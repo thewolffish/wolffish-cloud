@@ -1,0 +1,4 @@
+• Reopen the app mid-run and the turn is restored: the reply so far, the tool cards, and any question or approval it is waiting on.
+• Long, tool-heavy conversations no longer drop the connection. Oversized transcripts arrive in pieces and are reassembled on the phone.
+• The chat feed stays at the end of a reply as it arrives, instead of stopping short partway up.
+• The keyboard-dismiss chevron now appears above every keyboard in the app, not just the message field.

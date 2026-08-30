@@ -1,0 +1,10 @@
+{
+  "name": "@wolffish-cap/filesystem",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Wolffish filesystem capability — runtime npm dependencies installed lazily on first use.",
+  "dependencies": {
+    "sharp": "^0.34.5"
+  }
+}

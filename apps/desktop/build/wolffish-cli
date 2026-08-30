@@ -1,0 +1,18 @@
+#!/bin/sh
+# Wolffish CLI launcher — shipped by the .deb/.rpm as /usr/bin/wolffish.
+#
+# The app also writes a per-user shim into ~/.wolffish/bin on every boot, and
+# that one has to exist: an AppImage runs from a mount whose path changes every
+# launch, so only the running app knows where it lives. A native package has no
+# such problem — /opt/Wolffish is fixed by the packaging — which lets the
+# package answer the question outright instead of deferring it. This file exists
+# the moment `apt install` finishes: no first launch, no PATH line to add, the
+# same command for every user on the machine, and dpkg removes it on purge.
+#
+# ELECTRON_RUN_AS_NODE turns the shipped Electron binary into a plain node, so
+# the CLI needs no separate runtime and no window ever opens.
+#
+# Keep the "Wolffish CLI launcher" line above: the app reads it to tell its own
+# command apart from an unrelated `wolffish` earlier on PATH, which it reports
+# as a conflict. This one is not a conflict — it is the same client.
+ELECTRON_RUN_AS_NODE=1 exec /opt/Wolffish/wolffish-app /opt/Wolffish/resources/cli/wolffish.mjs "$@"

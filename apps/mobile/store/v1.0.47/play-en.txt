@@ -1,0 +1,2 @@
+• Ogg voice notes now play inline on current iPhones, with the same player every other voice note uses and nothing to download first. Older iPhones keep the file card.
+• The button that closes a project no longer wears the red reserved for deleting things; it now keeps a calm, muted look.

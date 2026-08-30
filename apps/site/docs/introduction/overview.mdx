@@ -1,0 +1,113 @@
+---
+title: "What is Wolffish?"
+description: "A local-first, markdown-powered personal AI desktop agent"
+---
+
+# Overview
+
+Wolffish is a local-first, markdown-powered personal AI desktop app built with Electron. It runs on macOS, Windows, and Linux, and maps the human brain's architecture onto a deterministic software pipeline where 15 runtime modules each handle one specific function — routing input, building context, managing memory, executing tools, enforcing safety, and learning from outcomes.
+
+## Demo Walkthrough
+
+See Wolffish in action. This walkthrough shows you what it actually does — how it thinks, how it routes your requests, and how it gets things done. If you've ever wanted an AI agent you can actually understand and trust, this is why Wolffish exists.
+
+<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
+  <iframe
+    src="https://www.youtube.com/embed/oog1q7T8H-s"
+    title="Wolffish — Demo Walkthrough"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+  />
+</div>
+
+## Official Cinematic Launch
+
+Our vision is simple: put a personal agent in the hands of every person on Earth and turbocharge humanity. This is Wolffish, officially launched.
+
+<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
+  <iframe
+    src="https://www.youtube.com/embed/XZdBttn-99E"
+    title="Wolffish — Official Cinematic Launch"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+  />
+</div>
+
+## Official Cinematic Reveal
+
+We're big fans of [OpenClaw](https://openclaw.ai). We genuinely admire what it set out to do. But after months of trying, we found it unusable — broken in ways we couldn't fix, buried under layers of bloat. It's not a server. It's not a CLI. It's certainly not an app. Wolffish is what we wish OpenClaw had been: simple, it works, and it's easy to use.
+
+<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
+  <iframe
+    src="https://www.youtube.com/embed/TKdTWd6BXR8"
+    title="Wolffish — Official Cinematic Reveal"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+  />
+</div>
+
+## Install
+
+macOS / Linux / Windows:
+
+```bash
+curl -fsSL https://releases.wolffi.sh/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://releases.wolffi.sh/install.ps1 | iex
+```
+
+Or download the latest release directly from [wolffi.sh](https://wolffi.sh/).
+
+## The Core Idea
+
+**Markdown is the source of truth for all agent behavior.** The TypeScript code is pure plumbing — it reads markdown, calls LLMs, executes tools, and writes markdown back. To change what the agent does, you edit a markdown file, not code. The LLM reads these instructions at runtime, so behavior evolves without rebuilds.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Local-First" icon="house">
+    Can work 100% offline with local Ollama models. Cloud providers and Ollama are both optional — use whichever fits your setup.
+  </Card>
+
+  <Card title="Markdown-Powered" icon="file-lines">
+    Your agent's entire brain is readable, editable, and version-controllable markdown files.
+  </Card>
+
+  <Card title="Deterministic Pipeline" icon="diagram-project">
+    The same input follows the same path through the same gates every time. The LLM adds creativity at one specific point.
+  </Card>
+
+  <Card title="Extensible Capabilities" icon="puzzle-piece">
+    Add new abilities by dropping a folder with a SKILL.md file. No code changes required.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Wolffish talks to LLMs via ten native cloud providers — DeepSeek, Z.ai (GLM), Xiaomi MiMo, Qwen (Alibaba Cloud), Kimi (Moonshot AI), MiniMax, xAI (Grok), Stepfun, Anthropic (Claude), OpenAI (GPT) — plus the OpenRouter aggregator and Ollama for local models. All are optional. You explicitly select your **Brain** model from the model switch beside the chat input — the one you choose is the one that runs. There's no automatic cascade or fallback. Optionally, switch the chat into **[workflow mode](/configuration/workflow-mode)**, where the agent plans phases and spawns parallel agents on models it picks from your connected providers. We recommend starting with DeepSeek or MiMo — they handle complex agentic tasks well at a fraction of the cost. Switch to Anthropic or OpenAI only if needed.
+
+Everything lives in one folder: `~/.wolffish/`. Delete it and you're back to factory defaults. No system-level daemons, no crontabs, no registry entries, no scattered config files — unless you deliberately register [autostart](/getting-started/server-deployment#make-it-survive-a-reboot), whose one launch entry `wolffish service uninstall` removes again.
+
+```text
+User message → Context Assembly → LLM Call → Tool Execution → Memory → Response
+```
+
+Each step is handled by a dedicated brain module, and every step is inspectable via markdown files.
+
+## Who Is It For?
+
+Wolffish is for anyone who wants a personal AI agent they fully understand, can use effectively, and can extend reliably. You don't need to be a developer — you just need to understand how it works. Everything is plain markdown files you can read, edit, and debug. If you want to own your AI tools rather than rent them, Wolffish is for you.
+
+<Card title="Get Started" icon="rocket" href="/getting-started/installation">
+  Install Wolffish and run your first conversation in under 5 minutes.
+</Card>

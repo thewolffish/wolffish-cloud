@@ -1,0 +1,157 @@
+name: Release
+
+# Every push to main cuts a versioned release:
+#   - patch bump by default          update: fix broken link          -> v1.0.3 to v1.0.4
+#   - [minor] anywhere in the message add: skills page [minor]        -> v1.0.4 to v1.1.0
+#   - [major] anywhere in the message remove: use-cases [major]       -> v1.1.0 to v2.0.0
+#   - [skip release] to push without releasing
+#
+# The version lives in git tags only. Nothing is committed back to main.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, needed to read the last version
+
+      - name: Resolve next version
+        id: version
+        run: |
+          set -euo pipefail
+
+          # Re-running the workflow on an already-released commit must not cut a
+          # second release.
+          released=$(git tag --points-at HEAD --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p || true)
+          if [ -n "$released" ]; then
+            echo "HEAD is already released as $released, nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The commit message is read from git, never interpolated into this
+          # script, so a crafted message cannot inject shell.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            bump="${{ inputs.bump }}"
+          else
+            case "$(git log -1 --pretty=%B)" in
+              *"[major]"*) bump=major ;;
+              *"[minor]"*) bump=minor ;;
+              *)           bump=patch ;;
+            esac
+          fi
+
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p || true)
+
+          if [ -z "$previous" ]; then
+            version="1.0.0"
+            echo "No existing tag, seeding the first release at v$version."
+          else
+            IFS=. read -r major minor patch <<<"${previous#v}"
+            case "$bump" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+            esac
+            version="${major}.${minor}.${patch}"
+            echo "$previous + $bump -> v$version"
+          fi
+
+          {
+            echo "skip=false"
+            echo "bump=$bump"
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "previous=$previous"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build docs archive
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Tracked content only: every .mdx page, docs.json, static/, ar/,
+          # README and LICENSE. CI plumbing is left to the source archives that
+          # GitHub attaches on its own.
+          git archive \
+            --format=zip \
+            --prefix="wolffish-docs-${TAG}/" \
+            -o "wolffish-docs-${TAG}.zip" \
+            HEAD -- . ':!.github' ':!.gitignore'
+
+          files=$(git ls-files -- . ':!.github' ':!.gitignore' | wc -l)
+          echo "Archived $files files into wolffish-docs-${TAG}.zip ($(du -h "wolffish-docs-${TAG}.zip" | cut -f1))"
+
+      - name: Tag and publish release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          BUMP: ${{ steps.version.outputs.bump }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Short topic for the release title: the commit subject with the bump
+          # markers stripped out.
+          topic=$(git log -1 --pretty=%s \
+            | sed -E 's/\[(major|minor|skip release)\]//g' \
+            | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+          zip="wolffish-docs-${TAG}.zip"
+
+          {
+            printf '**%s** — %s bump, %s\n\n' "$topic" "$BUMP" "$(git log -1 --pretty='%h · %cs')"
+            printf '### Assets\n\n'
+            printf -- '- `%s` — docs bundle: every MDX page, `docs.json`, `static/`, English + Arabic\n' "$zip"
+            printf -- '- **Source code** (zip / tar.gz) — the full repository at this tag\n\n'
+            if [ -n "$PREVIOUS" ]; then
+              printf '### Changes since %s\n\n' "$PREVIOUS"
+              git log --pretty='- %s (`%h`)' "$PREVIOUS..HEAD"
+              printf '\n[Full diff](%s/compare/%s...%s)\n' "$REPO_URL" "$PREVIOUS" "$TAG"
+            else
+              printf 'First versioned release of the documentation.\n'
+            fi
+          } > release-notes.md
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG — $topic"
+          git push origin "$TAG"
+
+          gh release create "$TAG" "$zip" \
+            --title "$TAG — $topic" \
+            --notes-file release-notes.md
+
+          {
+            printf '### Released [%s](%s/releases/tag/%s)\n\n' "$TAG" "$REPO_URL" "$TAG"
+            printf -- '- Topic: %s\n- Bump: %s\n- Docs archive: `%s`\n' "$topic" "$BUMP" "$zip"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report skip
+        if: steps.version.outputs.skip == 'true'
+        run: echo "No release cut — this commit already carries a version tag." >> "$GITHUB_STEP_SUMMARY"

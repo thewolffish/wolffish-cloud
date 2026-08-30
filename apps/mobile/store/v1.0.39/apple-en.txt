@@ -1,0 +1,5 @@
+Come back to the app while something is still running on your desktop and the reply is where you left it. Reopening a conversation mid-run used to show only the thinking words — the reply so far, the tool cards and any open question gone until the next update, which across a long tool call can be minutes away. The turn is now restored the moment the app reconnects, including a question or approval the run is waiting on.
+
+Long conversations no longer drop the connection. A transcript heavy with tool work could outgrow what a single message on the link carries, and opening it took the link down every time. Oversized transcripts now arrive in pieces and are put back together on the phone.
+
+The feed also stays at the end of a reply as it arrives. It no longer mistakes its own scrolling for yours, it follows all the way down instead of stopping short, and the newest message no longer hides behind the composer when the keyboard rises.

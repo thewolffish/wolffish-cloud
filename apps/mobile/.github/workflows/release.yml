@@ -1,0 +1,101 @@
+# Runs when scripts/release.js or scripts/ota.js pushes a vX.Y.Z tag.
+# Creates the GitHub Release with generated notes and, when an EXPO_TOKEN
+# repo secret is configured, attaches the store binary the release runs on —
+# named by the BINARY's own version, not the tag, so every release is
+# self-contained and honest: a store release carries its brand-new ipa; an
+# OTA release re-attaches the current store ipa it rides on (duplication
+# accepted on purpose). Store binaries are never built here — EAS owns those.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # Suppress the false-positive "uses Expo Go" warning — development
+      # happens via expo run:ios native builds, not Expo Go.
+      EAS_BUILD_NO_EXPO_GO_WARNING: 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx tsc --noEmit
+
+      - run: npm test -- --ci
+
+      # Artifacts are enhancements, never release blockers. Only the
+      # test/type gates above are allowed to fail the release.
+      #
+      # Built fresh from the tagged source (unlike the downloaded ipa below),
+      # so naming it by the tag is honest: an OTA tag's APK really contains
+      # that version's JS. It polls the preview channel, which stays
+      # unpublished — sideloads simply run their embedded bundle. Needs the
+      # Android keystore to exist on EAS (eas credentials -p android).
+      - name: Build sideload APK on EAS
+        if: env.EXPO_TOKEN != ''
+        continue-on-error: true
+        run: |
+          npx eas-cli build --platform android --profile preview --non-interactive --wait --json > android-build.json
+          APK_URL=$(node -e "
+            const b = JSON.parse(require('fs').readFileSync('android-build.json', 'utf8'))[0]
+            if (!b || !b.artifacts || !b.artifacts.buildUrl) { console.error('no apk artifact'); process.exit(0) }
+            console.log(b.artifacts.buildUrl)
+          ")
+          if [ -n "$APK_URL" ]; then
+            curl -fL "$APK_URL" -o "wolffish-${GITHUB_REF_NAME}.apk"
+          fi
+
+      # The ipa is not installable outside TestFlight/App Store — it is
+      # attached for transparency, so anyone can inspect the exact binary
+      # users run. Downloaded (not rebuilt) so it IS that binary. Only
+      # RELEASED binaries qualify: the build's version must have a pushed
+      # v-tag, which keeps a submitted-but-still-in-review binary from
+      # leaking into a public release via an OTA tag pushed meanwhile.
+      - name: Attach current released iOS binary from EAS
+        if: env.EXPO_TOKEN != ''
+        continue-on-error: true
+        run: |
+          npx eas-cli build:list --platform ios --build-profile production --status finished --limit 10 --non-interactive --json > ios-builds.json
+          git ls-remote --tags origin 'refs/tags/v*' | sed -e 's|.*refs/tags/||' -e 's|\^{}||' | sort -u > released-tags.txt
+          IPA_INFO=$(node -e "
+            const fs = require('fs')
+            const builds = JSON.parse(fs.readFileSync('ios-builds.json', 'utf8'))
+            const released = new Set(fs.readFileSync('released-tags.txt', 'utf8').split('\n').filter(Boolean))
+            const b = builds.find(
+              (b) => b.distribution === 'STORE' && released.has('v' + b.appVersion) && b.artifacts && b.artifacts.buildUrl
+            )
+            if (!b) { console.error('no released iOS binary to attach'); process.exit(0) }
+            console.log(b.artifacts.buildUrl + ' ' + b.appVersion)
+          ")
+          if [ -n "$IPA_INFO" ]; then
+            curl -fL "${IPA_INFO% *}" -o "wolffish-v${IPA_INFO#* }.ipa"
+          fi
+
+      - name: Checksums
+        run: |
+          ARTIFACTS=$(ls wolffish-*.apk wolffish-*.ipa 2>/dev/null || true)
+          if [ -n "$ARTIFACTS" ]; then
+            shasum -a 256 $ARTIFACTS > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            *.apk
+            *.ipa
+            SHA256SUMS.txt

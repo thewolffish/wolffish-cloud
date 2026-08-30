@@ -1,0 +1,3 @@
+• Reasoning now shows in full: each stretch of the model's thinking is a collapsed card right where it happened, not one card at the end of the reply.
+• Tap a card to read it; copying a message still copies only the reply itself.
+• The close-project button drops its deletion red for a calm, muted look.

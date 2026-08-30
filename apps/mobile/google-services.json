@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "187552782214",
+    "project_id": "wolffish-f9ac3",
+    "storage_bucket": "wolffish-f9ac3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:187552782214:android:1c56c7d1a0ec7a3b58fe07",
+        "android_client_info": {
+          "package_name": "sh.wolffi.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCK-kdZAMhkCIihodapiWySfXzozGe_oVs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

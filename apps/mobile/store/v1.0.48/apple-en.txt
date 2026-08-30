@@ -1,0 +1,5 @@
+Replies that involve real thinking now show all of it, right where it happened. Each stretch of the model's reasoning arrives as its own collapsed card above the words and actions it produced — instead of a single card at the end holding only the final thought. Tap a card to read it; copying a message still copies only the reply. Updating the paired desktop app brings the full effect.
+
+Voice notes in the Ogg format now play right on your iPhone. Recent versions of iOS decode Ogg natively, so these notes open in the same inline player as every other voice note, with nothing to download first. Older iPhones keep the file card, which is exactly what they need.
+
+The button that closes a project no longer wears the red reserved for deleting things. Closing a project is a harmless switch of mode, and the button now looks the part.

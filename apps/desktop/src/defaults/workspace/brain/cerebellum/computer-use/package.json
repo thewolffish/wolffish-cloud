@@ -1,0 +1,9 @@
+{
+  "name": "wolffish-computer-use",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "sharp": "^0.33.0"
+  }
+}

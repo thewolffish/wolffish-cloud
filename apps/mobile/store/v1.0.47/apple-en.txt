@@ -1,0 +1,3 @@
+Voice notes in the Ogg format now play right on your iPhone. Recent versions of iOS decode Ogg natively, so these notes open in the same inline player as every other voice note, with nothing to download first. Older iPhones keep the file card, which is exactly what they need.
+
+The button that closes a project no longer wears the red reserved for deleting things. Closing a project is a harmless switch of mode, so the button now keeps a calm, muted look.
