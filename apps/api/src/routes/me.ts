@@ -6,11 +6,32 @@
  */
 import { Hono } from 'hono'
 import { requireAuth, killKey, REFRESH_IDLE_DAYS, type AuthVars } from '../middleware/auth'
+import { getEffectivePolicy, getOrgConfig } from '../lib/policy'
+import { modelMeta } from '../lib/models'
 import type { Env } from '../index'
 
 const me = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 
 me.use('*', requireAuth)
+
+/**
+ * The server-driven model catalog: exactly what this user's picker shows.
+ * Admin edits the policy → this list changes → the client re-renders.
+ */
+me.get('/models', async (c) => {
+  const auth = c.get('auth')
+  const org = await getOrgConfig(c.env)
+  if (!org) return c.json({ error: 'org_not_provisioned' }, 500)
+  const policy = await getEffectivePolicy(c.env, auth.sub)
+  const ids = policy.allowed.length > 0 ? policy.allowed : [org.default_model]
+  return c.json({
+    default_model: org.default_model,
+    models: ids.map((id) => {
+      const meta = modelMeta(id)
+      return { id, name: meta.name, reasoning: meta.reasoning, default: id === org.default_model }
+    })
+  })
+})
 
 me.get('/me', async (c) => {
   const auth = c.get('auth')

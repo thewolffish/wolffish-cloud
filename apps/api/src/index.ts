@@ -9,6 +9,7 @@ import { Hono } from 'hono'
 import authRoutes from './routes/auth'
 import meRoutes from './routes/me'
 import adminRoutes from './routes/admin'
+import aiRoutes from './routes/ai'
 
 export type Env = {
   DB: D1Database
@@ -17,6 +18,8 @@ export type Env = {
   BLOBS: R2Bucket
   JWT_SECRET: string
   DEEPINFRA_API_KEY: string
+  /** Override for tests/mocks; defaults to the real DeepInfra endpoint. */
+  DEEPINFRA_BASE_URL?: string
 }
 
 const app = new Hono<{ Bindings: Env }>()
@@ -28,6 +31,7 @@ app.get('/health', (c) =>
 app.route('/auth', authRoutes)
 app.route('/v1', meRoutes)
 app.route('/admin', adminRoutes)
+app.route('/ai', aiRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 
