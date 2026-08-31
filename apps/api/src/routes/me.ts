@@ -8,6 +8,8 @@ import { Hono } from 'hono'
 import { requireAuth, killKey, REFRESH_IDLE_DAYS, type AuthVars } from '@/middleware/auth'
 import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
 import { modelMeta } from '@/lib/models'
+import { DevicePinSchema } from '@/lib/schemas'
+import { parseJson } from '@/lib/validate'
 import type { Env } from '@/index'
 
 const me = new Hono<{ Bindings: Env; Variables: AuthVars }>()
@@ -57,10 +59,8 @@ me.get('/me', async (c) => {
  */
 me.post('/device/pin', async (c) => {
   const auth = c.get('auth')
-  const body = await c.req.json<{ pin_set?: boolean }>().catch(() => null)
-  if (!body || typeof body.pin_set !== 'boolean') {
-    return c.json({ error: 'invalid_request', detail: 'pin_set boolean required' }, 400)
-  }
+  const body = await parseJson(c, DevicePinSchema)
+  if (body instanceof Response) return body
   await c.env.DB.prepare(
     'UPDATE devices SET pin_set = ?1, pin_clear_requested = 0 WHERE id = ?2 AND user_id = ?3'
   )

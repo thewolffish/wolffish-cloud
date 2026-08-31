@@ -127,6 +127,49 @@ check('garbage token 401', (await api('/v1/me', { token: 'not.a.token' })).statu
 check('unauthenticated router 401', (await api('/ai/v1/chat/completions', { body: { model: V31 } })).status === 401)
 check('employee blocked from admin', (await api('/admin/users', { token: VT })).status === 403)
 
+// ── 3.5 · the validation boundary rejects loudly ─────────────────────────
+const negCap = await api('/admin/org', { token: O, method: 'PATCH', body: { user_daily_token_cap: -5 } })
+check(
+  'negative org cap 400 with issue path',
+  negCap.status === 400 && negCap.json?.issues?.[0]?.path === 'user_daily_token_cap'
+)
+check(
+  'org default outside allowlist 400 (semantic)',
+  (await api('/admin/org', {
+    token: O,
+    method: 'PATCH',
+    body: { default_model: 'not/in-list', default_allowed_models: [V31] }
+  })).status === 400
+)
+check(
+  'wrong-typed policy 400',
+  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: 'x' } })).status === 400
+)
+check(
+  'config array 400',
+  (await api('/v1/config', { token: VT, method: 'PUT', body: { config: [1, 2] } })).status === 400
+)
+check(
+  'oversized config 400',
+  (await api('/v1/config', { token: VT, method: 'PUT', body: { config: { blob: 'x'.repeat(70_000) } } })).status === 400
+)
+const mixedBatch = await api('/v1/sync/batch', {
+  token: VT,
+  body: {
+    items: [
+      { type: 'conversation', id: `cnv_vx_${stamp}`, title: 'ok', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { type: 'record', id: 'bad', conversation_id: `cnv_vx_${stamp}`, seq: 'not-a-number', content: {}, created_at: 'nope' }
+    ]
+  }
+})
+check(
+  'mixed batch: good lands, bad rejected with issues',
+  mixedBatch.json?.accepted === 1 && mixedBatch.json?.rejected === 1 && mixedBatch.json?.issues?.[0]?.path?.startsWith('items.1'),
+  JSON.stringify(mixedBatch.json)
+)
+check('wrong-typed login 400', (await api('/auth/login', { body: { email: 123, password: true } })).status === 400)
+check('non-boolean pin 400', (await api('/v1/device/pin', { token: VT, body: { pin_set: 'yes' } })).status === 400)
+
 // ── 4 · the router, on real DeepSeek ─────────────────────────────────────
 const chat1 = await tinyChat(VT, V31)
 check('V3.1 completes (JSON)', chat1.status === 200 && chat1.json?.usage?.completion_tokens > 0, JSON.stringify(chat1.json).slice(0, 200))
@@ -212,7 +255,9 @@ check('other employee cannot fetch blob', (await api(`/v1/files/${sha}`, { token
 const boot = await api('/v1/sync/bootstrap', { token: VT })
 check(
   'bootstrap rehydrates fresh install',
-  boot.json?.config?.theme === 'dark' && boot.json?.conversations?.length === 1 && boot.json?.files?.length === 2
+  // Two conversations by this point: the sync section's plus the
+  // validation section's mixed-batch survivor.
+  boot.json?.config?.theme === 'dark' && boot.json?.conversations?.length === 2 && boot.json?.files?.length === 2
 )
 
 // ── 7 · sessions: refresh, reuse, PIN, revoke, reset, suspend ────────────

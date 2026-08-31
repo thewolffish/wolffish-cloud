@@ -1,6 +1,6 @@
 {
   "name": "wfc-api",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "description": "Wolffish Cloud master API — the single choke-point Worker at api.wolffi.sh: auth, sessions, model routing (DeepInfra), sync, admin.",
   "type": "module",
@@ -14,7 +14,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply wfc-master --remote"
   },
   "dependencies": {
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260828.1",

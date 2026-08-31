@@ -9,7 +9,10 @@
  * of record pages and blobs. Config is last-write-wins on the one row.
  */
 import { Hono } from 'hono'
+import type { z } from 'zod'
 import { newId, toHex } from '@/lib/crypto'
+import { BatchItemSchema, BatchSchema, ConfigPutSchema } from '@/lib/schemas'
+import { issuesOf, parseJson } from '@/lib/validate'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
 import type { Env } from '@/index'
 
@@ -33,10 +36,8 @@ sync.get('/config', async (c) => {
 
 sync.put('/config', async (c) => {
   const auth = c.get('auth')
-  const body = await c.req.json<{ config?: unknown }>().catch(() => null)
-  if (!body || typeof body.config !== 'object' || body.config === null) {
-    return c.json({ error: 'invalid_request', detail: 'config object required' }, 400)
-  }
+  const body = await parseJson(c, ConfigPutSchema)
+  if (body instanceof Response) return body
   const now = nowIso()
   await c.env.DB.prepare(
     `INSERT INTO settings (user_id, config, updated_at) VALUES (?1, ?2, ?3)
@@ -49,42 +50,29 @@ sync.put('/config', async (c) => {
 
 // ── The outbox drain ─────────────────────────────────────────────────────
 
-type BatchItem =
-  | {
-      type: 'conversation'
-      id: string
-      title?: string
-      created_at: string
-      updated_at: string
-      device_id?: string
-    }
-  | {
-      type: 'record'
-      id: string
-      conversation_id: string
-      seq: number
-      kind?: string
-      content: unknown
-      created_at: string
-    }
-  | { type: 'episode'; id: string; content: unknown; occurred_at: string }
+type BatchItem = z.infer<typeof BatchItemSchema>
 
 sync.post('/sync/batch', async (c) => {
   const auth = c.get('auth')
-  const body = await c.req.json<{ items?: BatchItem[] }>().catch(() => null)
-  const items = body?.items
-  if (!Array.isArray(items) || items.length === 0 || items.length > 500) {
-    return c.json({ error: 'invalid_request', detail: '1..500 items required' }, 400)
-  }
+  const parsed = await parseJson(c, BatchSchema)
+  if (parsed instanceof Response) return parsed
 
   let accepted = 0
   let ignored = 0
   let rejected = 0
-  for (const item of items) {
-    if (!item || typeof item.id !== 'string' || !item.id) {
+  // Per-item tolerance, loudly: a malformed item never sinks the batch
+  // (the outbox must keep draining), but its reasons come back in `issues`.
+  const issues: { path: string; message: string }[] = []
+  for (const [index, raw] of parsed.items.entries()) {
+    const itemIssues = issuesOf(BatchItemSchema, raw)
+    if (itemIssues) {
       rejected++
+      if (issues.length < 10) {
+        issues.push(...itemIssues.map((i) => ({ ...i, path: `items.${index}.${i.path}` })))
+      }
       continue
     }
+    const item = raw as BatchItem
     try {
       if (item.type === 'conversation') {
         const res = await c.env.DB.prepare(
@@ -131,7 +119,7 @@ sync.post('/sync/batch', async (c) => {
           )
           .run()
         res.meta.changes > 0 ? accepted++ : ignored++
-      } else if (item.type === 'episode') {
+      } else {
         const res = await c.env.DB.prepare(
           `INSERT OR IGNORE INTO episodes (id, user_id, content, occurred_at)
            VALUES (?1, ?2, ?3, ?4)`
@@ -139,14 +127,12 @@ sync.post('/sync/batch', async (c) => {
           .bind(item.id, auth.sub, JSON.stringify(item.content ?? null), item.occurred_at)
           .run()
         res.meta.changes > 0 ? accepted++ : ignored++
-      } else {
-        rejected++
       }
     } catch {
       rejected++
     }
   }
-  return c.json({ ok: true, accepted, ignored, rejected })
+  return c.json({ ok: true, accepted, ignored, rejected, ...(issues.length ? { issues } : {}) })
 })
 
 // ── Lazy reads (restore path) ────────────────────────────────────────────
@@ -185,8 +171,8 @@ sync.get('/conversations/:id/records', async (c) => {
 sync.post('/files/upload', async (c) => {
   const auth = c.get('auth')
   const sha256 = (c.req.query('sha256') ?? '').toLowerCase()
-  const name = c.req.query('name') ?? 'unnamed'
-  const mime = c.req.query('mime') ?? 'application/octet-stream'
+  const name = (c.req.query('name') ?? 'unnamed').slice(0, 200)
+  const mime = (c.req.query('mime') ?? 'application/octet-stream').slice(0, 100)
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
     return c.json({ error: 'invalid_request', detail: 'sha256 query param required' }, 400)
   }

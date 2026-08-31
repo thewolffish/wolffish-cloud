@@ -15,6 +15,8 @@ import {
   timingSafeEqualHex
 } from '@/lib/crypto'
 import { signJwt, verifyJwt, type AccessClaims } from '@/lib/jwt'
+import { LoginSchema, PasswordChangeSchema, RefreshSchema } from '@/lib/schemas'
+import { parseJson } from '@/lib/validate'
 import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS, killKey } from '@/middleware/auth'
 import type { Env } from '@/index'
 
@@ -87,12 +89,8 @@ async function issueSession(
 }
 
 auth.post('/login', async (c) => {
-  const body = await c.req.json<{
-    email?: string
-    password?: string
-    device?: { id?: string; platform?: 'desktop' | 'mobile' | 'sim'; name?: string; app_version?: string }
-  }>().catch(() => null)
-  if (!body?.email || !body?.password) return c.json({ error: 'invalid_request' }, 400)
+  const body = await parseJson(c, LoginSchema)
+  if (body instanceof Response) return body
 
   const email = body.email.trim().toLowerCase()
   const ip = c.req.header('cf-connecting-ip') ?? 'local'
@@ -184,14 +182,11 @@ auth.post('/password', async (c) => {
     return c.json({ error: 'unauthorized' }, 401)
   }
 
-  const body = await c.req.json<{ new_password?: string }>().catch(() => null)
-  const pw = body?.new_password ?? ''
-  if (pw.length < 10 || pw.length > 128) {
-    return c.json({ error: 'weak_password', detail: 'min 10 characters' }, 400)
-  }
+  const body = await parseJson(c, PasswordChangeSchema)
+  if (body instanceof Response) return body
 
   const salt = randomHex(16)
-  const hash = await hashPassword(pw, salt)
+  const hash = await hashPassword(body.new_password, salt)
   await c.env.DB.prepare(
     `UPDATE users SET password_hash = ?1, password_salt = ?2, must_change_password = 0,
        temp_password_expires_at = NULL,
@@ -205,8 +200,9 @@ auth.post('/password', async (c) => {
 })
 
 auth.post('/refresh', async (c) => {
-  const body = await c.req.json<{ refresh_token?: string }>().catch(() => null)
-  const raw = body?.refresh_token ?? ''
+  const body = await parseJson(c, RefreshSchema)
+  if (body instanceof Response) return body
+  const raw = body.refresh_token
   const dot = raw.indexOf('.')
   if (dot <= 0) return c.json({ error: 'invalid_refresh' }, 401)
   const sessionId = raw.slice(0, dot)

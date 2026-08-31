@@ -10,6 +10,14 @@
 import { Hono } from 'hono'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import {
+  ClearPinSchema,
+  InviteSchema,
+  OrgPatchSchema,
+  PolicyPutSchema,
+  UserPatchSchema
+} from '@/lib/schemas'
+import { parseJson } from '@/lib/validate'
+import {
   requireAuth,
   requireAdmin,
   requireRole,
@@ -82,18 +90,11 @@ async function activeSessionIds(env: Env, userId: string): Promise<string[]> {
 
 admin.post('/users', async (c) => {
   const auth = c.get('auth')
-  const body = await c.req
-    .json<{ email?: string; name?: string; role?: string }>()
-    .catch(() => null)
-  const email = body?.email?.trim().toLowerCase() ?? ''
-  const name = body?.name?.trim() ?? ''
-  const role = body?.role ?? 'employee'
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !name) {
-    return c.json({ error: 'invalid_request', detail: 'email and name required' }, 400)
-  }
-  if (!['owner', 'admin', 'support', 'employee'].includes(role)) {
-    return c.json({ error: 'invalid_role' }, 400)
-  }
+  const body = await parseJson(c, InviteSchema)
+  if (body instanceof Response) return body
+  const email = body.email.trim().toLowerCase()
+  const name = body.name.trim()
+  const role = body.role
   if (!(await ownerGuard(c.env, auth.role, null, role))) {
     return c.json({ error: 'forbidden', detail: 'only an owner can mint owners' }, 403)
   }
@@ -157,21 +158,13 @@ admin.get('/users/:id', async (c) => {
 admin.patch('/users/:id', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  const body = await c.req
-    .json<{ name?: string; role?: string; status?: string }>()
-    .catch(() => null)
-  if (!body) return c.json({ error: 'invalid_request' }, 400)
+  const body = await parseJson(c, UserPatchSchema)
+  if (body instanceof Response) return body
   if (id === auth.sub && (body.role || body.status)) {
     return c.json({ error: 'forbidden', detail: 'cannot change own role or status' }, 403)
   }
   if (!(await ownerGuard(c.env, auth.role, id, body.role))) {
     return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
-  }
-  if (body.role && !['owner', 'admin', 'support', 'employee'].includes(body.role)) {
-    return c.json({ error: 'invalid_role' }, 400)
-  }
-  if (body.status && !['active', 'suspended'].includes(body.status)) {
-    return c.json({ error: 'invalid_status' }, 400)
   }
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
@@ -223,7 +216,8 @@ admin.post('/users/:id/reset-password', async (c) => {
 admin.post('/users/:id/clear-pin', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  const body = await c.req.json<{ device_id?: string }>().catch(() => ({}) as { device_id?: string })
+  const body = await parseJson(c, ClearPinSchema)
+  if (body instanceof Response) return body
   const result = await c.env.DB.prepare(
     body?.device_id
       ? 'UPDATE devices SET pin_clear_requested = 1 WHERE user_id = ?1 AND id = ?2'
@@ -253,13 +247,8 @@ admin.post('/users/:id/revoke-sessions', async (c) => {
 admin.put('/users/:id/policy', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  const body = await c.req
-    .json<{ allowed_models?: string[] | null; daily_token_cap?: number | null }>()
-    .catch(() => null)
-  if (!body) return c.json({ error: 'invalid_request' }, 400)
-  if (body.allowed_models !== undefined && body.allowed_models !== null && !Array.isArray(body.allowed_models)) {
-    return c.json({ error: 'invalid_request', detail: 'allowed_models must be an array or null' }, 400)
-  }
+  const body = await parseJson(c, PolicyPutSchema)
+  if (body instanceof Response) return body
   const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
   if (!user) return c.json({ error: 'not_found' }, 404)
 
@@ -295,16 +284,41 @@ admin.get('/org', async (c) => {
 
 admin.patch('/org', async (c) => {
   const auth = c.get('auth')
-  const body = await c.req
-    .json<{
-      name?: string
-      default_model?: string
-      default_allowed_models?: string[]
-      user_daily_token_cap?: number
-      org_monthly_token_cap?: number
-    }>()
-    .catch(() => null)
-  if (!body) return c.json({ error: 'invalid_request' }, 400)
+  const body = await parseJson(c, OrgPatchSchema)
+  if (body instanceof Response) return body
+
+  // Semantic guard no schema can express: the resulting default model must
+  // be inside the resulting allowlist, or every employee on org defaults
+  // would be pointed at a model the router refuses.
+  if (body.default_model !== undefined || body.default_allowed_models !== undefined) {
+    const current = await c.env.DB.prepare(
+      'SELECT default_model, default_allowed_models FROM org WHERE id = 1'
+    ).first<{ default_model: string; default_allowed_models: string }>()
+    if (current) {
+      let currentList: string[] = []
+      try {
+        const parsed = JSON.parse(current.default_allowed_models)
+        if (Array.isArray(parsed)) currentList = parsed
+      } catch {}
+      const resultingDefault = body.default_model ?? current.default_model
+      const resultingList = body.default_allowed_models ?? currentList
+      if (resultingList.length > 0 && !resultingList.includes(resultingDefault)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            issues: [
+              {
+                path: 'default_model',
+                message: 'resulting default_model must be included in default_allowed_models'
+              }
+            ]
+          },
+          400
+        )
+      }
+    }
+  }
+
   await c.env.DB.prepare(
     `UPDATE org SET
        name = COALESCE(?1, name),
