@@ -7,7 +7,7 @@
  * are advisory speed bumps — the authoritative tally is the usage table,
  * and cron re-syncs counters from it.
  */
-import type { Env } from '../index'
+import type { Env } from '@/index'
 
 export type OrgConfig = {
   name: string

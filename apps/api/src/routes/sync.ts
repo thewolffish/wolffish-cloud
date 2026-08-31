@@ -9,9 +9,9 @@
  * of record pages and blobs. Config is last-write-wins on the one row.
  */
 import { Hono } from 'hono'
-import { newId, toHex } from '../lib/crypto'
-import { requireAuth, type AuthVars } from '../middleware/auth'
-import type { Env } from '../index'
+import { newId, toHex } from '@/lib/crypto'
+import { requireAuth, type AuthVars } from '@/middleware/auth'
+import type { Env } from '@/index'
 
 const sync = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 const nowIso = () => new Date().toISOString()

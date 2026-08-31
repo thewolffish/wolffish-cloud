@@ -5,10 +5,10 @@
  * on every admin endpoint regardless).
  */
 import { Hono } from 'hono'
-import { requireAuth, killKey, REFRESH_IDLE_DAYS, type AuthVars } from '../middleware/auth'
-import { getEffectivePolicy, getOrgConfig } from '../lib/policy'
-import { modelMeta } from '../lib/models'
-import type { Env } from '../index'
+import { requireAuth, killKey, REFRESH_IDLE_DAYS, type AuthVars } from '@/middleware/auth'
+import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
+import { modelMeta } from '@/lib/models'
+import type { Env } from '@/index'
 
 const me = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 

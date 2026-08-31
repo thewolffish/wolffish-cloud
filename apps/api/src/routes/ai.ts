@@ -11,16 +11,16 @@
  * content is never logged or stored here; only metering metadata is.
  */
 import { Hono } from 'hono'
-import { requireAuth, type AuthVars } from '../middleware/auth'
+import { requireAuth, type AuthVars } from '@/middleware/auth'
 import {
   bumpQuota,
   getEffectivePolicy,
   getOrgConfig,
   modelAllowed,
   quotaStanding
-} from '../lib/policy'
-import { costMicroUsd } from '../lib/models'
-import type { Env } from '../index'
+} from '@/lib/policy'
+import { costMicroUsd } from '@/lib/models'
+import type { Env } from '@/index'
 
 const DEEPINFRA_DEFAULT_BASE = 'https://api.deepinfra.com/v1/openai'
 

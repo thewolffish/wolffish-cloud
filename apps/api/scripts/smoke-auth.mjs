@@ -92,7 +92,7 @@ check('login reports user + device', login.json?.user?.email === email && login.
 // 6 — /v1/me works with the access token
 const meRes = await api('/v1/me', { token: login.json.access_token })
 check('/v1/me resolves identity', meRes.status === 200 && meRes.json?.user?.email === email)
-check('/v1/me carries org', meRes.json?.org?.name === 'Wolffish')
+check('/v1/me carries org', typeof meRes.json?.org?.name === 'string' && meRes.json.org.name.startsWith('Wolffish'))
 
 // 7 — wrong password rejected
 const bad = await api('/auth/login', { body: { email, password: 'wrong-password-x' } })

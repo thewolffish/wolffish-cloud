@@ -7,12 +7,12 @@
  */
 import { Hono } from 'hono'
 import pkg from '../package.json'
-import { landingPage } from './page'
-import authRoutes from './routes/auth'
-import meRoutes from './routes/me'
-import adminRoutes from './routes/admin'
-import aiRoutes from './routes/ai'
-import syncRoutes from './routes/sync'
+import { landingPage } from '@/page'
+import authRoutes from '@/routes/auth'
+import meRoutes from '@/routes/me'
+import adminRoutes from '@/routes/admin'
+import aiRoutes from '@/routes/ai'
+import syncRoutes from '@/routes/sync'
 
 export type Env = {
   DB: D1Database

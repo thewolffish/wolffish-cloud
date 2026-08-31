@@ -13,10 +13,10 @@ import {
   randomHex,
   sha256Hex,
   timingSafeEqualHex
-} from '../lib/crypto'
-import { signJwt, verifyJwt, type AccessClaims } from '../lib/jwt'
-import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS, killKey } from '../middleware/auth'
-import type { Env } from '../index'
+} from '@/lib/crypto'
+import { signJwt, verifyJwt, type AccessClaims } from '@/lib/jwt'
+import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS, killKey } from '@/middleware/auth'
+import type { Env } from '@/index'
 
 type UserRow = {
   id: string

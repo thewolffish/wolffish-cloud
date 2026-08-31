@@ -8,7 +8,7 @@
  * Every mutation writes an audit_log row.
  */
 import { Hono } from 'hono'
-import { hashPassword, newId, randomHex, tempPassword } from '../lib/crypto'
+import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import {
   requireAuth,
   requireAdmin,
@@ -16,8 +16,8 @@ import {
   killKey,
   REFRESH_IDLE_DAYS,
   type AuthVars
-} from '../middleware/auth'
-import type { Env } from '../index'
+} from '@/middleware/auth'
+import type { Env } from '@/index'
 
 const admin = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 const nowIso = () => new Date().toISOString()

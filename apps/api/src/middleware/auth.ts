@@ -9,8 +9,8 @@
  * token expiry.
  */
 import { createMiddleware } from 'hono/factory'
-import { verifyJwt, type AccessClaims } from '../lib/jwt'
-import type { Env } from '../index'
+import { verifyJwt, type AccessClaims } from '@/lib/jwt'
+import type { Env } from '@/index'
 
 export type AuthVars = {
   auth: AccessClaims
