@@ -1,6 +1,6 @@
 # wolffish-cloud
 
-> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup.** It carves the existing local-first personal-agent repos into one monorepo and re-aims them at a multi-tenant B2B platform. The personal repos remain the upstream and keep their own history; every folder here was carried over from a pinned commit, unmodified (see [Provenance](#provenance)).
+> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup.** It carves the existing local-first personal-agent repos into one monorepo and re-aims them at a multi-tenant B2B platform. The personal repos remain the upstream and keep their own history; every folder here was carried over from a pinned commit (see [Provenance](#provenance)).
 
 **Keep the agent on the device. Move the truth to the edge.**
 
@@ -45,7 +45,7 @@ wolffish-cloud/
     └── extension/   ← wolffish-extension · browser capability, bundled into desktop
 ```
 
-Each folder is the corresponding personal repo at a pinned commit, **byte-for-byte unmodified** — same code, same READMEs, same licenses, own lockfiles. Nothing has been rewired yet.
+Each folder is the corresponding personal repo at a pinned commit — same code, same READMEs, own lockfiles. The only repo-wide change so far is license unification: the per-module `LICENSE` files (all identical MIT) were collapsed into one root [LICENSE](LICENSE). Nothing has been rewired yet.
 
 ## The modules
 
@@ -142,4 +142,4 @@ Every folder was exported from the corresponding personal repo at the commit bel
 
 ## License
 
-Every module carries the MIT license of its source repo (a `LICENSE` file in each folder).
+The entire repository — every app and package — is covered by a single [MIT license](LICENSE) at the root, © 2026 Younes Alturkey. Third-party licenses bundled with assets (such as font OFL files) remain alongside those assets.

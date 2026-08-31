@@ -10,7 +10,7 @@ Wolffish is a local-first, markdown-powered personal AI desktop agent built with
 
 Built around a 15-module runtime modeled after the human brain, from memory consolidation to safety gating. Every piece of state lives in readable markdown files. To change what the agent does, you edit markdown — not code.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.274-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -439,4 +439,4 @@ Everything wolffish knows lives in `~/.wolffish/workspace/`:
 
 MIT License — Copyright (c) 2026 [Younes Alturkey](mailto:younes@wolffi.sh)
 
-See [LICENSE.md](LICENSE.md) for the full text.
+See [LICENSE](../../LICENSE) at the repository root for the full text.

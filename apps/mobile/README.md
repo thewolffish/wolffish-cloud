@@ -10,7 +10,7 @@ Wolffish Mobile is the official phone app for [Wolffish](https://github.com/thew
 
 Built with React Native and Expo. One codebase, iOS and Android, English and Arabic with full RTL.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.48-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)]()
 
@@ -389,4 +389,4 @@ Conversation data never leaves the pair. The relay stores none of it, and there 
 
 MIT License — Copyright (c) 2026 [Younes Alturkey](mailto:younes@wolffi.sh)
 
-See [LICENSE](LICENSE) for the full text.
+See [LICENSE](../../LICENSE) at the repository root for the full text.
