@@ -6,6 +6,8 @@
  * role → policy/quota gates → handler.
  */
 import { Hono } from 'hono'
+import authRoutes from './routes/auth'
+import meRoutes from './routes/me'
 
 export type Env = {
   DB: D1Database
@@ -21,6 +23,9 @@ const app = new Hono<{ Bindings: Env }>()
 app.get('/health', (c) =>
   c.json({ ok: true, service: 'wfc-api', time: new Date().toISOString() })
 )
+
+app.route('/auth', authRoutes)
+app.route('/v1', meRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 
