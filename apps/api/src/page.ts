@@ -155,6 +155,18 @@ export function landingPage(version: string): string {
   }
   .gh:hover { transform: translateY(-1px); box-shadow: 0 10px 30px -10px var(--shadow); }
   .gh img { width: 20px; height: 20px; display: block; }
+  .person { display: flex; align-items: center; gap: 0.95rem; margin-bottom: 1rem; }
+  .avatar {
+    width: 72px; height: 72px; border-radius: 50%; object-fit: cover; flex: none;
+    box-shadow: 0 0 0 1px var(--line), 0 12px 32px -12px var(--shadow);
+  }
+  .person strong { display: block; color: var(--fg); font-size: 1.05rem; font-weight: 650; line-height: 1.3; }
+  .person span { color: var(--muted); font-size: 0.88rem; }
+  .facts a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+  .facts a:hover { border-bottom-color: currentColor; }
+  .cta {
+    width: 100%; justify-content: center; margin-top: 1.15rem;
+  }
   footer { margin-top: 2.2rem; font-size: 0.82rem; color: var(--muted); }
   footer a { color: inherit; }
 </style>
@@ -195,6 +207,21 @@ export function landingPage(version: string): string {
       <li><b>Prompt content</b><span class="no">never</span></li>
       <li><b>Provider keys on devices</b><span class="no">never</span></li>
     </ul>
+  </section>
+  <section class="how">
+    <h2>Contact</h2>
+    <div class="person">
+      <img class="avatar" src="https://cdn.wolffi.sh/generic/younes-official.jpeg" alt="Younes Alturkey" width="72" height="72" />
+      <div>
+        <strong>Younes Alturkey</strong>
+        <span>Founder &amp; Engineer</span>
+      </div>
+    </div>
+    <ul class="facts">
+      <li><b>Email</b><a href="mailto:younes@wolffi.sh">younes@wolffi.sh</a></li>
+      <li><b>Phone</b><a href="tel:+966538654514">+966&nbsp;53&nbsp;865&nbsp;4514</a></li>
+    </ul>
+    <a class="gh cta" href="mailto:younes@wolffi.sh?subject=Wolffish%20Cloud">Contact Younes</a>
   </section>
   <a class="gh" href="https://github.com/thewolffish/wolffish-cloud">
     <img src="https://cdn.wolffi.sh/generic/github.png" alt="" width="20" height="20" />
