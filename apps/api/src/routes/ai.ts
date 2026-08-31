@@ -37,9 +37,15 @@ type Meter = {
   latencyMs: number
   decision: 'allowed' | 'denied_model' | 'denied_quota' | 'error'
   error?: string
+  /** Upstream's own bill (USD) when it reports one — authoritative. */
+  upstreamCostUsd?: number
 }
 
 async function meter(env: Env, m: Meter): Promise<void> {
+  const cost =
+    m.upstreamCostUsd !== undefined && Number.isFinite(m.upstreamCostUsd)
+      ? Math.round(m.upstreamCostUsd * 1_000_000)
+      : costMicroUsd(m.model, m.tokensIn, m.tokensOut)
   await env.DB.prepare(
     `INSERT INTO usage (user_id, device_id, model, tokens_in, tokens_out, cost_microusd,
        latency_ms, decision, error)
@@ -51,7 +57,7 @@ async function meter(env: Env, m: Meter): Promise<void> {
       m.model,
       m.tokensIn,
       m.tokensOut,
-      costMicroUsd(m.model, m.tokensIn, m.tokensOut),
+      cost,
       m.latencyMs,
       m.decision,
       m.error ?? null
@@ -61,8 +67,8 @@ async function meter(env: Env, m: Meter): Promise<void> {
 }
 
 /** Pull `usage` out of a completed SSE body (final chunk carries it). */
-function usageFromSse(text: string): { in: number; out: number } {
-  let usage = { in: 0, out: 0 }
+function usageFromSse(text: string): { in: number; out: number; costUsd?: number } {
+  let usage: { in: number; out: number; costUsd?: number } = { in: 0, out: 0 }
   for (const line of text.split('\n')) {
     if (!line.startsWith('data:')) continue
     const payload = line.slice(5).trim()
@@ -72,7 +78,8 @@ function usageFromSse(text: string): { in: number; out: number } {
       if (obj?.usage) {
         usage = {
           in: obj.usage.prompt_tokens ?? 0,
-          out: obj.usage.completion_tokens ?? 0
+          out: obj.usage.completion_tokens ?? 0,
+          costUsd: typeof obj.usage.estimated_cost === 'number' ? obj.usage.estimated_cost : undefined
         }
       }
     } catch {
@@ -181,6 +188,8 @@ ai.post('/v1/chat/completions', async (c) => {
     const json = await upstream.json<Record<string, any>>()
     const tokensIn = json?.usage?.prompt_tokens ?? 0
     const tokensOut = json?.usage?.completion_tokens ?? 0
+    const upstreamCostUsd =
+      typeof json?.usage?.estimated_cost === 'number' ? json.usage.estimated_cost : undefined
     c.executionCtx.waitUntil(
       meter(c.env, {
         userId: auth.sub,
@@ -189,7 +198,8 @@ ai.post('/v1/chat/completions', async (c) => {
         tokensIn,
         tokensOut,
         latencyMs,
-        decision: 'allowed'
+        decision: 'allowed',
+        upstreamCostUsd
       })
     )
     return c.json(json)
@@ -209,7 +219,8 @@ ai.post('/v1/chat/completions', async (c) => {
         tokensIn: usage.in,
         tokensOut: usage.out,
         latencyMs,
-        decision: 'allowed'
+        decision: 'allowed',
+        upstreamCostUsd: usage.costUsd
       })
     })()
   )

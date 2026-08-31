@@ -36,6 +36,7 @@ Wolffish Cloud inverts exactly one architectural fact, and it changes everything
 ```
 wolffish-cloud/
 ├── apps/
+│   ├── api/         · NEW — the master API, one Cloudflare Worker, live at api.wolffi.sh (Tier 2)
 │   ├── desktop/     ← wolffish-app       · the Electron desktop agent (Tier 1)
 │   ├── mobile/      ← wolffish-mobile    · the Expo/React Native remote
 │   └── site/
@@ -45,7 +46,7 @@ wolffish-cloud/
     └── extension/   ← wolffish-extension · browser capability, bundled into desktop
 ```
 
-Each folder is a clean export of the corresponding personal repo — same code, same READMEs, own lockfiles. The only repo-wide change so far is license unification: the per-module `LICENSE` files (all identical MIT) were collapsed into one root [LICENSE](LICENSE). Nothing has been rewired yet.
+Except `apps/api` — the first genuinely new code — each folder is a clean export of the corresponding personal repo: same code, same READMEs, own lockfiles, with the per-module `LICENSE` files (all identical MIT) collapsed into one root [LICENSE](LICENSE). The carried clients have not been rewired yet.
 
 ## The modules
 
@@ -60,6 +61,12 @@ A local-first, markdown-powered personal AI desktop agent built with Electron (m
 The companion phone app (Expo/React Native, iOS + Android). Today it pairs with the desktop over an end-to-end-encrypted tunnel through the relay.
 
 **What it becomes:** remote only — talks to the tenant's API instead of a standalone relay.
+
+### `apps/api` — the master (new code, live)
+
+The single choke-point Worker at `api.wolffi.sh` — every request the clients make flows through it. Auth (invite-only, temp password, forced first-login reset, 15-minute signed access tokens, rotating refresh with reuse detection, instant server-side revoke), the model router (OpenAI-compatible `/ai/v1/chat/completions` proxying DeepInfra DeepSeek models behind per-user allowlists, daily/monthly token quotas, and exact usage metering with upstream cost), sync (last-write-wins config, idempotent outbox batches, content-addressed files in R2, one-call bootstrap restore), and the full admin layer as pure API — invites, roles, policies, suspend/revoke, PIN clear, usage, audit. There is deliberately **no separate admin console**: the admin UI lives in the admin's own desktop client, and every admin endpoint re-verifies the role server-side.
+
+Single-org by design (the fork is the tenant boundary), backed by D1 (`wfc-master`), KV (`wfc-auth`, `wfc-config`), and R2 (`wfc-blobs`). Ships with a deterministic 50-employee "Wolffish Inc" demo seed and a traffic simulator that drives the real API with no test-mode bypass. Verified by per-layer smoke suites (76 checks against local simulations) plus a 58-check live suite and the 50-employee simulator against the deployed edge.
 
 ### `apps/site` — the tenant-facing web (from `wolffish-landing` + `wolffish-docs`)
 
@@ -79,12 +86,12 @@ Per the engineering plan, these workspaces will be **new** code and deliberately
 
 | Planned workspace | What it will be |
 | --- | --- |
-| `apps/api` | The master — one choke-point Worker at `api.<tenant-domain>`: auth and sessions, the ZDR model router, sync ingest, admin backend, device relay, cron and queues. Built fresh on Cloudflare (Workers + Hono), backed by D1 (relational master), R2 (content-addressed blobs), KV (tokens, allowlists, quota counters), Durable Objects (per-device/per-conversation state), Queues + Cron (async work), and AI Gateway (ZDR routing, failover, unified billing, BYOK). The personal `wolffish-relay` is not carried over; its tunnel protocol and push control plane get reimplemented as Durable Objects inside this Worker, with the upstream repo as the reference. |
-| `apps/admin` | The web admin console (React/Vite behind Cloudflare Access) — dashboard, live telemetry stream, people & devices, models & budgets, skills & config, audit log. Monitor, help, edit, revoke. |
 | `packages/protocol` | The tunnel wire contract, today vendored in each repo, extracted to one shared source — and extended into the API contract. |
-| `packages/auth` | Device-flow client, token refresh, session guard — shared by desktop/mobile. |
+| `packages/auth` | Session client (login, token refresh, session guard) — shared by desktop/mobile. |
 | `packages/sync` | The outbox engine + idempotent ingest client — shared by desktop/mobile. |
 | `packages/types` | Shared TypeScript types for the master data model. |
+
+(The formerly planned `apps/admin` web console was cut by design: the admin layer shipped as pure API inside `apps/api`, and its UI belongs to the admin's desktop client. The device relay/tunnel from `wolffish-relay` still gets re-homed into `apps/api` as Durable Objects when mobile integration lands, with the upstream repo as the reference.)
 
 Monorepo tooling (pnpm workspaces + Turborepo, one lockfile, orchestrated builds) also comes later. Right now every app is self-contained exactly as its source repo was: `cd` into it, install with its own package manager, run it as its own README describes.
 
@@ -117,16 +124,17 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 
 ## Status & roadmap
 
-**Phase 0 (this repo, current state):** monorepo carved; the desktop, mobile, extension, landing and docs repos placed in their target locations, unmodified. The personal relay is deliberately not carried over — `apps/api` will be built fresh on Cloudflare. No new code, no CI/CD, no workspace tooling yet.
+**Current state:** the monorepo is carved (desktop, mobile, extension, landing and docs placed unmodified) and **the master API is built and live at `api.wolffi.sh`** — auth, roles, the DeepInfra router, sync, the admin layer, and the seeded 50-employee Wolffish Inc demo org, verified end to end on the deployed edge (58-check live suite + concurrent-employee simulator). No CI/CD or workspace tooling yet.
 
-| Phase | Scope |
-| --- | --- |
-| 0 | Carve the monorepo · *sources placed — done* · extraction of `packages/*`, workspace tooling and CI/CD to follow |
-| 1 | Auth — orgs, users, roles; device-flow login; session management; Access SSO |
-| 2 | Sync engine — outbox, idempotent ingest, D1 master, R2 blobs, restore-on-reinstall |
-| 3 | ZDR router — model allowlist, quota ledger, AI Gateway, BYOK vault, attribution |
-| 4 | Admin console — live stream, edit rules, help users, revoke; roles + audit |
-| 5 | Seed a 50-employee demo org; docs; open-source packaging; white-label fork harness |
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 0 | Carve the monorepo; place the sources | done |
+| 1 | API: auth — users, roles, invites, sessions, password login, revoke | done, live |
+| 2 | API: router — DeepInfra DeepSeek, allowlists, quotas, metering | done, live |
+| 3 | API: sync — config, outbox ingest, R2 files, bootstrap restore | done, live |
+| 4 | API: admin layer + Wolffish Inc seed + simulator | done, live |
+| 5 | Desktop: strip providers/services, add login + PIN + org provider + sync client (`~/.wolffish` → `~/.wolffish-cloud` as a cache) | next |
+| 6 | Mobile re-aim (sync from desktop, tunnel re-homed into the API); packages extraction; CI/CD; release tagging | later |
 
 ## Provenance
 

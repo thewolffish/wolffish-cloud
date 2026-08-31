@@ -59,10 +59,16 @@ console.log(`cast: ${cast.length} active employees (of ${(rosterRes.json?.users 
 const t0 = Date.now()
 const sessions = await Promise.all(
   cast.map(async (u) => {
-    const r = await api('/auth/login', {
-      body: { email: u.email, password: PASSWORD, device: { platform: 'sim', name: `sim-${u.id}` } }
-    })
-    return r.status === 200 ? { user: u, token: r.json.access_token } : { user: u, error: r }
+    // One retry, like a real client: 48 simultaneous cold logins can see a
+    // transient hiccup that a second attempt clears.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await api('/auth/login', {
+        body: { email: u.email, password: PASSWORD, device: { platform: 'sim', name: `sim-${u.id}` } }
+      })
+      if (r.status === 200) return { user: u, token: r.json.access_token }
+      if (attempt === 0) await new Promise((res) => setTimeout(res, 1000))
+      else return { user: u, error: r }
+    }
   })
 )
 const live = sessions.filter((s) => s.token)

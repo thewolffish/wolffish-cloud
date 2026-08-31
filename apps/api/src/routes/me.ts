@@ -35,14 +35,38 @@ me.get('/models', async (c) => {
 
 me.get('/me', async (c) => {
   const auth = c.get('auth')
-  const [user, org] = await Promise.all([
+  const [user, org, device] = await Promise.all([
     c.env.DB.prepare('SELECT id, email, name, role, status, last_login_at FROM users WHERE id = ?1')
       .bind(auth.sub)
       .first<Record<string, unknown>>(),
-    c.env.DB.prepare('SELECT name, default_model FROM org WHERE id = 1').first<Record<string, unknown>>()
+    c.env.DB.prepare('SELECT name, default_model FROM org WHERE id = 1').first<Record<string, unknown>>(),
+    c.env.DB.prepare(
+      'SELECT id, platform, name, pin_set, pin_clear_requested FROM devices WHERE id = ?1'
+    )
+      .bind(auth.dev)
+      .first<Record<string, unknown>>()
   ])
   if (!user) return c.json({ error: 'unauthorized' }, 401)
-  return c.json({ user, org: org ?? null, device_id: auth.dev, session_id: auth.sid })
+  return c.json({ user, org: org ?? null, device: device ?? null, session_id: auth.sid })
+})
+
+/**
+ * The device reports its local PIN state. Setting pin_set also clears any
+ * pending admin clear-request — the client calls this to acknowledge the
+ * clear after wiping its local lock (the PIN itself never reaches us).
+ */
+me.post('/device/pin', async (c) => {
+  const auth = c.get('auth')
+  const body = await c.req.json<{ pin_set?: boolean }>().catch(() => null)
+  if (!body || typeof body.pin_set !== 'boolean') {
+    return c.json({ error: 'invalid_request', detail: 'pin_set boolean required' }, 400)
+  }
+  await c.env.DB.prepare(
+    'UPDATE devices SET pin_set = ?1, pin_clear_requested = 0 WHERE id = ?2 AND user_id = ?3'
+  )
+    .bind(body.pin_set ? 1 : 0, auth.dev, auth.sub)
+    .run()
+  return c.json({ ok: true })
 })
 
 me.post('/logout', async (c) => {
