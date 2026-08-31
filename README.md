@@ -38,7 +38,6 @@ wolffish-cloud/
 ├── apps/
 │   ├── desktop/     ← wolffish-app       · the Electron desktop agent (Tier 1)
 │   ├── mobile/      ← wolffish-mobile    · the Expo/React Native remote
-│   ├── api/         ← wolffish-relay     · seed of the choke-point Worker (Tier 2)
 │   └── site/
 │       ├── landing/ ← wolffish-landing   · marketing site (Next.js)
 │       └── docs/    ← wolffish-docs      · documentation (Mintlify, EN + AR)
@@ -62,12 +61,6 @@ The companion phone app (Expo/React Native, iOS + Android). Today it pairs with 
 
 **What it becomes:** remote only — talks to the tenant's API instead of a standalone relay.
 
-### `apps/api` — the master (from `wolffish-relay`)
-
-Today this folder contains the zero-retention WebSocket relay verbatim: a Cloudflare Worker + Durable Object that pairs desktop and mobile by rendezvous ID and forwards end-to-end-encrypted frames — stores nothing, logs nothing, sees only ciphertext.
-
-**What it becomes:** the one choke-point Worker at `api.<tenant-domain>` — auth and sessions, the ZDR model router, sync ingest, admin backend, cron and queues. The tunnel protocol and push control plane survive as Durable Objects inside it; the relay dies as a separate product. Backed by D1 (orgs, users, roles, devices, sessions, conversations, episodes, files, settings, skills, model policies, usage, audit log), R2 (content-addressed blobs), KV (tokens, allowlists, quota counters), Queues + Cron (post-execution fan-out, quota resets, stale-session sweeps), and AI Gateway (ZDR routing, model-first selection, failover, unified billing, BYOK).
-
 ### `apps/site` — the tenant-facing web (from `wolffish-landing` + `wolffish-docs`)
 
 Two repos placed side by side for now: the bilingual (EN/AR) Next.js landing page published at wolffi.sh, and the bilingual Mintlify documentation published at docs.wolffi.sh.
@@ -86,6 +79,7 @@ Per the engineering plan, these workspaces will be **new** code and deliberately
 
 | Planned workspace | What it will be |
 | --- | --- |
+| `apps/api` | The master — one choke-point Worker at `api.<tenant-domain>`: auth and sessions, the ZDR model router, sync ingest, admin backend, device relay, cron and queues. Built fresh on Cloudflare (Workers + Hono), backed by D1 (relational master), R2 (content-addressed blobs), KV (tokens, allowlists, quota counters), Durable Objects (per-device/per-conversation state), Queues + Cron (async work), and AI Gateway (ZDR routing, failover, unified billing, BYOK). The personal `wolffish-relay` is not carried over; its tunnel protocol and push control plane get reimplemented as Durable Objects inside this Worker, with the upstream repo as the reference. |
 | `apps/admin` | The web admin console (React/Vite behind Cloudflare Access) — dashboard, live telemetry stream, people & devices, models & budgets, skills & config, audit log. Monitor, help, edit, revoke. |
 | `packages/protocol` | The tunnel wire contract, today vendored in each repo, extracted to one shared source — and extended into the API contract. |
 | `packages/auth` | Device-flow client, token refresh, session guard — shared by desktop/mobile. |
@@ -123,7 +117,7 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 
 ## Status & roadmap
 
-**Phase 0 (this repo, current state):** monorepo carved; all six source repos placed in their target locations, unmodified. No new code, no CI/CD, no workspace tooling yet.
+**Phase 0 (this repo, current state):** monorepo carved; the desktop, mobile, extension, landing and docs repos placed in their target locations, unmodified. The personal relay is deliberately not carried over — `apps/api` will be built fresh on Cloudflare. No new code, no CI/CD, no workspace tooling yet.
 
 | Phase | Scope |
 | --- | --- |
@@ -142,7 +136,6 @@ Every folder was exported from the corresponding personal repo at the commit bel
 | --- | --- | --- | --- |
 | `apps/desktop` | [wolffish-app](https://github.com/thewolffish/wolffish-app) | 1.0.274 | `718725a3a35baa7e9360993d0da2808753e9e63b` |
 | `apps/mobile` | [wolffish-mobile](https://github.com/thewolffish/wolffish-mobile) | 1.0.48 (build 36) | `c753044c8fe6697a13d1003b84d491eab78e63cb` |
-| `apps/api` | [wolffish-relay](https://github.com/thewolffish/wolffish-relay) | 1.0.20 | `d6e81347d07ac818c3a0c385d68b83d28393dfbe` |
 | `apps/site/landing` | [wolffish-landing](https://github.com/thewolffish/wolffish-landing) | 1.0.0 | `2aaf88279fe7934a9ee464a6b00af459afaccb62` |
 | `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) | — | `8276738bd11e261bfdd1c76c8cea12824127972c` |
 | `packages/extension` | [wolffish-extension](https://github.com/thewolffish/wolffish-extension) | 0.1.58 | `bb2b0344ee8a7a08abfa2af73114a08844778cc1` |
