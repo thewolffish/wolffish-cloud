@@ -98,7 +98,9 @@ auth.post('/login', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local'
   if (
     !(await bumpRateLimit(c.env.AUTH_KV, `rl:login:${email}`, 10, 900)) ||
-    !(await bumpRateLimit(c.env.AUTH_KV, `rl:ip:${ip}`, 30, 900))
+    // Per-email is the brute-force guard; the IP cap only blunts sprays and
+    // must clear a whole office (or the 50-agent simulator) behind one NAT.
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:ip:${ip}`, 200, 900))
   ) {
     return c.json({ error: 'rate_limited' }, 429)
   }
