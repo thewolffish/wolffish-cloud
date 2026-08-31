@@ -136,6 +136,13 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 | 5 | Desktop: strip providers/services, add login + PIN + org provider + sync client (`~/.wolffish` → `~/.wolffish-cloud` as a cache) | next |
 | 6 | Mobile re-aim (sync from desktop, tunnel re-homed into the API); packages extraction; CI/CD; release tagging | later |
 
+## Versioning
+
+Two levels, incremented independently:
+
+- **The monorepo** carries a master version in [VERSION](VERSION) — the number a platform release gets tagged with (`v0.1.0`). It moves when the platform as a whole reaches a new state, not when a single module does.
+- **Each module** versions itself in its own manifest and increments on its own cadence: `apps/api` is at 1.0.0 (shown live at [api.wolffi.sh](https://api.wolffi.sh) and in `/health`), while the carried clients keep the versions they arrived with (desktop 1.0.274, mobile 1.0.48, extension 0.1.58) until wolffish-cloud starts changing them.
+
 ## Provenance
 
 Every folder is a clean export of the corresponding personal repo (tracked files only, no history imported). The original repos remain the reference for history before the carve; the exact export commits are recorded in this repo's initial commit message.

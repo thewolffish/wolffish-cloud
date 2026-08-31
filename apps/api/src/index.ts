@@ -6,6 +6,8 @@
  * role → policy/quota gates → handler.
  */
 import { Hono } from 'hono'
+import pkg from '../package.json'
+import { landingPage } from './page'
 import authRoutes from './routes/auth'
 import meRoutes from './routes/me'
 import adminRoutes from './routes/admin'
@@ -25,8 +27,18 @@ export type Env = {
 
 const app = new Hono<{ Bindings: Env }>()
 
+const API_VERSION = pkg.version
+
+app.get('/', (c) =>
+  c.html(landingPage(API_VERSION), 200, {
+    'cache-control': 'public, max-age=300',
+    'content-security-policy':
+      "default-src 'none'; img-src https://cdn.wolffi.sh; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+  })
+)
+
 app.get('/health', (c) =>
-  c.json({ ok: true, service: 'wfc-api', time: new Date().toISOString() })
+  c.json({ ok: true, service: 'wfc-api', version: API_VERSION, time: new Date().toISOString() })
 )
 
 app.route('/auth', authRoutes)
