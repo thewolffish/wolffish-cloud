@@ -10,6 +10,7 @@ import authRoutes from './routes/auth'
 import meRoutes from './routes/me'
 import adminRoutes from './routes/admin'
 import aiRoutes from './routes/ai'
+import syncRoutes from './routes/sync'
 
 export type Env = {
   DB: D1Database
@@ -32,6 +33,7 @@ app.route('/auth', authRoutes)
 app.route('/v1', meRoutes)
 app.route('/admin', adminRoutes)
 app.route('/ai', aiRoutes)
+app.route('/v1', syncRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 
@@ -40,4 +42,10 @@ app.onError((err, c) => {
   return c.json({ error: 'internal' }, 500)
 })
 
-export default app
+/** Nightly tidy: drop long-dead sessions (expiry itself is enforced live). */
+async function scheduled(_event: ScheduledController, env: Env): Promise<void> {
+  const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString()
+  await env.DB.prepare('DELETE FROM device_sessions WHERE expires_at < ?1').bind(cutoff).run()
+}
+
+export default { fetch: app.fetch, scheduled }
