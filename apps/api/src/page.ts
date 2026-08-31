@@ -110,6 +110,7 @@ export function landingPage(version: string): string {
     70%, 100% { transform: scale(1.1); opacity: 0; }
   }
   @media (prefers-reduced-motion: reduce) { .dot::after { animation: none; display: none; } }
+  .how .endpoint { display: block; margin: 0 0 1rem; text-align: center; }
   .endpoint {
     margin-top: 1.15rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -180,7 +181,6 @@ export function landingPage(version: string): string {
     <span class="pill status"><span class="dot"></span>Online</span>
     <span class="pill">api v${version}</span>
   </div>
-  <code class="endpoint">https://api.wolffi.sh/ai/v1/chat/completions</code>
   <section class="how">
     <h2>How it works</h2>
     <p><strong>Contract.</strong> You engage the Wolffish team. We take the complete Wolffish agent and tailor it to your company — your internal tools, your services, your way of working.</p>
@@ -197,6 +197,13 @@ export function landingPage(version: string): string {
       <li><b>Full visibility</b><span>Who ran what model, tokens, cost, latency, allowed or denied — attributed per employee, live. Metadata always, content never.</span></li>
       <li><b>Fully agentic</b><span>Not a chat window: the complete 15-region Wolffish agent — skills, memory, files, real work on a real machine — for every employee on the payroll.</span></li>
     </ul>
+  </section>
+  <section class="how">
+    <h2>The choke point</h2>
+    <code class="endpoint">POST https://api.wolffi.sh/ai/v1/chat/completions</code>
+    <p><strong>One door.</strong> Every employee's agent sends every model request to this single endpoint — there is no other road to a model, and the provider keys exist only behind it, never on a device.</p>
+    <p><strong>Every policy, every request.</strong> At this door the session is verified, the company's model allowlist is checked, and the employee's token budget is enforced — before anything is forwarded anywhere.</p>
+    <p><strong>Metered, then forwarded.</strong> Allowed requests stream from the model provider on zero data retention; tokens, cost, and latency are metered to the employee. Denials are recorded the same way — the meter never blinks.</p>
   </section>
   <section class="how">
     <h2>What the master holds</h2>
