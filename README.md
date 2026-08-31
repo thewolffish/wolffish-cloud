@@ -1,6 +1,6 @@
 # wolffish-cloud
 
-> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup.** It carves the existing local-first personal-agent repos into one monorepo and re-aims them at a multi-tenant B2B platform. The personal repos remain the upstream and keep their own history; every folder here was carried over from a pinned commit (see [Provenance](#provenance)).
+> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup.** It carves the existing local-first personal-agent repos into one monorepo and re-aims them at a multi-tenant B2B platform. The personal repos remain the upstream and keep their own history; every folder here was carried over from its personal repo (see [Provenance](#provenance)).
 
 **Keep the agent on the device. Move the truth to the edge.**
 
@@ -45,7 +45,7 @@ wolffish-cloud/
     └── extension/   ← wolffish-extension · browser capability, bundled into desktop
 ```
 
-Each folder is the corresponding personal repo at a pinned commit — same code, same READMEs, own lockfiles. The only repo-wide change so far is license unification: the per-module `LICENSE` files (all identical MIT) were collapsed into one root [LICENSE](LICENSE). Nothing has been rewired yet.
+Each folder is a clean export of the corresponding personal repo — same code, same READMEs, own lockfiles. The only repo-wide change so far is license unification: the per-module `LICENSE` files (all identical MIT) were collapsed into one root [LICENSE](LICENSE). Nothing has been rewired yet.
 
 ## The modules
 
@@ -130,15 +130,15 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 
 ## Provenance
 
-Every folder was exported from the corresponding personal repo at the commit below (`git archive` of a clean HEAD — tracked files only, no history imported). The original repos remain the reference for history before the carve.
+Every folder is a clean export of the corresponding personal repo (tracked files only, no history imported). The original repos remain the reference for history before the carve; the exact export commits are recorded in this repo's initial commit message.
 
-| Folder | Source repo | Version | Commit |
-| --- | --- | --- | --- |
-| `apps/desktop` | [wolffish-app](https://github.com/thewolffish/wolffish-app) | 1.0.274 | `718725a3a35baa7e9360993d0da2808753e9e63b` |
-| `apps/mobile` | [wolffish-mobile](https://github.com/thewolffish/wolffish-mobile) | 1.0.48 (build 36) | `c753044c8fe6697a13d1003b84d491eab78e63cb` |
-| `apps/site/landing` | [wolffish-landing](https://github.com/thewolffish/wolffish-landing) | 1.0.0 | `2aaf88279fe7934a9ee464a6b00af459afaccb62` |
-| `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) | — | `8276738bd11e261bfdd1c76c8cea12824127972c` |
-| `packages/extension` | [wolffish-extension](https://github.com/thewolffish/wolffish-extension) | 0.1.58 | `bb2b0344ee8a7a08abfa2af73114a08844778cc1` |
+| Folder | Source repo |
+| --- | --- |
+| `apps/desktop` | [wolffish-app](https://github.com/thewolffish/wolffish-app) |
+| `apps/mobile` | [wolffish-mobile](https://github.com/thewolffish/wolffish-mobile) |
+| `apps/site/landing` | [wolffish-landing](https://github.com/thewolffish/wolffish-landing) |
+| `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) |
+| `packages/extension` | [wolffish-extension](https://github.com/thewolffish/wolffish-extension) |
 
 ## License
 
