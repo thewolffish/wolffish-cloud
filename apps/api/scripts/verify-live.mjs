@@ -48,6 +48,21 @@ const api = async (path, { token, body, method, raw } = {}) => {
   return { status: res.status, json, buf, headers: res.headers }
 }
 
+/**
+ * Policy edits propagate through eventually-consistent KV (cache deletes
+ * usually land instantly, worst case ~60s). Poll until the expected status
+ * appears, like a real client would, instead of trusting one fixed sleep.
+ */
+const untilStatus = async (fn, wantStatus, tries = 20, delayMs = 3000) => {
+  let last
+  for (let i = 0; i < tries; i++) {
+    last = await fn()
+    if (last.status === wantStatus) return last
+    await new Promise((r) => setTimeout(r, delayMs))
+  }
+  return last
+}
+
 const V31 = 'deepseek-ai/DeepSeek-V3.1'
 const R1 = 'deepseek-ai/DeepSeek-R1-0528'
 const tinyChat = (token, model, stream = false) =>
@@ -195,28 +210,26 @@ check(
   'narrow allowlist',
   (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: [V31] } })).status === 200
 )
-await new Promise((r) => setTimeout(r, 1500)) // KV cache invalidation
+const deniedR1 = await untilStatus(
+  () => api('/ai/v1/chat/completions', { token: VT, body: { model: R1, messages: [{ role: 'user', content: 'x' }] } }),
+  403
+)
+check('narrowed model denied', deniedR1.status === 403 && deniedR1.json?.error === 'model_not_allowed')
 const models1 = await api('/v1/models', { token: VT })
 check('catalog reflects narrowing', (models1.json?.models ?? []).length === 1 && models1.json.models[0].id === V31)
-const deniedR1 = await api('/ai/v1/chat/completions', {
-  token: VT,
-  body: { model: R1, messages: [{ role: 'user', content: 'x' }] }
-})
-check('narrowed model denied', deniedR1.status === 403 && deniedR1.json?.error === 'model_not_allowed')
 
 check(
   'tiny quota set',
   (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: [V31], daily_token_cap: 10 } })).status === 200
 )
-await new Promise((r) => setTimeout(r, 1500))
-const quotaDenied = await tinyChat(VT, V31)
+const quotaDenied = await untilStatus(() => tinyChat(VT, V31), 429)
 check('quota trips 429', quotaDenied.status === 429 && quotaDenied.json?.error === 'quota_exceeded', JSON.stringify(quotaDenied.json))
 check(
   'quota restored',
   (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: [V31], daily_token_cap: null } })).status === 200
 )
-await new Promise((r) => setTimeout(r, 1500))
-check('service restored after cap lift', (await tinyChat(VT, V31)).status === 200)
+const restored = await untilStatus(() => tinyChat(VT, V31), 200)
+check('service restored after cap lift', restored.status === 200, JSON.stringify(restored.json))
 
 // ── 6 · sync: the folder-is-a-cache proof ────────────────────────────────
 check(
