@@ -1,0 +1,46 @@
+/**
+ * wfc-api — the Wolffish Cloud master API.
+ *
+ * One Worker, one front door: api.wolffi.sh. Everything the desktop and
+ * mobile clients do — auth, config, model routing, sync, admin — flows
+ * through here. Single environment by design: this deployment IS the POC
+ * demo; `wrangler dev` (local simulations) is the iteration loop.
+ *
+ * Secrets (set via `wrangler secret put`, never committed):
+ * - JWT_SECRET          HS256 signing secret for access tokens
+ * - DEEPINFRA_API_KEY   the org's model-provider key; never on a device
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wfc-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+
+  "workers_dev": true,
+  "preview_urls": false,
+  "send_metrics": false,
+
+  // Metadata-only logging: request bodies (prompts) are never logged by
+  // handler code; observability here covers errors, latency and our own
+  // structured events.
+  "observability": {
+    "enabled": true
+  },
+
+  "routes": [{ "pattern": "api.wolffi.sh", "custom_domain": true }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wfc-master",
+      "database_id": "add498db-3477-493d-b554-0b3e26cb9ce8"
+    }
+  ],
+
+  "kv_namespaces": [
+    { "binding": "AUTH_KV", "id": "232f445649c640a8ad28855e38656c76" },
+    { "binding": "CONFIG_KV", "id": "efcd5249246149b3aa2b302febbd639d" }
+  ],
+
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "wfc-blobs" }]
+}
