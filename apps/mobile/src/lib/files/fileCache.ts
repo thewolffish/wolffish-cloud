@@ -178,13 +178,21 @@ async function fetchIntoCache(
   } catch {
     // Offline, a timed-out transfer, a full disk — transient by definition:
     // the viewer keeps its loading card and retries, and only a source that
-    // ANSWERS "not here" may ever render as deleted. A fresh handle, because
-    // move() repoints the one it was given at the destination.
-    try {
-      const leftover = scratchFile(relPath)
-      if (leftover.exists) leftover.delete()
-    } catch {
-      // Nothing to clean up.
+    // ANSWERS "not here" may ever render as deleted.
+    //
+    // Paired, the partial in scratch is deliberately KEPT: the desktop fetch
+    // resumes from it on the next attempt (see fetchDesktopFileInto), which
+    // is what lets a big file finish over a link too slow to land it in one
+    // go. The demo CDN download cannot resume, so its leftover is deleted —
+    // a fresh handle, because move() repoints the one it was given at the
+    // destination.
+    if (!useAppStore.getState().paired) {
+      try {
+        const leftover = scratchFile(relPath)
+        if (leftover.exists) leftover.delete()
+      } catch {
+        // Nothing to clean up.
+      }
     }
     return TRANSIENT
   } finally {

@@ -714,7 +714,7 @@ async function fetchConversationBodyOnce(id: string): Promise<boolean> {
   }
   if ((answer as { chunked?: unknown } | null)?.chunked === true) {
     const pulled = await pullChunkedBody(
-      (method, params) => tunnel.rpc(method, params),
+      (method, params, timeoutMs) => tunnel.rpc(method, params, timeoutMs),
       answer as { bodyId?: unknown; sizeBytes?: unknown }
     )
     // A broken pull leaves the copy in hand untouched, exactly as a
@@ -835,7 +835,7 @@ const CHUNK_PULL_CONCURRENCY = 3
  * without a transport.
  */
 export async function pullChunkedBody(
-  rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
   meta: { bodyId?: unknown; sizeBytes?: unknown }
 ): Promise<unknown | null> {
   const bodyId = typeof meta.bodyId === 'string' ? meta.bodyId : ''
@@ -847,18 +847,26 @@ export async function pullChunkedBody(
   return pullWindowsSequential(rpc, bodyId, sizeBytes)
 }
 
+/** Bulk-window timeout, matching the file transfer's: a CHUNK_SIZE frame on
+ *  a slow link can honestly need more than the 30s control-RPC default. */
+const BODY_WINDOW_TIMEOUT_MS = 120_000
+
 /** One window off the wire, or null on any transport/shape failure. */
 async function pullWindow(
-  rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
   bodyId: string,
   offset: number
 ): Promise<Uint8Array | null> {
   try {
-    const chunk = (await rpc(Rpc.conversationBodyChunk, {
-      bodyId,
-      offset,
-      length: CHUNK_SIZE
-    })) as { data?: unknown } | null
+    const chunk = (await rpc(
+      Rpc.conversationBodyChunk,
+      {
+        bodyId,
+        offset,
+        length: CHUNK_SIZE
+      },
+      BODY_WINDOW_TIMEOUT_MS
+    )) as { data?: unknown } | null
     return fromBase64Url(typeof chunk?.data === 'string' ? chunk.data : '')
   } catch {
     return null
@@ -874,7 +882,7 @@ async function pullWindow(
  * complete one.
  */
 async function pullWindowsParallel(
-  rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
   bodyId: string,
   sizeBytes: number
 ): Promise<unknown | null | 'short'> {
@@ -914,7 +922,7 @@ async function pullWindowsParallel(
 /** The tolerant path: advance by the bytes actually served, whatever their
  *  size — the original contract, kept for any peer that windows differently. */
 async function pullWindowsSequential(
-  rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
   bodyId: string,
   sizeBytes: number
 ): Promise<unknown | null> {
