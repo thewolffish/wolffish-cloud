@@ -40,6 +40,9 @@ export function landingPage(version: string): string {
     --card: rgba(147, 161, 184, 0.06);
     --green: #34d399;
     --green-bg: rgba(52, 211, 153, 0.12);
+    --blush: #f9a8c4;
+    --blush-bg: rgba(249, 168, 196, 0.12);
+    --blush-line: rgba(249, 168, 196, 0.35);
     --btn-bg: #ffffff;
     --btn-fg: #0a0f1b;
     --shadow: rgba(0, 0, 0, 0.55);
@@ -54,6 +57,9 @@ export function landingPage(version: string): string {
       --card: rgba(20, 27, 38, 0.04);
       --green: #059669;
       --green-bg: rgba(5, 150, 105, 0.1);
+      --blush: #db2777;
+      --blush-bg: rgba(219, 39, 119, 0.08);
+      --blush-line: rgba(219, 39, 119, 0.25);
       --btn-bg: #ffffff;
       --btn-fg: #141b26;
       --shadow: rgba(20, 27, 38, 0.18);
@@ -76,9 +82,16 @@ export function landingPage(version: string): string {
     width: 88px; height: 88px; border-radius: 50%; object-fit: cover;
     box-shadow: 0 0 0 1px var(--line), 0 18px 48px -12px var(--shadow);
   }
-  h1 { margin-top: 1.35rem; font-size: 1.7rem; font-weight: 650; letter-spacing: -0.02em; }
-  h1 span { font-weight: 400; color: var(--muted); }
-  .tagline { margin-top: 0.3rem; color: var(--muted); font-size: 0.98rem; }
+  h1 { margin-top: 1.35rem; font-size: 1.7rem; font-weight: 650; letter-spacing: -0.02em; display: flex; align-items: center; gap: 0.55rem; }
+  .tag {
+    display: inline-flex; align-items: center;
+    padding: 0.14rem 0.62rem; border-radius: 999px;
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--blush); background: var(--blush-bg);
+    border: 1px solid var(--blush-line);
+    transform: translateY(1px);
+  }
+  .tagline { margin-top: 0.45rem; color: var(--muted); font-size: 0.98rem; line-height: 1.5; }
   .meta { display: flex; gap: 0.5rem; margin-top: 1.15rem; }
   .pill {
     display: inline-flex; align-items: center; gap: 0.45rem;
@@ -149,8 +162,8 @@ export function landingPage(version: string): string {
 <body>
 <main>
   <img class="logo" src="https://cdn.wolffi.sh/generic/icon.png" alt="Wolffish" width="88" height="88" />
-  <h1>wolffish <span>cloud</span></h1>
-  <p class="tagline">The company's agent platform. The employee's own agent.</p>
+  <h1>Wolffish <span class="tag">Cloud</span></h1>
+  <p class="tagline">Every employee runs the full Wolffish agent on their own computer.<br />Their company runs the cloud behind it — the models, the record, the rules.</p>
   <div class="meta">
     <span class="pill status"><span class="dot"></span>Online</span>
     <span class="pill">api v${version}</span>
@@ -158,9 +171,10 @@ export function landingPage(version: string): string {
   <code class="endpoint">https://api.wolffi.sh/ai/v1/chat/completions</code>
   <section class="how">
     <h2>How it works</h2>
-    <p><strong>Sign in.</strong> Invite-only, roles built in. Every employee runs the complete Wolffish agent on their own machine — full agentic capability, their files, their sessions — unlocked with a password and a quick local PIN.</p>
-    <p><strong>Work.</strong> Every model request flows through this one governed door: the org's allowlist, per-user token budgets, exact metering. Provider keys never touch a device, and nothing identity-shaped ever reaches a model provider.</p>
-    <p><strong>Nothing lost.</strong> After every turn the agent's work syncs here — the company's own master record. The local folder is a cache: delete the app, sign in, and everything returns.</p>
+    <p><strong>Contract.</strong> You engage the Wolffish team. We take the complete Wolffish agent and tailor it to your company — your internal tools, your services, your way of working.</p>
+    <p><strong>Deploy.</strong> Your build ships on your own private infrastructure: your cloud account, your services, your model keys. Nothing of yours runs on ours.</p>
+    <p><strong>Release.</strong> Every employee gets the agent on their own machine, and your admins get full visibility and debuggability over the whole fleet from day one.</p>
+    <p><strong>Grow.</strong> We keep improving your agent platform on a retainer and grow with you — per-seat pricing, zero upfront cost.</p>
   </section>
   <section class="how">
     <h2>What it is</h2>
