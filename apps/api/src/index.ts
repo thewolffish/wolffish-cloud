@@ -8,6 +8,7 @@
 import { Hono } from 'hono'
 import authRoutes from './routes/auth'
 import meRoutes from './routes/me'
+import adminRoutes from './routes/admin'
 
 export type Env = {
   DB: D1Database
@@ -26,6 +27,7 @@ app.get('/health', (c) =>
 
 app.route('/auth', authRoutes)
 app.route('/v1', meRoutes)
+app.route('/admin', adminRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 
