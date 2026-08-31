@@ -221,7 +221,7 @@ export function landingPage(version: string): string {
       <li><b>Email</b><a href="mailto:younes@wolffi.sh">younes@wolffi.sh</a></li>
       <li><b>Phone</b><a href="tel:+966538654514">+966&nbsp;53&nbsp;865&nbsp;4514</a></li>
     </ul>
-    <a class="gh cta" href="mailto:younes@wolffi.sh?subject=Wolffish%20Cloud">Contact Younes</a>
+    <a class="gh cta" href="https://wa.me/966538654514?text=Hi%20Younes%20%E2%80%94%20about%20Wolffish%20Cloud">Chat on WhatsApp</a>
   </section>
   <a class="gh" href="https://github.com/thewolffish/wolffish-cloud">
     <img src="https://cdn.wolffi.sh/generic/github.png" alt="" width="20" height="20" />
