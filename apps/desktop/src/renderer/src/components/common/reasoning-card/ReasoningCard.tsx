@@ -1,85 +1,83 @@
-import { ArrowDown01Icon, ArrowRight01Icon } from 'hugeicons-react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { CopyButton } from '@components/core/CopyButton'
+import { BrainIcon } from 'hugeicons-react'
+import { useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-/** Nearest scrollable ancestor — in Chat this is the column-reverse feed. */
-function nearestScroller(el: HTMLElement): HTMLElement | null {
-  for (let node = el.parentElement; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node)
-    if (overflowY === 'auto' || overflowY === 'scroll') return node
-  }
-  return null
+const HEADING = /^(?:\*\*(.+?)\*\*:?|__(.+?)__:?|#{1,6}\s+(.+?))$/
+const TITLE_MAX = 80
+
+/**
+ * Lift a leading heading line out of the reasoning text to label the card.
+ * Nothing structured rides the segment (providers stream thinking as plain
+ * text), but summarised reasoning opens with a bold or `#` heading — the
+ * closest thing to a title. A lone heading with no body underneath stays in
+ * the body; the card falls back to the generic label.
+ */
+function splitReasoningTitle(content: string): { title: string | null; body: string } {
+  const text = content.trim()
+  const [first = '', ...rest] = text.split('\n')
+  const match = first.trim().match(HEADING)
+  const title = (match?.[1] ?? match?.[2] ?? match?.[3])?.trim()
+  const body = rest.join('\n').trim()
+  if (!title || title.length > TITLE_MAX || body.length === 0) return { title: null, body: text }
+  return { title, body }
 }
 
 /**
- * The model's reasoning for a turn — a collapsed card at turn end that
- * expands to the raw thinking text on click. Mirrors the mobile app's
- * TurnEndCard reasoning block: collapsed by default, plain text when open.
+ * The model's reasoning for a turn — a scroll block styled like the tool
+ * card's output block: sized by its content up to eight lines, scrollable past
+ * that, with the copy control revealed on hover. Mirrors the mobile app's
+ * ReasoningCard.
  */
 export function ReasoningCard({ content }: { content: string }): React.JSX.Element {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-  const headRef = useRef<HTMLButtonElement>(null)
-  // Armed by a real click so the effect never scrolls on mount — opening a
-  // conversation renders every card at once and must land bottom-pinned.
-  const armedRef = useRef(false)
-
-  // The column-reverse feed glues the BOTTOM edge through height changes, so
-  // an unmanaged toggle strands the reader: expanding keeps the tail pinned
-  // and flings the card's head far above the viewport, while collapsing
-  // clamps the scroll offset against the shrunken content and lands at the
-  // very top of the feed. Restore the intent explicitly once the toggle has
-  // laid out (pre-paint, so there is no flash of the stranded position).
+  const { title, body } = splitReasoningTitle(content)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  // A streaming run follows its tail: while the reader has not scrolled up,
+  // every delta keeps the newest line in view. Scrolling up releases the pin;
+  // scrolling back to the bottom re-arms it. The first layout is skipped so a
+  // reloaded conversation opens every card on its head, in reading order.
+  const followRef = useRef(true)
+  const laidOutRef = useRef(false)
   useLayoutEffect(() => {
-    if (!armedRef.current) return
-    const head = headRef.current
-    if (!head) return
-    if (expanded) {
-      // 'nearest' no-ops while the head is still visible (short reasoning)
-      // and pulls it back to the top edge when it flew off. It must target
-      // the small header, not the card: an element taller than the scrollport
-      // counts as fully "in view", and 'nearest' on it would not move at all.
-      head.scrollIntoView({ block: 'nearest' })
-    } else {
-      // Closing returns the feed to its resting state — pinned to the newest
-      // message. Assigning past the maximum clamps to the bottom in both
-      // normal and column-reverse scrollers.
-      const scroller = nearestScroller(head)
-      if (scroller) scroller.scrollTop = scroller.scrollHeight
+    const el = bodyRef.current
+    if (!el) return
+    if (!laidOutRef.current) {
+      laidOutRef.current = true
+      return
     }
-  }, [expanded])
+    if (followRef.current) el.scrollTop = el.scrollHeight
+  }, [body])
 
   return (
     <div className="border-border bg-surface w-full max-w-[85%] self-start rounded-2xl border px-4 py-2.5">
-      {/* scroll-mt-16 keeps the restored head clear of the floating glass
-          discs overlaying the transcript's top edge. */}
-      <button
-        ref={headRef}
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => {
-          armedRef.current = true
-          setExpanded((v) => !v)
-        }}
-        className="flex w-full scroll-mt-16 cursor-pointer items-center justify-between gap-3 text-start"
-      >
+      <div className="flex items-center gap-2">
+        <BrainIcon size={14} className="text-muted shrink-0" aria-hidden />
         <span className="text-fg truncate text-xs font-medium">
-          {t('chat.reasoningCard.title')}
+          {title ?? t('chat.reasoningCard.title')}
         </span>
-        {expanded ? (
-          <ArrowDown01Icon size={14} className="text-muted shrink-0" aria-hidden />
-        ) : (
-          <ArrowRight01Icon size={14} className="text-muted shrink-0" aria-hidden />
-        )}
-      </button>
-      {expanded && (
-        <p
+      </div>
+      <div className="group/reasoning relative mt-2">
+        {/* box-content: max-h-40 caps the text area alone — eight lines of
+            leading-5 — so padding and border sit outside the count. */}
+        <div
+          ref={bodyRef}
           data-select-root
-          className="text-muted wrap-anywhere mt-2 whitespace-pre-wrap text-start text-xs leading-5"
+          onScroll={(e) => {
+            const el = e.currentTarget
+            followRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+          }}
+          className="border-border bg-bg text-muted wrap-anywhere box-content max-h-40 overflow-y-auto rounded-md border px-3 py-2 pe-12 text-start text-xs leading-5 whitespace-pre-wrap"
         >
-          {content.trim()}
-        </p>
-      )}
+          {body}
+        </div>
+        <CopyButton
+          text={content.trim()}
+          variant="overlay"
+          ariaLabelKey="chat.copy"
+          className="absolute inset-e-1.5 top-1.5 opacity-0 group-hover/reasoning:opacity-100 focus-visible:opacity-100"
+        />
+      </div>
     </div>
   )
 }
