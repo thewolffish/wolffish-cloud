@@ -58,8 +58,8 @@ function normalizeOrg(o: Record<string, unknown>): OrgConfig {
     user_daily_token_cap: Number(o.user_daily_token_cap ?? 0),
     org_monthly_token_cap: Number(o.org_monthly_token_cap ?? 0),
     search_enabled: o.search_enabled === undefined ? true : Boolean(Number(o.search_enabled)),
-    user_daily_search_cap: Number(o.user_daily_search_cap ?? 200),
-    org_monthly_search_cap: Number(o.org_monthly_search_cap ?? 100_000)
+    user_daily_search_cap: Number(o.user_daily_search_cap ?? 0),
+    org_monthly_search_cap: Number(o.org_monthly_search_cap ?? 0)
   }
 }
 

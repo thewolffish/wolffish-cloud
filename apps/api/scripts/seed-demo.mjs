@@ -160,10 +160,14 @@ if (WIPE) {
 }
 
 lines.push(
-  `INSERT INTO org (id, name, default_model, default_allowed_models, user_daily_token_cap, org_monthly_token_cap)
-   VALUES (1, 'Wolffish Inc', '${DEFAULT_MODEL}', '${JSON.stringify([DEFAULT_MODEL, PRO_MODEL])}', 2000000, 500000000)
+  // Caps unenforced in the baseline (0 = unlimited): quotas are a mechanism a
+  // fork switches on, not a policy the demo imposes.
+  `INSERT INTO org (id, name, default_model, default_allowed_models, user_daily_token_cap, org_monthly_token_cap,
+     user_daily_search_cap, org_monthly_search_cap)
+   VALUES (1, 'Wolffish Inc', '${DEFAULT_MODEL}', '${JSON.stringify([DEFAULT_MODEL, PRO_MODEL])}', 0, 0, 0, 0)
    ON CONFLICT(id) DO UPDATE SET name = excluded.name, default_model = excluded.default_model,
-     default_allowed_models = excluded.default_allowed_models;`
+     default_allowed_models = excluded.default_allowed_models,
+     user_daily_token_cap = 0, org_monthly_token_cap = 0, user_daily_search_cap = 0, org_monthly_search_cap = 0;`
 )
 
 for (const person of roster) {
@@ -188,23 +192,17 @@ for (const person of roster) {
 }
 
 // Policy variety so the admin surfaces have something true to show:
-// 05–14 default-only model, 15–19 tight daily caps, 20 effectively cut off.
+// 05–14 default-only model. No per-user caps in the baseline (NULL = org
+// default, and the org caps are unlimited); a fork sets them via the admin API.
 for (let i = 5; i <= 14; i++) {
   lines.push(
     `INSERT OR REPLACE INTO model_policies (user_id, allowed_models, daily_token_cap)
      VALUES ('${uid(i)}', '${JSON.stringify([DEFAULT_MODEL])}', NULL);`
   )
 }
-for (let i = 15; i <= 19; i++) {
-  lines.push(
-    `INSERT OR REPLACE INTO model_policies (user_id, allowed_models, daily_token_cap)
-     VALUES ('${uid(i)}', NULL, ${50_000 * (i - 14)});`
-  )
+for (let i = 15; i <= 20; i++) {
+  lines.push(`DELETE FROM model_policies WHERE user_id = '${uid(i)}';`)
 }
-lines.push(
-  `INSERT OR REPLACE INTO model_policies (user_id, allowed_models, daily_token_cap)
-   VALUES ('${uid(20)}', '${JSON.stringify([DEFAULT_MODEL])}', 1000);`
-)
 
 // A week of deterministic usage history (~600 rows) so dashboards live.
 for (const person of roster) {
