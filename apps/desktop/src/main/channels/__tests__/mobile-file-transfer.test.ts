@@ -8,7 +8,7 @@
  * The channel is driven through a fake tunnel that just captures onRpc
  * handlers — no relay, no crypto; those live in their own tests. HOME is
  * pointed at a temp dir BEFORE any import so workspaceRoot() lands there and
- * nothing touches the real ~/.wolffish.
+ * nothing touches the real ~/.wfc.
  *
  * Standalone — no vitest/jest in this repo. Run:
  *   npx tsx --tsconfig tsconfig.node.json src/main/channels/__tests__/mobile-file-transfer.test.ts

@@ -3,6 +3,7 @@ import type { Corpus } from '@main/runtime/corpus'
 import type { ProviderId } from '@main/runtime/thalamus'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { catalogPricing } from '@main/cloud/catalog'
 
 export type UsageEntry = {
   timestamp: Date
@@ -93,294 +94,21 @@ type ModelPricing = {
   cacheRead: number // multiplier on input rate (e.g. 0.10 → 10% of base)
 }
 
-// https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
-const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
-  'claude-fable-5': { input: 10 / 1e6, output: 50 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4-8': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4-7': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4-6': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4-5': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4-1': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-opus-4': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-sonnet-4-6': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-sonnet-4-5': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-sonnet-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-haiku-4-5': { input: 1 / 1e6, output: 5 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-3-7-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-3-5-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-3-5-haiku': { input: 0.8 / 1e6, output: 4 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-3-haiku': { input: 0.25 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
-}
-
-// https://developers.openai.com/api/docs/pricing
-// OpenAI auto-caches prefixes; no write premium. Pro models have no cached tier.
-const OPENAI_PRICING: Record<string, ModelPricing> = {
-  'gpt-5.5-pro': { input: 30 / 1e6, output: 180 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'gpt-5.5': { input: 5 / 1e6, output: 30 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'gpt-5.4-pro': { input: 30 / 1e6, output: 180 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'gpt-5.4': { input: 2.5 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'gpt-5.4-mini': { input: 0.75 / 1e6, output: 4.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'gpt-5.4-nano': { input: 0.2 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'gpt-5': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'gpt-4-turbo': { input: 10 / 1e6, output: 30 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'gpt-4': { input: 30 / 1e6, output: 60 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'gpt-3.5-turbo': { input: 0.5 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  o1: { input: 15 / 1e6, output: 60 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'o1-mini': { input: 3 / 1e6, output: 12 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  o3: { input: 10 / 1e6, output: 40 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'o3-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'o4-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
-}
-
-// https://api-docs.deepseek.com/quick_start/pricing
-// DeepSeek auto-caches at ~2% of input rate; no write premium.
-const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
-  // v4-pro cache hit is $0.003625/M (not 2% of input like the rest of the
-  // lineup) — ratio taken from the live pricing page 2026-08-03.
-  'deepseek-v4-pro': {
-    input: 0.435 / 1e6,
-    output: 0.87 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.003625 / 0.435
-  },
-  'deepseek-v4-flash': { input: 0.14 / 1e6, output: 0.28 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
-  'deepseek-chat': { input: 0.27 / 1e6, output: 1.1 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
-  'deepseek-reasoner': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 }
-}
-
-// https://platform.xiaomimimo.com/docs/en-US/pricing (overseas USD)
-// Input rates are for the ≤256K tier; the 256K-1M tier is ~5× higher but
-// most Wolffish turns stay under 256K. Cache write is free (limited time).
-// cacheRead is a FRACTION of the input rate (cached-input price / input
-// price) — these were previously entered as percentages (15.0/25.0),
-// billing cache hits at 15-25× the input rate and grossly over-costing
-// every cache-heavy Mimo turn.
-const MIMO_PRICING: Record<string, ModelPricing> = {
-  'mimo-v2.5-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0.15 },
-  'mimo-v2-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0.15 },
-  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 0.25 },
-  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 0.25 },
-  'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.3 / 1e6, cacheWrite: 0, cacheRead: 0 }
-}
-
-// https://platform.kimi.ai/docs/pricing
-// Cache read multiplier = cache_hit_rate / cache_miss_rate (auto-caching, no write premium).
-const KIMI_PRICING: Record<string, ModelPricing> = {
-  'kimi-k3': { input: 3.0 / 1e6, output: 15.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.3 / 3.0 },
-  'kimi-k2.6': { input: 0.95 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.16 / 0.95 },
-  'kimi-k2.5': { input: 0.6 / 1e6, output: 3.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 / 0.6 },
-  'moonshot-v1-128k': { input: 2.0 / 1e6, output: 5.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
-  'moonshot-v1-32k': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
-  'moonshot-v1-8k': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
-  'moonshot-v1-auto': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 }
-}
-
-// https://platform.minimax.io/docs/guides/pricing-paygo.md
-// Promotional rates shown; cache read is a fraction of input.
-const MINIMAX_PRICING: Record<string, ModelPricing> = {
-  'MiniMax-M3': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 },
-  'MiniMax-M2.7': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.2 },
-  'MiniMax-M2.7-highspeed': {
-    input: 0.6 / 1e6,
-    output: 2.4 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.1
-  },
-  'MiniMax-M2.5': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'MiniMax-M2.5-highspeed': {
-    input: 0.6 / 1e6,
-    output: 2.4 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.05
-  },
-  'MiniMax-M2.1': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'MiniMax-M2.1-highspeed': {
-    input: 0.6 / 1e6,
-    output: 2.4 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.05
-  },
-  'MiniMax-M2': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
-}
-
-// https://help.aliyun.com/zh/model-studio/billing (DashScope international pricing)
-// Prices in USD per million tokens. Cache multiplier ≈ input discount fraction.
-const QWEN_PRICING: Record<string, ModelPricing> = {
-  'qwen3.8-max': { input: 2.0 / 1e6, output: 6.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.0 },
-  'qwen3.7-max': { input: 2.5 / 1e6, output: 7.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.5 },
-  'qwen3.7-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.064 / 0.4 },
-  'qwen3.6-max': { input: 1.3 / 1e6, output: 7.8 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3.6-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3.6-flash': { input: 0.25 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3.5-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3.5-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen3-coder': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen-turbo': { input: 0.3 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwen-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qwq-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'qvq-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 }
-}
-
-// https://platform.stepfun.ai/docs/en/pricing
-// Stepfun prices in RMB, converted at ~7.2 CNY/USD.
-const STEPFUN_PRICING: Record<string, ModelPricing> = {
-  'step-3.7-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'step-3.5-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'step-2-16k': { input: 1.39 / 1e6, output: 16.67 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'step-2': { input: 5.56 / 1e6, output: 27.78 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'step-1-200k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'step-1-128k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'step-1': { input: 1.25 / 1e6, output: 8.33 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
-}
-
-// https://docs.z.ai/guides/overview/pricing
-// Z.ai (Zhipu) GLM. Context caching auto-applies with no write fee;
-// cacheRead = cached-input price / input price (~0.18 across the lineup).
-const ZAI_PRICING: Record<string, ModelPricing> = {
-  'glm-5.2': { input: 1.4 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.26 / 1.4 },
-  'glm-5.1': { input: 1.4 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.26 / 1.4 },
-  'glm-5-turbo': { input: 1.2 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.24 / 1.2 },
-  'glm-5': { input: 1.0 / 1e6, output: 3.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 },
-  'glm-4.7': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 },
-  'glm-4.6': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 },
-  'glm-4.5-air': { input: 0.2 / 1e6, output: 1.1 / 1e6, cacheWrite: 1.0, cacheRead: 0.03 / 0.2 },
-  'glm-4.5': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 }
-}
-
-// https://docs.x.ai/docs/pricing
-// xAI auto-caches; no write premium. Reasoning tokens billed at output rate.
-// cacheRead = cached-input price / input price, from /v1/language-models.
-// grok-4.5 doubles input+output beyond a 200K long-context threshold; we
-// bill the flat base rate (same simplification as grok-4.3/4.20).
-const XAI_PRICING: Record<string, ModelPricing> = {
-  'grok-4.5': { input: 2.0 / 1e6, output: 6.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 / 2.0 },
-  'grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.25 },
-  'grok-4.20': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.25 },
-  'grok-build': { input: 1.0 / 1e6, output: 2.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.0 },
-  'grok-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-3': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-3-mini': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-2': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
-}
-
-const OPENROUTER_PRICING: Record<string, ModelPricing> = {
-  'anthropic/claude-sonnet-4': {
-    input: 3 / 1e6,
-    output: 15 / 1e6,
-    cacheWrite: 1.25,
-    cacheRead: 0.1
-  },
-  'anthropic/claude-opus-4': {
-    input: 15 / 1e6,
-    output: 75 / 1e6,
-    cacheWrite: 1.25,
-    cacheRead: 0.1
-  },
-  'anthropic/claude-3.5-sonnet': {
-    input: 3 / 1e6,
-    output: 15 / 1e6,
-    cacheWrite: 1.25,
-    cacheRead: 0.1
-  },
-  'anthropic/claude-3.5-haiku': {
-    input: 0.8 / 1e6,
-    output: 4 / 1e6,
-    cacheWrite: 1.25,
-    cacheRead: 0.1
-  },
-  'anthropic/claude-3-opus': {
-    input: 15 / 1e6,
-    output: 75 / 1e6,
-    cacheWrite: 1.25,
-    cacheRead: 0.1
-  },
-  'openai/gpt-4.1': { input: 2 / 1e6, output: 8 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/gpt-4.1-mini': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/gpt-4.1-nano': { input: 0.1 / 1e6, output: 0.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/o4-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/o3-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'openai/gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'openai/gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'google/gemini-2.5-pro': {
-    input: 1.25 / 1e6,
-    output: 10 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.25
-  },
-  'google/gemini-2.5-flash': {
-    input: 0.15 / 1e6,
-    output: 0.6 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.25
-  },
-  'google/gemini-2.0-flash': {
-    input: 0.1 / 1e6,
-    output: 0.4 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.25
-  },
-  'google/gemini-pro-1.5': { input: 1.25 / 1e6, output: 5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'deepseek/deepseek-r1': {
-    input: 0.55 / 1e6,
-    output: 2.19 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.25
-  },
-  'deepseek/deepseek-chat': {
-    input: 0.14 / 1e6,
-    output: 0.28 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 0.1
-  },
-  'meta-llama/llama-4-maverick': {
-    input: 0.2 / 1e6,
-    output: 0.85 / 1e6,
+/**
+ * PLACEHOLDER pricing for the local scratch ledger. Authoritative cost is
+ * metered per-request by the org API (DeepInfra's own bill lands in the
+ * master usage table); this local estimate exists only so the on-device
+ * ledger has an order-of-magnitude number before API integration wires
+ * the real figures through.
+ */
+const CLOUD_PRICING: Record<string, ModelPricing> = {
+  'deepseek-ai/DeepSeek-R1': {
+    input: 0.5 / 1e6,
+    output: 2.15 / 1e6,
     cacheWrite: 1.0,
     cacheRead: 1.0
   },
-  'meta-llama/llama-4-scout': {
-    input: 0.11 / 1e6,
-    output: 0.34 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 1.0
-  },
-  'meta-llama/llama-3.3-70b': {
-    input: 0.12 / 1e6,
-    output: 0.3 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 1.0
-  },
-  'meta-llama/llama-3.1-405b': {
-    input: 0.9 / 1e6,
-    output: 0.9 / 1e6,
-    cacheWrite: 1.0,
-    cacheRead: 1.0
-  },
-  'mistralai/mistral-large': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'mistralai/codestral': { input: 0.3 / 1e6, output: 0.9 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'qwen/qwq-32b': { input: 0.12 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'qwen/qwen-2.5-72b': { input: 0.18 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'moonshotai/kimi-k3': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'x-ai/grok-4.5': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'x-ai/grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'x-ai/grok-3-beta': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'x-ai/grok-3-mini-beta': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'cohere/command-r-plus': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'cohere/command-r': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'perplexity/sonar-pro': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'perplexity/sonar': { input: 1 / 1e6, output: 1 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 }
-}
-
-const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
-  input: 0,
-  output: 0,
-  cacheWrite: 1.0,
-  cacheRead: 1.0
+  'deepseek-ai/DeepSeek': { input: 0.27 / 1e6, output: 1.0 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 }
 }
 
 const BRAVE_COST_PER_QUERY = 0.005
@@ -478,20 +206,7 @@ export class Usage {
     }
 
     const providers: ProviderUsageSummary[] = []
-    for (const pid of [
-      'local',
-      'anthropic',
-      'openai',
-      'openrouter',
-      'deepseek',
-      'mimo',
-      'kimi',
-      'minimax',
-      'xai',
-      'qwen',
-      'stepfun',
-      'zai'
-    ] as ProviderId[]) {
+    for (const pid of ['cloud'] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
         providers.push({
@@ -670,8 +385,7 @@ export class Usage {
   }
 
   private providerFilePath(provider: ProviderId): string {
-    const name = provider === 'local' ? 'ollama' : provider
-    return path.join(this.usageDir(), 'providers', `${name}.md`)
+    return path.join(this.usageDir(), 'providers', `${provider}.md`)
   }
 
   private dailyFilePath(date: string): string {
@@ -679,68 +393,27 @@ export class Usage {
   }
 
   private async appendToProviderFile(entry: UsageEntry): Promise<void> {
-    const filepath = this.providerFilePath(entry.provider)
-    const dir = path.dirname(filepath)
-    try {
-      await fs.mkdir(dir, { recursive: true })
-    } catch {
-      return
-    }
-
-    const date = formatDate(entry.timestamp)
-    const time = formatTime(entry.timestamp)
-    const cachePart =
-      entry.cacheCreationTokens || entry.cacheReadTokens
-        ? ` cw:${entry.cacheCreationTokens ?? 0} cr:${entry.cacheReadTokens ?? 0}`
-        : ''
-    const line = `- ${date} ${time} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
-
-    // Header/date-section decision runs INSIDE the file's write queue — the
-    // probe used to run outside it, so two turns finishing together wrote
-    // duplicate date headers.
-    const dateHeader = `## ${date}`
-    try {
-      await diskWriter.update(filepath, (raw) => {
-        const existing = raw ?? ''
-        if (!existing.includes(dateHeader)) {
-          const body =
-            existing.length === 0
-              ? `# ${providerLabel(entry.provider)}\n\n${dateHeader}\n\n${line}`
-              : `\n${dateHeader}\n\n${line}`
-          return existing + body
-        }
-        return existing + line
-      })
-    } catch {
-      return
-    }
+    await appendProviderLine(this.providerFilePath(entry.provider), entry.provider, {
+      at: entry.timestamp,
+      model: entry.model,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      cacheCreationTokens: entry.cacheCreationTokens,
+      cacheReadTokens: entry.cacheReadTokens,
+      cost: entry.cost
+    })
   }
 
   private async appendToDailyFile(entry: UsageEntry): Promise<void> {
-    const date = formatDate(entry.timestamp)
-    const filepath = this.dailyFilePath(date)
-    const dir = path.dirname(filepath)
-    try {
-      await fs.mkdir(dir, { recursive: true })
-    } catch {
-      return
-    }
-
-    const time = formatTime(entry.timestamp)
-    const providerName = providerLabel(entry.provider)
-    const cachePart =
-      entry.cacheCreationTokens || entry.cacheReadTokens
-        ? ` cw:${entry.cacheCreationTokens ?? 0} cr:${entry.cacheReadTokens ?? 0}`
-        : ''
-    const line = `- ${time} | ${providerName} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
-
-    try {
-      await diskWriter.appendWithInit(filepath, (exists) =>
-        exists ? line : `# ${date}\n\n${line}`
-      )
-    } catch {
-      return
-    }
+    await appendDailyLine(this.dailyFilePath(formatDate(entry.timestamp)), entry.provider, {
+      at: entry.timestamp,
+      model: entry.model,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      cacheCreationTokens: entry.cacheCreationTokens,
+      cacheReadTokens: entry.cacheReadTokens,
+      cost: entry.cost
+    })
   }
 
   private async parseAllProviderFiles(): Promise<CachedEntry[]> {
@@ -749,18 +422,7 @@ export class Usage {
     const providerDir = path.join(this.usageDir(), 'providers')
 
     const providerFiles: Array<{ file: string; provider: ProviderId }> = [
-      { file: 'ollama.md', provider: 'local' },
-      { file: 'anthropic.md', provider: 'anthropic' },
-      { file: 'openai.md', provider: 'openai' },
-      { file: 'deepseek.md', provider: 'deepseek' },
-      { file: 'mimo.md', provider: 'mimo' },
-      { file: 'kimi.md', provider: 'kimi' },
-      { file: 'minimax.md', provider: 'minimax' },
-      { file: 'xai.md', provider: 'xai' },
-      { file: 'qwen.md', provider: 'qwen' },
-      { file: 'stepfun.md', provider: 'stepfun' },
-      { file: 'zai.md', provider: 'zai' },
-      { file: 'openrouter.md', provider: 'openrouter' }
+      { file: 'cloud.md', provider: 'cloud' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -798,6 +460,203 @@ export class Usage {
   }
 }
 
+// ── The ledger files themselves ──────────────────────────────────────────
+//
+// One line per metered call, appended by this process at turn end AND by
+// the cloud sync when it reconciles the org's authoritative usage table
+// (a purged install rebuilds the whole ledger from it; a running one folds
+// in what the user's other devices spent). Both writers share these
+// formatters, so the parser above always sees one shape.
+
+/** One ledger line's worth of a metered call. */
+export type LedgerRow = {
+  at: Date
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens?: number
+  cacheReadTokens?: number
+  cost: number
+}
+
+const cachePartOf = (row: LedgerRow): string =>
+  row.cacheCreationTokens || row.cacheReadTokens
+    ? ` cw:${row.cacheCreationTokens ?? 0} cr:${row.cacheReadTokens ?? 0}`
+    : ''
+
+/** `- date time | model | in:N out:N[ cw:N cr:N] | $cost` — the provider ledger line. */
+export function providerLedgerLine(row: LedgerRow): string {
+  return `- ${formatDate(row.at)} ${formatTime(row.at)} | ${row.model} | in:${row.inputTokens} out:${row.outputTokens}${cachePartOf(row)} | $${row.cost.toFixed(6)}\n`
+}
+
+/** `- time | provider | model | in:N out:N[ cw:N cr:N] | $cost` — the daily file line. */
+export function dailyLedgerLine(row: LedgerRow, provider: ProviderId = 'cloud'): string {
+  return `- ${formatTime(row.at)} | ${providerLabel(provider)} | ${row.model} | in:${row.inputTokens} out:${row.outputTokens}${cachePartOf(row)} | $${row.cost.toFixed(6)}\n`
+}
+
+async function appendProviderLine(
+  filepath: string,
+  provider: ProviderId,
+  row: LedgerRow
+): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(filepath), { recursive: true })
+  } catch {
+    return
+  }
+  const line = providerLedgerLine(row)
+  // Header/date-section decision runs INSIDE the file's write queue — the
+  // probe used to run outside it, so two turns finishing together wrote
+  // duplicate date headers.
+  const dateHeader = `## ${formatDate(row.at)}`
+  try {
+    await diskWriter.update(filepath, (raw) => {
+      const existing = raw ?? ''
+      if (!existing.includes(dateHeader)) {
+        const body =
+          existing.length === 0
+            ? `# ${providerLabel(provider)}\n\n${dateHeader}\n\n${line}`
+            : `\n${dateHeader}\n\n${line}`
+        return existing + body
+      }
+      return existing + line
+    })
+  } catch {
+    return
+  }
+}
+
+async function appendDailyLine(
+  filepath: string,
+  provider: ProviderId,
+  row: LedgerRow
+): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(filepath), { recursive: true })
+  } catch {
+    return
+  }
+  const line = dailyLedgerLine(row, provider)
+  try {
+    await diskWriter.appendWithInit(filepath, (exists) =>
+      exists ? line : `# ${formatDate(row.at)}\n\n${line}`
+    )
+  } catch {
+    return
+  }
+}
+
+/** Append one call to the ledger (provider file + that day's file). */
+export async function appendLedgerRow(workspaceRoot: string, row: LedgerRow): Promise<void> {
+  const usageDir = path.join(workspaceRoot, 'usage')
+  await appendProviderLine(path.join(usageDir, 'providers', 'cloud.md'), 'cloud', row)
+  await appendDailyLine(path.join(usageDir, 'daily', `${formatDate(row.at)}.md`), 'cloud', row)
+}
+
+/**
+ * Rewrite the ledger from scratch — the purge+restore path, where the org's
+ * usage table is the only record left. Rows are laid out exactly as the
+ * incremental writer would have (sorted, one date section per day), so a
+ * rebuilt ledger and a lived-in one are indistinguishable to the parser.
+ * Goes through the disk writer, so it queues behind any append in flight.
+ */
+export async function rewriteLedger(workspaceRoot: string, rows: LedgerRow[]): Promise<void> {
+  const usageDir = path.join(workspaceRoot, 'usage')
+  await fs.mkdir(path.join(usageDir, 'providers'), { recursive: true })
+  await fs.mkdir(path.join(usageDir, 'daily'), { recursive: true })
+  const sorted = [...rows].sort((a, b) => a.at.getTime() - b.at.getTime())
+  let provider = `# ${providerLabel('cloud')}\n`
+  const daily = new Map<string, string>()
+  let currentDate: string | null = null
+  for (const row of sorted) {
+    const date = formatDate(row.at)
+    if (date !== currentDate) {
+      provider += `\n## ${date}\n\n`
+      currentDate = date
+    }
+    provider += providerLedgerLine(row)
+    daily.set(date, (daily.get(date) ?? `# ${date}\n\n`) + dailyLedgerLine(row, 'cloud'))
+  }
+  await diskWriter.writeFileAtomic(path.join(usageDir, 'providers', 'cloud.md'), provider)
+  for (const [date, text] of daily) {
+    await diskWriter.writeFileAtomic(path.join(usageDir, 'daily', `${date}.md`), text)
+  }
+}
+
+// ── The Brave query ledger ───────────────────────────────────────────────
+//
+// One line per metered web search: `- date time | web_search | query`. The
+// web-search plugin appends this device's queries the moment they return
+// (query text included, for the local record); the cloud sync appends the
+// user's OTHER devices' searches from the org's usage table and rebuilds the
+// whole file after a purge. Those org rows carry no query text — the org
+// meters that a search happened, never its content — so they print a
+// placeholder in that column. parseBraveFile reads only the timestamp.
+
+export type BraveLedgerRow = { at: Date; query?: string }
+
+const BRAVE_ORG_QUERY = '(metered by the org)'
+
+export function braveLedgerLine(row: BraveLedgerRow): string {
+  const safe = (row.query ?? BRAVE_ORG_QUERY).replace(/[|\n\r]/g, ' ').slice(0, 120)
+  return `- ${formatDate(row.at)} ${formatTime(row.at)} | web_search | ${safe}\n`
+}
+
+const braveLedgerPath = (workspaceRoot: string): string =>
+  path.join(workspaceRoot, 'usage', 'providers', 'brave.md')
+
+/** Append one search (header + date section minted inside the write queue). */
+export async function appendBraveLedgerRow(
+  workspaceRoot: string,
+  row: BraveLedgerRow
+): Promise<void> {
+  const filepath = braveLedgerPath(workspaceRoot)
+  try {
+    await fs.mkdir(path.dirname(filepath), { recursive: true })
+  } catch {
+    return
+  }
+  const line = braveLedgerLine(row)
+  const dateHeader = `## ${formatDate(row.at)}`
+  try {
+    await diskWriter.update(filepath, (raw) => {
+      const existing = raw ?? ''
+      if (!existing.includes(dateHeader)) {
+        return (
+          existing +
+          (existing.length === 0
+            ? `# Brave Search\n\n${dateHeader}\n\n${line}`
+            : `\n${dateHeader}\n\n${line}`)
+        )
+      }
+      return existing + line
+    })
+  } catch {
+    return
+  }
+}
+
+/** Rewrite the Brave ledger from the org's record — the purge+restore path. */
+export async function rewriteBraveLedger(
+  workspaceRoot: string,
+  rows: BraveLedgerRow[]
+): Promise<void> {
+  const filepath = braveLedgerPath(workspaceRoot)
+  await fs.mkdir(path.dirname(filepath), { recursive: true })
+  const sorted = [...rows].sort((a, b) => a.at.getTime() - b.at.getTime())
+  let text = '# Brave Search\n'
+  let currentDate: string | null = null
+  for (const row of sorted) {
+    const date = formatDate(row.at)
+    if (date !== currentDate) {
+      text += `\n## ${date}\n\n`
+      currentDate = date
+    }
+    text += braveLedgerLine(row)
+  }
+  await diskWriter.writeFileAtomic(filepath, text)
+}
+
 function parseProviderLine(line: string, provider: ProviderId): CachedEntry | null {
   const m =
     /^-\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(\S+)\s+\|\s+in:(\d+)\s+out:(\d+)(?:\s+cw:(\d+)\s+cr:(\d+))?\s+\|\s+\$(\d+(?:\.\d+)?)/.exec(
@@ -817,41 +676,22 @@ function parseProviderLine(line: string, provider: ProviderId): CachedEntry | nu
 }
 
 export function calculateCost(
-  provider: ProviderId,
+  _provider: ProviderId,
   model: string,
   inputTokens: number,
   outputTokens: number,
   cacheCreationTokens?: number,
   cacheReadTokens?: number
 ): number {
-  if (provider === 'local') {
-    return (
-      inputTokens * LOCAL_EQUIVALENT_PRICING.input + outputTokens * LOCAL_EQUIVALENT_PRICING.output
-    )
-  }
-  const table =
-    provider === 'anthropic'
-      ? ANTHROPIC_PRICING
-      : provider === 'deepseek'
-        ? DEEPSEEK_PRICING
-        : provider === 'mimo'
-          ? MIMO_PRICING
-          : provider === 'kimi'
-            ? KIMI_PRICING
-            : provider === 'minimax'
-              ? MINIMAX_PRICING
-              : provider === 'xai'
-                ? XAI_PRICING
-                : provider === 'qwen'
-                  ? QWEN_PRICING
-                  : provider === 'stepfun'
-                    ? STEPFUN_PRICING
-                    : provider === 'zai'
-                      ? ZAI_PRICING
-                      : provider === 'openrouter'
-                        ? OPENROUTER_PRICING
-                        : OPENAI_PRICING
-  const pricing = findPricing(model, table)
+  void _provider
+  // Catalog prices (from the org API) win; the static table is the
+  // cold-start fallback. Cache reads bill at the catalog input rate —
+  // the server meters true upstream cost regardless; this figure feeds
+  // the local usage panel only.
+  const fromCatalog = catalogPricing(model)
+  const pricing = fromCatalog
+    ? { input: fromCatalog.input, output: fromCatalog.output, cacheWrite: 1, cacheRead: 0.1 }
+    : findPricing(model, CLOUD_PRICING)
   return (
     inputTokens * pricing.input +
     (cacheCreationTokens ?? 0) * pricing.input * pricing.cacheWrite +
@@ -916,19 +756,9 @@ function formatTime(d: Date): string {
   return `${hh}:${mm}:${ss}`
 }
 
-function providerLabel(provider: ProviderId): string {
-  if (provider === 'local') return 'Ollama'
-  if (provider === 'anthropic') return 'Anthropic'
-  if (provider === 'deepseek') return 'DeepSeek'
-  if (provider === 'mimo') return 'Xiaomi Mimo'
-  if (provider === 'kimi') return 'Kimi'
-  if (provider === 'minimax') return 'MiniMax'
-  if (provider === 'xai') return 'xAI'
-  if (provider === 'qwen') return 'Qwen'
-  if (provider === 'stepfun') return 'Stepfun'
-  if (provider === 'zai') return 'Z.ai'
-  if (provider === 'openrouter') return 'OpenRouter'
-  return 'OpenAI'
+function providerLabel(_provider: ProviderId): string {
+  void _provider
+  return 'Wolffish Cloud'
 }
 
 function longestConsecutiveStreak(dates: string[]): number {

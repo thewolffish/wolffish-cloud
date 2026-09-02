@@ -32,7 +32,6 @@ import {
   table,
   wrapText
 } from '../lib/ui.mjs'
-import { renderMarkdown } from '../lib/markdown.mjs'
 import { pair } from './pair.mjs'
 import { pathCommand, service } from './service.mjs'
 import { brain, capabilities, manageKeys, variables } from './settings.mjs'
@@ -154,16 +153,14 @@ async function cliStatus(client) {
     client.invoke('cli:pathStatus', process.env.PATH ?? null).catch(() => null),
     client.invoke('service:status').catch(() => null)
   ])
-  heading('The wolffish command')
+  heading('The wfc command')
   keyValue([
     ['on PATH', shim?.installed ? c.green('yes') : c.red('no')],
     ['shim', c.gray(shortPath(shim?.target ?? '—'))],
     ['resolves to', shim?.resolved ? c.gray(shortPath(shim.resolved)) : c.gray('nothing')]
   ])
   if (shim?.shadowedBy) {
-    out(
-      `  ${icon.warn()} ${c.yellow(`another wolffish runs first: ${shortPath(shim.shadowedBy)}`)}`
-    )
+    out(`  ${icon.warn()} ${c.yellow(`another wfc runs first: ${shortPath(shim.shadowedBy)}`)}`)
   }
   if (shim?.needsPathEntry && shim.profileHint) {
     out(`  ${icon.warn()} ${c.yellow('its folder is not on your PATH')}`)
@@ -188,7 +185,7 @@ async function cliStatus(client) {
 async function removeCliPath(client) {
   const before = await client.invoke('cli:pathStatus', process.env.PATH ?? null).catch(() => null)
   if (!before?.installed) {
-    out(c.gray('  the wolffish command is not installed'))
+    out(c.gray('  the wfc command is not installed'))
     return 0
   }
   out(c.gray(`  ${shortPath(before.target)}`))
@@ -200,7 +197,7 @@ async function removeCliPath(client) {
     return 1
   }
   out(`${icon.ok()} removed`)
-  // A shell that has already resolved `wolffish` keeps its cached answer until
+  // A shell that has already resolved `wfc` keeps its cached answer until
   // it is told otherwise, so the command appearing to still exist is expected
   // rather than a failed removal.
   out(c.gray('  your current shell may still remember it — open a new one, or: hash -r'))
@@ -289,7 +286,7 @@ async function mobileStatus(client) {
   heading('Phone')
   if (!status?.paired) {
     out(c.gray('  no phone paired'))
-    out(c.gray('  pair one from here, or: wolffish pair phone --code'))
+    out(c.gray('  pair one from here, or: wfc pair phone --code'))
     return 0
   }
   const p = status.pairing ?? {}
@@ -1025,11 +1022,25 @@ function tester(title, run) {
   }
 }
 
+// Brave Search is provided by the organization (one key behind the API's
+// /v1/search lane), so there is no key here to test — the check reads the
+// lane's live status and this account's allowance.
 const testBrave = tester('Brave Search', async (client) => {
-  const config = await client.invoke('brave:getConfig')
-  if (!config?.apiKey) return { ok: false, error: 'no key set' }
-  const result = await client.invoke('brave:test', config.apiKey)
-  return { ...result, detail: result?.ok ? 'the key works' : undefined }
+  const status = await client.invoke('brave:status', { refresh: true })
+  if (status?.state !== 'ready') {
+    const why = {
+      disabled: 'turned off by your organization',
+      unconfigured: 'not set up yet by your organization',
+      signed_out: 'sign in first',
+      unreachable: `cannot reach your organization${status?.error ? ` (${status.error})` : ''}`
+    }
+    return { ok: false, error: why[status?.state] ?? 'lane status unknown' }
+  }
+  const cap = status.dailyCap > 0 ? String(status.dailyCap) : 'unlimited'
+  return {
+    ok: true,
+    detail: `provided by your organization — ${status.usedToday} of ${cap} searches used today, $${status.pricePerQueryUsd.toFixed(3)} each`
+  }
 })
 
 const testVideo = tester('Video generation', async (client) => {
@@ -1102,54 +1113,6 @@ function engine(kind, title) {
   }
 }
 
-// ─── Updates ────────────────────────────────────────────────────────────────
-
-async function updateStatus(client) {
-  const [version, state, ready] = await Promise.all([
-    client.invoke('updater:getVersion').catch(() => null),
-    client.invoke('updater:getState').catch(() => null),
-    client.invoke('updater:getReady').catch(() => null)
-  ])
-  heading('Version')
-  // `UpdaterState` is { phase, version, percent, releaseNotes, error } — it has
-  // no `status`, so reading one and falling back to the object itself printed
-  // "[object Object]". Named fields only; never String() a payload whose shape
-  // has not been read.
-  const phase = state?.phase ?? 'idle'
-  const rows = [
-    ['installed', String(version ?? '—')],
-    [
-      'state',
-      phase === 'downloading' && state?.percent
-        ? `${c.cyan(phase)} ${c.gray(`${Math.round(state.percent)}%`)}`
-        : c.gray(phase)
-    ],
-    [
-      'downloaded',
-      ready?.version
-        ? c.green(`${ready.version} ready to install`)
-        : ready
-          ? c.green('ready to install')
-          : c.gray('nothing waiting')
-    ]
-  ]
-  if (state?.version && state.version !== version) rows.push(['available', c.cyan(state.version)])
-  if (state?.error) {
-    rows.push(['error', c.red(state.error.detail ?? state.error.kind ?? 'failed')])
-  }
-  keyValue(rows)
-  return 0
-}
-
-/**
- * Check for an update, and distinguish the three answers.
- *
- * `updater:check` returns `{ ok, version }` and never an `available` flag, so
- * `result?.available` was undefined on every path — including a check that
- * threw — and the command reported "already up to date" whether it was up to
- * date, offline, or running from a dev tree that cannot update at all. On a
- * server, "up to date" is the one answer nobody re-checks.
- */
 /**
  * Rebuild the usage ledger from the corpus. The desktop panel's Sync button —
  * the fix for a report that has drifted, which is exactly the thing someone
@@ -1190,32 +1153,6 @@ async function mobileRelay(client) {
   await client.invoke('mobile:setRelayUrl', next)
   const after = await client.invoke('mobile:status').catch(() => null)
   out(`${icon.ok()} ${after?.relayUrl ?? next ?? 'default'}`)
-  return 0
-}
-
-/**
- * The changelog, before deciding whether to install.
- *
- * "1.0.239 is available" is not enough information to restart a server on.
- */
-async function releaseNotes(client) {
-  const months = await client.invoke('updater:listChangelogMonths').catch(() => [])
-  const list = Array.isArray(months) ? months : []
-  if (list.length === 0) {
-    out(c.gray('  no changelog shipped with this build'))
-    return 0
-  }
-  const month = list.length === 1 ? list[0] : await pick(list, { prompt: 'which month' })
-  if (!month) return 0
-  const markdown = await client
-    .invoke('updater:readChangelog', typeof month === 'string' ? month : month.id)
-    .catch(() => '')
-  if (!markdown) {
-    out(c.gray('  nothing recorded for that month'))
-    return 0
-  }
-  out()
-  out(renderMarkdown(markdown))
   return 0
 }
 
@@ -1293,44 +1230,6 @@ async function usageSync(client) {
     return 1
   }
   out(`${icon.ok()} ledger rebuilt`)
-  return 0
-}
-
-async function checkForUpdates(client) {
-  const current = await client.invoke('updater:getVersion').catch(() => null)
-  const result = await client
-    .invoke('updater:check')
-    .catch((error) => ({ ok: false, error: error?.message }))
-  if (!result || result.ok === false) {
-    out(`${icon.fail()} ${c.red(result?.error ?? 'the update check failed')}`)
-    out(c.gray('  it could not reach the update server, or this build cannot self-update'))
-    return 1
-  }
-  if (result.version && result.version !== current) {
-    out(
-      `${icon.ok()} ${c.green(`${result.version} is available`)} ${c.gray(`(you have ${current})`)}`
-    )
-    const state = await client.invoke('updater:getState').catch(() => null)
-    if (state?.releaseNotes) {
-      out()
-      out(wrapText(c.gray(String(state.releaseNotes).slice(0, 1200)), 2))
-    }
-    out(c.gray('  download completes in the background; then: Install a downloaded update'))
-    return 0
-  }
-  out(c.gray(`  already up to date ${c.dim(`(${current ?? '?'})`)}`))
-  return 0
-}
-
-async function installUpdate(client) {
-  const ready = await client.invoke('updater:getReady').catch(() => null)
-  if (!ready) {
-    out(c.yellow('  nothing downloaded yet — check for updates first'))
-    return 1
-  }
-  if (!(await confirm('  install now? the app restarts', false))) return 0
-  await client.invoke('updater:install')
-  out(`${icon.ok()} installing — the app will restart`)
   return 0
 }
 
@@ -1449,18 +1348,18 @@ export const ACTIONS = [
 
   {
     section: 'channels.cli',
-    label: 'The wolffish command and autostart',
+    label: 'The wfc command and autostart',
     view: true,
     run: cliStatus
   },
   {
     section: 'channels.cli',
-    label: 'Install the wolffish command on your PATH',
+    label: 'Install the wfc command on your PATH',
     run: (client) => pathCommand(client, ['install'])
   },
   // Every install has its removal beside it. A card that can only add leaves
   // the terminal as the only way back out of a change the card itself made.
-  { section: 'channels.cli', label: 'Remove the wolffish command', run: removeCliPath },
+  { section: 'channels.cli', label: 'Remove the wfc command', run: removeCliPath },
   {
     section: 'channels.cli',
     label: 'Register autostart',
@@ -1529,7 +1428,7 @@ export const ACTIONS = [
     label: 'Forget the OAuth credentials',
     run: googleForgetCredentials
   },
-  { section: 'services.brave', label: 'Test the key', run: testBrave },
+  { section: 'services.brave', label: 'Check the org lane', run: testBrave },
   { section: 'services.video', label: 'Test the key', run: testVideo },
   { section: 'services.memes', label: 'Test Giphy and Imgflip', run: testMemes },
   {
@@ -1612,11 +1511,7 @@ export const ACTIONS = [
   { section: 'usage.report', label: 'Tokens and cost', view: true, run: usageReport },
   { section: 'usage.report', label: 'Re-sync the ledger', run: usageSync },
   { section: 'data.workspace', label: 'Disk usage', view: true, run: dataUsage },
-  { section: 'data.workspace', label: 'Factory reset', run: factoryReset },
-  { section: 'updates.app', label: 'Version', view: true, run: updateStatus },
-  { section: 'updates.app', label: 'Check for updates', run: checkForUpdates },
-  { section: 'updates.app', label: "What's new", view: true, run: releaseNotes },
-  { section: 'updates.app', label: 'Install a downloaded update', run: installUpdate }
+  { section: 'data.workspace', label: 'Factory reset', run: factoryReset }
 ]
 
 /**

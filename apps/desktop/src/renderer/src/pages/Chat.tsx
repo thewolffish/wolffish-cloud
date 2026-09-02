@@ -1,4 +1,5 @@
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
+import { useConversationHydration } from '@hooks/use-conversation-hydration/useConversationHydration'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
@@ -20,7 +21,6 @@ import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
-import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TaskCard } from '@components/common/task-card/TaskCard'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
@@ -200,28 +200,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     descriptor.initialConversationId
   )
+  // On-open media hydration: a restored conversation's files download when
+  // it is opened (nothing is predownloaded), and this drives the banner.
+  const hydration = useConversationHydration(activeConversationId, visible)
 
-  const currentModel = status?.config?.llm.local.model ?? null
-  const localOnly = status?.config?.llm.localOnly ?? false
-  const cloudProviders = useMemo(
-    () => status?.config?.llm.providers ?? [],
-    [status?.config?.llm.providers]
-  )
-  const brain = status?.config?.llm.brain ?? null
-  const hasCloudProvider = cloudProviders.some((p) => p.apiKey && p.apiKey.length > 0)
-  // The single Brain is the active cloud model — but only when its provider
-  // still has a saved key. Null otherwise (no cloud model selected).
-  const activeCloudProvider = useMemo(() => {
-    if (!brain) return null
-    const provider = cloudProviders.find((p) => p.id === brain.providerId)
-    return provider && provider.apiKey && provider.apiKey.length > 0 ? brain.providerId : null
-  }, [brain, cloudProviders])
-  const hasAnyModel = !!currentModel || hasCloudProvider
-  const [savingMode, setSavingMode] = useState(false)
-  const activeCloudModel = useMemo(
-    () => (activeCloudProvider && brain ? brain.model : null),
-    [activeCloudProvider, brain]
-  )
+  // One lane: the selected model is the whole model state. The org API is
+  // the authority on the catalog (wired at API integration).
+  const selectedModel = status?.config?.llm.model ?? null
+  const hasAnyModel = !!selectedModel
+  // Bypass permissions rides next to the model controls in chat now.
+  const bypass = status?.config?.safety?.bypassPermissions ?? false
 
   // Chat mode: 'single' (solo turns) vs 'workflow' (model-led agents).
   // Switched from the composer's mode button; global, like the Brain.
@@ -232,56 +220,48 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // brain button. Source of truth is reasoningModesFor — corrected to live
   // provider behaviour during verification.
   const reasoningModes = useMemo<ReasoningMode[]>(() => {
-    if (localOnly) return []
-    const provider = activeCloudProvider
-    const model = activeCloudModel
-    if (!provider || !model) return []
-    const openrouterReasoning =
-      provider === 'openrouter'
-        ? (cloudProviders.find((p) => p.id === 'openrouter')?.reasoningModels?.includes(model) ??
-          false)
-        : false
-    return reasoningModesFor(provider, model, { openrouterReasoning })
-  }, [localOnly, activeCloudProvider, activeCloudModel, cloudProviders])
+    if (!selectedModel) return []
+    return reasoningModesFor('cloud', selectedModel)
+  }, [selectedModel])
 
   // Active mode, clamped/migrated to a value valid for this model's modes.
   const thinkingMode = useMemo<ReasoningMode>(
     () =>
       normalizeReasoningMode(
-        activeCloudModel ? persistedThinkingModes?.[activeCloudModel] : undefined,
+        selectedModel ? persistedThinkingModes?.[selectedModel] : undefined,
         reasoningModes
       ),
-    [activeCloudModel, persistedThinkingModes, reasoningModes]
+    [selectedModel, persistedThinkingModes, reasoningModes]
   )
 
   // Persist via API — the source of truth is persistedThinkingModes, which
   // updates reactively through status once the write completes.
   const setThinkingMode = useCallback(
     async (mode: string) => {
-      if (!activeCloudModel) return
+      if (!selectedModel) return
       // Skip redundant writes. The effect below drives this setter
       // autonomously on every status/model transition (including starting a
       // new chat), so persisting an unchanged value just adds config.json
       // write churn — and that write contention is what surfaced the
       // config-wipe race in the first place. A never-seen model has no
       // persisted value (undefined), so the default still gets written once.
-      const current = persistedThinkingModes?.[activeCloudModel]
+      const current = persistedThinkingModes?.[selectedModel]
       if (mode === current) return
-      await window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
+      await window.api.runtime.setThinkingMode(selectedModel, mode as ThinkingMode)
       await refreshStatus()
     },
-    [activeCloudModel, persistedThinkingModes, refreshStatus]
+    [selectedModel, persistedThinkingModes, refreshStatus]
   )
 
   // Migrate/clamp the persisted mode to a value valid for this model. Runs on
   // load and on every model switch so a stale or legacy token (e.g. 'basic')
   // is rewritten to a canonical one. No write when the model has no modes.
   useEffect(() => {
-    if (!activeCloudModel || reasoningModes.length === 0) return
-    const persisted = persistedThinkingModes?.[activeCloudModel]
+    if (!selectedModel || reasoningModes.length === 0) return
+    const persisted = persistedThinkingModes?.[selectedModel]
     const normalized = normalizeReasoningMode(persisted, reasoningModes)
     if (persisted !== normalized) void setThinkingMode(normalized)
-  }, [reasoningModes, activeCloudModel, persistedThinkingModes, setThinkingMode])
+  }, [reasoningModes, selectedModel, persistedThinkingModes, setThinkingMode])
 
   useEffect(() => {
     void refreshStatus()
@@ -315,18 +295,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     }
   }, [])
 
-  const onModeChange = useCallback(
+  const onToggleBypass = useCallback(
     async (next: boolean) => {
-      if (savingMode || next === localOnly) return
-      setSavingMode(true)
-      try {
-        await window.api.runtime.setLocalOnly(next)
-        await refreshStatus()
-      } finally {
-        setSavingMode(false)
-      }
+      if (next === bypass) return
+      await window.api.runtime.setBypassPermissions(next)
+      await refreshStatus()
     },
-    [savingMode, localOnly, refreshStatus]
+    [bypass, refreshStatus]
   )
   // While the agent is paused for a confirm/destructive approval, the
   // streaming bubble swaps "Thinking…" for "Awaiting permission…".
@@ -867,7 +842,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     return () => {
       cancelled = true
     }
-  }, [currentModel, localOnly, activeCloudModel])
+  }, [selectedModel])
 
   // Fold main-side rolling-summary updates into the in-memory conversation:
   // the summarizer persisted {summary, mark} after our last save — merge them
@@ -951,9 +926,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       // conversation), and it needs the phone and the app going at once.
 
       if (!conversationRef.current) {
-        const conv = await window.api.conversation.create(
-          localOnly ? currentModel : activeCloudModel
-        )
+        const conv = await window.api.conversation.create(selectedModel)
         if (descriptor.projectId) conv.projectId = descriptor.projectId
         if (descriptor.icon) conv.icon = descriptor.icon
         conversationRef.current = conv
@@ -996,9 +969,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     [
       descriptor.projectId,
       descriptor.icon,
-      currentModel,
-      localOnly,
-      activeCloudModel,
+      selectedModel,
       setActiveConversationId,
       contextTokens,
       contextBudget,
@@ -1750,7 +1721,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           conversationRef.current = {
             id: activeConversationId,
             title: 'Untitled',
-            model: currentModel,
+            model: selectedModel,
             messages: [],
             createdAt: now,
             updatedAt: now,
@@ -1763,7 +1734,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       }
       return activeConversationId
     }
-    const conv = await window.api.conversation.create(localOnly ? currentModel : activeCloudModel)
+    const conv = await window.api.conversation.create(selectedModel)
     if (descriptor.projectId) conv.projectId = descriptor.projectId
     if (descriptor.icon) conv.icon = descriptor.icon
     conversationRef.current = conv
@@ -1774,9 +1745,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     return conv.id
   }, [
     activeConversationId,
-    currentModel,
-    localOnly,
-    activeCloudModel,
+    selectedModel,
     setActiveConversationId,
     descriptor.projectId,
     descriptor.icon
@@ -2589,9 +2558,63 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-2">
-          <div className="pointer-events-auto">
-            <UpdateCard />
-          </div>
+          {hydration && !hydration.done && hydration.filesTotal > 0 && (
+            <div className="pointer-events-auto mx-auto mt-2 w-full max-w-sm">
+              <div className="border-border bg-surface/95 flex flex-col gap-1.5 rounded-xl border p-3 shadow-sm backdrop-blur">
+                <div className="text-muted flex items-center gap-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {t('chat.hydration.downloading')}
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    {t('chat.hydration.count', {
+                      done: Math.min(hydration.filesDone + 1, hydration.filesTotal),
+                      total: hydration.filesTotal
+                    })}
+                  </span>
+                  {hydration.totalBytes > 0 && (
+                    <span className="shrink-0 tabular-nums">
+                      {Math.min(
+                        100,
+                        Math.round((hydration.doneBytes / hydration.totalBytes) * 100)
+                      )}
+                      %
+                    </span>
+                  )}
+                </div>
+                {hydration.current && (
+                  <div dir="ltr" className="text-muted/80 truncate text-[11px]">
+                    {hydration.current.split('/').pop()}
+                  </div>
+                )}
+                <div
+                  role="progressbar"
+                  aria-label={t('chat.hydration.downloading')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={
+                    hydration.totalBytes > 0
+                      ? Math.min(
+                          100,
+                          Math.round((hydration.doneBytes / hydration.totalBytes) * 100)
+                        )
+                      : Math.round((hydration.filesDone / Math.max(1, hydration.filesTotal)) * 100)
+                  }
+                  className="bg-border h-1 w-full overflow-hidden rounded-full"
+                >
+                  <div
+                    className="bg-primary h-full rounded-full transition-[width] duration-150"
+                    style={{
+                      width: `${
+                        hydration.totalBytes > 0
+                          ? Math.min(100, (hydration.doneBytes / hydration.totalBytes) * 100)
+                          : (hydration.filesDone / Math.max(1, hydration.filesTotal)) * 100
+                      }%`
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         <div
           className={cn(
@@ -2871,33 +2894,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 rows now (two rows above the model search) — one panel for
                 every model knob instead of three composer pills. */}
             <ModelSwitch
-              localOnly={localOnly}
-              localModel={currentModel}
-              providers={cloudProviders}
-              brain={brain}
-              disabled={savingMode || busy}
+              model={selectedModel}
+              disabled={busy}
               reasoningModes={reasoningModes}
               reasoningMode={thinkingMode}
               chatMode={chatMode}
+              bypass={bypass}
               showControls={recPhase === 'idle'}
-              onModeChange={onModeChange}
-              onSelectModel={async (sel) => {
-                await window.api.provider.setBrain(sel)
-                await refreshStatus()
-              }}
-              onSelectLocalModel={async (model) => {
-                // Every model the card offers is already installed, so this
-                // is the no-pull branch of model:select — it just writes the
-                // choice and re-points the local provider.
-                await window.api.model.select(model)
-                await refreshStatus()
-              }}
               onSelectReasoning={setThinkingMode}
               onSelectChatMode={async (mode) => {
                 if (mode === chatMode) return
                 await window.api.provider.setMode(mode)
                 await refreshStatus()
               }}
+              onToggleBypass={onToggleBypass}
             />
             {recPhase === 'idle' && (
               <ContextMeter
@@ -2922,7 +2932,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 provider={
                   lastCall?.provider ??
                   convStats?.lastTurn?.provider ??
-                  (localOnly ? 'local' : activeCloudProvider)
+                  (selectedModel ? 'cloud' : null)
                 }
                 logsCount={timelineEventCount}
                 filesCount={conversationFiles.length}
@@ -2943,22 +2953,26 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 <ArrowExpandIcon size={14} />
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => void exportChatPdf()}
-              disabled={busy || exportingPdf || !canExportPdf}
-              title={t('chat.downloadPdf')}
-              aria-label={t('chat.downloadPdf')}
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-                'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                !busy && !exportingPdf && canExportPdf && 'cursor-pointer'
-              )}
-            >
-              <Download01Icon size={16} />
-            </button>
+            {/* Hidden outright when the chat has nothing printable — an
+                always-present-but-disabled download reads as broken. */}
+            {canExportPdf && (
+              <button
+                type="button"
+                onClick={() => void exportChatPdf()}
+                disabled={busy || exportingPdf}
+                title={t('chat.downloadPdf')}
+                aria-label={t('chat.downloadPdf')}
+                className={cn(
+                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                  'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  !busy && !exportingPdf && 'cursor-pointer'
+                )}
+              >
+                <Download01Icon size={16} />
+              </button>
+            )}
             {/* Picking a folder stays live mid-turn — it rides the next queued
                 prompt, same as an attachment. Removing is locked while the turn
                 runs so the agent can't lose a folder it's working in. */}
@@ -3078,6 +3092,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               <CodeEditor
                 value={draft}
                 language="markdown"
+                background="field"
                 isDark={isDark}
                 onChange={setDraft}
                 className="flex-1 overflow-auto"
@@ -4461,7 +4476,7 @@ function renderSegments(
         if (imagePath) {
           const imgRelPath = imagePath.startsWith('wolffish-media://')
             ? imagePath
-            : imagePath.replace(/^.*?\.wolffish\/workspace\//, '')
+            : imagePath.replace(/^.*?\.wfc\/workspace\//, '')
           const imgReachable = !imgRelPath.startsWith('/')
           const imgFileName = imagePath.split('/').pop() ?? 'image'
           const imgExt = (imagePath.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
@@ -4561,7 +4576,7 @@ function renderSegments(
           // If the path is outside the workspace (e.g. /tmp/) the regex won't
           // match and relPath stays absolute — render with fileExists=false so
           // the player shows an "unavailable" placeholder.
-          const relPath = media.path.replace(/^.*?\.wolffish\/workspace\//, '')
+          const relPath = media.path.replace(/^.*?\.wfc\/workspace\//, '')
           const fileReachable = !relPath.startsWith('/')
           if (emitOnce(relPath)) {
             if (media.type === 'audio') {
@@ -5294,7 +5309,7 @@ function normalizeFilePathArg(raw: unknown): string | null {
   // Shell / query / email metacharacters never appear in a real file path but
   // are all over command strings, search queries, JIDs and emails.
   if (/["'`|<>;*?@]|&&/.test(s)) return null
-  s = s.replace(/^.*?\.wolffish\/workspace\//, '')
+  s = s.replace(/^.*?\.wfc\/workspace\//, '')
   // After stripping the workspace prefix, anything still absolute (/, ~, C:\)
   // lives outside the workspace and can't be resolved/rendered — drop it.
   if (/^([/~]|[A-Za-z]:\\)/.test(s)) return null
@@ -5330,12 +5345,12 @@ function argFilePaths(args: Record<string, unknown> | undefined): string[] {
 // Fold an absolute path that lives inside the workspace down to the relative
 // form user uploads and arg-scanned files use, so the SAME file collapses in
 // dedup no matter which source named it: a marker delivery gives an absolute
-// path (send_file emits `/…/.wolffish/workspace/files/x.pdf`) while the arg
+// path (send_file emits `/…/.wfc/workspace/files/x.pdf`) while the arg
 // scan gives `files/x.pdf`. Without this the file appears twice. Non-workspace,
 // already-relative, and wolffish-media:// values pass through unchanged.
 function toWorkspaceRelative(p: string): string {
   if (p.startsWith('wolffish-media://')) return p
-  return p.replace(/^.*?\.wolffish\/workspace\//, '')
+  return p.replace(/^.*?\.wfc\/workspace\//, '')
 }
 
 /**

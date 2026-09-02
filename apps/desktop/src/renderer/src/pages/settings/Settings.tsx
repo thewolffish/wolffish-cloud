@@ -1,29 +1,11 @@
-import {
-  AnthropicLogo,
-  BraveLogo,
-  DeepSeekLogo,
-  GoogleLogo,
-  KimiLogo,
-  MimoLogo,
-  MiniMaxLogo,
-  NotionLogo,
-  OllamaLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  QwenLogo,
-  StepfunLogo,
-  TelegramLogo,
-  XAILogo,
-  ZaiLogo
-} from '@components/core/ProviderLogos'
+import { BraveLogo, GoogleLogo, NotionLogo, TelegramLogo } from '@components/core/ProviderLogos'
 import { RTL_LOCALES, type SupportedLocale } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { CapabilitiesPanel } from '@pages/settings/CapabilitiesPanel'
-import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
+import { ModelsPanel } from '@pages/settings/ModelsPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
 import { ReflectionPanel } from '@pages/settings/ReflectionPanel'
 import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
@@ -41,7 +23,6 @@ import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
 import { MobilePanel } from '@pages/settings/MobilePanel'
 import { TelegramPanel } from '@pages/settings/TelegramPanel'
 import { TextToSpeechPanel } from '@pages/settings/TextToSpeechPanel'
-import { UpdatesPanel } from '@pages/settings/UpdatesPanel'
 import { UsagePanel } from '@pages/settings/UsagePanel'
 import { VariablesPanel } from '@pages/settings/VariablesPanel'
 import { WhatsAppPanel } from '@pages/settings/WhatsAppPanel'
@@ -51,15 +32,13 @@ import { useLocale } from '@providers/locale/useLocale'
 import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
 import {
   AiMagicIcon,
-  Video01Icon,
   AnalyticsUpIcon,
+  Video01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
-  ArrowUp02Icon,
   BrainIcon,
   BrowserIcon,
   BubbleChatIcon,
-  CloudIcon,
   ComputerIcon,
   ComputerTerminal01Icon,
   Database02Icon,
@@ -78,10 +57,8 @@ import {
 } from 'hugeicons-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { IconType } from 'react-icons'
 
 import { prefetchCapabilityGate } from '@pages/settings/capabilityGate'
-import { PanelBackChevron } from '@pages/settings/drillNav'
 import { SettingsCardGrid } from '@pages/settings/SettingsCardGrid'
 import {
   consumeNextTab,
@@ -107,7 +84,6 @@ const TABS: Tab[] = [
   { key: 'knowledge', icon: <DnaIcon size={18} />, labelKey: 'settings.tabs.knowledge' },
   { key: 'usage', icon: <AnalyticsUpIcon size={18} />, labelKey: 'settings.tabs.usage' },
   { key: 'data', icon: <Database02Icon size={18} />, labelKey: 'settings.tabs.data' },
-  { key: 'updates', icon: <ArrowUp02Icon size={18} />, labelKey: 'settings.tabs.updates' },
   { key: 'wolffish', icon: <AiMagicIcon size={18} />, labelKey: 'settings.tabs.wolffish' },
   { key: 'appearance', icon: <PaintBoardIcon size={18} />, labelKey: 'settings.tabs.appearance' }
 ]
@@ -116,8 +92,6 @@ const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
 
 type SettingsSnapshot = {
   tab: TabKey
-  // null means the tab's card grid; a value means that card is drilled open.
-  provider: Provider | null
   channel: Channel
   service: Service | null
   knowledgeTab: KnowledgeTab
@@ -132,8 +106,6 @@ function restoreSnapshot(
   const s = cfg?.lastSettingsState
   const result: SettingsSnapshot = {
     tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'channels',
-    provider:
-      s?.provider && PROVIDERS.includes(s.provider as Provider) ? (s.provider as Provider) : null,
     channel:
       s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'inapp',
     service: s?.service && SERVICES.includes(s.service as Service) ? (s.service as Service) : null,
@@ -162,7 +134,6 @@ export function Settings(): React.JSX.Element {
   const [active, setActiveRaw] = useState<TabKey>(() => {
     return consumeNextTab() ?? snapshot.tab
   })
-  const [provider, setProviderRaw] = useState<Provider | null>(snapshot.provider)
   const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
   const [service, setServiceRaw] = useState<Service | null>(snapshot.service)
   const [knowledgeTab, setKnowledgeTabRaw] = useState<KnowledgeTab>(snapshot.knowledgeTab)
@@ -171,30 +142,15 @@ export function Settings(): React.JSX.Element {
     (key: TabKey) => {
       setActiveRaw(key)
       const next: SettingsSnapshot = { ...(memo ?? snapshot), tab: key }
-      // Activating Models or Services always lands on the card grid — the
-      // sidebar tab is the way back out of a drilled-open card.
-      if (key === 'model') {
-        next.provider = null
-        setProviderRaw(null)
-        persistField('provider', '')
-      } else if (key === 'services') {
+      // Activating Services always lands on the card grid — the sidebar
+      // tab is the way back out of a drilled-open card.
+      if (key === 'services') {
         next.service = null
         setServiceRaw(null)
         persistField('service', '')
       }
       memo = next
       persistField('tab', key)
-    },
-    [snapshot]
-  )
-
-  // The provider panels link to the Brain page for model selection.
-
-  const setProvider = useCallback(
-    (p: Provider | null) => {
-      setProviderRaw(p)
-      memo = { ...(memo ?? snapshot), provider: p }
-      persistField('provider', p ?? '')
     },
     [snapshot]
   )
@@ -226,41 +182,6 @@ export function Settings(): React.JSX.Element {
     [snapshot]
   )
 
-  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void window.api.ollama.detect().then((r) => {
-      if (!cancelled) setOllamaReachable(r.reachable)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  // Cloud providers with a saved key get their cloud badge tinted on the
-  // grid card. provider:updated fires on every save/remove, so the set stays
-  // current while the user edits keys in the panels.
-  const [keyedProviders, setKeyedProviders] = useState<ReadonlySet<string>>(new Set())
-
-  useEffect(() => {
-    let cancelled = false
-    const reload = (): void => {
-      void window.api.provider.list().then((entries) => {
-        if (cancelled) return
-        setKeyedProviders(
-          new Set(entries.filter((e) => e.apiKey.trim().length > 0).map((e) => e.id))
-        )
-      })
-    }
-    reload()
-    const off = window.api.provider.onUpdated(reload)
-    return () => {
-      cancelled = true
-      off()
-    }
-  }, [])
-
   // Warm up the Google Workspace snapshot and the capability gate the
   // moment Settings opens, so by the time the user opens a service card
   // the data is already populated and the panel renders without a flash.
@@ -275,7 +196,6 @@ export function Settings(): React.JSX.Element {
   const ServicePanel = service !== null ? SERVICE_PANELS[service] : null
 
   // Stable context values for the drilled panels' title-row back chevrons.
-  const backToProviders = useCallback(() => setProvider(null), [setProvider])
   const backToServices = useCallback(() => setService(null), [setService])
 
   return (
@@ -399,9 +319,6 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'appearance'}>
           <AppearancePanel />
         </TabPanel>
-        <TabPanel active={active === 'updates'}>
-          <UpdatesPanel />
-        </TabPanel>
         <TabPanel active={active === 'wolffish'}>
           <WolffishPanel />
         </TabPanel>
@@ -423,50 +340,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'data'}>
           <DataPanel />
         </TabPanel>
-        {active === 'model' && provider === null && (
-          <SettingsCardGrid
-            title={t('settings.model.titleWithCount', { count: PROVIDERS.length })}
-            subtitle={t('settings.model.subtitle')}
-            searchPlaceholder={t('settings.model.searchPlaceholder')}
-            emptyLabel={t('settings.model.noMatches')}
-            cards={PROVIDERS.map((p) => {
-              const Logo = PROVIDER_ICONS[p]
-              return {
-                id: p,
-                title: t(`settings.model.providers.${p}`),
-                description: t(`settings.model.providers.descriptions.${p}`),
-                glyph: <Logo size={20} />,
-                badge:
-                  p === 'ollama' ? undefined : (
-                    <CloudIcon
-                      size={14}
-                      className={cn(
-                        'shrink-0',
-                        keyedProviders.has(p)
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : 'text-muted'
-                      )}
-                      aria-label={t('settings.model.cloudBadge')}
-                    />
-                  )
-              }
-            })}
-            onOpen={(id) => setProvider(id as Provider)}
-          />
-        )}
-        {active === 'model' && provider !== null && (
-          <DrillBackContext.Provider value={backToProviders}>
-            {provider === 'ollama' ? (
-              ollamaReachable === false ? (
-                <OllamaNotAvailableNotice goTo={goTo} t={t} />
-              ) : (
-                <ModelPicker />
-              )
-            ) : (
-              <CloudProviderPanel provider={provider} />
-            )}
-          </DrillBackContext.Provider>
-        )}
+        <TabPanel active={active === 'model'}>
+          <ModelsPanel />
+        </TabPanel>
         {active === 'services' && service === null && (
           <SettingsCardGrid
             title={t('settings.services.titleWithCount', { count: SERVICES.length })}
@@ -489,12 +365,6 @@ export function Settings(): React.JSX.Element {
         )}
         <TabPanel active={active === 'channels' && channel === 'mobile'}>
           <MobilePanel />
-        </TabPanel>
-        <TabPanel active={active === 'channels' && channel === 'telegram'}>
-          <TelegramPanel />
-        </TabPanel>
-        <TabPanel active={active === 'channels' && channel === 'whatsapp'}>
-          <WhatsAppPanel />
         </TabPanel>
         <TabPanel active={active === 'channels' && channel === 'inapp'}>
           <InAppPanel />
@@ -522,54 +392,6 @@ function TabPanel({
 }): React.JSX.Element | null {
   if (!active) return null
   return <>{children}</>
-}
-
-type Provider =
-  | 'ollama'
-  | 'anthropic'
-  | 'openai'
-  | 'openrouter'
-  | 'deepseek'
-  | 'mimo'
-  | 'kimi'
-  | 'minimax'
-  | 'xai'
-  | 'qwen'
-  | 'stepfun'
-  | 'zai'
-// Ollama leads the grid — the local, no-key option comes before any cloud
-// provider card.
-const PROVIDERS: Provider[] = [
-  'ollama',
-  'qwen',
-  'mimo',
-  'zai',
-  'deepseek',
-  'kimi',
-  'minimax',
-  'stepfun',
-  'anthropic',
-  'xai',
-  'openai',
-  'openrouter'
-]
-
-const PROVIDER_ICONS: Record<
-  Provider,
-  IconType | React.ComponentType<{ size?: number; className?: string }>
-> = {
-  ollama: OllamaLogo,
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo
 }
 
 type NavIconComponent = React.ComponentType<{ size?: number }>
@@ -606,18 +428,16 @@ function NavIcon({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Element 
   )
 }
 
-type Channel = 'inapp' | 'cli' | 'mobile' | 'browser' | 'telegram' | 'whatsapp'
+type Channel = 'inapp' | 'cli' | 'mobile' | 'browser'
 // Wolffish's own surfaces first (In-App, CLI, Mobile, Browser), then the
 // external messengers.
-const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'browser', 'telegram', 'whatsapp']
+const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'browser']
 
 const CHANNEL_ICONS: Record<Channel, NavIconComponent> = {
   inapp: ComputerIcon,
   cli: ComputerTerminal01Icon,
   mobile: SmartPhone01Icon,
-  browser: BrowserIcon,
-  telegram: TelegramLogo,
-  whatsapp: WhatsappIcon
+  browser: BrowserIcon
 }
 
 type KnowledgeTab = 'compaction' | 'reflection'
@@ -627,6 +447,8 @@ type Service =
   | 'brave'
   | 'notion'
   | 'github'
+  | 'telegram'
+  | 'whatsapp'
   | 'google'
   | 'memes'
   | 'video'
@@ -641,6 +463,8 @@ type Service =
 const SERVICES: Service[] = [
   'brave',
   'google',
+  'telegram',
+  'whatsapp',
   'memes',
   'video',
   'notion',
@@ -652,6 +476,8 @@ const SERVICES: Service[] = [
 
 const SERVICE_ICONS: Record<Service, NavIconComponent> = {
   brave: BraveLogo,
+  telegram: TelegramLogo,
+  whatsapp: WhatsappIcon,
   notion: NotionLogo,
   github: GithubIcon,
   google: GoogleLogo,
@@ -664,6 +490,8 @@ const SERVICE_ICONS: Record<Service, NavIconComponent> = {
 
 const SERVICE_PANELS: Record<Service, React.ComponentType> = {
   brave: BravePanel,
+  telegram: TelegramPanel,
+  whatsapp: WhatsAppPanel,
   notion: NotionPanel,
   github: GitHubPanel,
   google: GooglePanel,
@@ -687,49 +515,6 @@ function CardGlyph({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Elemen
     <span className="flex h-5 w-5 items-center justify-center">
       <Icon size={size} />
     </span>
-  )
-}
-
-function OllamaNotAvailableNotice({
-  goTo,
-  t
-}: {
-  goTo: (screen: 'ollama-setup', returnTo: 'settings') => void
-  t: (k: string) => string
-}): React.JSX.Element {
-  return (
-    <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
-      <div className="flex w-full max-w-2xl flex-col gap-6">
-        <header className="flex flex-col gap-2">
-          <div className="flex items-center gap-1.5">
-            <PanelBackChevron />
-            <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('settings.model.providers.ollama')}
-            </h1>
-          </div>
-          <p className="text-muted text-sm leading-relaxed">
-            {t('settings.model.ollamaNotAvailable.subtitle')}
-          </p>
-        </header>
-        <section className="border-border bg-surface flex flex-col items-center gap-4 rounded-2xl border p-8 text-center">
-          <OllamaLogo size={36} className="text-muted" />
-          <p className="text-fg text-sm leading-relaxed">
-            {t('settings.model.ollamaNotAvailable.description')}
-          </p>
-          <button
-            type="button"
-            onClick={() => goTo('ollama-setup', 'settings')}
-            className={cn(
-              'bg-primary text-primary-fg cursor-pointer rounded-lg px-5 py-2 text-sm font-medium',
-              'hover:brightness-110',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-            )}
-          >
-            {t('settings.model.ollamaNotAvailable.setup')}
-          </button>
-        </section>
-      </div>
-    </div>
   )
 }
 

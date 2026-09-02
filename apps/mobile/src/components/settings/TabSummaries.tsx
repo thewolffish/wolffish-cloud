@@ -273,13 +273,15 @@ export function UpdatesSummary(): React.JSX.Element {
 }
 
 /**
- * Preferences — whether the desktop comes up on its own, and whether the agent
- * still stops to ask, in the panel's own order.
+ * Preferences — whether the desktop comes up on its own, and whether the
+ * credentials guard is holding, in the panel's own order. (Bypass used to be
+ * the second half; it moved to the chat controls with the model selection,
+ * so the tab's summary follows the tab.)
  *
  * Both halves are stated in colour rather than merely printed: these are the
  * two preferences whose off state changes what the machine does on its own —
- * one run stops to ask, the other never starts — and a word in amber says so
- * from the list, without opening the tab.
+ * one never starts by itself, the other will type secrets when asked — and a
+ * word in amber says so from the list, without opening the tab.
  *
  * Two Texts and a separator node rather than one string, so each half carries
  * its own tone and RTL mirrors the pair by flex order instead of by where the
@@ -288,14 +290,16 @@ export function UpdatesSummary(): React.JSX.Element {
 export function PreferencesSummary(): React.JSX.Element {
   const { t } = useTranslation()
   const startup = useConfigValue('launchAtStartup')
-  const bypass = useConfigValue('bypassPermissions')
+  const credentials = useConfigValue('blockCredentials')
   const state = (on: boolean): string => (on ? t('settings.toggle.on') : t('settings.toggle.off'))
   const tone = (on: boolean): 'ok' | 'warn' => (on ? 'ok' : 'warn')
   return (
     <View className="max-w-[60%] shrink flex-row items-center gap-1">
       <Note tone={tone(startup)}>{`${t('settings.summary.startup')} ${state(startup)}`}</Note>
       <Text className="text-muted shrink-0 font-sans text-xs">·</Text>
-      <Note tone={tone(bypass)}>{`${t('settings.summary.bypass')} ${state(bypass)}`}</Note>
+      <Note
+        tone={tone(credentials)}
+      >{`${t('settings.summary.credentials')} ${state(credentials)}`}</Note>
     </View>
   )
 }

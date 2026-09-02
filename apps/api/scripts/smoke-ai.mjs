@@ -15,8 +15,8 @@ const BASE = process.env.API_BASE ?? 'http://localhost:8787'
 const stamp = Date.now().toString(36)
 const ownerEmail = `aiowner-${stamp}@wolffi.sh`
 const PW = 'ai-owner-pass-1'
-const MODEL = 'deepseek-ai/DeepSeek-V3.1'
-const OTHER = 'deepseek-ai/DeepSeek-R1-0528'
+const MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+const OTHER = 'deepseek-ai/DeepSeek-V4-Pro-0813'
 
 const salt = '00112233445566778899aabbccddeeff'
 const hash = pbkdf2Sync(PW, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').toString('hex')
@@ -93,6 +93,47 @@ check(
     streamRes.headers.get('content-type')?.includes('event-stream') &&
     streamText.includes('Hello ') &&
     streamText.includes('[DONE]')
+)
+
+// Thinking modes: the router forwards reasoning_effort verbatim and the
+// upstream's reasoning_content comes back untouched, in both wire shapes.
+const thinkOn = await api('/ai/v1/chat/completions', {
+  token: tok,
+  body: { model: MODEL, reasoning_effort: 'high', messages: [{ role: 'user', content: 'hi' }] }
+})
+check(
+  'reasoning_effort=high returns reasoning_content (JSON)',
+  thinkOn.status === 200 && thinkOn.json?.choices?.[0]?.message?.reasoning_content?.length > 0,
+  JSON.stringify(thinkOn.json)
+)
+const thinkOff = await api('/ai/v1/chat/completions', {
+  token: tok,
+  body: { model: MODEL, reasoning_effort: 'none', messages: [{ role: 'user', content: 'hi' }] }
+})
+check(
+  'reasoning_effort=none returns no reasoning_content',
+  thinkOff.status === 200 && thinkOff.json?.choices?.[0]?.message?.reasoning_content === undefined
+)
+const thinkStream = await fetch(`${BASE}/ai/v1/chat/completions`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
+  body: JSON.stringify({
+    model: MODEL,
+    reasoning_effort: 'max',
+    messages: [{ role: 'user', content: 'hi' }],
+    stream: true
+  })
+})
+check(
+  'streamed reasoning_content passes through',
+  thinkStream.status === 200 && (await thinkStream.text()).includes('"reasoning_content"')
+)
+check(
+  'invalid reasoning_effort surfaces as upstream_error',
+  (await api('/ai/v1/chat/completions', {
+    token: tok,
+    body: { model: MODEL, reasoning_effort: 'banana', messages: [{ role: 'user', content: 'hi' }] }
+  })).status === 502
 )
 
 // Disallowed model refused with the allowed list attached

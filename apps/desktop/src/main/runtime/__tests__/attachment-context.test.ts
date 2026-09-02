@@ -18,7 +18,7 @@
  *     one of the two screens stale, which is invisible until someone looks.
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/attachment-context.test.ts
  */
@@ -53,7 +53,7 @@ function ok(label: string, cond: boolean, detail?: string): void {
   console.error(`FAIL ${label}${detail ? `: ${detail}` : ''}`)
 }
 
-const WORKSPACE = path.join(TEST_HOME, '.wolffish', 'workspace')
+const WORKSPACE = path.join(TEST_HOME, '.wfc', 'workspace')
 
 async function run(): Promise<void> {
   fs.mkdirSync(path.join(WORKSPACE, 'brain'), { recursive: true })

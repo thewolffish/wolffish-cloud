@@ -1,6 +1,6 @@
 {
-  "name": "wolffish-extension",
-  "version": "0.1.58",
+  "name": "wolffish-cloud-extension",
+  "version": "0.2.0",
   "description": "Browser capability for the Wolffish AI agent",
   "license": "MIT",
   "author": "Younes Alturkey",

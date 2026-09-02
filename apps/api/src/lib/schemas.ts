@@ -46,8 +46,21 @@ export const LoginSchema = z.object({
     .optional()
 })
 
-export const PasswordChangeSchema = z.object({
+export const ResetRequestSchema = z.object({
+  email: z.string().email().max(320)
+})
+
+export const ResetConfirmSchema = z.object({
+  email: z.string().email().max(320),
+  code: z.string().regex(/^[0-9]{6}$/, '6-digit code'),
   new_password: z.string().min(10, 'min 10 characters').max(128)
+})
+
+export const PasswordChangeSchema = z.object({
+  new_password: z.string().min(10, 'min 10 characters').max(128),
+  // Required when the caller holds a normal session (voluntary change);
+  // the forced first-login flow's change token carries no password to prove.
+  current_password: z.string().min(1).max(256).optional()
 })
 
 export const RefreshSchema = z.object({
@@ -80,7 +93,9 @@ export const ClearPinSchema = z.object({ device_id: idStr.optional() }).nullable
 
 export const PolicyPutSchema = z.object({
   allowed_models: modelList.nullable().optional(),
-  daily_token_cap: cap.nullable().optional()
+  daily_token_cap: cap.nullable().optional(),
+  // Searches per day; null/absent = org default, 0 = unlimited.
+  daily_search_cap: cap.nullable().optional()
 })
 
 export const OrgPatchSchema = z
@@ -89,15 +104,64 @@ export const OrgPatchSchema = z
     default_model: modelId.optional(),
     default_allowed_models: modelList.optional(),
     user_daily_token_cap: cap.optional(),
-    org_monthly_token_cap: cap.optional()
+    org_monthly_token_cap: cap.optional(),
+    search_enabled: z.boolean().optional(),
+    user_daily_search_cap: cap.optional(),
+    org_monthly_search_cap: cap.optional()
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: 'no fields to update' })
+
+// ── search ───────────────────────────────────────────────────────────────
+
+/**
+ * One web search. `count` is results per query (Brave's ceiling is 20);
+ * the locale knobs are pass-through and validated to Brave's shapes so a
+ * malformed value fails here, not as an opaque upstream 4xx.
+ */
+export const SearchSchema = z.object({
+  query: z.string().trim().min(1, 'query required').max(400),
+  count: z.number().int().min(1).max(20).optional(),
+  country: z.string().regex(/^[A-Za-z]{2}$/, 'two-letter country code').optional(),
+  search_lang: z
+    .string()
+    .regex(/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/, 'language code such as en or pt-br')
+    .optional(),
+  freshness: z.enum(['pd', 'pw', 'pm', 'py']).optional()
+})
+
+export const ProfilePatchSchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    position: z.string().max(120).optional(),
+    phone: z
+      .string()
+      .max(32)
+      .regex(/^[+0-9 ()-]*$/, 'digits, spaces, + ( ) - only')
+      .optional(),
+    bio: z.string().max(500).optional()
   })
   .refine((b) => Object.keys(b).length > 0, { message: 'no fields to update' })
 
 // ── sync ─────────────────────────────────────────────────────────────────
 
 export const ConfigPutSchema = z.object({
-  // The whole per-user config blob; 64 KB ceiling on the serialized form.
-  config: plainObject.refine((v) => JSON.stringify(v).length <= 65_536, 'must serialize to <= 65536 bytes')
+  // The whole per-user config blob. 512 KB ceiling: the blob carries every
+  // integration credential plus per-server MCP OAuth state, so the old 64 KB
+  // cap was reachable in real configs — and a client that hits the ceiling
+  // stops syncing config entirely. Bounded still, so one bug can't bloat
+  // the row without limit.
+  config: plainObject.refine(
+    (v) => JSON.stringify(v).length <= 524_288,
+    'must serialize to <= 524288 bytes'
+  )
+})
+
+/**
+ * Tombstone request for path-named file rows — the delete half of the blob
+ * sweep. Names are workspace-relative paths, same field the manifest serves.
+ */
+export const FilesDeleteSchema = z.object({
+  names: z.array(z.string().min(1).max(500)).min(1).max(500)
 })
 
 export const BatchItemSchema = z.discriminatedUnion('type', [
@@ -115,13 +179,15 @@ export const BatchItemSchema = z.discriminatedUnion('type', [
     conversation_id: idStr,
     seq: z.number().int().min(0),
     kind: z.string().max(64).optional(),
-    content: boundedJson(131_072),
+    // 400 KB: comfortably above the client's 300 KB slim threshold, so a
+    // message it chose to send whole is never rejected for size.
+    content: boundedJson(409_600),
     created_at: isoDate
   }),
   z.object({
     type: z.literal('episode'),
     id: idStr,
-    content: boundedJson(131_072),
+    content: boundedJson(409_600),
     occurred_at: isoDate
   })
 ])

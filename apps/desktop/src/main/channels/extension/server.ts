@@ -28,7 +28,7 @@ const IDENTITY_TIMEOUT_MS = 10_000
 
 // ─── Debug Logger ───────────────────────────────────────────────────────────
 
-const DEBUG_DIR = join(homedir(), '.wolffish', 'workspace', 'logs', 'extension', '.debug')
+const DEBUG_DIR = join(homedir(), '.wfc', 'workspace', 'logs', 'extension', '.debug')
 let debugReady: Promise<void> | null = null
 
 function ensureDebugDir(): Promise<void> {
@@ -152,7 +152,7 @@ export class ExtensionServer {
   /** clientId → conversation last events_sync'd to that client's panel. */
   private syncedByClient = new Map<string, string>()
   private currentTitle: string | null = null
-  private currentPort = 23151
+  private currentPort = 23152
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
 
   setStatusChangeHandler(handler: (status: ExtensionServerStatus) => void): void {

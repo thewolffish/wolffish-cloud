@@ -3,6 +3,9 @@ import { cn } from '@lib/utils/cn'
 import type { WeekStartsOn } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Avatar } from '@components/common/profile/Avatar'
+import { Building03Icon } from 'hugeicons-react'
+import { useProfile } from '@lib/profile/profileStore'
 import { useTranslation } from 'react-i18next'
 
 export function WolffishPanel(): React.JSX.Element {
@@ -16,10 +19,6 @@ export function WolffishPanel(): React.JSX.Element {
   const [blockCredentials, setBlockCredentials] = useState<boolean>(
     config?.safety?.blockCredentials ?? false
   )
-  const [bypass, setBypass] = useState<boolean>(config?.safety?.bypassPermissions ?? false)
-  const [restrictModels, setRestrictModels] = useState<boolean>(
-    config?.llm.restrictPowerfulModels ?? true
-  )
   const [weekStartsOn, setWeekStartsOnState] = useState<WeekStartsOn>(config?.weekStartsOn ?? 1)
   // Voice replies (default ON): voice prompt in → spoken reply out. Lives in
   // config under tts.voiceReplies but is a PREFERENCE about how Wolffish
@@ -27,13 +26,7 @@ export function WolffishPanel(): React.JSX.Element {
   // instructions are included if and only if this is on.
   const [voiceReplies, setVoiceReplies] = useState<boolean>(true)
   const [savingKey, setSavingKey] = useState<
-    | 'launchAtStartup'
-    | 'blockCredentials'
-    | 'bypass'
-    | 'restrictModels'
-    | 'weekStart'
-    | 'voiceReplies'
-    | null
+    'launchAtStartup' | 'blockCredentials' | 'weekStart' | 'voiceReplies' | null
   >(null)
 
   // Seed the four config-backed switches from a fresh value set. Reused by
@@ -42,10 +35,6 @@ export function WolffishPanel(): React.JSX.Element {
   // item, not the config mirror of it.
   const seedFromPatch = useCallback((patch: Record<string, unknown>): void => {
     if (typeof patch.blockCredentials === 'boolean') setBlockCredentials(patch.blockCredentials)
-    if (typeof patch.bypassPermissions === 'boolean') setBypass(patch.bypassPermissions)
-    if (typeof patch.restrictPowerfulModels === 'boolean') {
-      setRestrictModels(patch.restrictPowerfulModels)
-    }
     if (patch.weekStartsOn === 0 || patch.weekStartsOn === 1) {
       setWeekStartsOnState(patch.weekStartsOn)
     }
@@ -66,8 +55,6 @@ export function WolffishPanel(): React.JSX.Element {
       if (cancelled || !s?.config) return
       seedFromPatch({
         blockCredentials: s.config.safety?.blockCredentials ?? false,
-        bypassPermissions: s.config.safety?.bypassPermissions ?? false,
-        restrictPowerfulModels: s.config.llm.restrictPowerfulModels ?? true,
         weekStartsOn: s.config.weekStartsOn ?? 1
       })
     })
@@ -140,30 +127,6 @@ export function WolffishPanel(): React.JSX.Element {
     }
   }
 
-  const onChangeBypass = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === bypass) return
-    setSavingKey('bypass')
-    try {
-      await window.api.runtime.setBypassPermissions(next)
-      setBypass(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  const onChangeRestrictModels = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === restrictModels) return
-    setSavingKey('restrictModels')
-    try {
-      await window.api.runtime.setRestrictPowerfulModels(next)
-      setRestrictModels(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
   const onChangeVoiceReplies = async (next: boolean): Promise<void> => {
     if (savingKey !== null || next === voiceReplies) return
     setSavingKey('voiceReplies')
@@ -197,6 +160,8 @@ export function WolffishPanel(): React.JSX.Element {
           <p className="text-muted text-sm leading-relaxed">{t('settings.wolffish.subtitle')}</p>
         </header>
 
+        <AccountCard />
+
         <section className="bg-surface border-border flex flex-col gap-6 rounded-2xl border p-6">
           {launchAtStartup !== null && startupActive !== null ? (
             <StartupSetting
@@ -216,22 +181,7 @@ export function WolffishPanel(): React.JSX.Element {
             onChange={onChangeBlockCredentials}
             disabled={savingKey === 'blockCredentials'}
           />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.bypassPermissions.label')}
-            description={t('settings.wolffish.bypassPermissions.description')}
-            value={bypass}
-            onChange={onChangeBypass}
-            disabled={savingKey === 'bypass'}
-          />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.restrictPowerfulModels.label')}
-            description={t('settings.wolffish.restrictPowerfulModels.description')}
-            value={restrictModels}
-            onChange={onChangeRestrictModels}
-            disabled={savingKey === 'restrictModels'}
-          />
+
           <div className="border-border/60 border-t" />
           <SettingToggle
             label={t('settings.wolffish.voiceReplies.label')}
@@ -442,5 +392,59 @@ function StartupSetting({
         {t('settings.wolffish.launchAtStartup.description')}
       </p>
     </div>
+  )
+}
+
+/**
+ * Who this device is signed in as, and the way out. The session (and its
+ * tokens) live in the main process; this card only renders the redacted
+ * state and calls signOut — which drops every surface back to the gate.
+ */
+function AccountCard(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const { auth } = useFlow()
+  const { avatar } = useProfile()
+  const [busy, setBusy] = useState(false)
+  if (!auth?.user) return null
+  return (
+    <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+      <h2 className="text-fg text-sm font-semibold">{t('settings.wolffish.account.title')}</h2>
+      <div className="flex items-center gap-3">
+        <Avatar name={auth.user.name} size={44} src={avatar} />
+        <div className="min-w-0 flex-1">
+          <p className="text-fg truncate text-sm font-semibold">{auth.user.name}</p>
+          <p className="text-muted truncate text-xs" dir="ltr">
+            {auth.user.email}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          <span className="border-primary/30 bg-primary/10 text-primary inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium">
+            {auth.user.role}
+          </span>
+          {auth.orgName ? (
+            <span className="border-border bg-border/30 text-fg inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium">
+              <Building03Icon size={11} className="text-muted shrink-0" />
+              {auth.orgName}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="border-border/60 flex items-center justify-between gap-4 border-t pt-4">
+        <p className="text-muted flex-1 text-xs leading-relaxed">
+          {t('settings.wolffish.account.signOutDescription')}
+        </p>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            void window.api.auth.signOut().finally(() => setBusy(false))
+          }}
+          className="border-border text-fg hover:bg-border/40 shrink-0 cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium disabled:opacity-60"
+        >
+          {t('settings.wolffish.account.signOut')}
+        </button>
+      </div>
+    </section>
   )
 }

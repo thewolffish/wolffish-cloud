@@ -882,7 +882,7 @@ function requireBrowserPolyfill() {
   })(browserPolyfill$1)), browserPolyfill$1.exports;
 }
 requireBrowserPolyfill();
-const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 15e3, COMMAND_TIMEOUT_MS = 3e4, CONTENT_SCRIPT_PING_TIMEOUT_MS = 500, WolffishCommands = {
+const DEFAULT_PORT = 23152, LOG_PREFIX = "[Wolffish Cloud]", HEARTBEAT_INTERVAL_MS = 15e3, COMMAND_TIMEOUT_MS = 3e4, CONTENT_SCRIPT_PING_TIMEOUT_MS = 500, WolffishCommands = {
   // Navigation
   BROWSER_NAVIGATE: "browser_navigate",
   BROWSER_BACK: "browser_back",
@@ -1134,7 +1134,7 @@ const checkStoragePermission = (e) => {
     getSnapshot: g,
     subscribe: l
   };
-}, storage = createStorage("wolffish-connection-config", { port: 23151 }, {
+}, storage = createStorage("wolffish-connection-config", { port: 23152 }, {
   storageEnum: StorageEnum.Local
 }), wolffishConnectionStorage = {
   ...storage

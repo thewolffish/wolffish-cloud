@@ -45,7 +45,7 @@ import { runTurn } from '../lib/turn.mjs'
 const PAGE_SIZE = 25
 
 /**
- * `wolffish conversations` — the app's History screen.
+ * `wfc conversations` — the app's History screen.
  *
  * Bare lists; a subcommand acts on one. A bare id is treated as `show <id>`,
  * because that is what someone who just read the listing and typed the id
@@ -63,7 +63,7 @@ export async function conversations(client, args, flags = {}, resume = null) {
     })
   }
   if (sub === 'show' || sub === 'print' || sub === 'read') {
-    if (!rest[0]) return usageLine('wolffish conversations show <id> [--tools] [--last <n>]')
+    if (!rest[0]) return usageLine('wfc conversations show <id> [--tools] [--last <n>]')
     return showConversation(client, rest[0], {
       verbose: flags.verbose,
       json: flags.json,
@@ -73,15 +73,15 @@ export async function conversations(client, args, flags = {}, resume = null) {
     })
   }
   if (sub === 'rm' || sub === 'delete') {
-    if (!rest[0]) return usageLine('wolffish conversations rm <id>')
+    if (!rest[0]) return usageLine('wfc conversations rm <id>')
     return deleteConversation(client, rest[0])
   }
   if (sub === 'diagnose' || sub === 'diagnostics') {
-    if (!rest[0]) return usageLine('wolffish conversations diagnose <id>')
+    if (!rest[0]) return usageLine('wfc conversations diagnose <id>')
     return exportDiagnostics(client, rest[0])
   }
   if (sub === 'resume' || sub === 'open' || sub === 'continue') {
-    if (!resume) return usageLine('wolffish resume <id>')
+    if (!resume) return usageLine('wfc resume <id>')
     const id = rest[0] ? await resolveConversationId(client, rest[0]) : null
     if (rest[0] && !id) {
       out(c.red(`no conversation matching "${rest[0]}"`))
@@ -118,7 +118,7 @@ export function shortConversationId(id) {
 }
 
 /**
- * `wolffish conversations` — navigable, like every other list here.
+ * `wfc conversations` — navigable, like every other list here.
  *
  * It was the one screen that printed a table and a footer naming commands to
  * retype. That is bearable for five rows and absurd for a thousand: the id
@@ -128,7 +128,7 @@ export function shortConversationId(id) {
  * the next page.
  *
  * Piped or scripted it prints the table and returns, exactly as before, so
- * `wolffish conversations --json` and `| grep` are untouched.
+ * `wfc conversations --json` and `| grep` are untouched.
  */
 export async function listConversations(client, { json, limit, all = false, resume = null } = {}) {
   const conversations = await client.invoke('conversation:list')
@@ -301,7 +301,7 @@ async function openConversation(client, conv, { resume = null } = {}) {
  * what happened is a file. The collector takes tens of seconds and streams
  * `diagnostics:progress`, so the wait is narrated rather than silent.
  *
- * The archive is written inside the workspace either way, so `wolffish view`
+ * The archive is written inside the workspace either way, so `wfc view`
  * and `scp` both reach it; the absolute path is printed for the second.
  */
 export async function exportDiagnostics(client, conversationId) {
@@ -371,7 +371,7 @@ async function exportConversation(client, conv) {
   for (const message of full.messages ?? []) {
     const who = message.role === 'user' ? 'You' : 'Wolffish'
     const text = String(message.content ?? '')
-      .replace(/\[wolffish-output:[^\]]*\]/g, '')
+      .replace(/\[wfc-output:[^\]]*\]/g, '')
       .trim()
     if (!text) continue
     body.push(`## ${who}`, '', text, '')
@@ -451,7 +451,7 @@ export async function resolveConversationId(client, partial) {
  *
  * IT HAS TO FIT. The renderers write as they go, so this dumped an unbounded
  * wall of text past the top of the window with no way to stop it. Paged now,
- * a screenful at a time, exactly like `wolffish view`.
+ * a screenful at a time, exactly like `wfc view`.
  *
  * AND MOSTLY YOU WANT THE END. `--last <n>` takes the most recent n turns,
  * because on a conversation with two hundred messages the useful question is
@@ -673,7 +673,7 @@ async function findIn(client, channel, needle) {
  * cannot use: at a chat prompt those words are a message to the agent, and
  * pressing enter does nothing, so the surface reads as a place you are inside
  * with no way back out. Either the footer is actionable or the list is — this
- * makes it the list, in the same idiom `wolffish settings` already uses:
+ * makes it the list, in the same idiom `wfc settings` already uses:
  * numbers open, blank goes up, and up from the top leaves.
  *
  * Only when someone is there to answer. Piped or scripted, the table prints
@@ -856,14 +856,14 @@ export async function projects(client, args, { json = false } = {}) {
     }
     case 'rename': {
       const title = tail.join(' ').trim()
-      if (!title) return usageLine('wolffish projects rename <id> "<title>"')
+      if (!title) return usageLine('wfc projects rename <id> "<title>"')
       await client.invoke('projects:update', { id: project.id, title })
       out(`${icon.ok()} ${title}`)
       return 0
     }
     case 'icon': {
       const emoji = tail.join(' ').trim()
-      if (!emoji) return usageLine('wolffish projects icon <id> <emoji>')
+      if (!emoji) return usageLine('wfc projects icon <id> <emoji>')
       await client.invoke('projects:update', { id: project.id, icon: emoji })
       out(`${icon.ok()} ${emoji} ${project.title}`)
       return 0
@@ -1373,14 +1373,14 @@ export async function procedures(
     }
     case 'rename': {
       const title = tail.join(' ').trim()
-      if (!title) return usageLine('wolffish procedures rename <id> "<title>"')
+      if (!title) return usageLine('wfc procedures rename <id> "<title>"')
       await client.invoke('procedures:update', { id: procedure.id, title })
       out(`${icon.ok()} ${title}`)
       return 0
     }
     case 'icon': {
       const emoji = tail.join(' ').trim()
-      if (!emoji) return usageLine('wolffish procedures icon <id> <emoji>')
+      if (!emoji) return usageLine('wfc procedures icon <id> <emoji>')
       await client.invoke('procedures:update', { id: procedure.id, icon: emoji })
       out(`${icon.ok()} ${emoji} ${procedure.title}`)
       return 0
@@ -1388,7 +1388,7 @@ export async function procedures(
     case 'mode': {
       const mode = (tail[0] ?? '').toLowerCase()
       if (mode !== 'single' && mode !== 'workflow') {
-        return usageLine('wolffish procedures mode <id> single|workflow')
+        return usageLine('wfc procedures mode <id> single|workflow')
       }
       await client.invoke('procedures:update', { id: procedure.id, mode })
       out(`${icon.ok()} ${procedure.title} runs in ${mode}`)
@@ -1396,7 +1396,7 @@ export async function procedures(
     }
     case 'project': {
       const wanted = tail.join(' ').trim()
-      if (!wanted) return usageLine('wolffish procedures project <id> <project|none>')
+      if (!wanted) return usageLine('wfc procedures project <id> <project|none>')
       if (wanted === 'none' || wanted === 'off') {
         await client.invoke('procedures:update', { id: procedure.id, projectId: '' })
         out(`${icon.ok()} ${procedure.title} is no longer bound to a project`)
@@ -1872,7 +1872,7 @@ export async function automations(client, args, { json = false } = {}) {
   const named = KNOWN_AUTOMATION_VERBS.has(sub)
   const [needle, ...tail] = named ? rest : [sub, ...rest]
   const verb = named ? sub : 'show'
-  if (!needle) return usageLine(`wolffish automations ${verb} "<label>"`)
+  if (!needle) return usageLine(`wfc automations ${verb} "<label>"`)
 
   // An automation is named by its heading — the schedule itself — so a label
   // is the identity here, not an id.
@@ -2005,7 +2005,7 @@ const DOCS = {
 }
 
 /**
- * `wolffish customizations` — the three files that shape the agent.
+ * `wfc customizations` — the three files that shape the agent.
  *
  * The name is the app's own: the config snapshot calls these
  * `CUSTOMIZATION_DOCS` and the phone's screen for them is Customization, so
@@ -2209,7 +2209,7 @@ function flatten(nodes, into = []) {
 }
 
 /**
- * `wolffish files` — the workspace, walked rather than dumped.
+ * `wfc files` — the workspace, walked rather than dumped.
  *
  * It used to print a two-level tree with a footer suggesting `edit <path>`, and
  * that was the whole of it: no way to look INSIDE a file, no way to reach
@@ -2399,11 +2399,11 @@ const maskValue = (value) => {
  * provider keys, the daemon masks secret cards before they cross the socket,
  * and both say why: a terminal is scrollback, tmux buffers and screen shares.
  * A file viewer that reads `config.json` straight off disk walks around all of
- * it, and `wolffish files` now puts that two keystrokes from the top level.
+ * it, and `wfc files` now puts that two keystrokes from the top level.
  *
  * So displaying a file masks; EDITING one does not, because an edit has to
  * round-trip byte-for-byte or it would write the mask back over the key. The
- * escape hatch is explicit: `wolffish view <path> --raw`.
+ * escape hatch is explicit: `wfc view <path> --raw`.
  */
 export function redact(text) {
   let count = 0
@@ -2688,7 +2688,7 @@ function compact(n) {
 const money = (n) => `$${(Number(n) || 0).toFixed(2)}`
 
 /**
- * `wolffish usage` — the Usage panel's numbers, from the Usage panel's calls.
+ * `wfc usage` — the Usage panel's numbers, from the Usage panel's calls.
  *
  * Both of them: `getSummary` is per provider and per model, `getStats` is the
  * spend and activity tiles, and the panel renders them together. An earlier

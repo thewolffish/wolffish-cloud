@@ -42,8 +42,10 @@ wolffish-cloud/
 │   └── site/
 │       ├── landing/ ← wolffish-landing   · marketing site (Next.js)
 │       └── docs/    ← wolffish-docs      · documentation (Mintlify, EN + AR)
-└── packages/
-    └── extension/   ← wolffish-extension · browser capability, bundled into desktop
+├── packages/
+│   └── extension/   ← wolffish-extension · browser capability, bundled into desktop
+└── capabilities/    ← official capability sources — seeded to the org registry
+                       (R2 via api.wolffi.sh), never bundled into clients
 ```
 
 Except `apps/api` — the first genuinely new code — each folder is a clean export of the corresponding personal repo: same code, same READMEs, own lockfiles, with the per-module `LICENSE` files (all identical MIT) collapsed into one root [LICENSE](LICENSE). The carried clients have not been rewired yet.
@@ -64,9 +66,9 @@ The companion phone app (Expo/React Native, iOS + Android). Today it pairs with 
 
 ### `apps/api` — the master (new code, live)
 
-The single choke-point Worker at `api.wolffi.sh` — every request the clients make flows through it. Auth (invite-only, temp password, forced first-login reset, 15-minute signed access tokens, rotating refresh with reuse detection, instant server-side revoke), the model router (OpenAI-compatible `/ai/v1/chat/completions` proxying DeepInfra DeepSeek models behind per-user allowlists, daily/monthly token quotas, and exact usage metering with upstream cost), sync (last-write-wins config, idempotent outbox batches, content-addressed files in R2, one-call bootstrap restore), and the full admin layer as pure API — invites, roles, policies, suspend/revoke, PIN clear, usage, audit. There is deliberately **no separate admin console**: the admin UI lives in the admin's own desktop client, and every admin endpoint re-verifies the role server-side.
+The single choke-point Worker at `api.wolffi.sh` — every request the clients make flows through it. Auth (invite-only, temp password, forced first-login reset, 15-minute signed access tokens, rotating refresh with reuse detection, instant server-side revoke), the model router (OpenAI-compatible `/ai/v1/chat/completions` proxying DeepInfra DeepSeek models behind per-user allowlists, daily/monthly token quotas, and exact usage metering with upstream cost), the web-search lane (`/v1/search` on the org's one Brave Search key, queued fairly across employees by a Durable Object gate in front of the plan's rate limit, with per-user daily and org monthly search caps and per-query metering — no key ever on a device, no query text ever logged), sync (last-write-wins config, idempotent outbox batches, content-addressed files in R2, one-call bootstrap restore), and the full admin layer as pure API — invites, roles, policies, suspend/revoke, PIN clear, usage, audit. There is deliberately **no separate admin console**: the admin UI lives in the admin's own desktop client, and every admin endpoint re-verifies the role server-side.
 
-Single-org by design (the fork is the tenant boundary), backed by D1 (`wfc-master`), KV (`wfc-auth`, `wfc-config`), and R2 (`wfc-blobs`). Ships with a deterministic 50-employee "Wolffish Inc" demo seed and a traffic simulator that drives the real API with no test-mode bypass. Verified by per-layer smoke suites (76 checks against local simulations) plus a 58-check live suite and the 50-employee simulator against the deployed edge.
+Single-org by design (the fork is the tenant boundary), backed by D1 (`wfc-master`), KV (`wfc-auth`, `wfc-config`), and R2 (`wfc-blobs`). Ships with a deterministic 50-employee "Wolffish Inc" demo seed and a traffic simulator that drives the real API with no test-mode bypass. Verified by per-layer smoke suites (76 checks against local simulations) plus a 131-check live suite and the 50-employee simulator against the deployed edge.
 
 ### `apps/site` — the tenant-facing web (from `wolffish-landing` + `wolffish-docs`)
 
@@ -124,7 +126,7 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 
 ## Status & roadmap
 
-**Current state:** the monorepo is carved (desktop, mobile, extension, landing and docs placed unmodified) and **the master API is built and live at `api.wolffi.sh`** — auth, roles, the DeepInfra router, sync, the admin layer, and the seeded 50-employee Wolffish Inc demo org, verified end to end on the deployed edge (58-check live suite + concurrent-employee simulator). No CI/CD or workspace tooling yet.
+**Current state:** the monorepo is carved (desktop, mobile, extension, landing and docs placed unmodified) and **the master API is built and live at `api.wolffi.sh`** — auth, roles, the DeepInfra router, sync, the admin layer, and the seeded 50-employee Wolffish Inc demo org, verified end to end on the deployed edge (131-check live suite + concurrent-employee simulator). No CI/CD or workspace tooling yet.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
@@ -141,7 +143,7 @@ Nothing about the agent's code changes between tenants — only the endpoint and
 Two levels, incremented independently:
 
 - **The monorepo** carries a master version in [VERSION](VERSION) — the number a platform release gets tagged with (`v0.1.0`). It moves when the platform as a whole reaches a new state, not when a single module does.
-- **Each module** versions itself in its own manifest and increments on its own cadence: `apps/api` is at 1.0.0 (shown live at [api.wolffi.sh](https://api.wolffi.sh) and in `/health`), while the carried clients keep the versions they arrived with (desktop 1.0.274, mobile 1.0.48, extension 0.1.58) until wolffish-cloud starts changing them.
+- **Each module** versions itself in its own manifest and increments on its own cadence: `apps/api` moves fastest (shown live at [api.wolffi.sh](https://api.wolffi.sh) and in `/health`), the extension was re-identified as "Wolffish Cloud" at 0.2.0 (own name, own gecko id, own port — it coexists with the personal edition's extension), and the remaining carried clients keep the versions they arrived with (desktop 1.0.274, mobile 1.0.48) until wolffish-cloud starts changing them.
 
 ## Provenance
 

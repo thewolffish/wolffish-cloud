@@ -5,7 +5,7 @@
  * Autostart is the part worth reading. A client that spawns the daemon as an
  * ordinary child would tie the agent's life to the terminal, so closing the
  * SSH session would kill the automations, the channels, and any turn in
- * flight. Detached + `unref()` is what makes `wolffish` a viewport onto a
+ * flight. Detached + `unref()` is what makes `wfc` a viewport onto a
  * process that outlives it, which is the entire premise of running on a VPS.
  */
 import { spawn } from 'node:child_process'
@@ -23,10 +23,10 @@ import { existsSync, readFileSync } from 'node:fs'
 export const SOCKET_PATH =
   process.env.WOLFFISH_SOCKET ||
   (process.platform === 'win32'
-    ? '\\\\.\\pipe\\wolffish-cli'
-    : path.join(os.homedir(), '.wolffish', 'cli.sock'))
+    ? '\\\\.\\pipe\\wfc-cli'
+    : path.join(os.homedir(), '.wfc', 'cli.sock'))
 
-const PID_PATH = path.join(os.homedir(), '.wolffish', 'cli.pid')
+const PID_PATH = path.join(os.homedir(), '.wfc', 'cli.pid')
 
 /**
  * How long one handler call may take before the client gives up. Generous:
@@ -153,7 +153,7 @@ export class DaemonClient {
         if (!this.pending.delete(id)) return
         reject(
           new Error(
-            `the daemon did not answer "${channel}" within ${Math.round(INVOKE_TIMEOUT_MS / 1000)}s — it may be wedged (wolffish service stop, then run any command again)`
+            `the daemon did not answer "${channel}" within ${Math.round(INVOKE_TIMEOUT_MS / 1000)}s — it may be wedged (wfc service stop, then run any command again)`
           )
         )
       }, INVOKE_TIMEOUT_MS)
@@ -242,7 +242,7 @@ export async function startDaemon({ quiet = false } = {}) {
   // Chromium aborts as root unless this is on the command line — the check runs
   // before any of the app's own code, so the switch main appends at startup is
   // read too late. A VPS logs you in as root, which makes this the difference
-  // between `wolffish` working there and dying with a FATAL nobody sees, since
+  // between `wfc` working there and dying with a FATAL nobody sees, since
   // the daemon is spawned detached with its output thrown away.
   args.push('--no-sandbox')
 
@@ -269,7 +269,7 @@ export async function startDaemon({ quiet = false } = {}) {
       client.close()
     }
   }
-  throw new Error('the daemon did not come up in time — check the logs with: wolffish service logs')
+  throw new Error('the daemon did not come up in time — check the logs with: wfc service logs')
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * `wolffish status`, `wolffish service …`, `wolffish path …`.
+ * `wfc status`, `wfc service …`, `wfc path …`.
  *
  * These three exist because a headless install has questions a desktop never
  * asks: is the agent actually running, will it come back after a reboot, and
@@ -84,7 +84,7 @@ export async function status(client, { json, raw = false } = {}) {
       : [])
   ])
   if (!brain?.model)
-    out(c.gray('    wolffish keys set anthropic && wolffish brain anthropic <model>'))
+    out(c.gray('    wfc keys set anthropic && wfc brain anthropic <model>'))
 
   heading('Autostart')
   const auto = snapshot.autostart ?? {}
@@ -97,7 +97,7 @@ export async function status(client, { json, raw = false } = {}) {
     out()
     out(`  ${icon.warn()} ${c.yellow(wrapText(auto.warning, 0).trim())}`)
   }
-  if (!auto.active) out(c.gray('    enable with: wolffish service install'))
+  if (!auto.active) out(c.gray('    enable with: wfc service install'))
 
   heading('Command')
   const p = snapshot.path ?? {}
@@ -113,7 +113,7 @@ export async function status(client, { json, raw = false } = {}) {
   ])
   if (!p.installed) {
     out()
-    out(`  ${icon.warn()} ${c.yellow('run: wolffish path install')}`)
+    out(`  ${icon.warn()} ${c.yellow('run: wfc path install')}`)
   }
 
   const channels = Array.isArray(snapshot.channels) ? snapshot.channels : []
@@ -189,7 +189,7 @@ export async function service(client, args) {
   }
 
   if (sub === 'start') {
-    out(c.gray('  the daemon starts on demand — any wolffish command brings it up'))
+    out(c.gray('  the daemon starts on demand — any wfc command brings it up'))
     return 0
   }
 
@@ -203,7 +203,7 @@ export async function service(client, args) {
      * The pid file outlives a crash, and pids are recycled.
      *
      * Signalling whatever now holds that number is not a theoretical worry on
-     * a busy server — it is how `wolffish service stop` kills someone else's
+     * a busy server — it is how `wfc service stop` kills someone else's
      * process. The socket is the check that costs nothing: a daemon that
      * answers is the daemon, and a pid file with nothing behind it is stale by
      * definition.
@@ -230,7 +230,7 @@ export async function service(client, args) {
     return tailLogs(rest)
   }
 
-  out(c.red(`unknown: wolffish service ${sub}`))
+  out(c.red(`unknown: wfc service ${sub}`))
   out(c.gray('  status | install [--headless] | uninstall | stop | logs'))
   return 2
 }
@@ -247,7 +247,7 @@ export async function service(client, args) {
  */
 async function tailLogs(args) {
   const home = process.env.HOME || process.env.USERPROFILE || ''
-  const dir = path.join(home, '.wolffish', 'workspace', 'logs')
+  const dir = path.join(home, '.wfc', 'workspace', 'logs')
 
   let newest = null
   try {
@@ -296,7 +296,7 @@ async function tailLogs(args) {
 }
 
 /**
- * `wolffish path` — the command's own installation.
+ * `wfc path` — the command's own installation.
  *
  * Worth its own verb because the failure mode is invisible: without the shim
  * on PATH, every other command in this document is unreachable and the shell
@@ -316,7 +316,7 @@ export async function pathCommand(client, args) {
     if (state.shadowedBy) {
       out()
       out(
-        `  ${icon.warn()} ${c.yellow(`"wolffish" currently runs ${shortPath(state.shadowedBy)}`)}`
+        `  ${icon.warn()} ${c.yellow(`"wfc" currently runs ${shortPath(state.shadowedBy)}`)}`
       )
       out(
         wrapText(
@@ -334,7 +334,7 @@ export async function pathCommand(client, args) {
     }
     if (!state.installed && !state.needsPathEntry) {
       out()
-      out(c.gray('  install with: wolffish path install'))
+      out(c.gray('  install with: wfc path install'))
     }
     out()
     return state.installed ? 0 : 1
@@ -356,7 +356,7 @@ export async function pathCommand(client, args) {
     }
     if (state.shadowedBy) {
       out(
-        `${icon.warn()} ${c.yellow(`another "wolffish" is earlier on PATH: ${shortPath(state.shadowedBy)}`)}`
+        `${icon.warn()} ${c.yellow(`another "wfc" is earlier on PATH: ${shortPath(state.shadowedBy)}`)}`
       )
       return 1
     }
@@ -369,7 +369,7 @@ export async function pathCommand(client, args) {
     return 0
   }
 
-  out(c.red(`unknown: wolffish path ${sub}`))
+  out(c.red(`unknown: wfc path ${sub}`))
   out(c.gray('  status | install | uninstall'))
   return 2
 }

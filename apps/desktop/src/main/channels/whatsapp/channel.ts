@@ -80,14 +80,12 @@ import {
 } from '@main/runtime/broca'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
-import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
   getWhatsAppConfig,
   readConfig,
-  setBrain as persistBrain,
-  setLocalOnly as persistLocalOnly,
+  setModel as persistModel,
   setMode as persistMode,
   workspaceRoot
 } from '@main/workspace/workspace'
@@ -179,9 +177,6 @@ const STALE_DEFAULT_HOURS = 3
 // risk the main process. Matches the in-app 1 GB per-message upload budget.
 const MAX_WHATSAPP_MEDIA_BYTES = 1024 * 1024 * 1024
 
-const BUSY_SYSTEM_PROMPT =
-  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural. Write plain conversational text only — no Markdown, no formatting markup of any kind (your reply is delivered verbatim to a phone chat)."
-const BUSY_REPLY_TIMEOUT_MS = 8000
 const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back to you in a moment."
 
 const COMMANDS_HELP =
@@ -193,10 +188,8 @@ const COMMANDS_HELP =
   '/current — show the active conversation\n' +
   '/status — system status report\n' +
   '/mode — single or workflow mode\n' +
-  '/model — pick the cloud model\n' +
-  '/project — pick or exit a project\n' +
-  '/local — switch to local model\n' +
-  '/cloud — switch to cloud model'
+  '/model — show or pick the model\n' +
+  '/project — pick or exit a project'
 
 /**
  * Min gap between live in-app mirror snapshots of an in-flight turn — bursts
@@ -423,8 +416,7 @@ export class WhatsAppChannel {
 
   constructor(
     private readonly agent: Agent,
-    private readonly runner: TurnRunner,
-    private readonly localProvider: LocalProvider
+    private readonly runner: TurnRunner
   ) {}
 
   /**
@@ -1196,25 +1188,6 @@ export class WhatsAppChannel {
       return
     }
 
-    // /local and /cloud — flip provider mode. Busy-blocked to avoid
-    // switching mid-turn.
-    if (lower === '/local' || lower === 'local') {
-      if (this.activeByJid.size > 0) {
-        await this.sendBusyReply(jid, trimmed)
-        return
-      }
-      await this.handleLocalCloudCommand(jid, true)
-      return
-    }
-    if (lower === '/cloud' || lower === 'cloud') {
-      if (this.activeByJid.size > 0) {
-        await this.sendBusyReply(jid, trimmed)
-        return
-      }
-      await this.handleLocalCloudCommand(jid, false)
-      return
-    }
-
     // /mode — set single vs workflow (the global chat mode). Bare `/mode`
     // reports the current mode; `/mode single` / `/mode workflow` set it.
     // Setting is busy-blocked inside the handler; reading is always allowed.
@@ -1464,17 +1437,6 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Handle /local and /cloud — flip llm.localOnly (persist + live thalamus),
-   * mirroring the in-app local/cloud switch and the main-process IPC handler.
-   * Distinct from /mode (single vs workflow — see handleModeCommand).
-   */
-  private async handleLocalCloudCommand(jid: string, localOnly: boolean): Promise<void> {
-    await persistLocalOnly(localOnly)
-    this.agent.thalamus.setLocalOnly(localOnly)
-    await this.safeSend(jid, localOnly ? 'Switched to local model.' : 'Switched to cloud model.')
-  }
-
-  /**
    * Handle /mode — read or set the global chat mode (single vs workflow),
    * mirroring the in-app mode picker's two steps: persist (setMode) + live
    * (agent.setMode). Bare `/mode` reports the current mode. Setting is
@@ -1508,77 +1470,48 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Handle /model — list connected cloud models and switch the Brain. Bare
-   * `/model` lists them numbered (read-only, so allowed even mid-turn) and
-   * arms a numbered picker; `/model <query>` filters by substring and, on a
-   * single match, switches directly. The switch mirrors the in-app model
-   * picker (persist setBrain + live thalamus.setBrain) and also clears
-   * localOnly — a deliberately chosen cloud model would otherwise be ignored
-   * while local-only mode is on (resolveEntry short-circuits to local).
+   * Handle /model — show or pick the model. One lane: until the org API's
+   * per-user catalog is wired in, the only listable option is the current
+   * selection, so bare `/model` reads as "here is your model".
    */
   private async handleModelCommand(jid: string, query: string, raw: string): Promise<void> {
-    const options = collectModelOptions(this.agent.thalamus.getCloudProviders())
+    const options = collectModelOptions(this.agent.thalamus.getActiveModel())
     if (options.length === 0) {
-      await this.safeSend(
-        jid,
-        'No cloud providers connected. Add an API key in Settings, or use /local for the on-device model.'
-      )
+      await this.safeSend(jid, 'No model selected — models are managed by your organization.')
       return
     }
     const matches = filterModelOptions(options, query)
-    // A query that pins exactly one model switches straight to it.
     if (query && matches.length === 1) {
       await this.applyModelSelection(jid, matches[0], raw)
       return
     }
     if (matches.length === 0) {
-      await this.safeSend(jid, `No cloud model matches "${query}".`)
+      await this.safeSend(jid, `No model matches "${query}".`)
       return
     }
-    const activeProvider = this.agent.thalamus.getActiveProvider()
     const activeModel = this.agent.thalamus.getActiveModel()
     const shown = matches.slice(0, MODEL_LIST_CAP)
     this.pendingSelections.set(jid, { command: 'model', models: shown })
     const lines = shown.map((o, i) => {
-      const current = o.providerId === activeProvider && o.model === activeModel ? ' ✅' : ''
-      return `${i + 1}. *${o.providerId}* · ${o.model}${current}`
+      const current = o.model === activeModel ? ' ✅' : ''
+      return `${i + 1}. *${o.model}*${current}`
     })
-    const header =
-      query && matches.length !== options.length
-        ? `*Models matching "${query}"* — reply with the number:`
-        : '*Pick a model* — reply with the number:'
-    const more =
-      matches.length > shown.length
-        ? `\n\n…and ${matches.length - shown.length} more — narrow with /model <name>.`
-        : ''
-    await this.safeSend(jid, `${header}\n\n${lines.join('\n')}${more}`)
+    await this.safeSend(jid, `*Pick a model* — reply with the number:\n\n${lines.join('\n')}`)
   }
 
   /**
-   * Commit a chosen cloud model as the Brain (persist + live), clearing
-   * localOnly so it actually takes effect. Busy-blocked: the Brain is global,
-   * so swapping it mid-turn would change the in-flight turn's next iteration.
+   * Commit a chosen model (persist + live). Busy-blocked: the selection is
+   * global, so swapping it mid-turn would change the in-flight turn's next
+   * iteration.
    */
   private async applyModelSelection(jid: string, option: ModelOption, raw: string): Promise<void> {
     if (this.activeByJid.size > 0) {
       await this.sendBusyReply(jid, raw)
       return
     }
-    // Capture the prior local-only state before switching — only to decide
-    // whether to note the mode flip in the reply.
-    const config = await readConfig()
-    const wasLocalOnly = config?.llm.localOnly ?? false
-    await persistBrain(option)
-    this.agent.thalamus.setBrain(option)
-    // Choosing a specific cloud model IS a request to run on the cloud, so
-    // force localOnly OFF — unconditionally, so a failed config read can never
-    // leave the pick shadowed by local mode (resolveEntry would keep serving
-    // the on-device model). Mirrors the in-app ModelSwitch, which flips to
-    // cloud on select.
-    await persistLocalOnly(false)
-    this.agent.thalamus.setLocalOnly(false)
-    const note = wasLocalOnly ? ' (switched to cloud)' : ''
-    await this.safeSend(jid, `Model: ${option.providerId} · ${option.model}${note}`)
+    const updated = await persistModel(option.model)
+    this.agent.thalamus.setModel(updated.llm.model)
+    await this.safeSend(jid, `Model: ${option.model}`)
   }
 
   private async handleNewCommand(jid: string): Promise<void> {
@@ -1806,7 +1739,7 @@ export class WhatsAppChannel {
 
   /**
    * Inbound voice note: download the OGG/Opus blob into the conversation's
-   * uploads folder (so it lands in ~/.wolffish and the in-app history can
+   * uploads folder (so it lands in ~/.wfc and the in-app history can
    * replay it), transcribe it via the cerebellum, then dispatch a normal text
    * turn with the transcript as content and voicePrompt:true. Mirrors
    * Telegram's handleVoiceMessage. Every early-return surfaces a friendly
@@ -3085,37 +3018,11 @@ export class WhatsAppChannel {
 
   // --- Busy handling ---
 
-  private async sendBusyReply(jid: string, userText: string): Promise<void> {
-    if (!this.localProvider.isReady) {
-      await this.safeSend(jid, FALLBACK_BUSY_REPLY)
-      return
-    }
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), BUSY_REPLY_TIMEOUT_MS)
-
-    let response = ''
-    try {
-      for await (const chunk of this.localProvider.stream({
-        system: BUSY_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userText }],
-        signal: controller.signal
-      })) {
-        if (chunk.type === 'text') response += chunk.text
-        if (chunk.type === 'turn_meta') break
-        if (chunk.type === 'error') {
-          response = ''
-          break
-        }
-      }
-    } catch {
-      response = ''
-    } finally {
-      clearTimeout(timer)
-    }
-
-    const trimmed = response.trim()
-    await this.safeSend(jid, trimmed.length > 0 ? trimmed : FALLBACK_BUSY_REPLY)
+  private async sendBusyReply(jid: string, _userText: string): Promise<void> {
+    // No on-device model exists to improvise a quip — the constant reply is
+    // the whole feature now.
+    void _userText
+    await this.safeSend(jid, FALLBACK_BUSY_REPLY)
   }
 
   // --- Sending ---

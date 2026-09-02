@@ -19,7 +19,7 @@ import path from 'node:path'
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-cli-mirror-'))
 const realHomedir = os.homedir
 ;(os as { homedir: () => string }).homedir = () => TMP
-fs.mkdirSync(path.join(TMP, '.wolffish', 'workspace', 'brain', 'conversations'), {
+fs.mkdirSync(path.join(TMP, '.wfc', 'workspace', 'brain', 'conversations'), {
   recursive: true
 })
 
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   // the app (and the phone) show the prompt while the answer is still being
   // written, instead of a bare "assistant is typing" under nothing.
   check('the prompt is persisted before the turn starts', () => {
-    const dir = path.join(TMP, '.wolffish', 'workspace', 'brain', 'conversations')
+    const dir = path.join(TMP, '.wfc', 'workspace', 'brain', 'conversations')
     const files: string[] = []
     const walk = (d: string): void => {
       for (const entry of fs.readdirSync(d, { withFileTypes: true })) {

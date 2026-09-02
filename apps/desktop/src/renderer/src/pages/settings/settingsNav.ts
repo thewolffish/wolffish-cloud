@@ -14,7 +14,6 @@ export type TabKey =
   | 'channels'
   | 'services'
   | 'mcp'
-  | 'updates'
   | 'wolffish'
   | 'variables'
   | 'capabilities'

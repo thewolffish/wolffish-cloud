@@ -6,7 +6,7 @@
  * shipped a toggle that silently did nothing there and a status reader that
  * could only ever answer "inactive". This module owns the whole question
  * instead, and reports what is ACTUALLY registered rather than what was asked
- * for, so the UI (and `wolffish service status`) can show the difference.
+ * for, so the UI (and `wfc service status`) can show the difference.
  *
  * Two axes decide the mechanism: the platform, and whether this install runs
  * with a desktop (`gui`) or as a service (`headless`).
@@ -73,7 +73,7 @@ export type AutostartStatus = {
   /** Registered and expected to actually fire. */
   active: boolean
   mechanism: AutostartMechanism
-  /** Where the registration lives, for the panel + `wolffish service status`. */
+  /** Where the registration lives, for the panel + `wfc service status`. */
   location: string | null
   /**
    * Registered but NOT going to behave as promised — today only one case:
@@ -83,10 +83,51 @@ export type AutostartStatus = {
   warning: string | null
 }
 
-const IDENTIFIER = 'sh.wolffi.app'
-const UNIT_NAME = 'wolffish.service'
-const TASK_NAME = 'Wolffish'
-const DESKTOP_FILE = 'wolffish.desktop'
+const IDENTIFIER = 'cloud.wolffi.sh'
+
+/**
+ * Artifacts this app registered under FORMER names — the `.dev` launchd
+ * label and the pre-rename `wolffish.*` unit/desktop files. Swept on every
+ * install so an upgraded machine never keeps two registrations racing to
+ * start the app. The personal Wolffish app uses its own identifiers and is
+ * never matched by any of these.
+ */
+const OLD_IDENTIFIERS = ['cloud.wolffish.dev']
+const OLD_UNIT_NAMES = ['wolffish.service']
+const OLD_DESKTOP_FILES = ['wolffish.desktop']
+
+async function removeOldRegistrations(): Promise<void> {
+  if (process.platform === 'darwin') {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501
+    for (const id of OLD_IDENTIFIERS) {
+      const plist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${id}.plist`)
+      if (existsSync(plist)) {
+        await serviceCall('launchctl', ['bootout', `gui/${uid}/${id}`]).catch(() => undefined)
+        await fs.rm(plist, { force: true }).catch(() => undefined)
+        wlog.info(TAG, `removed old launch agent ${id}`)
+      }
+    }
+  } else if (process.platform === 'linux') {
+    for (const unit of OLD_UNIT_NAMES) {
+      const file = path.join(os.homedir(), '.config', 'systemd', 'user', unit)
+      if (existsSync(file)) {
+        await systemctlUser('disable', unit).catch(() => undefined)
+        await fs.rm(file, { force: true }).catch(() => undefined)
+        wlog.info(TAG, `removed old unit ${unit}`)
+      }
+    }
+    for (const desk of OLD_DESKTOP_FILES) {
+      const file = path.join(os.homedir(), '.config', 'autostart', desk)
+      if (existsSync(file)) {
+        await fs.rm(file, { force: true }).catch(() => undefined)
+        wlog.info(TAG, `removed old autostart entry ${desk}`)
+      }
+    }
+  }
+}
+const UNIT_NAME = 'wfc.service'
+const TASK_NAME = 'Wolffish Cloud'
+const DESKTOP_FILE = 'wfc.desktop'
 
 /**
  * True when this Linux box has no graphical session to autostart INTO. XDG
@@ -232,7 +273,7 @@ async function systemdStatus(): Promise<AutostartStatus> {
     mechanism: 'systemd',
     location: unitPath,
     warning: !enabled
-      ? 'The unit is installed but not enabled — run: systemctl --user enable wolffish.service'
+      ? 'The unit is installed but not enabled — run: systemctl --user enable wfc.service'
       : linger
         ? null
         : `Lingering is off, so Wolffish stops when this user logs out and does not start at boot. Run: loginctl enable-linger ${os.userInfo().username}`
@@ -260,7 +301,7 @@ Version=1.0
 Name=Wolffish
 Comment=Personal AI agent that runs locally with full system access
 Exec=${prefix}"${execPath}" ${NO_SANDBOX}
-Icon=wolffish
+Icon=wfc
 Terminal=false
 X-GNOME-Autostart-enabled=true
 `
@@ -295,7 +336,7 @@ function launchAgentPath(): string {
 function plistBody(execPath: string): string {
   const { bin, args } = serviceCommand(execPath)
   const argXml = [bin, ...args].map((a) => `    <string>${a}</string>`).join('\n')
-  const logDir = path.join(os.homedir(), '.wolffish', 'logs')
+  const logDir = path.join(os.homedir(), '.wfc', 'logs')
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -322,7 +363,7 @@ ${argXml}
 async function installLaunchd(execPath: string): Promise<AutostartStatus> {
   const file = launchAgentPath()
   await fs.mkdir(path.dirname(file), { recursive: true })
-  await fs.mkdir(path.join(os.homedir(), '.wolffish', 'logs'), { recursive: true })
+  await fs.mkdir(path.join(os.homedir(), '.wfc', 'logs'), { recursive: true })
   await fs.writeFile(file, plistBody(execPath), 'utf8')
   // bootstrap is the modern verb; `load` covers older systems. Either failing
   // is fine — the plist alone makes it load at the next login.
@@ -495,6 +536,7 @@ export async function installAutostart(
   // not exist by then, so the registration would succeed, report itself
   // healthy, and quietly never start the app again.
   const exec = stableExecPath(execPath)
+  await removeOldRegistrations().catch(() => undefined)
   try {
     switch (mechanism) {
       case 'systemd':

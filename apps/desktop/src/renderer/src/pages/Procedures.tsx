@@ -1,9 +1,9 @@
+import { ChipRow } from '@components/common/chip-row/ChipRow'
 import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
 import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { Modal } from '@components/core/Modal'
-import { Select } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -189,6 +189,30 @@ export function Procedures(): React.JSX.Element {
   )
 
   const draftProject = draftProjectId ? projectsById.get(draftProjectId) : undefined
+
+  // The editor's project chips: "No project" first, then every project with
+  // its own emoji and title. A binding whose project is missing from that
+  // list still needs a chip, or the row would show nothing lit and the next
+  // pick would silently drop it — the mobile chat menu's exact rules.
+  const projectChips = useMemo(() => {
+    const emoji = (e: string): React.ReactNode => (
+      <span aria-hidden className="text-sm leading-none">
+        {e}
+      </span>
+    )
+    const rows = [
+      { value: '', label: t('procedures.projectNone'), icon: emoji('📄') },
+      ...projects.map((p) => ({
+        value: p.id,
+        label: p.title.trim() || t('projects.untitled'),
+        icon: emoji(p.icon || '📁')
+      }))
+    ]
+    if (draftProjectId && !projects.some((p) => p.id === draftProjectId)) {
+      rows.push({ value: draftProjectId, label: draftProjectId, icon: emoji('📁') })
+    }
+    return rows
+  }, [projects, draftProjectId, t])
 
   // The last values dispatched to disk for the open procedure. Used as the
   // auto-save baseline: comparing the draft against this (updated synchronously
@@ -706,26 +730,18 @@ export function Procedures(): React.JSX.Element {
           </div>
           <span className="text-muted text-xs font-medium">{t('procedures.project')}</span>
           {/* Bind/unbind a project: the run gets the project's context and its
-              conversation registers under the project. */}
-          <Select
+              conversation registers under the project. The mobile chat menu's
+              chip row — the whole list on one x-scrolling line. */}
+          <ChipRow
+            ariaLabel={t('procedures.project')}
+            truncateLabels
+            chips={projectChips}
             value={draftProjectId}
-            onChange={(v) => {
+            onChange={(id) => {
               setTouched(true)
-              setDraftProjectId(v)
+              setDraftProjectId(id)
               setEmojiOpen(false)
             }}
-            options={[
-              { value: '', label: t('procedures.projectNone') },
-              ...projects.map((p) => ({
-                value: p.id,
-                label: p.title.trim() || t('projects.untitled'),
-                icon: (
-                  <span aria-hidden className="text-base leading-none">
-                    {p.icon || '📁'}
-                  </span>
-                )
-              }))
-            ]}
           />
           {/* Files: copied INTO the workspace on attach, exactly like a
               project's, so the procedure can never dangle on a moved
@@ -862,38 +878,29 @@ export function Procedures(): React.JSX.Element {
           )}
 
           <span className="text-muted text-xs font-medium">{t('procedures.prompt')}</span>
-          {/* The prompt, in the card's own code block — capped but scrollable,
-              so the whole thing can be read here without opening anything.
-              With files and folders above it, an inline editor tall enough to
-              write in pushed everything else off screen — clicking opens the
-              full-height editor below instead. Scrolling stays clean: the wheel
-              moves this block rather than the dialog behind it, and dragging
-              its scrollbar never reaches the button's click handler. */}
-          <button
-            type="button"
-            onClick={() => setPromptExpanded(true)}
-            title={t('procedures.expandPrompt')}
-            className={cn(
-              'bg-bg border-border block w-full cursor-pointer rounded-lg border px-3 py-2 text-start',
-              'hover:border-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
-            )}
-          >
-            {draftPrompt.trim() ? (
-              <pre
-                dir="auto"
-                className="text-muted max-h-40 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-              >
-                {draftPrompt}
-              </pre>
-            ) : (
-              <span className="text-muted/60 font-mono text-xs italic">
-                {t('procedures.promptPlaceholder')}
-              </span>
-            )}
-          </button>
-          {/* The same secondary action the phone offers under its preview. The
-                block above is still the primary target — this is the affordance
-                that says so, for anyone who does not think to click a code block. */}
+          {/* The prompt, in the same CodeMirror editor the expanded sheet
+              runs — editable in place, over the same draft state. Fixed
+              height, filled or empty: the dialog never reflows as the prompt
+              grows, so a long prompt scrolls inside the block and the button
+              below opens the full-height sheet to write comfortably.
+              background="field" sits the block in the same bg-bg well the
+              Select and input fields use. */}
+          <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
+            <CodeEditor
+              value={draftPrompt}
+              language="markdown"
+              background="field"
+              isDark={isDark}
+              onChange={(value) => {
+                setTouched(true)
+                setDraftPrompt(value)
+              }}
+              placeholder={t('procedures.promptPlaceholder')}
+              className="h-full overflow-auto overscroll-contain"
+              spellcheck
+            />
+          </div>
+          {/* Same draft, more room — opens the full-height editor sheet. */}
           <Button
             variant="outline"
             size="sm"
@@ -924,6 +931,7 @@ export function Procedures(): React.JSX.Element {
               <CodeEditor
                 value={draftPrompt}
                 language="markdown"
+                background="field"
                 isDark={isDark}
                 onChange={(value) => {
                   setTouched(true)

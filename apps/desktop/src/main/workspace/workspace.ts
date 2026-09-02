@@ -3,51 +3,18 @@ import { diskWriter } from '@main/io/diskWriter'
 import { importOutsideProjectFiles } from '@main/projects'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
-import { isKnownModelName } from '@main/runtime/models'
 import { app } from 'electron'
-import yaml from 'js-yaml'
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import semver from 'semver'
 import { WORKSPACE_ROOT } from './root'
 
-export type LocalModelConfig = {
-  enabled: boolean
-  provider: 'ollama'
-  model: string | null
-  endpoint: string
-}
-
-export type CloudProviderConfig = {
-  id:
-    | 'anthropic'
-    | 'openai'
-    | 'openrouter'
-    | 'deepseek'
-    | 'mimo'
-    | 'kimi'
-    | 'minimax'
-    | 'xai'
-    | 'qwen'
-    | 'stepfun'
-    | 'zai'
-  model: string
-  apiKey: string
-  // Cached from the provider's /v1/models endpoint. Refreshed on app
-  // startup (see refreshAllProviderModels in main/index.ts) and on each
-  // successful "Test" in settings. Optional so legacy configs migrate
-  // cleanly — an empty cache just means "no list yet, retest to populate".
-  models?: string[]
-  reasoningModels?: string[]
-  // Anthropic prompt-cache breakpoint TTL. '1h' costs 2x base input on
-  // cache writes but keeps the prefix warm through tasks whose individual
-  // steps outlast the 5-minute default. Ignored by other providers.
-  cacheTtl?: '5m' | '1h'
-}
+// Wolffish Cloud carries no model-provider configuration on the device.
+// There are no provider entries, no API keys, no local models: the org's
+// API is the only model lane, the catalog and policy come from it, and the
+// only model state stored here is which allowed model the user selected
+// (llm.model below). The API integration phase wires the catalog in.
 
 export type SafetyConfig = {
   bypassPermissions: boolean
@@ -76,12 +43,6 @@ export type TelegramConfig = {
   hideAutomationsFromResume?: boolean
 }
 
-/**
- * Brave Search API configuration. When `enabled` is true and `apiKey` is
- * non-empty, the web-search cerebellum plugin uses Brave as the primary
- * search provider (falling back to DuckDuckGo on failure). When disabled
- * or unset, the plugin uses DuckDuckGo only.
- */
 export type WhatsAppConfig = {
   enabled: boolean
   allowedPhoneNumbers: string[]
@@ -160,8 +121,21 @@ export type MobileChannelConfig = {
   notifications?: boolean
   verbose?: boolean
   runCards?: boolean
+  /**
+   * Power-user tunnel relay override (Settings → Mobile). Lives HERE — not
+   * in the device-local pairing file — because it is user-authored
+   * configuration that must survive a purge and reach the user's other
+   * devices; the pairing file keeps only the device-bound keypair.
+   * Absent = the built-in default relay.
+   */
+  relayUrl?: string
 }
 
+/**
+ * Legacy Brave Search block. Web search is now provided by the organization
+ * (one key behind the API's /v1/search lane), so nothing reads these fields
+ * any more; the type survives only so an older config.json still parses.
+ */
 export type BraveConfig = {
   enabled: boolean
   apiKey: string
@@ -285,7 +259,7 @@ export type MemesConfig = {
 
 /**
  * Video generation (MiniMax H3) credentials — deliberately its OWN key,
- * never read from the MiniMax entry under llm.providers.
+ * independent of any chat-model configuration (models are API-served).
  *
  * MiniMax issues one credential that happens to unlock both the chat
  * completions API and the video API, so the same string works in both
@@ -379,30 +353,17 @@ export type WorkspaceConfig = {
   // The actual OS registration is checked at runtime via
   // app.getLoginItemSettings() — this field stores the user's intent.
   launchAtStartup?: boolean
-  ollamaModelsFolder?: string
   llm: {
-    local: LocalModelConfig
-    providers: CloudProviderConfig[]
-    // The single user-chosen cloud model — the Brain. Sole source of truth
-    // for which cloud provider+model runs when not in local-only mode.
-    // Null/absent means no cloud model is selected yet. Set from the Brain
-    // settings page; the matching provider's `model` field is mirrored to it.
-    brain?: { providerId: CloudProviderConfig['id']; model: string } | null
+    // The user's selected model, by id. The catalog of allowed models —
+    // ids, names, reasoning flags, logos — is served per-user by the
+    // Wolffish Cloud API (GET /v1/models); nothing model-shaped beyond
+    // this selection is stored on the device. Null means not chosen yet.
+    model: string | null
     // Chat mode, switched from the chat composer's mode button. 'single'
     // (default) runs every turn solo. 'workflow' makes each top-level turn a
     // workflow master: it can plan phases and spawn live parallel subagents
-    // (per-agent models it chooses) through the `workflow` capability.
-    // Global — heartbeat/procedure runs inherit it, like the Brain itself.
+    // through the `workflow` capability.
     mode?: 'single' | 'workflow'
-    // When true, cloud is skipped entirely and only the local model runs.
-    // Toggled from the chat input's mode switch.
-    localOnly?: boolean
-    // When true (default), the model picker blocks models whose RAM
-    // footprint exceeds ~55% of the system's physical memory. Turning
-    // this off lets the user install any model regardless of hardware
-    // limits — not recommended, as oversized models cause heavy swap
-    // thrashing and degrade the entire system.
-    restrictPowerfulModels?: boolean
     // Per-model thinking mode. Key is model name, value is thinking mode string.
     thinkingModes?: Record<string, string>
   }
@@ -447,9 +408,8 @@ export type WorkspaceConfig = {
   // Mobile channel preferences. Optional so legacy configs migrate cleanly
   // — when absent, model-initiated phone notifications default to ON.
   mobile?: MobileChannelConfig
-  // Brave Search API key + toggle. When enabled and a key is set, the
-  // web-search plugin uses Brave first and falls back to DuckDuckGo on
-  // failure. Optional so legacy configs migrate cleanly.
+  // Legacy Brave Search block (key + toggle) from before web search became
+  // an org-provided lane. Ignored; kept so older configs still parse.
   brave?: BraveConfig
   // Notion integration token. Optional so legacy configs migrate
   // cleanly — when absent the cerebellum plugin simply has no token
@@ -505,7 +465,6 @@ export type WorkspaceConfig = {
 export type WorkspaceStatus = {
   rootPath: string
   initialized: boolean
-  hasLocalModel: boolean
   onboardingCompleted: boolean
   config: WorkspaceConfig | null
 }
@@ -513,7 +472,6 @@ export type WorkspaceStatus = {
 const CONFIG_FILENAME = 'config.json'
 const CONFIG_BACKUP_FILENAME = 'config.json.bak'
 const LOCK_FILENAME = '.lock'
-const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434'
 
 // Defined in ./root (a leaf module) so conversations.ts and
 // compose-attachments.ts can import it without closing a cycle back into this
@@ -554,7 +512,7 @@ export function isInternalToolCall(name: string, args: Record<string, unknown>):
 }
 
 /**
- * Wipe the entire ~/.wolffish/workspace tree. Caller is responsible for
+ * Wipe the entire ~/.wfc/workspace tree. Caller is responsible for
  * relaunching the app afterwards — leaving the process running with no
  * workspace would put us in an undefined state.
  */
@@ -657,12 +615,19 @@ export async function writeConfig(config: WorkspaceConfig): Promise<void> {
  * the config lock (the logical read-modify-write mutex); diskWriter adds the
  * physical per-path serialization on top.
  */
+/** Cloud-sync notifier for config writes, injected by main at startup. */
+let configSyncHook: (() => void) | null = null
+export function setConfigSyncHook(hook: (() => void) | null): void {
+  configSyncHook = hook
+}
+
 async function writeConfigAtomic(config: WorkspaceConfig): Promise<void> {
   const data = JSON.stringify(config, null, 2)
   await diskWriter.writeFileAtomic(configPath(), data)
   // Best-effort last-known-good snapshot. A failure here can never affect the
   // live file, and the backup is only ever read as a recovery fallback.
   await diskWriter.writeFileAtomic(configBackupPath(), data).catch(() => {})
+  configSyncHook?.()
 }
 
 export async function patchConfig(
@@ -710,23 +675,12 @@ async function readBackupConfig(): Promise<WorkspaceConfig | null> {
   }
 }
 
-function emptyLocalModel(): LocalModelConfig {
-  return {
-    enabled: false,
-    provider: 'ollama',
-    model: null,
-    endpoint: DEFAULT_OLLAMA_ENDPOINT
-  }
-}
-
 function defaultConfig(): WorkspaceConfig {
   return {
     version: 1,
     launchAtStartup: false,
     llm: {
-      local: emptyLocalModel(),
-      providers: [],
-      restrictPowerfulModels: true
+      model: null
     },
     safety: { bypassPermissions: true, blockCredentials: false },
     updates: { enabled: true },
@@ -745,19 +699,10 @@ export async function ensureWorkspace(): Promise<void> {
     if (!existsSync(source)) {
       throw new Error(`default workspace missing at ${source}`)
     }
-    // Skip the cerebellum subtree — ensureBundledCapabilities below copies
-    // each capability under its dot-prefixed name. Without this skip, fresh
-    // installs end up with both `<name>/` (from the bulk copy) and `.<name>/`
-    // (from ensureBundledCapabilities) sitting side-by-side.
-    const cerebellumSource = path.join(source, 'brain', 'cerebellum')
     await fs.cp(source, WORKSPACE_ROOT, {
       recursive: true,
       force: false,
-      filter: (src) => {
-        if (src.endsWith('.DS_Store')) return false
-        if (src === cerebellumSource || src.startsWith(cerebellumSource + path.sep)) return false
-        return true
-      }
+      filter: (src) => !src.endsWith('.DS_Store')
     })
     if (!existsSync(configPath())) {
       await writeConfig(defaultConfig())
@@ -765,8 +710,7 @@ export async function ensureWorkspace(): Promise<void> {
   }
 
   // Post-update migration: merge new config keys and refresh the app-managed
-  // prompt files. Must run before ensureBundledCapabilities so capability
-  // version checks see the current bundled versions.
+  // prompt files.
   await migrateConfig()
   await migrateAgentsCore()
   await migrateAgentsGuide()
@@ -774,14 +718,12 @@ export async function ensureWorkspace(): Promise<void> {
   // The standing removed-feature sweep — one function, extended in place.
   await cleanupWorkspace()
 
-  // Always sync bundled capabilities — new ones get added and existing
-  // ones get refreshed on every launch, so plugin bug fixes shipped by an
-  // app upgrade actually reach existing workspaces. Files the user added
-  // alongside a bundled plugin (e.g. node_modules from `npm install`,
-  // ad-hoc notes) are preserved because we copy with force-overwrite, not
-  // a wipe-and-replace.
-  await ensureBundledCapabilities()
-  await migrateOfficialCapabilities()
+  // Capabilities are cloud-first: nothing ships in the app. The org set
+  // (and the user's own imports) download from the registry on session
+  // ready and stay in sync from then on — see cloud/capabilitySync.ts.
+  // Only the empty directory is guaranteed here, so the loader and the
+  // first sync pass have a stable root before sign-in.
+  await fs.mkdir(path.join(WORKSPACE_ROOT, 'brain', 'cerebellum'), { recursive: true })
 
   // cortex.db is NOT nuked here anymore: Cortex.init() is schema-versioned
   // (full rebuild on version bump) and its startup catch-up diff picks up any
@@ -797,71 +739,6 @@ export async function ensureWorkspace(): Promise<void> {
   await ensureLogsDirectory()
   await ensureExtensionLogsDirectory()
   await ensureBundledExtension()
-}
-
-async function ensureBundledCapabilities(): Promise<void> {
-  const defaultsDir = path.join(defaultsWorkspacePath(), 'brain', 'cerebellum')
-  if (!existsSync(defaultsDir)) return
-
-  const userDir = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum')
-  await fs.mkdir(userDir, { recursive: true })
-
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await fs.readdir(defaultsDir, { withFileTypes: true })
-  } catch {
-    return
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    if (entry.name.startsWith('.')) continue
-    // Bundled capabilities live in dot-prefixed folders (.git, .browser, …)
-    // so they're hidden from `ls` but still load and show in our UI.
-    const target = path.join(userDir, `.${entry.name}`)
-    const source = path.join(defaultsDir, entry.name)
-    await fs.cp(source, target, {
-      recursive: true,
-      force: true,
-      filter: (src) => {
-        if (src.endsWith('.DS_Store')) return false
-        const rel = path.relative(source, src)
-        if (rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)) return false
-        if (
-          rel === 'plugin' + path.sep + 'node_modules' ||
-          rel.startsWith('plugin' + path.sep + 'node_modules' + path.sep)
-        )
-          return false
-        return true
-      }
-    })
-  }
-}
-
-let bundledCapabilityNamesCache: Set<string> | null = null
-
-/**
- * Names of capabilities that ship with the app (bundled under
- * src/defaults/workspace/brain/cerebellum/). Anything else in the user's
- * workspace was dropped in by them. Read once and cached — the bundled
- * set doesn't change at runtime.
- */
-export async function bundledCapabilityNames(): Promise<Set<string>> {
-  if (bundledCapabilityNamesCache) return bundledCapabilityNamesCache
-  const defaultsDir = path.join(defaultsWorkspacePath(), 'brain', 'cerebellum')
-  const names = new Set<string>()
-  try {
-    const entries = await fs.readdir(defaultsDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      if (entry.name.startsWith('.')) continue
-      names.add(entry.name)
-    }
-  } catch {
-    // best-effort — if defaults are unreadable, treat everything as user-provided
-  }
-  bundledCapabilityNamesCache = names
-  return names
 }
 
 async function ensureSpeechDirectory(): Promise<void> {
@@ -936,7 +813,7 @@ async function migrateConfig(): Promise<void> {
  * THE one permanent home for sweeping out what removed features left behind
  * in deployed footprints — retired capabilities, replaced prompt files, dead
  * config keys, stale caches. Runs every launch; every block is idempotent
- * (no-ops once clean) and strictly scoped to our own ~/.wolffish footprint.
+ * (no-ops once clean) and strictly scoped to our own ~/.wfc footprint.
  * When a feature is removed from the app, append its cleanup HERE — never
  * mint a new one-off function for it.
  *
@@ -966,7 +843,7 @@ async function migrateAgentsCore(): Promise<void> {
 
 /**
  * AGENTS.md is the orientation guide for any AI assistant pointed at the
- * ~/.wolffish folder. It lives at the ROOT of ~/.wolffish (next to workspace/,
+ * ~/.wfc folder. It lives at the ROOT of ~/.wfc (next to workspace/,
  * runtime/, logs/) — not inside the workspace — because it documents the whole
  * footprint, and its own map and path references are written relative to that
  * root. Bundled at src/defaults/AGENTS.md.
@@ -1002,93 +879,6 @@ async function migrateIdentityRoleFiles(): Promise<void> {
   }
 }
 
-function parseSkillVersion(content: string): string | null {
-  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
-  if (!fmMatch) return null
-  try {
-    const fm = yaml.load(fmMatch[1]) as Record<string, unknown>
-    return typeof fm.version === 'string' ? fm.version : String(fm.version ?? '')
-  } catch {
-    return null
-  }
-}
-
-async function fileHash(filePath: string): Promise<string> {
-  try {
-    const data = await fs.readFile(filePath)
-    return createHash('sha256').update(data).digest('hex')
-  } catch {
-    return ''
-  }
-}
-
-function npmInstall(cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile('npm', ['install', '--production'], { cwd }, (err) => {
-      if (err) reject(err)
-      else resolve()
-    })
-  })
-}
-
-async function migrateOfficialCapabilities(): Promise<void> {
-  const bundledDir = path.join(defaultsWorkspacePath(), 'brain', 'cerebellum')
-  if (!existsSync(bundledDir)) return
-
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await fs.readdir(bundledDir, { withFileTypes: true })
-  } catch {
-    return
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-    const bundledRoot = path.join(bundledDir, entry.name)
-    const installedRoot = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum', `.${entry.name}`)
-
-    const bundledSkill = path.join(bundledRoot, 'SKILL.md')
-    if (!existsSync(bundledSkill)) continue
-
-    const bundledContent = await fs.readFile(bundledSkill, 'utf8').catch(() => '')
-    const bundledVersion = parseSkillVersion(bundledContent)
-    if (!bundledVersion) continue
-
-    const installedSkill = path.join(installedRoot, 'SKILL.md')
-    let installedVersion: string | null = null
-    if (existsSync(installedSkill)) {
-      const installedContent = await fs.readFile(installedSkill, 'utf8').catch(() => '')
-      installedVersion = parseSkillVersion(installedContent)
-    }
-
-    if (installedVersion && !semver.lt(installedVersion, bundledVersion)) continue
-
-    const oldPkgHash = await fileHash(path.join(installedRoot, 'plugin', 'package.json'))
-
-    await fs.cp(bundledRoot, installedRoot, {
-      recursive: true,
-      force: true,
-      filter: (src) => {
-        if (src.endsWith('.DS_Store')) return false
-        const rel = path.relative(bundledRoot, src)
-        if (rel.startsWith('plugin' + path.sep + 'node_modules')) return false
-        if (rel === 'plugin' + path.sep + 'node_modules') return false
-        return true
-      }
-    })
-
-    const newPkgPath = path.join(installedRoot, 'plugin', 'package.json')
-    if (existsSync(newPkgPath)) {
-      const newPkgHash = await fileHash(newPkgPath)
-      if (oldPkgHash !== newPkgHash) {
-        await npmInstall(path.join(installedRoot, 'plugin')).catch((err) => {
-          console.error(`npm install failed for capability ${entry.name}:`, err)
-        })
-      }
-    }
-  }
-}
-
 async function ensureUsageStructure(): Promise<void> {
   const usageDir = path.join(WORKSPACE_ROOT, 'usage')
   const providersDir = path.join(usageDir, 'providers')
@@ -1096,14 +886,9 @@ async function ensureUsageStructure(): Promise<void> {
   await fs.mkdir(providersDir, { recursive: true })
   await fs.mkdir(dailyDir, { recursive: true })
 
-  const providerFiles = [
-    { file: 'ollama.md', header: '# Ollama' },
-    { file: 'anthropic.md', header: '# Anthropic' },
-    { file: 'openai.md', header: '# OpenAI' },
-    { file: 'mimo.md', header: '# Xiaomi Mimo' },
-    { file: 'kimi.md', header: '# Kimi' },
-    { file: 'minimax.md', header: '# MiniMax' }
-  ]
+  // One lane only: every model call flows through the org's API. Real
+  // metering lives server-side; this ledger is the local scratch record.
+  const providerFiles = [{ file: 'cloud.md', header: '# Wolffish Cloud' }]
   for (const { file, header } of providerFiles) {
     const filepath = path.join(providersDir, file)
     if (!existsSync(filepath)) {
@@ -1115,100 +900,26 @@ async function ensureUsageStructure(): Promise<void> {
 export async function getStatus(): Promise<WorkspaceStatus> {
   const config = await readConfig()
   const initialized = config !== null
-  const hasLocalModel = !!config?.llm.local.model
   return {
     rootPath: WORKSPACE_ROOT,
     initialized,
-    hasLocalModel,
     onboardingCompleted: !!config?.onboardingCompleted,
     config
   }
 }
 
-export async function selectLocalModel(modelName: string): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: {
-      ...c.llm,
-      local: {
-        enabled: true,
-        provider: 'ollama',
-        model: modelName,
-        endpoint: c.llm.local.endpoint || DEFAULT_OLLAMA_ENDPOINT
-      }
-    }
-  }))
-}
-
-export async function clearLocalModel(): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, local: emptyLocalModel() }
-  }))
-}
-
-export async function setCloudProvider(provider: CloudProviderConfig): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const others = c.llm.providers.filter((p) => p.id !== provider.id)
-    const nextProviders = [...others, provider]
-    // Keep the Brain's model in sync when its own provider's model changes.
-    const brain =
-      c.llm.brain && c.llm.brain.providerId === provider.id
-        ? { providerId: provider.id, model: provider.model }
-        : c.llm.brain
-    return {
-      ...c,
-      llm: { ...c.llm, providers: nextProviders, brain }
-    }
-  })
-}
-
-export async function removeCloudProvider(id: CloudProviderConfig['id']): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const nextProviders = c.llm.providers.filter((p) => p.id !== id)
-    // Clear the Brain if it pointed at the removed provider.
-    const brain = c.llm.brain && c.llm.brain.providerId === id ? null : c.llm.brain
-    return {
-      ...c,
-      llm: { ...c.llm, providers: nextProviders, brain }
-    }
-  })
-}
-
 /**
- * Set (or clear) the Brain — the single user-chosen cloud model. When
- * non-null, mirror its model onto the matching provider record so the
- * Brain and that provider never drift.
+ * Set (or clear) the selected model. Validity is the API's business — the
+ * catalog endpoint decides what this user may pick, and the router refuses
+ * disallowed models regardless of what is stored here.
  */
-export async function setBrain(
-  brain: { providerId: CloudProviderConfig['id']; model: string } | null
-): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    if (!brain) return { ...c, llm: { ...c.llm, brain: null } }
-    const providers = c.llm.providers.map((p) =>
-      p.id === brain.providerId ? { ...p, model: brain.model } : p
-    )
-    return { ...c, llm: { ...c.llm, providers, brain } }
-  })
+export async function setModel(model: string | null): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, llm: { ...c.llm, model } }))
 }
 
 /** Set the chat mode: 'single' (solo turns) vs 'workflow' (model-led agents). */
 export async function setMode(mode: 'single' | 'workflow'): Promise<WorkspaceConfig> {
   return patchConfig((c) => ({ ...c, llm: { ...c.llm, mode } }))
-}
-
-// If the config records a model name no longer in our curated catalog (e.g.
-// the catalog was bumped to a new major), clear it so the user is routed
-// back to the picker. The renderer additionally checks Ollama at startup for
-// installed status.
-export async function reconcileLocalModel(): Promise<void> {
-  const config = await readConfig()
-  if (!config) return
-  const { model } = config.llm.local
-  if (!model) return
-  if (!isKnownModelName(model)) {
-    await clearLocalModel()
-  }
 }
 
 export async function markOnboardingComplete(): Promise<WorkspaceConfig> {
@@ -1240,13 +951,6 @@ export async function setBlockCredentials(value: boolean): Promise<WorkspaceConf
       ...(c.safety ?? { bypassPermissions: false, blockCredentials: false }),
       blockCredentials: value
     }
-  }))
-}
-
-export async function setLocalOnly(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, localOnly: value }
   }))
 }
 
@@ -1320,13 +1024,6 @@ export async function setReflectionConfig(patch: ReflectionPatch): Promise<Works
   })
 }
 
-export async function setRestrictPowerfulModels(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, restrictPowerfulModels: value }
-  }))
-}
-
 export async function setThinkingMode(model: string, mode: string): Promise<WorkspaceConfig> {
   return patchConfig((c) => ({
     ...c,
@@ -1342,7 +1039,7 @@ export async function setLaunchAtStartup(value: boolean): Promise<WorkspaceConfi
 }
 
 /**
- * Wipe the data inside ~/.wolffish/workspace but preserve user preferences:
+ * Wipe the data inside ~/.wfc/workspace but preserve user preferences:
  * API keys, model selection, locale, theme, runtime toggles, and the
  * week-start setting. Memories, conversations, feedback, tasks, debug
  * snapshots, corpus event logs, knowledge files, identity tweaks, and
@@ -1493,30 +1190,12 @@ export async function setMobileChannelConfig(
     const next: MobileChannelConfig = {
       notifications: patch.notifications ?? current.notifications,
       verbose: patch.verbose ?? current.verbose,
-      runCards: patch.runCards ?? current.runCards
+      runCards: patch.runCards ?? current.runCards,
+      // Not a preference this setter owns — carried through so a prefs
+      // save can never strip the synced relay override.
+      ...(current.relayUrl ? { relayUrl: current.relayUrl } : {})
     }
     return { ...c, mobile: next }
-  })
-}
-
-const EMPTY_BRAVE_CONFIG: BraveConfig = {
-  enabled: false,
-  apiKey: ''
-}
-
-export async function getBraveConfig(): Promise<BraveConfig> {
-  const config = await readConfig()
-  return config?.brave ?? EMPTY_BRAVE_CONFIG
-}
-
-export async function setBraveConfig(patch: Partial<BraveConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.brave ?? EMPTY_BRAVE_CONFIG
-    const next: BraveConfig = {
-      enabled: patch.enabled ?? current.enabled,
-      apiKey: patch.apiKey ?? current.apiKey
-    }
-    return { ...c, brave: next }
   })
 }
 
@@ -1786,8 +1465,10 @@ export async function setComputerUseConfig(
 
 // ─── Browser Extension ──────────────────────────────────────────────────
 
+// 23152, not the personal edition's 23151 — both apps (and both extensions)
+// must coexist on one machine without fighting over the socket.
 const DEFAULT_BROWSER_EXTENSION_CONFIG: BrowserExtensionConfig = {
-  port: 23151,
+  port: 23152,
   screenshotMaxWidth: 1280,
   screenshotFormat: 'jpeg',
   screenshotQuality: 80
@@ -1798,7 +1479,7 @@ export async function getBrowserExtensionConfig(): Promise<BrowserExtensionConfi
   const stored = config?.browserExtension
   if (!stored) return DEFAULT_BROWSER_EXTENSION_CONFIG
   return {
-    port: stored.port ?? 23151,
+    port: stored.port ?? 23152,
     screenshotMaxWidth: stored.screenshotMaxWidth ?? 1280,
     screenshotFormat: stored.screenshotFormat ?? 'jpeg',
     screenshotQuality: stored.screenshotQuality ?? 80
@@ -1940,7 +1621,7 @@ export async function getBundledExtensionVersion(): Promise<string | null> {
 
 /**
  * Version of the extension currently in the runtime workspace folder
- * (~/.wolffish/workspace/extension/). May lag behind the bundled
+ * (~/.wfc/workspace/extension/). May lag behind the bundled
  * version until the next app launch syncs them.
  */
 export async function getRuntimeExtensionVersion(): Promise<string | null> {

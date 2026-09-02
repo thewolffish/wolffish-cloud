@@ -2,21 +2,7 @@ import {
   ActivityHeatmap,
   type ActivityHeatmapEntry
 } from '@components/charts/activity-heatmap/ActivityHeatmap'
-import {
-  AnthropicLogo,
-  BraveLogo,
-  DeepSeekLogo,
-  KimiLogo,
-  MiniMaxLogo,
-  MimoLogo,
-  OllamaLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  XAILogo,
-  QwenLogo,
-  StepfunLogo,
-  ZaiLogo
-} from '@components/core/ProviderLogos'
+import { BraveLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
@@ -36,6 +22,7 @@ import {
   CalendarCheckOut02Icon,
   ChartAverageIcon,
   ChartUpIcon,
+  CloudIcon,
   Database02Icon,
   Fire03Icon,
   MessageMultiple01Icon,
@@ -48,20 +35,6 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId =
-  | 'local'
-  | 'anthropic'
-  | 'openai'
-  | 'openrouter'
-  | 'deepseek'
-  | 'mimo'
-  | 'kimi'
-  | 'minimax'
-  | 'xai'
-  | 'qwen'
-  | 'stepfun'
-  | 'zai'
-
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
   'this_month',
@@ -71,19 +44,10 @@ const TIME_RANGES: UsageTimeRange[] = [
   'all_time'
 ]
 
-const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> = {
-  local: OllamaLogo,
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo
+// One lane: every model call flows through the org API. The same glyph the
+// Models panel puts on the lane, so the two screens read as one thing.
+const PROVIDER_ICONS: Record<UsageProviderSummary['provider'], IconComp> = {
+  cloud: CloudIcon
 }
 
 type RangeData = { summary: UsageSummary; stats: UsageStats }
@@ -598,9 +562,9 @@ function CostCardsSkeleton(): React.JSX.Element {
 }
 
 function ProviderCardsSkeleton(): React.JSX.Element {
-  // getSummary zero-fills every provider it knows about, so the real list is
+  // getSummary zero-fills every lane it knows about, so the real list is
   // always the full roster plus the Brave card — never a short list. Counting
-  // the icon map keeps this honest when a provider is added.
+  // the icon map keeps this honest if a lane is ever added.
   const count = Object.keys(PROVIDER_ICONS).length + 1
   return (
     <div className="flex flex-col gap-3">

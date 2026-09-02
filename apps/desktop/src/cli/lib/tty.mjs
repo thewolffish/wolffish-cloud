@@ -12,11 +12,11 @@
  * off, ASCII glyphs, prompts refusing to prompt, spinners disabled, width
  * guessed at 80. So on Windows the answer is passed IN, by the one process in
  * the chain that is attached to the console and therefore actually knows:
- * wolffish-cli.exe (build/win-cli-launcher/wolffish-cli.cs).
+ * wfc-cli.exe (build/win-cli-launcher/wfc-cli.cs).
  *
  * The env vars are set only by that launcher, only for the handles it verified
- * are consoles, and never when the user redirected or piped — so `wolffish ...
- * > notes.md` and `wolffish ... | findstr` still see a plain non-terminal and
+ * are consoles, and never when the user redirected or piped — so `wfc ...
+ * > notes.md` and `wfc ... | findstr` still see a plain non-terminal and
  * still get clean, colourless, ASCII output.
  */
 
@@ -67,7 +67,7 @@ const S_IFIFO = 0o010000
  * packaged binary: `type x | node -e "fs.fstatSync(0).isFIFO()"` is false while
  * the mode is 0o10000, which is exactly S_IFIFO.
  *
- * The consequence was silent and total: `type log.txt | wolffish -p "why?"`
+ * The consequence was silent and total: `type log.txt | wfc -p "why?"`
  * dropped the file and asked the model an empty question.
  */
 export function modeIsFifo(mode) {

@@ -1,5 +1,5 @@
 /**
- * The CLI channel — wolffish spoken through a terminal.
+ * The CLI channel — wfc spoken through a terminal.
  *
  * Structurally the Electron channel with a socket where the WebContents was:
  * it owns a per-turn sink, routes approvals and ask-the-user cards to the
@@ -294,7 +294,7 @@ export class CliChannel {
       if (existing) return existing
     }
     // No idle rotation here, unlike the phone-facing channels: a terminal
-    // session is explicit about which conversation it is in (`wolffish resume`,
+    // session is explicit about which conversation it is in (`wfc resume`,
     // `/resume`), so silently starting a fresh one would be a surprise.
     const fresh = createConversation(null)
     fresh.channel = 'cli'

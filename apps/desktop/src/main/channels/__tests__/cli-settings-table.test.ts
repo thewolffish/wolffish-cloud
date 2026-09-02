@@ -81,7 +81,7 @@ function registeredChannels(): Set<string> {
  */
 async function snapshotPaths(): Promise<Set<string>> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-settings-'))
-  const workspace = path.join(home, '.wolffish', 'workspace')
+  const workspace = path.join(home, '.wfc', 'workspace')
   fs.mkdirSync(workspace, { recursive: true })
   // A config with every optional section present, so nothing is missing merely
   // because this machine has not configured it.

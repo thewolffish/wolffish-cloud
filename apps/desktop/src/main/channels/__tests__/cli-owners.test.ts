@@ -41,7 +41,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-owners-'))
-const ws = path.join(home, '.wolffish', 'workspace')
+const ws = path.join(home, '.wfc', 'workspace')
 fs.mkdirSync(path.join(ws, 'brain', 'brainstem'), { recursive: true })
 fs.mkdirSync(path.join(ws, 'brain', 'identity'), { recursive: true })
 fs.mkdirSync(path.join(ws, 'brain', 'prefrontal'), { recursive: true })

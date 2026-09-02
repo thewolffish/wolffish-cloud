@@ -34,7 +34,7 @@ import path from 'node:path'
 // Redirect the workspace to a throwaway temp dir BEFORE the runtime graph
 // loads: TurnRunner now titles conversations (a persisted step), and
 // conversations.ts derives its path from os.homedir() — without this the test
-// would write junk conversation shells into the real ~/.wolffish workspace.
+// would write junk conversation shells into the real ~/.wfc workspace.
 const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-turntest-'))
 ;(os as unknown as { homedir: () => string }).homedir = (): string => TEST_HOME
 

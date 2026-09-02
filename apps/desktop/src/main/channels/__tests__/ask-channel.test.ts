@@ -22,7 +22,7 @@
 
 import { interpretAskReply, parseAskNumber } from '../ask-reply'
 // The real ask capability plugin (ES module, same file the runtime loads).
-import askPlugin from '../../../defaults/workspace/brain/cerebellum/ask/plugin/index.mjs'
+import askPlugin from '../../../../../../capabilities/ask/plugin/index.mjs'
 
 let passed = 0
 let failed = 0

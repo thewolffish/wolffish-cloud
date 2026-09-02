@@ -59,7 +59,7 @@
       "compaction": "Compact",
       "reflection": "Reflect",
       "startup": "Startup",
-      "bypass": "Bypass",
+      "credentials": "Credentials",
       "today": "{{value}} today"
     },
     "appearanceSubtitle": "Theme and language.",
@@ -453,8 +453,6 @@
       "weekStartsOn": "Week starts on",
       "weekStartsOnDescription": "The first day of the week for the activity map and ranges like \"this week\". Monday is the ISO standard.",
       "safetyTitle": "Safety",
-      "bypassPermissions": "Bypass permissions",
-      "bypassPermissionsDescription": "Act without approval prompts.",
       "blockCredentials": "Block credentials",
       "blockCredentialsDescription": "Never type passwords or keys."
     },
@@ -773,6 +771,13 @@
       "allTime": "All time",
       "turns": "turns",
       "noStats": "No stats for this conversation yet."
+    },
+    "permissions": {
+      "label": "Actions",
+      "ask": "Ask",
+      "askDesc": "Ask before sensitive actions — approvals appear in chat.",
+      "bypass": "Bypass",
+      "bypassDesc": "Skip permission prompts — the agent acts without asking."
     },
     "editor": {
       "title": "Edit prompt",

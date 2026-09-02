@@ -2,7 +2,7 @@ import { diskWriter } from '@main/io/diskWriter'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const LOGS_DIR = join(homedir(), '.wolffish', 'workspace', 'logs')
+const LOGS_DIR = join(homedir(), '.wfc', 'workspace', 'logs')
 
 function dateStamp(): string {
   return new Date().toISOString().slice(0, 10)

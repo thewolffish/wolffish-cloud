@@ -1,5 +1,5 @@
 /**
- * The interactive session — `wolffish` with no arguments.
+ * The interactive session — `wfc` with no arguments.
  *
  * The important thing this is NOT: the process that runs Wolffish. The agent
  * lives in the daemon. This is a viewport, so closing it (or losing the SSH
@@ -403,7 +403,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
    * An approval left unanswered by a client that went away is PARKED, not
    * denied — so the first thing a returning session has to do is ask about it.
    * Without this the daemon holds a turn on a decision nobody can see: the
-   * conversation is simply stuck, and `wolffish status` reports it as running.
+   * conversation is simply stuck, and `wfc status` reports it as running.
    */
   void client
     .invoke('cli:pendingRequests')
@@ -750,7 +750,7 @@ function printBanner({ snapshot, state, status, version }) {
     'brain',
     brainModel
       ? `${c.bold(brainModel)}${brainProvider ? c.gray(` · ${brainProvider}`) : ''}`
-      : c.yellow('not configured — wolffish settings')
+      : c.yellow('not configured — wfc settings')
   ])
   rows.push([
     'mode',
@@ -1064,7 +1064,7 @@ async function handleSlash(client, state, input) {
 
     /**
      * The app's other screens, in the session. Same functions the top-level
-     * `wolffish projects` / `procedures` / `automations` / `customizations`
+     * `wfc projects` / `procedures` / `automations` / `customizations`
      * run —
      * one implementation, reachable from wherever you happen to be.
      */

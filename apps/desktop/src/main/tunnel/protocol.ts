@@ -753,10 +753,12 @@ export type OverlaySeed = {
 }
 
 /**
- * The desktop updater's phase machine on the wire — main/updater.ts
+ * A desktop self-updater's phase machine on the wire — the upstream app's
  * UpdaterState minus `releaseNotes`, which is deliberately left home: state
  * is pushed on every download-percent tick, and the notes' markdown riding a
- * hundred times per update would buy nothing the phone shows.
+ * hundred times per update would buy nothing the phone shows. Wolffish Cloud
+ * is dev-only and ships no updater, so this desktop never pushes one; the
+ * shape stays because it is the phone's contract.
  *
  * The phase vocabulary is the desktop's own, exported as a list (the
  * OVERLAY_KINDS pattern) so the phone validates against it rather than

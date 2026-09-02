@@ -34,6 +34,8 @@ type Meter = {
   model: string
   tokensIn: number
   tokensOut: number
+  /** Prompt tokens served from upstream's cache (a subset of tokensIn). */
+  tokensCached: number
   latencyMs: number
   decision: 'allowed' | 'denied_model' | 'denied_quota' | 'error'
   error?: string
@@ -47,9 +49,9 @@ async function meter(env: Env, m: Meter): Promise<void> {
       ? Math.round(m.upstreamCostUsd * 1_000_000)
       : costMicroUsd(m.model, m.tokensIn, m.tokensOut)
   await env.DB.prepare(
-    `INSERT INTO usage (user_id, device_id, model, tokens_in, tokens_out, cost_microusd,
-       latency_ms, decision, error)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+    `INSERT INTO usage (user_id, device_id, model, tokens_in, tokens_out, tokens_cached,
+       cost_microusd, latency_ms, decision, error)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
   )
     .bind(
       m.userId,
@@ -57,6 +59,7 @@ async function meter(env: Env, m: Meter): Promise<void> {
       m.model,
       m.tokensIn,
       m.tokensOut,
+      m.tokensCached,
       cost,
       m.latencyMs,
       m.decision,
@@ -66,22 +69,30 @@ async function meter(env: Env, m: Meter): Promise<void> {
   if (m.decision === 'allowed') await bumpQuota(env, m.userId, m.tokensIn + m.tokensOut)
 }
 
+type UpstreamUsage = { in: number; out: number; cached: number; costUsd?: number }
+
+/** The usage block of one upstream response (JSON body or final SSE chunk). */
+function readUsage(raw: unknown): UpstreamUsage | null {
+  const u = (raw as { usage?: Record<string, any> } | null)?.usage
+  if (!u || typeof u !== 'object') return null
+  return {
+    in: u.prompt_tokens ?? 0,
+    out: u.completion_tokens ?? 0,
+    cached: u.prompt_tokens_details?.cached_tokens ?? 0,
+    costUsd: typeof u.estimated_cost === 'number' ? u.estimated_cost : undefined
+  }
+}
+
 /** Pull `usage` out of a completed SSE body (final chunk carries it). */
-function usageFromSse(text: string): { in: number; out: number; costUsd?: number } {
-  let usage: { in: number; out: number; costUsd?: number } = { in: 0, out: 0 }
+function usageFromSse(text: string): UpstreamUsage {
+  let usage: UpstreamUsage = { in: 0, out: 0, cached: 0 }
   for (const line of text.split('\n')) {
     if (!line.startsWith('data:')) continue
     const payload = line.slice(5).trim()
     if (!payload || payload === '[DONE]') continue
     try {
-      const obj = JSON.parse(payload)
-      if (obj?.usage) {
-        usage = {
-          in: obj.usage.prompt_tokens ?? 0,
-          out: obj.usage.completion_tokens ?? 0,
-          costUsd: typeof obj.usage.estimated_cost === 'number' ? obj.usage.estimated_cost : undefined
-        }
-      }
+      const found = readUsage(JSON.parse(payload))
+      if (found) usage = found
     } catch {
       // partial or non-JSON keepalive line — ignore
     }
@@ -106,6 +117,7 @@ ai.post('/v1/chat/completions', async (c) => {
       model,
       tokensIn: 0,
       tokensOut: 0,
+      tokensCached: 0,
       latencyMs: 0,
       decision: 'denied_model'
     })
@@ -127,6 +139,7 @@ ai.post('/v1/chat/completions', async (c) => {
       model,
       tokensIn: 0,
       tokensOut: 0,
+      tokensCached: 0,
       latencyMs: 0,
       decision: 'denied_quota'
     })
@@ -161,6 +174,7 @@ ai.post('/v1/chat/completions', async (c) => {
       model,
       tokensIn: 0,
       tokensOut: 0,
+      tokensCached: 0,
       latencyMs: Date.now() - started,
       decision: 'error',
       error: 'upstream_unreachable'
@@ -177,6 +191,7 @@ ai.post('/v1/chat/completions', async (c) => {
       model,
       tokensIn: 0,
       tokensOut: 0,
+      tokensCached: 0,
       latencyMs,
       decision: 'error',
       error: `upstream_${upstream.status}`
@@ -186,20 +201,18 @@ ai.post('/v1/chat/completions', async (c) => {
 
   if (!stream) {
     const json = await upstream.json<Record<string, any>>()
-    const tokensIn = json?.usage?.prompt_tokens ?? 0
-    const tokensOut = json?.usage?.completion_tokens ?? 0
-    const upstreamCostUsd =
-      typeof json?.usage?.estimated_cost === 'number' ? json.usage.estimated_cost : undefined
+    const usage = readUsage(json) ?? { in: 0, out: 0, cached: 0 }
     c.executionCtx.waitUntil(
       meter(c.env, {
         userId: auth.sub,
         deviceId: auth.dev,
         model,
-        tokensIn,
-        tokensOut,
+        tokensIn: usage.in,
+        tokensOut: usage.out,
+        tokensCached: usage.cached,
         latencyMs,
         decision: 'allowed',
-        upstreamCostUsd
+        upstreamCostUsd: usage.costUsd
       })
     )
     return c.json(json)
@@ -218,6 +231,7 @@ ai.post('/v1/chat/completions', async (c) => {
         model,
         tokensIn: usage.in,
         tokensOut: usage.out,
+        tokensCached: usage.cached,
         latencyMs,
         decision: 'allowed',
         upstreamCostUsd: usage.costUsd

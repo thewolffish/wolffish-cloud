@@ -89,7 +89,7 @@ async function run(): Promise<void> {
 
   // ── conversation-shaped RMW appends + summarizer merge ──────────────────
   // Hermetic twin of updateConversation (same diskWriter.update code path,
-  // temp-dir file instead of the real ~/.wolffish workspace) + the pure
+  // temp-dir file instead of the real ~/.wfc workspace) + the pure
   // mergeConversationOnto rules.
   {
     const { mergeConversationOnto } = await import('@main/conversations')

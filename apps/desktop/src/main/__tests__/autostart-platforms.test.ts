@@ -281,15 +281,15 @@ async function main(): Promise<void> {
   }
 
   // ── the CLI shim, all three platforms ─────────────────────────────────────
-  // One directory on every platform: ~/.wolffish/bin, the same managed bin the
+  // One directory on every platform: ~/.wfc/bin, the same managed bin the
   // app already uses for gog, ffmpeg and the voice engines. Asserted per
   // platform rather than assumed, because the split it replaces (POSIX in
-  // ~/.local/bin, Windows in ~/.wolffish/bin) is exactly the kind of drift
+  // ~/.local/bin, Windows in ~/.wfc/bin) is exactly the kind of drift
   // that reads as intentional until someone checks.
   const shimCases: Array<[NodeJS.Platform, string, string]> = [
-    ['darwin', path.join(TMP, 'shim-mac'), '.wolffish/bin/wolffish'],
-    ['linux', path.join(TMP, 'shim-linux'), '.wolffish/bin/wolffish'],
-    ['win32', path.join(TMP, 'shim-win'), '.wolffish/bin/wolffish.cmd']
+    ['darwin', path.join(TMP, 'shim-mac'), '.wfc/bin/wolffish'],
+    ['linux', path.join(TMP, 'shim-linux'), '.wfc/bin/wolffish'],
+    ['win32', path.join(TMP, 'shim-win'), '.wfc/bin/wolffish.cmd']
   ]
   for (const [platform, home, relative] of shimCases) {
     fs.mkdirSync(home, { recursive: true })
@@ -356,10 +356,7 @@ async function main(): Promise<void> {
     )
   )
   check('windows: shim hands off to wolffish-cli.exe when it is packaged', () => {
-    const body = fs.readFileSync(
-      path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd'),
-      'utf8'
-    )
+    const body = fs.readFileSync(path.join(launcherHome, '.wfc', 'bin', 'wolffish.cmd'), 'utf8')
     assert.ok(body.includes('wolffish-cli.exe'), `never reached the launcher:\n${body}`)
     assert.ok(
       !body.includes('ELECTRON_RUN_AS_NODE'),
@@ -376,10 +373,10 @@ async function main(): Promise<void> {
   // Windows therefore writes BOTH: cmd resolves the .cmd and cannot execute
   // the extensionless file, bash resolves the extensionless file and never
   // looks for the .cmd.
-  const bashShim = path.join(launcherHome, '.wolffish', 'bin', 'wolffish')
+  const bashShim = path.join(launcherHome, '.wfc', 'bin', 'wolffish')
   check('windows: an extensionless shim is written for Git Bash', () => {
     assert.ok(fs.existsSync(bashShim), 'Git Bash would report command not found')
-    assert.ok(fs.existsSync(path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd')))
+    assert.ok(fs.existsSync(path.join(launcherHome, '.wfc', 'bin', 'wolffish.cmd')))
   })
   check('windows: the Git Bash shim is a sh script MSYS will execute', () => {
     const body = fs.readFileSync(bashShim, 'utf8')
@@ -412,7 +409,7 @@ async function main(): Promise<void> {
   await asPlatform('win32', launcherHome, () => cliPath.uninstallCliPath())
   check('windows: uninstall removes BOTH shims', () => {
     assert.ok(!fs.existsSync(bashShim), 'Git Bash would still resolve the command')
-    assert.ok(!fs.existsSync(path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd')))
+    assert.ok(!fs.existsSync(path.join(launcherHome, '.wfc', 'bin', 'wolffish.cmd')))
   })
 
   // ── windows: the cwd is not a PATH entry ──────────────────────────────────
@@ -430,7 +427,7 @@ async function main(): Promise<void> {
   const originalCwd = process.cwd()
   const cwdTrapStatus = await asPlatform('win32', cwdHome, async () => {
     await cliPath.installCliPath(path.join(installRoot, 'wolffish.exe'), '/res/cli.mjs')
-    const binDir = path.join(cwdHome, '.wolffish', 'bin')
+    const binDir = path.join(cwdHome, '.wfc', 'bin')
     process.chdir(installRoot)
     try {
       return await cliPath.cliPathStatus(binDir)
@@ -441,7 +438,7 @@ async function main(): Promise<void> {
   check('windows: the shim wins the name even when the cwd holds wolffish.exe', () => {
     assert.equal(
       cwdTrapStatus.resolved,
-      path.join(cwdHome, '.wolffish', 'bin', 'wolffish.cmd'),
+      path.join(cwdHome, '.wfc', 'bin', 'wolffish.cmd'),
       'resolved something other than the shim'
     )
     assert.equal(cwdTrapStatus.shadowedBy, null, 'cried wolf about the app shadowing its own CLI')
@@ -449,7 +446,7 @@ async function main(): Promise<void> {
   })
 
   // ── the footprint rule, and the upgrade sweep ─────────────────────────────
-  // "uninstall must be rm -rf ~/.wolffish" is a project hard rule, so the CLI
+  // "uninstall must be rm -rf ~/.wfc" is a project hard rule, so the CLI
   // install must not write a single byte outside that tree.
   for (const [platform, home] of [
     ['darwin', path.join(TMP, 'footprint-mac')],
@@ -458,14 +455,14 @@ async function main(): Promise<void> {
   ] as Array<[NodeJS.Platform, string]>) {
     fs.mkdirSync(home, { recursive: true })
     await asPlatform(platform, home, () => cliPath.installCliPath('/bin/app', '/res/cli.mjs'))
-    check(`${platform}: shim install writes nothing outside ~/.wolffish`, () => {
-      const stray = fs.readdirSync(home).filter((entry) => entry !== '.wolffish')
+    check(`${platform}: shim install writes nothing outside ~/.wfc`, () => {
+      const stray = fs.readdirSync(home).filter((entry) => entry !== '.wfc')
       assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
     })
   }
 
   // An upgraded machine must not keep the old POSIX shim: ~/.local/bin is
-  // typically EARLIER on PATH than ~/.wolffish/bin, so a leftover would keep
+  // typically EARLIER on PATH than ~/.wfc/bin, so a leftover would keep
   // winning `command -v` and silently run a stale target forever.
   const upgradeHome = path.join(TMP, 'upgrade')
   const legacyDir = path.join(upgradeHome, '.local', 'bin')
@@ -482,7 +479,7 @@ async function main(): Promise<void> {
       !fs.existsSync(path.join(legacyDir, 'wolffish')),
       'stale shim survived — it would shadow the new one on PATH'
     )
-    assert.ok(fs.existsSync(path.join(upgradeHome, '.wolffish', 'bin', 'wolffish')))
+    assert.ok(fs.existsSync(path.join(upgradeHome, '.wfc', 'bin', 'wolffish')))
   })
 
   // ...but only when it is recognisably ours. A user's own script at that
@@ -518,30 +515,27 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(mountCli, 'lib', 'client.mjs'), 'export const connect = () => {}\n')
 
   const savedAppImage = process.env.APPIMAGE
-  process.env.APPIMAGE = path.join(appImageHome, '.wolffish', 'Wolffish.AppImage')
+  process.env.APPIMAGE = path.join(appImageHome, '.wfc', 'Wolffish.AppImage')
 
   await asPlatform('linux', appImageHome, () =>
     cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
   )
-  const appImageShim = fs.readFileSync(
-    path.join(appImageHome, '.wolffish', 'bin', 'wolffish'),
-    'utf8'
-  )
+  const appImageShim = fs.readFileSync(path.join(appImageHome, '.wfc', 'bin', 'wolffish'), 'utf8')
   check('appimage: the shim names the .AppImage, not the mount it is running from', () => {
     assert.ok(appImageShim.includes('Wolffish.AppImage'), `named nothing stable:\n${appImageShim}`)
     assert.ok(!appImageShim.includes(mount), 'recorded a path that dies with this process')
   })
   check('appimage: the client is lifted out of the mount, imports included', () => {
-    const copied = path.join(appImageHome, '.wolffish', 'cli', 'wolffish.mjs')
+    const copied = path.join(appImageHome, '.wfc', 'cli', 'wolffish.mjs')
     assert.ok(fs.existsSync(copied), 'client not copied out')
     assert.ok(
-      fs.existsSync(path.join(appImageHome, '.wolffish', 'cli', 'lib', 'client.mjs')),
+      fs.existsSync(path.join(appImageHome, '.wfc', 'cli', 'lib', 'client.mjs')),
       'copied the entry but not what it imports — the shim would die on first import'
     )
     assert.ok(appImageShim.includes(copied), `shim does not name the copy:\n${appImageShim}`)
   })
-  check('appimage: the copy respects the rm -rf ~/.wolffish rule', () => {
-    const stray = fs.readdirSync(appImageHome).filter((entry) => entry !== '.wolffish')
+  check('appimage: the copy respects the rm -rf ~/.wfc rule', () => {
+    const stray = fs.readdirSync(appImageHome).filter((entry) => entry !== '.wfc')
     assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
   })
   check('appimage: a mounted launch does not make the shim self-extract', () => {
@@ -558,14 +552,14 @@ async function main(): Promise<void> {
   // re-derive it: this process running at all is proof of a launch that worked.
   const extractHome = path.join(TMP, 'appimage-extract')
   fs.mkdirSync(extractHome, { recursive: true })
-  process.env.APPIMAGE = path.join(extractHome, '.wolffish', 'Wolffish.AppImage')
+  process.env.APPIMAGE = path.join(extractHome, '.wfc', 'Wolffish.AppImage')
   process.env.APPIMAGE_EXTRACT_AND_RUN = '1'
   await asPlatform('linux', extractHome, () =>
     cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
   )
   delete process.env.APPIMAGE_EXTRACT_AND_RUN
   check('appimage: a self-extracting launch is carried into the shim', () => {
-    const body = fs.readFileSync(path.join(extractHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    const body = fs.readFileSync(path.join(extractHome, '.wfc', 'bin', 'wolffish'), 'utf8')
     assert.ok(
       body.includes('APPIMAGE_EXTRACT_AND_RUN=1 ELECTRON_RUN_AS_NODE=1 exec'),
       `shim would try to mount on a box that cannot:\n${body}`
@@ -651,10 +645,10 @@ async function main(): Promise<void> {
   )
   check('native install: no client copy, shim points straight into /opt', () => {
     assert.ok(
-      !fs.existsSync(path.join(nativeHome, '.wolffish', 'cli')),
+      !fs.existsSync(path.join(nativeHome, '.wfc', 'cli')),
       'copied the client on an install whose paths are already stable'
     )
-    const body = fs.readFileSync(path.join(nativeHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    const body = fs.readFileSync(path.join(nativeHome, '.wfc', 'bin', 'wolffish'), 'utf8')
     assert.ok(body.includes('/opt/Wolffish/resources/cli/wolffish.mjs'), body)
   })
 

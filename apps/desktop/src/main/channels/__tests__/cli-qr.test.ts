@@ -41,7 +41,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-qr-'))
-const ws = path.join(home, '.wolffish', 'workspace')
+const ws = path.join(home, '.wfc', 'workspace')
 fs.mkdirSync(ws, { recursive: true })
 fs.writeFileSync(
   path.join(ws, 'config.json'),

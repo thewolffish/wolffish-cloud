@@ -11,7 +11,7 @@
  *
  * Replays the exact writes processAutonomous performs, against a throwaway
  * workspace (os.homedir is shimmed to a temp dir before anything imports
- * workspace/root.ts, so ~/.wolffish is never touched).
+ * workspace/root.ts, so ~/.wfc is never touched).
  *
  *  (a) full run: shell → progress ×2 → final,
  *  (b) quit mid-run: shell → progress, then nothing (the resumable state),
@@ -64,7 +64,7 @@ async function run(): Promise<void> {
   const { buildAssistantMessage } = await import('@main/channels/channel')
   type AssistantAccumulator = import('@main/channels/channel').AssistantAccumulator
 
-  const convDir = path.join(tmpHome, '.wolffish', 'workspace', 'brain', 'conversations')
+  const convDir = path.join(tmpHome, '.wfc', 'workspace', 'brain', 'conversations')
   await fs.mkdir(convDir, { recursive: true })
 
   const readDisk = async (id: string): Promise<ConversationFile> => {

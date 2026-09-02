@@ -4,9 +4,9 @@ import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const CONVERSATIONS_DIR = join(homedir(), '.wolffish', 'workspace', 'brain', 'conversations')
+const CONVERSATIONS_DIR = join(homedir(), '.wfc', 'workspace', 'brain', 'conversations')
 
-const LOGS_DIR = join(homedir(), '.wolffish', 'workspace', 'logs', 'extension')
+const LOGS_DIR = join(homedir(), '.wfc', 'workspace', 'logs', 'extension')
 let ready: Promise<void> | null = null
 
 function ensureDir(): Promise<void> {

@@ -1,7 +1,7 @@
 export type PathInfo = { exists: boolean; isDirectory: boolean }
 
 // Home directory, learned once (best-effort) so `~/x` and `/Users/me/x` can be
-// folded to one canonical key for dedup. rootPath is `<home>/.wolffish/workspace`.
+// folded to one canonical key for dedup. rootPath is `<home>/.wfc/workspace`.
 let homeDir: string | null = null
 let homeRequested = false
 function ensureHome(): void {
@@ -12,7 +12,7 @@ function ensureHome(): void {
       ?.getStatus?.()
       .then((s) => {
         const root = s?.rootPath?.replace(/[\\/]+$/, '')
-        const m = root?.match(/^(.*)\/\.wolffish\/workspace$/)
+        const m = root?.match(/^(.*)\/\.wfc\/workspace$/)
         if (m) homeDir = m[1]
       })
       .catch(() => {})

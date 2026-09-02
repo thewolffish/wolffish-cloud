@@ -206,7 +206,7 @@ export async function runTurn(client, payload, { verbose = false, fileOffset = 0
 
 /**
  * The approval card, as a blocking prompt. Fails CLOSED on a non-interactive
- * stdin: a piped `wolffish -p` cannot answer, and auto-approving a flagged
+ * stdin: a piped `wfc -p` cannot answer, and auto-approving a flagged
  * call because nobody was watching is exactly the wrong direction. Use
  * `--yes`, or turn on bypass-permissions deliberately.
  */

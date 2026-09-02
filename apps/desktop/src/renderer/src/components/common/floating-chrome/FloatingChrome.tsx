@@ -1,4 +1,5 @@
 import { ConversationsSheet } from '@components/common/floating-chrome/ConversationsSheet'
+import { ProfileSheet } from '@components/common/profile/ProfileSheet'
 import { glassButtonClass } from '@components/common/floating-chrome/glass'
 import { NewChatButton } from '@components/common/new-chat-button/NewChatButton'
 import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
@@ -31,6 +32,7 @@ export function FloatingChrome(): React.JSX.Element {
   const { newSession, activeProject, setActiveProject, activeConversationId, runStatuses } =
     useSessions()
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   // The dialog's `busy` lock (instructions/files frozen under a running turn):
   // the active conversation's live phase is the app-level equivalent of the
@@ -77,7 +79,17 @@ export function FloatingChrome(): React.JSX.Element {
           />
         )}
       </div>
-      {sheetOpen && <ConversationsSheet onClose={() => setSheetOpen(false)} />}
+      {sheetOpen && (
+        <ConversationsSheet
+          onClose={() => setSheetOpen(false)}
+          // The profile stacks ON TOP: the sidebar stays open underneath
+          // (suspended, so it ignores Escape) and is right there again the
+          // moment the profile closes.
+          onOpenProfile={() => setProfileOpen(true)}
+          suspended={profileOpen}
+        />
+      )}
+      <ProfileSheet open={profileOpen} onClose={() => setProfileOpen(false)} />
       <ProjectDialog
         project={projectDialogOpen ? activeProject : null}
         onClose={() => setProjectDialogOpen(false)}

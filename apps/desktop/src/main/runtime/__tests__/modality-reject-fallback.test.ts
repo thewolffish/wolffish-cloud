@@ -168,15 +168,13 @@ function toolHasImages(opts: ProviderStreamOptions): boolean {
 }
 
 async function main(): Promise<void> {
-  const { LocalProvider } = await import('../providers/local')
   const { Thalamus, MODALITY_MEMO_REQUESTS } = await import('../thalamus')
   const { isModalityReject, REQUEST_MODALITY_STRIP_REASON, TOOL_RESULT_MODALITY_STRIP_REASON } =
     await import('../vision')
 
   const makeThalamus = (fake: FakeProvider): InstanceType<typeof Thalamus> => {
-    const t = new Thalamus(new LocalProvider(), { testProvider: fake })
-    t.setCloudProviders([{ id: 'xai', model: 'grok-4.6', apiKey: 'test-key' }])
-    t.setBrain({ providerId: 'xai', model: 'grok-4.6' })
+    const t = new Thalamus({ testProvider: fake })
+    t.setModel('grok-4.6')
     return t
   }
 

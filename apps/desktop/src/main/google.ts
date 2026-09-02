@@ -1,7 +1,7 @@
 /**
  * Google Workspace integration. Downloads the prebuilt gogcli binary
  * from GitHub releases for the current platform/arch and installs it
- * to ~/.wolffish/bin/gog. Cross-platform (macOS, Linux, Windows).
+ * to ~/.wfc/bin/gog. Cross-platform (macOS, Linux, Windows).
  * No package manager dependency, no admin password.
  */
 
@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-const WOLFFISH_BIN = join(homedir(), '.wolffish', 'bin')
+const WOLFFISH_BIN = join(homedir(), '.wfc', 'bin')
 const IS_WINDOWS = os.platform() === 'win32'
 const GOG_NAME = IS_WINDOWS ? 'gog.exe' : 'gog'
 const GOG_PATH = join(WOLFFISH_BIN, GOG_NAME)
@@ -47,9 +47,56 @@ export type GoogleErrorKind =
   | 'unknown'
 
 export type GoogleStatus = {
-  status: 'inactive' | 'active' | 'error'
+  status: 'inactive' | 'active' | 'error' | 'needsReconnect'
   errorKind: GoogleErrorKind | null
   error: string | null
+  /** The SYNCED config says this user set Google up (on some device). */
+  cloudConfigured: boolean
+  /** Accounts gogcli holds on THIS device. */
+  accountsOnDevice: number
+}
+
+/**
+ * Pure status derivation — REALITY FIRST. Google credentials are inherently
+ * per-device (they live in gogcli's own store, outside the synced
+ * workspace), so the synced config can only ever say "this user set Google
+ * up somewhere". What THIS device can do is decided by the accounts gogcli
+ * actually holds here:
+ *   - accounts on device        → active (or error while a probe failure
+ *                                 stands) — even if the synced flags drifted;
+ *   - none, but cloud-configured → needsReconnect: the panel walks the user
+ *                                 through connecting on THIS device, and the
+ *                                 synced row is NEVER rewritten (that would
+ *                                 flip status for devices that DO have
+ *                                 credentials);
+ *   - none, nothing configured   → inactive.
+ */
+export function deriveGoogleStatus(input: {
+  accountsOnDevice: number
+  cloudConfigured: boolean
+  lastError: { kind: GoogleErrorKind; message: string | null } | null
+}): GoogleStatus {
+  const base = {
+    cloudConfigured: input.cloudConfigured,
+    accountsOnDevice: input.accountsOnDevice
+  }
+  if (input.accountsOnDevice > 0) {
+    if (input.lastError) {
+      return {
+        status: 'error',
+        errorKind: input.lastError.kind,
+        error: input.lastError.message,
+        ...base
+      }
+    }
+    return { status: 'active', errorKind: null, error: null, ...base }
+  }
+  return {
+    status: input.cloudConfigured ? 'needsReconnect' : 'inactive',
+    errorKind: null,
+    error: null,
+    ...base
+  }
 }
 
 export type GoogleBinaryStatus = {
@@ -231,7 +278,7 @@ async function downloadAndExtract(
 }
 
 /**
- * Best-effort: add ~/.wolffish/bin to the user's PATH so `gog` is also
+ * Best-effort: add ~/.wfc/bin to the user's PATH so `gog` is also
  * available outside Wolffish. Internal calls always use the absolute
  * path, so PATH is purely a UX nicety. Errors are swallowed.
  */
@@ -240,13 +287,13 @@ async function ensureInUserPath(): Promise<void> {
     if (IS_WINDOWS) {
       const ps =
         "$p = [Environment]::GetEnvironmentVariable('Path', 'User'); " +
-        "$b = (Join-Path $HOME '.wolffish\\bin'); " +
+        "$b = (Join-Path $HOME '.wfc\\bin'); " +
         "if ($p -and $p.Split(';') -contains $b) { return } " +
         "[Environment]::SetEnvironmentVariable('Path', ($(if ($p) { \"$p;$b\" } else { $b })), 'User')"
       await exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], 10_000)
     } else {
       const marker = '# Wolffish — gogcli'
-      const line = `\n${marker}\nexport PATH="$HOME/.wolffish/bin:$PATH"\n`
+      const line = `\n${marker}\nexport PATH="$HOME/.wfc/bin:$PATH"\n`
       for (const rc of ['.zshrc', '.bashrc', '.profile']) {
         const p = join(homedir(), rc)
         if (!(await fileExists(p))) continue
@@ -265,7 +312,7 @@ class GoogleService {
   private authChild: ReturnType<typeof spawn> | null = null
   // In-flight install/update progress, queryable so a Settings panel remounted
   // after the user navigates away can recover the running setup/update instead
-  // of resetting to idle. Mirrors the updater's getState pattern.
+  // of resetting to idle.
   private setupState: GoogleSetupState = { stage: 'idle', percent: 0 }
 
   getSetupState(): GoogleSetupState {
@@ -285,25 +332,17 @@ class GoogleService {
   }
 
   async getStatus(): Promise<GoogleStatus> {
-    const cfg = await getGoogleConfig()
-    // Derive status from reality: credentials on disk + gogcli accounts.
-    // Don't gate on cfg.status — it's a cached hint that easily drifts
-    // (e.g. credentials uploaded but status never flipped to 'active').
-    if (!cfg.credentialsStored) {
-      return { status: 'inactive', errorKind: null, error: null }
-    }
-    const accounts = await this.listAccounts()
-    if (accounts.length === 0) {
-      return { status: 'inactive', errorKind: null, error: null }
-    }
-    if (this.lastError) {
-      return {
-        status: 'error',
-        errorKind: this.lastError.kind,
-        error: this.lastError.message
-      }
-    }
-    return { status: 'active', errorKind: null, error: null }
+    // Reality first: what accounts does gogcli hold on THIS device? The
+    // synced config only contributes the cloud-configured hint — after a
+    // purge+restore it claims 'active' while this machine holds nothing,
+    // and the honest answer there is needsReconnect, not a lie either way.
+    const [cfg, accounts] = await Promise.all([getGoogleConfig(), this.listAccounts()])
+    const cloudConfigured = cfg.status === 'active' || cfg.credentialsStored
+    return deriveGoogleStatus({
+      accountsOnDevice: accounts.length,
+      cloudConfigured,
+      lastError: this.lastError
+    })
   }
 
   async checkBinary(): Promise<GoogleBinaryStatus> {

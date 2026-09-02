@@ -428,13 +428,7 @@ async function run(): Promise<void> {
 
   // ── end-to-end: real conversation logs (read-only) ───────────────────
 
-  const conversationsDir = path.join(
-    os.homedir(),
-    '.wolffish',
-    'workspace',
-    'brain',
-    'conversations'
-  )
+  const conversationsDir = path.join(os.homedir(), '.wfc', 'workspace', 'brain', 'conversations')
   if (!fs.existsSync(conversationsDir)) {
     console.log('\n(skipped real-log pass — no workspace at ' + conversationsDir + ')')
   } else {

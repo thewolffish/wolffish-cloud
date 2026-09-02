@@ -36,7 +36,8 @@ jest.mock('@/components/chat/ChatControls', () => {
   const { Text } = require('react-native')
   return {
     ContextMeterCard: () => <Text>context-meter</Text>,
-    ModeAndThinkingControls: () => <Text>mode-and-thinking</Text>
+    ModeAndThinkingControls: () => <Text>mode-and-thinking</Text>,
+    PermissionsSwitch: () => <Text>permissions-switch</Text>
   }
 })
 jest.mock('@/components/chat/ModelSwitch', () => {

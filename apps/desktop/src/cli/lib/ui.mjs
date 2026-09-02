@@ -477,14 +477,14 @@ export function interactive() {
 /**
  * A command, spelled the way THIS surface spells it.
  *
- * The same listing is printed by `wolffish projects` and by `/projects`, and
- * its footer has to tell you what to type next. "wolffish projects edit <id>"
+ * The same listing is printed by `wfc projects` and by `/projects`, and
+ * its footer has to tell you what to type next. "wfc projects edit <id>"
  * is wrong advice inside a session — there is no shell there — and "/projects
  * edit <id>" is wrong advice at a shell prompt. The line reader is the tell:
  * if one is registered, a session is reading.
  */
 export function cmd(rest) {
-  return owner ? `/${rest}` : `wolffish ${rest}`
+  return owner ? `/${rest}` : `wfc ${rest}`
 }
 
 /**
@@ -531,7 +531,6 @@ const PROGRESS_LABELS = {
   'usage:getSummary': 'Loading usage',
   'usage:getStats': 'Loading usage',
   'data:getAnalytics': 'Reading disk usage',
-  'updater:check': 'Checking for updates',
   'conversation:list': 'Loading conversations',
   'conversation:load': 'Loading conversation'
 }
@@ -718,7 +717,7 @@ export function multilineHint() {
  *  - a session on the launcher's cooked pipe: the session's reader collects
  *    lines until a lone `.` (see the multiline ask in repl.mjs);
  *  - a bare shell prompt on a raw terminal: a throwaway composer;
- *  - piped stdin: read to EOF, so `cat new-prompt.md | wolffish … paste <id>`
+ *  - piped stdin: read to EOF, so `cat new-prompt.md | wfc … paste <id>`
  *    is a one-liner.
  */
 export async function questionMultiline(prompt) {

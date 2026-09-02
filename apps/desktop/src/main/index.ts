@@ -2,7 +2,7 @@ process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { attachFilesToAutomation, removeAutomationFile } from '@main/automations/files'
-import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
+import { braveService, type BraveStatus } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
 import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
@@ -102,18 +102,23 @@ import {
   updateProject,
   type ProjectFileRef
 } from '@main/projects'
+import { API_BASE } from '@main/cloud/api'
+import { getCatalog, refreshCatalog } from '@main/cloud/catalogSync'
 import {
-  defaultModelsFolder,
-  detect as detectOllama,
-  enrichWithDetails,
-  isOllamaInstalled,
-  listTags,
-  platformInstallUrl,
-  pullModel,
-  scanModelManifests,
-  startOllama,
-  type OllamaPullStatus
-} from '@main/ollama'
+  initCapabilitySync,
+  queueUserCapabilityDelete,
+  scheduleCapabilitySync
+} from '@main/cloud/capabilitySync'
+import {
+  hydrateConversationFiles,
+  initCloudSync,
+  markWorkspaceReset,
+  wipeCloudData,
+  type HydrationProgress,
+  type RestoreSummary
+} from '@main/cloud/sync'
+import { cloudSession, type AuthState } from '@main/cloud/session'
+import { connectCloudProvider } from '@main/runtime/providers/cloud'
 import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
@@ -130,26 +135,11 @@ import {
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { McpManager } from '@main/runtime/mcp/manager'
 import type { McpAddInput, McpHeader } from '@main/runtime/mcp/types'
-import { MODEL_CATALOG } from '@main/runtime/models'
-import { localProvider } from '@main/runtime/providers/local'
 import { sudoSession } from '@main/runtime/sudoSession'
-import type { CloudProviderConfig } from '@main/runtime/thalamus'
 import { Thalamus } from '@main/runtime/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { detectSystem, type SystemInfo } from '@main/system'
-import {
-  checkForUpdatesIfEnabled,
-  getUpdaterState,
-  initUpdater,
-  installUpdate,
-  isUpdateReady,
-  markInstalling,
-  onUpdaterState,
-  stampPreUpdateVersion,
-  type UpdaterState
-} from '@main/updater'
-import type { UpdaterWireState } from '@main/tunnel/protocol'
 import {
   classifyFile,
   isSupportedExtension,
@@ -175,12 +165,9 @@ import {
 } from '@main/viewer'
 import { wlog } from '@main/workspace/logger'
 import {
-  bundledCapabilityNames,
-  clearLocalModel,
   ensureWorkspace,
   extensionFolderPath,
   factoryReset,
-  getBraveConfig,
   getBrowserExtensionConfig,
   getCompactionConfig,
   getComputerUseConfig,
@@ -205,10 +192,10 @@ import {
   lockfilePath,
   markOnboardingComplete,
   patchConfig,
+  purgeWorkspace,
   setBlockCredentials as persistBlockCredentials,
-  setBrain as persistBrain,
+  setModel as persistModel,
   setMode as persistMode,
-  setBraveConfig as persistBraveConfig,
   setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
   setCliConfig as persistCliConfig,
@@ -220,10 +207,8 @@ import {
   setInAppConfig as persistInAppConfig,
   setLaunchAtStartup as persistLaunchAtStartup,
   setLocale as persistLocale,
-  setLocalOnly as persistLocalOnly,
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
-  setRestrictPowerfulModels as persistRestrictPowerfulModels,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
   setTheme as persistTheme,
@@ -233,12 +218,7 @@ import {
   setWeekStartsOn as persistWeekStartsOn,
   setWhatsAppConfig as persistWhatsAppConfig,
   readConfig,
-  reconcileLocalModel,
-  removeCloudProvider,
-  selectLocalModel,
-  setCloudProvider,
   workspaceRoot,
-  type BraveConfig,
   type BrowserExtensionConfig,
   type ComputerUseConfig,
   type GitHubConfig,
@@ -255,6 +235,7 @@ import {
   type Variable,
   type WeekStartsOn,
   type WhatsAppConfig,
+  type WorkspaceConfig,
   type WorkspaceStatus
 } from '@main/workspace/workspace'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -278,19 +259,19 @@ import {
 } from 'electron'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 
-// Redirect Chromium/Electron-managed state into ~/.wolffish so a single
-// `rm -rf ~/.wolffish` wipes every byte the app touches. Must run before
+// Redirect Chromium/Electron-managed state into ~/.wfc so a single
+// `rm -rf ~/.wfc` wipes every byte the app touches. Must run before
 // app.whenReady() — Electron resolves these paths on first use.
-const WOLFFISH_ROOT = join(os.homedir(), '.wolffish')
+const WOLFFISH_ROOT = join(os.homedir(), '.wfc')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
 
 /**
  * Headless: boot the whole agent — channels, automations, MCP, the CLI socket
  * — and never create a window or a tray. This is what a VPS runs under
- * systemd, and what the `wolffish` command attaches to.
+ * systemd, and what the `wfc` command attaches to.
  *
  * Only the window and tray are skipped. Everything else is deliberately the
  * same code path, because a headless mode that boots differently is a second
@@ -333,6 +314,12 @@ const IS_HEADLESS_BOOT =
   process.argv.includes('--headless') || process.env.WOLFFISH_HEADLESS === '1'
 
 app.commandLine.appendSwitch('no-sandbox')
+// Test-harness escape hatch: an isolated $HOME (integration runs) has no
+// authorized login keychain, and Chromium's Safe Storage bootstrap then
+// blocks the main process on a keychain-auth dialog. The mock keychain
+// keeps safeStorage functional without touching the real one. Never set
+// in production; guarded by an explicit opt-in env.
+if (process.env.WFC_MOCK_KEYCHAIN === '1') app.commandLine.appendSwitch('use-mock-keychain')
 
 // Running unsandboxed, Chromium's guest/renderer processes allocate their
 // shared memory directly in /dev/shm instead of via the sandbox broker. On some
@@ -413,463 +400,21 @@ protocol.registerSchemesAsPrivileged([
 export type ThemeSource = 'system' | 'light' | 'dark'
 export type Locale = 'en' | 'ar'
 
-export type ProviderListEntry = {
-  id: CloudProviderConfig['id']
-  model: string
-  apiKey: string
-  models?: string[]
-  reasoningModels?: string[]
-}
-
-export type ProviderTestErrorKind =
-  | 'invalid_key'
-  | 'rate_limited'
-  | 'invalid_model'
-  | 'network'
-  | 'generic'
-
-export type ProviderTestResult =
-  | { ok: true; models: string[]; reasoningModels?: string[] }
-  | { ok: false; kind: ProviderTestErrorKind; message?: string }
-
-function classifyHttpError(
-  status: number,
-  rawBody: string
-): { kind: ProviderTestErrorKind; message?: string } {
-  if (status === 401 || status === 403) return { kind: 'invalid_key' }
-  if (status === 429) return { kind: 'rate_limited' }
-  if (status === 404) return { kind: 'invalid_model' }
-  let message = rawBody
-  try {
-    const parsed = JSON.parse(rawBody) as { error?: { message?: string } }
-    if (parsed.error?.message) message = parsed.error.message
-  } catch {
-    /* keep raw body */
-  }
-  return { kind: 'generic', message: message || `HTTP ${status}` }
-}
-
-/**
- * Hit the provider's /v1/models endpoint. This doubles as auth validation —
- * if the key is bad we get a 401, no tokens spent. Returns chat-capable
- * models only, sorted newest first.
- */
-async function fetchProviderModels(
-  id: CloudProviderConfig['id'],
-  apiKey: string
-): Promise<ProviderTestResult> {
-  try {
-    if (id === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/models?limit=1000', {
-        method: 'GET',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created_at?: string }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isAnthropicChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'deepseek') {
-      const res = await fetch('https://api.deepseek.com/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isDeepSeekChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'mimo') {
-      const res = await fetch('https://api.xiaomimimo.com/v1/models', {
-        method: 'GET',
-        headers: { 'api-key': apiKey }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isMiMoChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'minimax') {
-      const res = await fetch('https://api.minimaxi.chat/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isMiniMaxChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'kimi') {
-      const res = await fetch('https://api.moonshot.ai/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isKimiChatModel(m.id))
-        .slice()
-        // Moonshot stamps every model with one shared `created` (catalog
-        // refresh), which would leave the picker in raw API order with the
-        // flagship last — tie-break by family+version, kimi-k* newest-first,
-        // the sunsetting moonshot-v1 line after.
-        .sort(
-          (a, b) =>
-            (b.created ?? 0) - (a.created ?? 0) ||
-            kimiRank(b.id).localeCompare(kimiRank(a.id), undefined, { numeric: true })
-        )
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'qwen') {
-      const res = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isQwenChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'stepfun') {
-      const res = await fetch('https://api.stepfun.ai/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isStepfunChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'zai') {
-      const res = await fetch('https://api.z.ai/api/paas/v4/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isZaiChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'xai') {
-      const res = await fetch('https://api.x.ai/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number }>
-      }
-      const models = (body.data ?? [])
-        .filter((m) => isXAIChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-        .map((m) => m.id)
-      return { ok: true, models }
-    }
-
-    if (id === 'openrouter') {
-      // OpenRouter's /v1/models is public — it returns 200 with no auth at
-      // all — so unlike every other provider's catalogue endpoint it can't
-      // double as key validation. Probe /v1/key alongside it: that endpoint
-      // 401s on a revoked/invalid key.
-      const [keyRes, res] = await Promise.all([
-        fetch('https://openrouter.ai/api/v1/key', {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${apiKey}` }
-        }),
-        fetch('https://openrouter.ai/api/v1/models', {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${apiKey}` }
-        })
-      ])
-      if (!keyRes.ok) {
-        const text = await keyRes.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(keyRes.status, text) }
-      }
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        return { ok: false, ...classifyHttpError(res.status, text) }
-      }
-      const body = (await res.json()) as {
-        data?: Array<{ id: string; created?: number; supported_parameters?: string[] }>
-      }
-      const filtered = (body.data ?? [])
-        .filter((m) => isOpenRouterChatModel(m.id))
-        .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-      const models = filtered.map((m) => m.id)
-      const reasoningModels = filtered
-        .filter((m) => m.supported_parameters?.includes('reasoning'))
-        .map((m) => m.id)
-      return { ok: true, models, reasoningModels }
-    }
-
-    const res = await fetch('https://api.openai.com/v1/models', {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${apiKey}` }
-    })
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      return { ok: false, ...classifyHttpError(res.status, text) }
-    }
-    const body = (await res.json()) as {
-      data?: Array<{ id: string; created?: number }>
-    }
-    const models = (body.data ?? [])
-      .filter((m) => isOpenAIChatModel(m.id))
-      .slice()
-      .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-      .map((m) => m.id)
-    return { ok: true, models }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return { ok: false, kind: 'network', message }
-  }
-}
-
-// Anthropic /v1/models returns the full historical catalog (claude-2, the
-// claude-3.x generations, dated snapshots, etc.). Wolffish supports the current
-// generation — the Claude 4.x family (opus-4 / sonnet-4 / haiku-4) and Fable —
-// which are the models with verified thinking/effort behaviour. Hide the rest so
-// the picker stays focused and the user isn't offered unvalidated models.
-function isAnthropicChatModel(id: string): boolean {
-  return /^claude-(fable|opus-4|sonnet-4|haiku-4)/.test(id)
-}
-
-// OpenAI's /v1/models returns 60+ entries. Keep ANY chat-completions-capable
-// model — reasoning OR not (non-reasoning models just show the brain button
-// off). Omit only what genuinely can't work in Wolffish or adds no value:
-//  • non-chat endpoints (image/audio/tts/realtime/etc.)
-//  • -pro tiers — Responses-API only, 404 on /v1/chat/completions (verified)
-//  • gpt-3.5 — too weak for an agentic assistant
-//  • dated snapshots (…-YYYY-MM-DD or -MMDD) — exact duplicates of the alias
-function isOpenAIChatModel(id: string): boolean {
-  if (id.startsWith('gpt-image-') || id.startsWith('chatgpt-image')) return false
-  if (/-(audio|tts|whisper|search|realtime|transcribe|image|instruct)/.test(id)) return false
-  if (/-pro($|-)/.test(id)) return false
-  if (/(\d{4}-\d{2}-\d{2}|-\d{4})$/.test(id)) return false
-  if (/^gpt-3\.5/.test(id)) return false
-  return /^(gpt-|chatgpt-|o\d)/.test(id)
-}
-
-function isDeepSeekChatModel(id: string): boolean {
-  return id.startsWith('deepseek-')
-}
-
-function isMiniMaxChatModel(id: string): boolean {
-  return id.startsWith('MiniMax-M')
-}
-
-function isStepfunChatModel(id: string): boolean {
-  if (id.startsWith('step-')) {
-    if (/-(image|tts|asr|embed)/.test(id)) return false
-    if (/-\d{4}$/.test(id)) return false // dated snapshot (e.g. step-3.5-flash-2603)
-    return true
-  }
-  return false
-}
-
-// DashScope returns 150+ models. Keep only the clean Qwen chat/reasoning API
-// tiers and drop the noise: non-chat modalities (image/tts/asr/omni/vl/mt/…),
-// open-weight size variants (…-8b, -235b-a22b, -next), dated snapshots,
-// preview/latest aliases, legacy qwen2 / qwen-coder.
-function isQwenChatModel(id: string): boolean {
-  if (!/^(qwen|qwq|qvq)/.test(id)) return false
-  if (
-    /-(image|tts|asr|realtime|embed|livetranslate|captioner|ocr|character|omni|vl|mt|s2s|vc|vd|tingwu)/.test(
-      id
-    )
-  )
-    return false
-  if (/^(wan|z-image|text-embedding|ccai|tongyi)/.test(id)) return false
-  if (id.startsWith('qwen-image') || id.startsWith('qwen-vl') || id.startsWith('qwen-mt'))
-    return false
-  if (id.startsWith('qwen-coder')) return false // legacy; superseded by qwen3-coder
-  if (/(\d{4}-\d{2}-\d{2})$/.test(id) || /-preview$/.test(id) || /-latest$/.test(id)) return false
-  if (/-\d+b(-a\d+b)?($|-)/.test(id) || /-next($|-)/.test(id)) return false // open-weight sizes
-  if (/^qwen2/.test(id)) return false
-  return true
-}
-
-function isZaiChatModel(id: string): boolean {
-  // Z.ai serves GLM chat/reasoning models. Vision variants (glm-*v) are
-  // chat-capable too; only filter out obvious non-chat endpoints.
-  if (id.startsWith('glm-')) {
-    if (/-(tts|asr|embedding|whisper|image|video|voice|cogview|realtime)/.test(id)) return false
-    return true
-  }
-  return false
-}
-
-function isXAIChatModel(id: string): boolean {
-  if (!id.startsWith('grok-')) return false
-  if (/-(imagine|embed|tts|stt|whisper)/.test(id)) return false
-  if (id.includes('multi-agent')) return false // not allowed on /chat/completions
-  return true
-}
-
-function isOpenRouterChatModel(id: string): boolean {
-  if (/(-embed|-tts|-stt|-whisper|-vision-gen|-diffusion|-stable|flux|dall-e|midjourney)/.test(id))
-    return false
-  if (
-    /^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/|z-ai\/)/.test(
-      id
-    )
-  )
-    return true
-  return false
-}
-
-// MiMo /v1/models is unfiltered and includes TTS / voice-clone / voice-design /
-// ASR endpoints, which are not chat models and can't drive Wolffish's agentic
-// loop. Keep only the text/omni chat models.
-function isMiMoChatModel(id: string): boolean {
-  if (!id.startsWith('mimo-')) return false
-  if (/-(tts|voiceclone|voicedesign|asr|embed)/.test(id)) return false
-  return true
-}
-
-// Sort key for the kimi picker tie-break: kimi-k* family above moonshot-v1.
-function kimiRank(id: string): string {
-  return id.startsWith('kimi-') ? `1-${id}` : `0-${id}`
-}
-
-function isKimiChatModel(id: string): boolean {
-  if (id.startsWith('kimi-') || id.startsWith('moonshot-v1-')) {
-    // Drop non-chat endpoints and the redundant vision-preview variants —
-    // Kimi's vision is covered by the general k2.x models, so the moonshot
-    // *-vision-preview duplicates just clutter the picker.
-    if (/-(tts|asr|embedding|whisper|vision)/.test(id)) return false
-    return true
-  }
-  return false
-}
-
-/**
- * Refresh the cached model list for every saved provider, in the
- * background, on app startup. Failures (offline, expired key) are silent —
- * the user keeps whatever cache they had and can retest from settings.
- */
-async function refreshAllProviderModels(): Promise<void> {
-  const cfg = await readConfig()
-  if (!cfg?.llm.providers?.length) return
-  for (const p of cfg.llm.providers) {
-    if (!p.apiKey) continue
-    const result = await fetchProviderModels(p.id, p.apiKey)
-    if (!result.ok) continue
-    await setCloudProvider({ ...p, models: result.models, reasoningModels: result.reasoningModels })
-    broadcast('provider:updated', { id: p.id })
-  }
-  // Re-seed so any new model selection downstream sees the latest config
-  // (apiKey/model haven't changed but the cached model list did).
-  const next = await readConfig()
-  if (next?.llm.providers) {
-    thalamus.setCloudProviders(next.llm.providers)
-    thalamus.setBrain(next.llm.brain ?? null)
-  }
-}
-
 export type ThemeState = {
   themeSource: ThemeSource
   shouldUseDarkColors: boolean
 }
 
-let activePull: AbortController | null = null
-let activePullModel: string | null = null
 let lockAcquired = false
 let isShuttingDown = false
 
-const thalamus = new Thalamus(localProvider)
+const thalamus = new Thalamus()
 const agent = new Agent({
   thalamus,
-  workspaceRoot: workspaceRoot(),
-  getActiveModel: () => localProvider.currentModel
+  workspaceRoot: workspaceRoot()
 })
 
-// Channels are the user-facing surfaces wolffish speaks through. The
+// Channels are the user-facing surfaces wfc speaks through. The
 // Electron renderer is the original; Telegram is the second. They share
 // one TurnRunner, which serializes turns PER CONVERSATION (one ordered
 // transcript each) while conversations — across channels and within the
@@ -928,8 +473,8 @@ agent.corpus.on('conversation.indexed', ({ rel }) => {
 // one list-changed when the pass ends so every surface reconciles.
 agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
-const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
-const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
+const telegramChannel = new TelegramChannel(agent, turnRunner)
+const whatsappChannel = new WhatsAppChannel(agent, turnRunner)
 // The terminal. Same pipeline, same TurnRunner, no window — which is also
 // what makes a VPS install possible: nothing here needs one.
 const cliChannel = new CliChannel(agent, turnRunner)
@@ -999,13 +544,11 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
   for (const [key, value] of Object.entries(settings)) {
     switch (key) {
       case 'braveEnabled':
-        await persistBraveConfig({ enabled: value === true })
-        braveService.resetCache()
-        break
       case 'braveApiKey':
-        await persistBraveConfig({ apiKey: str(value) })
-        braveService.resetCache()
-        break
+        // Web search is provided by the organization — one key behind the
+        // API's /v1/search lane — so there is nothing on this device to edit.
+        // The phone treats the refusal like any other and refetches.
+        throw new Error('Brave Search is managed by your organization')
       case 'imgflipUsername':
       case 'imgflipPassword': {
         const memes = await getMemesConfig()
@@ -1111,9 +654,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       }
       // Preferences — mirroring the runtime:* IPC handlers exactly: persist,
       // then update the live runtime the same way a click in the panel does.
-      case 'restrictPowerfulModels':
-        await persistRestrictPowerfulModels(value === true)
-        break
       case 'bypassPermissions':
         await persistBypassPermissions(value === true)
         agent.amygdala.setBypassPermissions(value === true)
@@ -1155,88 +695,18 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         // Stored per model, exactly as the desktop's brain button stores it.
         // The snapshot serves the current Brain's entry, so the Brain is the
         // model this phone-side chip names — no Brain, nothing to hold it.
-        const model = str((await readConfig())?.llm.brain?.model)
-        if (!model) throw new Error('no Brain model to hold a thinking mode')
+        const model = str((await readConfig())?.llm.model)
+        if (!model) throw new Error('no selected model to hold a thinking mode')
         await persistThinkingMode(model, mode)
         broadcast('preferences:changed', { thinkingMode: { model, mode } })
         break
       }
-      case 'localOnly':
-        await persistLocalOnly(value === true)
-        thalamus.setLocalOnly(value === true)
-        break
-      case 'localModel': {
-        // Choosing among the models the desktop has already pulled — the
-        // phone's picker lists /api/tags, so anything else is a stale row.
-        // Refusing beats silently starting a multi-gigabyte pull.
-        const modelName = str(value)
-        const installed = await listTags().catch(() => [])
-        if (!installed.some((tag) => tag.name === modelName)) {
-          throw new Error(`"${modelName}" is not installed on the desktop`)
-        }
-        await selectLocalModel(modelName)
-        const updated = await readConfig()
-        if (updated?.llm.local.model) {
-          localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
-        }
-        broadcast('model:pullDone', { modelName, ok: true as const })
-        break
-      }
-      case 'brainProvider': {
-        // The provider half of the cloud picker. The phone follows with its
-        // brainModel write; until that lands, the provider's own stored model
-        // keeps the Brain coherent — the same pair the desktop's picker sets.
-        const providerId = str(value)
-        const provider = (await readConfig())?.llm.providers.find((p) => p.id === providerId)
-        if (!provider) throw new Error(`"${providerId}" is not a configured provider`)
-        const updated = await persistBrain({ providerId: provider.id, model: provider.model })
-        thalamus.setBrain(updated.llm.brain ?? null)
-        broadcast('provider:updated', { id: provider.id })
-        break
-      }
       case 'brainModel': {
-        const brain = (await readConfig())?.llm.brain
-        if (!brain) throw new Error('no Brain provider to set a model for')
-        const updated = await persistBrain({ providerId: brain.providerId, model: str(value) })
-        thalamus.setBrain(updated.llm.brain ?? null)
-        broadcast('provider:updated', { id: brain.providerId })
-        break
-      }
-      case 'providers': {
-        // The Model screen's provider cards, as one array. Only two fields
-        // are honored per entry: a model choice and a NEWLY TYPED key. The
-        // snapshot sends key previews (12 chars + '…', see maskKey), and
-        // those round-trip back here on every model change — a masked value
-        // must never overwrite the real credential it abbreviates. Rows this
-        // desktop does not have cannot carry a user edit (the phone renders
-        // snapshot rows), so they are dropped rather than refused.
-        if (!Array.isArray(value)) throw new Error('providers must be an array')
-        const stored = (await readConfig())?.llm.providers ?? []
-        let changed: string | null = null
-        for (const entry of value as Array<{ id?: unknown; model?: unknown; apiKey?: unknown }>) {
-          const existing = stored.find((p) => p.id === entry?.id)
-          if (!existing) continue
-          const model =
-            typeof entry.model === 'string' && entry.model ? entry.model : existing.model
-          const apiKey =
-            typeof entry.apiKey === 'string' && entry.apiKey && !entry.apiKey.endsWith('…')
-              ? entry.apiKey
-              : existing.apiKey
-          if (model === existing.model && apiKey === existing.apiKey) continue
-          await setCloudProvider({ ...existing, model, apiKey })
-          changed = existing.id
-        }
-        if (changed) {
-          // Re-seed the cascade exactly as `provider:save` does — setBrain
-          // included, because setCloudProvider mirrors a model change onto a
-          // Brain that points at the edited provider.
-          const updated = await readConfig()
-          if (updated?.llm.providers) {
-            thalamus.setCloudProviders(updated.llm.providers)
-            thalamus.setBrain(updated.llm.brain ?? null)
-          }
-          broadcast('provider:updated', { id: changed })
-        }
+        // The phone's model pick — one lane now, so this simply sets the
+        // selected model. The org API is the authority on validity.
+        const updated = await persistModel(str(value))
+        thalamus.setModel(updated.llm.model)
+        broadcast('provider:updated', { id: 'cloud' })
         break
       }
       case 'mcpServers': {
@@ -1314,7 +784,7 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         break
       /**
        * The terminal's feed preference — the one CLI setting the phone edits.
-       * Everything else on that card is a machine fact (is `wolffish` on PATH,
+       * Everything else on that card is a machine fact (is `wfc` on PATH,
        * did the autostart registration take, by which mechanism), and the two
        * that ARE knobs upstream — autostart on/off and its mode — are the same
        * OS registration `launchAtStartup` is, which this device has always
@@ -1419,8 +889,6 @@ function customizationDocFor(relativePath: string): CustomizationDoc | null {
 
 /** Which service panel each phone-editable key belongs to, for re-seeding. */
 const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
-  braveEnabled: 'brave',
-  braveApiKey: 'brave',
   memesEnabled: 'memes',
   imgflipUsername: 'memes',
   imgflipPassword: 'memes',
@@ -1518,54 +986,6 @@ async function applyReflectionPatch(
   return cfg
 }
 
-/**
- * Where this build keeps its own release notes — src/changelog in dev, the
- * packaged resources copy in production. One resolver shared by the updater
- * IPC and the phone's changelog RPC, so the two readers can never diverge.
- */
-function changelogDir(): string {
-  return is.dev
-    ? join(app.getAppPath(), 'src', 'changelog')
-    : join(process.resourcesPath, 'changelog')
-}
-
-/** Months with notes, newest first — `YYYY-MM` directory names only. */
-async function listChangelogMonths(): Promise<string[]> {
-  const { readdir } = await import('node:fs/promises')
-  try {
-    const entries = await readdir(changelogDir(), { withFileTypes: true })
-    return entries
-      .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort()
-      .reverse()
-  } catch {
-    return []
-  }
-}
-
-/** One month's notes in one language, English fallback — null when absent. */
-async function readChangelogMarkdown(month: string, locale?: string): Promise<string | null> {
-  const { readFile } = await import('node:fs/promises')
-  for (const lang of [locale ?? 'en', 'en']) {
-    try {
-      return await readFile(join(changelogDir(), month, `${lang}.md`), 'utf8')
-    } catch {
-      // try the next language
-    }
-  }
-  return null
-}
-
-/** The updater's state minus `releaseNotes` — the wire shape the phone
- *  renders. The notes stay home: state rides every download-percent tick. */
-const toWireUpdaterState = (state: UpdaterState): UpdaterWireState => ({
-  phase: state.phase,
-  version: state.version,
-  percent: state.percent,
-  error: state.error
-})
-
 const mobileChannel = new MobileChannel({
   agent,
   runner: turnRunner,
@@ -1586,43 +1006,16 @@ const mobileChannel = new MobileChannel({
   // as the desktop Usage panel does. agent.usage folds the same per-line
   // cache the panel reads, so the two screens can never disagree.
   usageDays: () => agent.usage.getDays(),
+  // The org's web-search lane, for the phone's Brave card: on = the org has
+  // the lane switched on and a key set; there is no key to edit anywhere.
+  searchLane: () => braveService.getStatus(),
   dataAnalytics: () => getDataAnalytics(),
-  // Same probes the Ollama settings IPC uses — default endpoint, live answer.
-  ollamaRunning: () => detectOllama(),
-  ollamaModels: async () => (await listTags()).map((tag) => tag.name),
+  // No local models in Wolffish Cloud — constant answers keep the phone
+  // protocol satisfied until the mobile re-aim.
+  ollamaRunning: async () => false,
+  ollamaModels: async () => [],
   projects: () => listProjects(),
   compactionRuns: () => agent.brainstem.getCompactionRuns(),
-  // This build's own release notes for the phone's What's-new page: the month
-  // list rides the snapshot, bodies are served one month at a time.
-  changelogMonths: () => listChangelogMonths(),
-  readChangelog: (month, locale) => readChangelogMarkdown(month, locale),
-  // The phone's updater controls land on the SAME registered handlers this
-  // app's own Updates panel and the CLI invoke, so a tap over the tunnel is
-  // the identical act — guards, state machine, graceful shutdown and all.
-  updaterState: async () => toWireUpdaterState(getUpdaterState()),
-  updaterCheck: async () => {
-    const check = ipcHandlers.get('updater:check')
-    if (!check) return { ok: false, error: 'updater unavailable' }
-    return (await check(null)) as { ok: boolean; version?: string | null; error?: string }
-  },
-  updaterInstall: async () => {
-    // Refuse cleanly when nothing verified is ready — never trip the
-    // handler's own failure path (that surfaces an error card on BOTH
-    // screens) for what can only be a stale phone tap racing a state change.
-    if (is.dev || !isUpdateReady()) return { ok: false }
-    const install = ipcHandlers.get('updater:install')
-    if (!install) return { ok: false }
-    // Answer first, install a beat later: the handler runs the full desktop
-    // sequence (installing broadcast, pre-update stamp, graceful shutdown,
-    // quitAndInstall), and the phone's reply has to leave on this tunnel
-    // before that shutdown takes the process with it. The tunnel itself
-    // survives the grace window — shutdownGracefully never stops the Mobile
-    // channel — so the phone also sees the 'installing' push before the drop.
-    setTimeout(() => {
-      void install(null)
-    }, 500)
-    return { ok: true }
-  },
   // What the OS has ACTUALLY registered, not the stored intent — the two
   // disagree whenever a registration failed, which on Linux used to be always.
   launchAtStartupActive: async () => (await readAutostartStatus()).active,
@@ -1817,7 +1210,7 @@ agent.cerebellum.setMcpHost({
 // Wire the retrieval bridge the `introspect` capability's plugin receives in
 // its init context. It queries the SAME cortex index the ambient context
 // assembly reads, so memory_search / conversation_list / usage_report and the
-// prompt's memory section can never disagree about what wolffish knows.
+// prompt's memory section can never disagree about what wfc knows.
 agent.cerebellum.setCortexHost({
   searchRecords: (query, opts) => agent.cortex.searchRecords(query, opts),
   getRecordsByRef: (refPrefix, limit) => agent.cortex.getRecordsByRef(refPrefix, limit),
@@ -2126,7 +1519,7 @@ function buildTrayPopup(): BrowserWindow {
   void popup.loadURL(
     'data:text/html;charset=UTF-8,' +
       encodeURIComponent(
-        '<!doctype html><html><head><meta charset="utf-8"><title>Wolffish</title></head><body></body></html>'
+        '<!doctype html><html><head><meta charset="utf-8"><title>Wolffish Cloud</title></head><body></body></html>'
       )
   )
   return popup
@@ -2220,7 +1613,7 @@ function createTray(locale: Locale = 'en'): void {
     img = trayIconImage(32)
   }
   tray = new Tray(img)
-  tray.setToolTip('Wolffish')
+  tray.setToolTip('Wolffish Cloud')
 
   if (process.platform === 'win32') {
     // Windows: open the custom, larger popup on right-click instead of the
@@ -2302,7 +1695,6 @@ function createWindow(): BrowserWindow {
   })
 
   mainWindow.on('close', (event) => {
-    if (updateInstallInProgress) return
     if (isQuittingFromTray || isShuttingDown) {
       if (quitInProgress) {
         event.preventDefault()
@@ -2421,6 +1813,7 @@ const MOBILE_CONFIG_SILENT = new Set([
   'chat:turnState',
   'conversation:changed',
   'conversation:deleted',
+  'conversation:hydrationProgress',
   'conversation:messageMirror',
   'conversation:summaryUpdated',
   'diagnostics:progress',
@@ -2521,7 +1914,7 @@ async function readAutostartStatus(): Promise<AutostartFacts> {
   }
 }
 
-/** Everything `wolffish status` prints that isn't a config value. */
+/** Everything `wfc status` prints that isn't a config value. */
 async function buildCliStatus(callerPath?: string | null): Promise<Record<string, unknown>> {
   const [workspace, autostart, cliPath] = await Promise.all([
     getStatus().catch(() => null),
@@ -2632,7 +2025,6 @@ async function shutdownGracefully(): Promise<void> {
   if (isShuttingDown) return
   isShuttingDown = true
 
-  if (activePull) activePull.abort()
   electronChannel.abort()
   telegramChannel.abort()
   whatsappChannel.abort()
@@ -2655,7 +2047,6 @@ let pendingDrainResolvers: Array<() => void> = []
 // otherwise a spammed Cmd+Q would let the second event slip past the
 // in-progress drain and kill the process anyway.
 let quitInProgress = false
-let updateInstallInProgress = false
 
 async function trackBackgroundTask<T>(work: () => Promise<T>): Promise<T> {
   pendingBackgroundTasks += 1
@@ -2678,7 +2069,6 @@ function waitForBackgroundDrain(): Promise<void> {
 
 function hasInflightWork(): boolean {
   return (
-    !!activePull ||
     electronChannel.hasActiveTurn() ||
     telegramChannel.hasActiveTurn() ||
     whatsappChannel.hasActiveTurn() ||
@@ -2722,13 +2112,60 @@ function resolveShellPath(): void {
   }
 }
 
+/**
+ * Stop everything holding workspace handles or exclusive side effects, so a
+ * relaunch (factory reset, restore-applied, account switch) starts clean.
+ * app.exit() skips before-quit/will-quit, so children must die here.
+ */
+async function teardownForRelaunch(reason: string): Promise<void> {
+  electronChannel.abort()
+  telegramChannel.abort()
+  whatsappChannel.abort()
+  await telegramChannel.stop(reason).catch(() => undefined)
+  await whatsappChannel.stop(reason).catch(() => undefined)
+  await mcpManager.stop().catch(() => undefined)
+  await agent.stop().catch(() => undefined)
+  if (lockAcquired) {
+    releaseLockSync(lockfilePath())
+    lockAcquired = false
+  }
+}
+
+/**
+ * Apply an adopted server config to the RUNNING app — the subset that can
+ * change live without a restart: theme, model, mode, safety toggles,
+ * locale-bound prompts, capability sets, and the brainstem schedules.
+ * Channels and MCP stay boot-read (they hold sockets and child processes);
+ * the restore path relaunches for those, and a steady-state adoption gets
+ * them at the next launch. The renderer is pinged to re-read its settings.
+ */
+function applyAdoptedConfig(cfg: WorkspaceConfig): void {
+  try {
+    nativeTheme.themeSource = cfg.theme ?? 'system'
+    broadcastThemeUpdate()
+    thalamus.setModel(cfg.llm?.model ?? null)
+    agent.setMode(cfg.llm?.mode ?? 'single')
+    agent.amygdala.setBypassPermissions(cfg.safety?.bypassPermissions ?? false)
+    turnRunner.setBlockCredentials(cfg.safety?.blockCredentials ?? false)
+    turnRunner.setLocale(cfg.locale ?? 'en')
+    sudoSession.setLocale(cfg.locale ?? 'en')
+    agent.cerebellum.setDisabled(cfg.disabledCapabilities ?? [])
+    agent.cerebellum.setPinnedCapabilities(cfg.pinnedCapabilities ?? [])
+    if (cfg.compaction) agent.brainstem.setCompactionConfig(cfg.compaction)
+    agent.brainstem.setReflectionConfig(normalizeReflectionConfig(cfg.reflection))
+    broadcast('workspace:configAdopted', null)
+  } catch (err) {
+    wlog.warn('sync', 'live apply of adopted config failed (relaunch will):', err)
+  }
+}
+
 app.whenReady().then(async () => {
   // Must stay identical to `appId` in electron-builder.yml: the NSIS installer
   // stamps that value onto the Start Menu and Desktop shortcuts, and Windows
   // only matches a running window to its own shortcut — and only raises toasts
   // at all — when the two agree. A YAML file cannot import this constant, so the
   // two are kept in sync by hand.
-  electronApp.setAppUserModelId('sh.wolffi.app')
+  electronApp.setAppUserModelId('cloud.wolffi.sh')
 
   if (is.dev && process.platform === 'darwin') {
     app.dock?.setIcon(dockIcon)
@@ -2736,12 +2173,104 @@ app.whenReady().then(async () => {
 
   resolveShellPath()
   await ensureWorkspace()
-  await reconcileLocalModel()
-  initUpdater()
-  // The phone's Updates screen mirrors the updater live — the same state
-  // machine the renderer panels subscribe to, one push per transition/tick.
-  onUpdaterState((state) => {
-    if (mobileChannel.hasPeer) mobileChannel.pushUpdaterState(toWireUpdaterState(state))
+  // The cloud session gates every screen: initialize it early and mirror
+  // every transition to the renderer. Init is non-blocking (it may touch
+  // the network to rotate the refresh token) — the renderer shows a splash
+  // while status is 'initializing'.
+  // The runtime's one lane authenticates with the session's access token;
+  // this seam keeps electron out of the runtime import graph.
+  connectCloudProvider({
+    apiBase: API_BASE,
+    getToken: () => cloudSession.withAccessToken(async (token) => token)
+  })
+  // The same seam for capability plugins: the web-search plugin routes every
+  // search through the org's /v1/search lane with the session token — the
+  // org's Brave key never leaves the edge (see main/brave.ts for the status).
+  agent.cerebellum.setCloudHost({
+    apiBase: API_BASE,
+    withAccessToken: (fn) => cloudSession.withAccessToken(fn)
+  })
+  // Sync registers its own onState listener — BEFORE init() so the very
+  // first ready (silent resume at launch) also restores and sweeps.
+  initCloudSync({
+    getUserId: () => cloudSession.getUserId(),
+    getDeviceId: () => cloudSession.getDeviceId(),
+    // The org's usage table landed rows in the local ledger (a rebuild
+    // after restore, or the user's other devices' calls) — re-read it so
+    // the usage panel and the phone show the org's record.
+    onUsageLedgerChanged: () => {
+      void agent.usage
+        .sync()
+        .then(() => mobileChannel.pushUsageChanged())
+        .catch(() => undefined)
+    },
+    // A restore into a fresh workspace delivered the user's real setup —
+    // relaunch so every boot-read subsystem (channels, MCP, theme, model,
+    // conversation list) comes up on the restored config. restore_done is
+    // already durable, so the relaunched instance goes straight to sweep.
+    onRestored: (summary: RestoreSummary) => {
+      wlog.info(
+        'sync',
+        `workspace restored (${summary.conversations} conversations, ${summary.files} files) — relaunching to apply`
+      )
+      void (async () => {
+        await teardownForRelaunch('restore complete')
+        app.relaunch()
+        app.exit(0)
+      })()
+    },
+    // The workspace on disk belongs to a DIFFERENT user than the session.
+    // Cloud-first semantics: the local folder is a cache of one user's
+    // record — reset it and let the relaunch restore this user's own.
+    // Never sweep user A's data into user B's account.
+    onForeignWorkspace: (ownerUserId: string) => {
+      wlog.warn(
+        'sync',
+        `workspace cache belongs to user ${ownerUserId} — resetting for the signed-in account`
+      )
+      void (async () => {
+        await teardownForRelaunch('account switch')
+        await purgeWorkspace().catch(() => undefined)
+        app.relaunch()
+        app.exit(0)
+      })()
+    },
+    // A server config row replaced the local file (restore, launch
+    // reconciliation, or the 2-minute steady-state pull): apply what can
+    // change live and ping the renderer to re-read.
+    onConfigAdopted: (cfg) => applyAdoptedConfig(cfg),
+    // On-open media hydration ticks → the chat's download banner.
+    onHydrationProgress: (progress: HydrationProgress) =>
+      broadcast('conversation:hydrationProgress', progress)
+  })
+  // Avatar cache revalidations land here: updated/removed photos reach
+  // every open surface without a refetch.
+  cloudSession.onAvatar((dataUrl) => {
+    broadcast('auth:avatarChanged', dataUrl)
+  })
+  cloudSession.onState((state) => {
+    broadcast('auth:changed', state)
+    // 'locked' still holds live tokens — the PIN screen is UI-only privacy,
+    // so catalog and model adoption never wait behind it.
+    if (state.status === 'ready' || state.status === 'locked') {
+      // Fresh session → fresh catalog, and a working default model with
+      // zero clicks: when nothing is selected yet, adopt the org default.
+      void refreshCatalog()
+        .then(async (models) => {
+          const current = (await readConfig())?.llm.model ?? null
+          const stillListed = current !== null && models.some((m) => m.id === current)
+          if (current !== null && stillListed) return
+          const fallback = models.find((m) => m.default) ?? models[0]
+          if (!fallback) return
+          const updated = await persistModel(fallback.id)
+          thalamus.setModel(updated.llm.model)
+          broadcast('provider:updated', { id: 'cloud' })
+        })
+        .catch(() => undefined)
+    }
+  })
+  void cloudSession.init().catch((err) => {
+    console.error('cloudSession.init failed:', err)
   })
   agent.init().catch((err) => {
     console.error('agent.init failed:', err)
@@ -2751,20 +2280,8 @@ app.whenReady().then(async () => {
   // Read it once at startup to apply the theme and restore the selected model.
   const cfg = await readConfig()
   nativeTheme.themeSource = cfg?.theme ?? 'system'
-  if (cfg?.llm.local.model) {
-    localProvider.configure(cfg.llm.local.model, cfg.llm.local.endpoint)
-  }
-  if (cfg?.llm.providers) {
-    thalamus.setCloudProviders(cfg.llm.providers)
-    thalamus.setBrain(cfg.llm.brain ?? null)
-    // Fire-and-forget refresh of each provider's model catalogue. Cheap
-    // (a single GET per provider) and doesn't block window creation.
-    void refreshAllProviderModels()
-  }
+  thalamus.setModel(cfg?.llm.model ?? null)
 
-  // Fire-and-forget update check. Respects the updates.enabled config flag.
-  void checkForUpdatesIfEnabled()
-  thalamus.setLocalOnly(cfg?.llm.localOnly ?? false)
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
   agent.setMode(cfg?.llm.mode ?? 'single')
   turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
@@ -2824,7 +2341,7 @@ app.whenReady().then(async () => {
   }
 
   {
-    const extCfg = cfg?.browserExtension ?? { port: 23151 }
+    const extCfg = cfg?.browserExtension ?? { port: 23152 }
     extensionServer.setStatusChangeHandler((status) => {
       for (const w of BrowserWindow.getAllWindows()) {
         w.webContents.send('extension:statusChange', status)
@@ -2844,7 +2361,7 @@ app.whenReady().then(async () => {
   // MCP connections start only in the instance that owns the workspace
   // lock: stdio servers are real child processes with exclusive side
   // effects (ports, database locks, OAuth token refresh writes), and a
-  // dev + packaged instance pair sharing ~/.wolffish must not both
+  // dev + packaged instance pair sharing ~/.wfc must not both
   // spawn them. Channels predate this concern; MCP doesn't inherit it.
   if (lock.acquired) {
     mcpManager.start(cfg?.mcp)
@@ -2907,16 +2424,6 @@ app.whenReady().then(async () => {
     broadcast('preferences:changed', { blockCredentials: value })
     return { value }
   })
-  handle('runtime:setLocalOnly', async (_e, value: boolean) => {
-    await persistLocalOnly(value)
-    thalamus.setLocalOnly(value)
-    return { value }
-  })
-  handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
-    await persistRestrictPowerfulModels(value)
-    broadcast('preferences:changed', { restrictPowerfulModels: value })
-    return { value }
-  })
   handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
     await persistThinkingMode(model, mode)
     broadcast('preferences:changed', { thinkingMode: { model, mode } })
@@ -2938,10 +2445,7 @@ app.whenReady().then(async () => {
       payload: { provider: string; model: string }
     ): Promise<{ modes: string[]; current: string }> => {
       const cfg = await readConfig()
-      const provider = cfg?.llm.providers.find((p) => p.id === payload.provider)
-      const modes = reasoningModesFor(payload.provider, payload.model, {
-        openrouterReasoning: provider?.reasoningModels?.includes(payload.model) ?? false
-      })
+      const modes = reasoningModesFor('cloud', payload.model)
       const stored = cfg?.llm.thinkingModes?.[payload.model]
       return { modes, current: normalizeReasoningMode(stored, modes) }
     }
@@ -3072,7 +2576,7 @@ app.whenReady().then(async () => {
    *
    * These used to call `BrowserWindow.getAllWindows()` directly, and that made
    * linking WhatsApp from a terminal impossible rather than merely awkward:
-   * `wolffish pair whatsapp` subscribes to `whatsapp:statusChange` and waits
+   * `wfc pair whatsapp` subscribes to `whatsapp:statusChange` and waits
    * for the code, and the code was only ever posted to renderer processes. On
    * the machine this CLI exists for — a VPS with no window at all — the events
    * went to an empty array and the terminal sat at "waiting for a code…"
@@ -3129,33 +2633,15 @@ app.whenReady().then(async () => {
 
   handle('mcp:authorize', (_e, id: string) => mcpManager.authorize(id))
 
-  // Brave Search — stateless service. The web-search cerebellum plugin
-  // reads the persisted config and uses Brave as the primary provider
-  // when enabled. No long-poll, no in-process server: just a key + flag.
-  handle('brave:getConfig', (): Promise<BraveConfig> => getBraveConfig())
-
+  // Brave Search — provided by the organization: one key behind the API's
+  // /v1/search lane, never on this device. The web-search capability's
+  // plugin calls that lane through the cerebellum's cloud host; this
+  // handler is the status the settings panel renders (org switch, this
+  // user's allowance, plan price and rate limit).
   handle(
-    'brave:setConfig',
-    async (
-      _e,
-      patch: Partial<BraveConfig>
-    ): Promise<{ ok: true; status: BraveStatus; config: BraveConfig }> => {
-      const updated = await persistBraveConfig(patch)
-      const next = updated.brave ?? { enabled: false, apiKey: '' }
-      // Reset cached error so the next status read reflects the new key.
-      braveService.resetCache()
-      // Announce so every other audience — the phone (via the broadcast
-      // hook's config.changed) and other windows' panels — re-seeds live.
-      broadcast('services:changed', { service: 'brave' })
-      return { ok: true as const, status: await braveService.getStatus(), config: next }
-    }
-  )
-
-  handle('brave:status', (): Promise<BraveStatus> => braveService.getStatus())
-
-  handle(
-    'brave:test',
-    (_e, apiKey: string): Promise<BraveTestResult> => braveService.testKey(apiKey)
+    'brave:status',
+    (_e, opts?: { refresh?: boolean }): Promise<BraveStatus> =>
+      braveService.getStatus(Boolean(opts?.refresh))
   )
 
   // Notion — stateless service. The notion cerebellum plugin reads the
@@ -3742,6 +3228,39 @@ app.whenReady().then(async () => {
   // System
   handle('system:getInfo', (): Promise<SystemInfo> => detectSystem())
 
+  // Cloud auth — the session (and every token) lives in the main process;
+  // the renderer sees only the redacted AuthState.
+  handle('auth:getState', (): AuthState => cloudSession.getState())
+  handle('auth:login', (_e, email: string, password: string) => cloudSession.login(email, password))
+  handle('auth:changePassword', (_e, newPassword: string) =>
+    cloudSession.completePasswordChange(newPassword)
+  )
+  handle('auth:setPin', (_e, pin: string) => cloudSession.setPin(pin))
+  handle('auth:unlock', (_e, pin: string) => cloudSession.unlock(pin))
+  handle('auth:signOut', () => cloudSession.signOut())
+  handle('auth:lock', () => cloudSession.lock())
+  handle('auth:changePin', (_e, currentPin: string, nextPin: string) =>
+    cloudSession.changePin(currentPin, nextPin)
+  )
+  handle('auth:profileGet', () => cloudSession.getProfile())
+  handle(
+    'auth:profileUpdate',
+    (_e, patch: { name?: string; phone?: string; position?: string; bio?: string }) =>
+      cloudSession.updateProfile(patch)
+  )
+  handle('auth:passwordChangeSelf', (_e, currentPassword: string, newPassword: string) =>
+    cloudSession.changePasswordSelf(currentPassword, newPassword)
+  )
+  handle('auth:resetRequest', (_e, email: string) => cloudSession.requestPasswordReset(email))
+  handle('auth:resetConfirm', (_e, email: string, code: string, newPassword: string) =>
+    cloudSession.confirmPasswordReset(email, code, newPassword)
+  )
+  handle('auth:avatarGet', () => cloudSession.getAvatar())
+  handle('auth:avatarSet', (_e, bytes: ArrayBuffer, mime: string) =>
+    cloudSession.setAvatar(bytes, mime)
+  )
+  handle('auth:avatarRemove', () => cloudSession.removeAvatar())
+
   // Workspace
   handle('workspace:getStatus', (): Promise<WorkspaceStatus> => getStatus())
   handle('workspace:completeOnboarding', () => markOnboardingComplete())
@@ -3750,26 +3269,29 @@ app.whenReady().then(async () => {
   // theme, and runtime toggles. The relaunch ensures no stale handles
   // (cortex.db, brainstem watcher, corpus flush timer) survive the wipe.
   handle('app:factoryReset', async () => {
-    activePull?.abort()
-    electronChannel.abort()
-    telegramChannel.abort()
-    whatsappChannel.abort()
-    await telegramChannel.stop('factory reset').catch(() => undefined)
-    await whatsappChannel.stop('factory reset').catch(() => undefined)
-    // app.exit() below skips before-quit/will-quit, so MCP children must
-    // be torn down here or they survive into the relaunched instance.
-    await mcpManager.stop().catch(() => undefined)
-    await agent.stop().catch(() => undefined)
-    if (lockAcquired) {
-      releaseLockSync(lockfilePath())
-      lockAcquired = false
-    }
+    await teardownForRelaunch('factory reset')
+    // "Wipe my data" means the org copy too — tombstone the cloud record
+    // first (best-effort: offline resets still reset locally; the marker
+    // below keeps the survivors from resurrecting either way).
+    await wipeCloudData().catch((err) =>
+      wlog.warn('sync', 'cloud wipe during factory reset failed:', err)
+    )
     await factoryReset().catch(() => undefined)
+    // Stamp the fresh workspace as already-restored: a factory reset must
+    // never be followed by a restore that pulls the erased data back.
+    await markWorkspaceReset(cloudSession.getUserId()).catch(() => undefined)
     app.relaunch()
     app.exit(0)
   })
 
   handle('data:getAnalytics', (): Promise<DataAnalytics> => getDataAnalytics())
+
+  // Official = org-managed: materialized by capability sync into a
+  // dot-prefixed folder (or built into the process). The old signal —
+  // presence in the app bundle — died when capabilities moved to the
+  // cloud registry.
+  const officialCapability = (cap: { dir?: string; inProcess?: boolean }): boolean =>
+    Boolean(cap.inProcess) || basename(cap.dir ?? '').startsWith('.')
 
   // The mobile channel needs the same list; publish the closure so it can be
   // called from outside this scope rather than reimplementing the mapping.
@@ -3790,7 +3312,6 @@ app.whenReady().then(async () => {
       error?: string
     }>
   > => {
-    const bundled = await bundledCapabilityNames()
     return agent.cerebellum
       .getCapabilities()
       .filter((c) => !c.inProcess)
@@ -3802,7 +3323,7 @@ app.whenReady().then(async () => {
         toolCount: c.tools.length,
         triggers: c.triggers.keywords,
         requires: c.requires,
-        official: bundled.has(c.name),
+        official: officialCapability(c),
         core: LOCKED_CAPABILITIES.has(c.name),
         wolffish: c.author === WOLFFISH_AUTHOR,
         // `tested` is tracked only for Wolffish-authored plugin skills; for
@@ -3927,11 +3448,15 @@ app.whenReady().then(async () => {
   handle('cerebellum:importCapability', async (_e, sourcePath: string) => {
     await agent.init()
     const existingNames = new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
-    return importCapability({
+    const result = await importCapability({
       sourcePath,
       cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
       existingNames
     })
+    // A successful import is a user-scoped capability: push it to the org
+    // registry so the user's other devices materialize it too.
+    if (result.ok) scheduleCapabilitySync()
+    return result
   })
 
   // Native picker for the import dropzone's "browse" affordance. On macOS the
@@ -3964,15 +3489,17 @@ app.whenReady().then(async () => {
     const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
     if (!cap) return { ok: false as const, error: `Capability "${name}" not found.` }
 
-    const bundled = await bundledCapabilityNames()
     const outcome = await deleteCapabilityFolder({
       name,
       dir: cap.dir,
       cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
-      isOfficial: bundled.has(name),
+      isOfficial: officialCapability(cap),
       isInProcess: Boolean(cap.inProcess)
     })
     if (!outcome.ok) return outcome
+    // Propagate: tombstone the user-scoped registry entry so other devices
+    // remove it too (queued locally, so offline deletes still stick).
+    void queueUserCapabilityDelete(basename(cap.dir))
 
     // Forget any disabled-toggle for the gone capability, then reload so the
     // in-memory cerebellum (and the plugin's destroy hook) reflect the removal.
@@ -3993,7 +3520,6 @@ app.whenReady().then(async () => {
   // uses — there is one implementation of "disable a skill", not two.
   agent.cerebellum.setPluginHost({
     listCapabilities: async () => {
-      const bundled = await bundledCapabilityNames()
       return agent.cerebellum.getCapabilities().map((c) => ({
         name: c.name,
         description: c.description,
@@ -4002,7 +3528,7 @@ app.whenReady().then(async () => {
         hasPlugin: c.hasPlugin,
         status: c.status,
         enabled: !agent.cerebellum.isDisabled(c.name),
-        official: Boolean(c.inProcess) || bundled.has(c.name),
+        official: officialCapability(c),
         core: LOCKED_CAPABILITIES.has(c.name),
         wolffish: c.author === WOLFFISH_AUTHOR,
         tested: c.tested !== false,
@@ -4017,15 +3543,15 @@ app.whenReady().then(async () => {
     deleteCapability: async (name) => {
       const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
       if (!cap) return { ok: false, error: `Capability "${name}" not found.` }
-      const bundled = await bundledCapabilityNames()
       const outcome = await deleteCapabilityFolder({
         name,
         dir: cap.dir,
         cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
-        isOfficial: bundled.has(name),
+        isOfficial: officialCapability(cap),
         isInProcess: Boolean(cap.inProcess)
       })
       if (!outcome.ok) return outcome
+      void queueUserCapabilityDelete(basename(cap.dir))
       await patchConfig((c) => ({
         ...c,
         disabledCapabilities: (c.disabledCapabilities ?? []).filter((n) => n !== name)
@@ -4037,11 +3563,13 @@ app.whenReady().then(async () => {
     },
     importCapability: async (sourcePath) => {
       const existingNames = new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
-      return importCapability({
+      const result = await importCapability({
         sourcePath,
         cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
         existingNames
       })
+      if (result.ok) scheduleCapabilitySync()
+      return result
     },
     reload: async () => {
       await agent.cerebellum.reload()
@@ -4049,6 +3577,32 @@ app.whenReady().then(async () => {
       agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
     }
   })
+
+  // Cloud-first capabilities: the org registry (R2 + D1 behind the API) is
+  // the source of truth; this wiring is its mirror. A pass fires on session
+  // ready, after a local import/delete, and on a slow interval; downloads
+  // stage silently, and the folder swaps land only while no runs are active
+  // (capabilitySync defers and retries until the app goes quiet).
+  initCapabilitySync({
+    apiBase: API_BASE,
+    withAccessToken: (fn) => cloudSession.withAccessToken(fn),
+    cerebellumDir: () => join(workspaceRoot(), 'brain', 'cerebellum'),
+    runsActive: () => turnRunner.activeRuns().length > 0 || agent.activeAutonomousRuns().length > 0,
+    onApplied: async () => {
+      await agent.cerebellum.reload()
+      const cfg = await readConfig()
+      agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
+      broadcast('cerebellum:capabilitiesChanged', await serializeCapabilities())
+    },
+    log: (m) => console.log(m)
+  })
+  cloudSession.onState((state) => {
+    if (state.status === 'ready' || state.status === 'locked') scheduleCapabilitySync()
+  })
+  {
+    const status = cloudSession.getState().status
+    if (status === 'ready' || status === 'locked') scheduleCapabilitySync()
+  }
 
   // Automation-management bridge handed to the `automations` capability's
   // plugin via its init context. Every method runs over the live Brainstem so
@@ -4540,19 +4094,6 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
-  handle('runtime:setUpdatesEnabled', async (_e, value: boolean) => {
-    await patchConfig((c) => ({
-      ...c,
-      updates: { ...(c.updates ?? { enabled: true }), enabled: value }
-    }))
-    // Announced like the other preference setters: the broadcast hook's
-    // config.changed push is what moves the phone's mirror of this switch
-    // now, rather than on its next screen focus. Without it this was the one
-    // setting that synced phone→desktop but not desktop→phone.
-    broadcast('preferences:changed', { updatesEnabled: value })
-    return { value }
-  })
-
   handle('runtime:setLastSettingsState', async (_e, patch: Record<string, string>) => {
     await patchConfig((c) => ({
       ...c,
@@ -4607,60 +4148,6 @@ app.whenReady().then(async () => {
   handle('task:cancel', async (_e, payload: { taskId: string }) => {
     return videoTasks.cancel(payload.taskId)
   })
-  handle('updater:install', async () => {
-    if (is.dev || updateInstallInProgress) return
-    // Bail before tearing anything down if there's no verified artifact —
-    // otherwise a failed arm would force-exit the app with nothing installed.
-    // installUpdate() surfaces the error to the renderer so it can recover.
-    if (!isUpdateReady()) {
-      installUpdate()
-      return
-    }
-    updateInstallInProgress = true
-    // Broadcast 'installing' so a panel remounted during the grace window
-    // (page navigation) restores the disabled state instead of re-enabling.
-    markInstalling()
-    await stampPreUpdateVersion()
-    void shutdownGracefully()
-    // Grace period: let in-flight work finish, then force through
-    await new Promise((resolve) => setTimeout(resolve, 4_000))
-    quitInProgress = false
-    installUpdate()
-    // Safety net: force exit if quitAndInstall silently failed
-    setTimeout(() => {
-      wlog.warn('[updater]', 'quitAndInstall did not exit — forcing')
-      if (lockAcquired) {
-        releaseLockSync(lockfilePath())
-        lockAcquired = false
-      }
-      app.exit(0)
-    }, 5_000)
-  })
-
-  handle('updater:consumePostUpdate', async () => {
-    const cfg = await readConfig()
-    const last = cfg?.updates?.lastVersion
-    if (!last || last === app.getVersion()) return false
-    await patchConfig((c) => {
-      const { lastVersion, ...rest } = c.updates ?? { enabled: true }
-      void lastVersion
-      return { ...c, updates: rest as typeof c.updates }
-    })
-    return true
-  })
-
-  // Same readers the phone's changelog RPC uses (changelogDir and friends,
-  // beside applyMobileSettings). The renderer contract keeps '' for a month
-  // with no page — the Changelog screen renders that as its empty state.
-  handle('updater:listChangelogMonths', () => listChangelogMonths())
-
-  handle(
-    'updater:readChangelog',
-    async (_event, month: string, locale?: string) =>
-      (await readChangelogMarkdown(month, locale)) ?? ''
-  )
-
-  handle('workspace:getModelCatalog', () => MODEL_CATALOG)
 
   // Viewer — read-only tree + read/write of individual workspace files.
   handle('viewer:readTree', (): Promise<ViewerTreeNode[]> => readViewerTree())
@@ -4995,10 +4482,8 @@ app.whenReady().then(async () => {
     const run = (async (): Promise<DiagnosticResult> => {
       const config = await readConfig()
       const provider = agent.thalamus.getActiveProvider()
-      // Cloud-only, by design: the opinion is a lean side-call and a local
-      // model is the one case where "quick" isn't true. No model at all and
-      // it's skipped outright.
-      const cloud = provider !== null && provider !== 'local'
+      // No model selected → the diagnostic opinion is skipped outright.
+      const cloud = provider !== null
       return await exportConversationDiagnostics({
         conversationId,
         env: {
@@ -5100,9 +4585,17 @@ app.whenReady().then(async () => {
     }
     return listConversations()
   })
+  handle('conversation:load', (_e, id: string): Promise<ConversationFile | null> => {
+    // Opening a conversation is what triggers its media download (nothing
+    // is predownloaded at restore) — fire-and-forget; progress reaches the
+    // renderer through conversation:hydrationProgress, and the explicit
+    // conversation:hydrate call below dedupes into the same flight.
+    void hydrateConversationFiles(id).catch(() => undefined)
+    return loadConversation(id)
+  })
   handle(
-    'conversation:load',
-    (_e, id: string): Promise<ConversationFile | null> => loadConversation(id)
+    'conversation:hydrate',
+    (_e, id: string): Promise<HydrationProgress> => hydrateConversationFiles(id)
   )
   handle('conversation:save', (_e, conv: ConversationFile): Promise<{ ok: true }> => {
     return trackBackgroundTask(async () => {
@@ -5144,144 +4637,6 @@ app.whenReady().then(async () => {
     (_e, model: string | null): ConversationFile => createConversation(model)
   )
 
-  // Ollama
-  handle('ollama:detect', async () => {
-    const reachable = await detectOllama()
-    const installed = isOllamaInstalled()
-    return { reachable, installed }
-  })
-  handle('ollama:installUrl', () => platformInstallUrl(process.platform))
-  handle('ollama:openInstallPage', async () => {
-    await shell.openExternal(platformInstallUrl(process.platform))
-    return { opened: true }
-  })
-  handle('ollama:start', () => startOllama())
-  handle('ollama:listInstalled', async () => {
-    try {
-      return await listTags()
-    } catch {
-      return []
-    }
-  })
-
-  handle('ollama:scanAvailable', async () => {
-    const cfg = await readConfig()
-    const folder = cfg?.ollamaModelsFolder || defaultModelsFolder()
-    const scanned = await scanModelManifests(folder)
-    return enrichWithDetails(scanned)
-  })
-
-  handle('ollama:getModelsFolder', async () => {
-    const cfg = await readConfig()
-    return cfg?.ollamaModelsFolder || defaultModelsFolder()
-  })
-
-  handle('ollama:setModelsFolder', async (_e, folder: string) => {
-    await patchConfig((c) => ({ ...c, ollamaModelsFolder: folder }))
-    return { ok: true as const, folder }
-  })
-
-  handle('ollama:pickModelsFolder', async () => {
-    const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    if (!mainWin) return null
-    const result = await dialog.showOpenDialog(mainWin, {
-      title: 'Select Ollama models folder',
-      properties: ['openDirectory']
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-
-  // Model selection — pulls (if needed) and persists. Streams progress to
-  // every renderer; final 'success' or error is also broadcast.
-  handle('model:select', async (_e, modelName: string) => {
-    if (activePull && activePullModel !== modelName) {
-      activePull.abort()
-    }
-    if (activePull && activePullModel === modelName) {
-      return { ok: true, alreadyRunning: true }
-    }
-
-    const installed = await listTags().catch(() => [])
-    const alreadyDownloaded = installed.some((t) => t.name === modelName)
-
-    if (alreadyDownloaded) {
-      await selectLocalModel(modelName)
-      const updated = await readConfig()
-      if (updated?.llm.local.model) {
-        localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
-      }
-      broadcast('model:pullDone', { modelName, ok: true as const })
-      return { ok: true, alreadyDownloaded: true }
-    }
-
-    const controller = new AbortController()
-    activePull = controller
-    activePullModel = modelName
-
-    try {
-      await pullModel({
-        model: modelName,
-        signal: controller.signal,
-        onStatus: (status: OllamaPullStatus) => {
-          if (status.kind === 'success') {
-            broadcast('model:pullProgress', {
-              modelName,
-              status: 'success',
-              completed: null,
-              total: null
-            })
-          } else {
-            broadcast('model:pullProgress', {
-              modelName,
-              status: status.status,
-              completed: status.completed,
-              total: status.total
-            })
-          }
-        }
-      })
-      await selectLocalModel(modelName)
-      const updated = await readConfig()
-      if (updated?.llm.local.model) {
-        localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
-      }
-      broadcast('model:pullDone', { modelName, ok: true as const })
-      return { ok: true }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      const aborted = controller.signal.aborted
-      broadcast('model:pullDone', {
-        modelName,
-        ok: false as const,
-        error: message,
-        aborted
-      })
-      return { ok: false, error: message, aborted }
-    } finally {
-      if (activePull === controller) {
-        activePull = null
-        activePullModel = null
-      }
-    }
-  })
-
-  handle('model:cancelPull', () => {
-    activePull?.abort()
-    return { canceled: !!activePull }
-  })
-
-  handle('model:clear', async () => {
-    activePull?.abort()
-    await clearLocalModel()
-    localProvider.configure(null)
-    return { cleared: true }
-  })
-
-  handle('model:status', () => ({
-    model: localProvider.currentModel
-  }))
-
   // Active-model capability check used by the renderer to decide whether
   // to allow image uploads. Cloud models go through the well-known-family
   // check in vision.ts (text-only APIs like DeepSeek reject image parts
@@ -5306,131 +4661,28 @@ app.whenReady().then(async () => {
       const provider = agent.thalamus.getActiveProvider()
       if (!provider)
         return { provider: null, model: null, supportsVision: false, contextWindow, compactionAt }
-      if (provider === 'local') {
-        const model = agent.thalamus.getLocalModelName()
-        const supportsVision = await agent.thalamus.localSupportsVision()
-        return { provider, model, supportsVision, contextWindow, compactionAt }
-      }
-      const cloudProviders = agent.thalamus.getCloudProviders()
-      const active = cloudProviders.find((p) => p.id === provider)
-      const model = active?.model ?? null
+      const model = agent.thalamus.getActiveModel()
       const supportsVision = model !== null && cloudModelSupportsVision(provider, model)
       return { provider, model, supportsVision, contextWindow, compactionAt }
     }
   )
 
-  // Cloud providers — list/save/remove persist to config.json and re-seed
-  // the thalamus cascade in-place. test hits the provider's /v1/models
-  // endpoint, which validates auth without spending tokens and returns the
-  // catalogue used to populate the model dropdown.
-  handle('provider:list', async (): Promise<ProviderListEntry[]> => {
-    const cfg = await readConfig()
-    const providers = cfg?.llm.providers ?? []
-    return providers.map((p) => ({
-      id: p.id,
-      model: p.model,
-      apiKey: p.apiKey,
-      models: p.models,
-      reasoningModels: p.reasoningModels
-    }))
+  // The org catalog, straight from GET /v1/models (cached 5 min). The
+  // renderer's picker renders exactly this list — admin edits the policy,
+  // the list changes, the picker follows.
+  handle('model:catalog', async () => {
+    const models = await getCatalog()
+    return { models }
   })
 
-  handle(
-    'provider:test',
-    async (
-      _e,
-      payload: { id: CloudProviderConfig['id']; apiKey?: string }
-    ): Promise<ProviderTestResult> => {
-      // No apiKey from the renderer means "re-validate the key already on
-      // disk" — used by the panel's silent refresh on mount. The stored key
-      // never round-trips back to the renderer.
-      let apiKey = payload.apiKey
-      const usingStored = !apiKey
-      if (!apiKey) {
-        const cfg = await readConfig()
-        apiKey = cfg?.llm.providers.find((p) => p.id === payload.id)?.apiKey
-      }
-      if (!apiKey) return { ok: false, kind: 'invalid_key' }
-
-      const result = await fetchProviderModels(payload.id, apiKey)
-      if (result.ok && usingStored) {
-        const cfg = await readConfig()
-        const existing = cfg?.llm.providers.find((p) => p.id === payload.id)
-        if (existing) {
-          await setCloudProvider({
-            ...existing,
-            models: result.models,
-            reasoningModels: result.reasoningModels
-          })
-          const next = await readConfig()
-          if (next?.llm.providers) {
-            thalamus.setCloudProviders(next.llm.providers)
-            thalamus.setBrain(next.llm.brain ?? null)
-          }
-          broadcast('provider:updated', { id: payload.id })
-        }
-      }
-      return result
-    }
-  )
-
-  // Save accepts an optional apiKey — if omitted, we keep what's already on
-  // disk. Lets the user change just the model selection without re-pasting
-  // their key.
-  handle(
-    'provider:save',
-    async (
-      _e,
-      payload: {
-        id: CloudProviderConfig['id']
-        model: string
-        apiKey?: string
-        models?: string[]
-        reasoningModels?: string[]
-      }
-    ): Promise<{ ok: true } | { ok: false; error: string }> => {
-      const cfg = await readConfig()
-      const existing = cfg?.llm.providers.find((p) => p.id === payload.id)
-      const apiKey = payload.apiKey ?? existing?.apiKey
-      if (!apiKey) {
-        return { ok: false, error: 'no_key' }
-      }
-      const updated = await setCloudProvider({
-        id: payload.id,
-        model: payload.model,
-        apiKey,
-        models: payload.models ?? existing?.models,
-        reasoningModels: payload.reasoningModels ?? existing?.reasoningModels
-      })
-      thalamus.setCloudProviders(updated.llm.providers)
-      thalamus.setBrain(updated.llm.brain ?? null)
-      broadcast('provider:updated', { id: payload.id })
-      return { ok: true }
-    }
-  )
-
-  handle('provider:remove', async (_e, id: CloudProviderConfig['id']): Promise<{ ok: true }> => {
-    const updated = await removeCloudProvider(id)
-    thalamus.setCloudProviders(updated.llm.providers)
-    thalamus.setBrain(updated.llm.brain ?? null)
-    broadcast('provider:updated', { id })
+  // Model selection — one lane. Selecting persists to config.json and
+  // updates the live runtime, exactly as the old Brain picker did.
+  handle('model:select', async (_e, model: string | null): Promise<{ ok: true }> => {
+    const updated = await persistModel(model)
+    thalamus.setModel(updated.llm.model)
+    broadcast('provider:updated', { id: model ? 'cloud' : null })
     return { ok: true }
   })
-
-  handle(
-    'provider:setBrain',
-    async (
-      _e,
-      brain: { providerId: CloudProviderConfig['id']; model: string } | null
-    ): Promise<{ ok: true }> => {
-      const updated = await persistBrain(brain)
-      thalamus.setBrain(updated.llm.brain ?? null)
-      // Broadcast so the Brain page, the chat mode switcher, and the
-      // reasoning button all reflect the new Brain immediately.
-      broadcast('provider:updated', { id: brain?.providerId ?? null })
-      return { ok: true }
-    }
-  )
 
   handle('provider:setMode', async (_e, mode: 'single' | 'workflow'): Promise<{ ok: true }> => {
     await persistMode(mode === 'workflow' ? 'workflow' : 'single')
@@ -5530,7 +4782,7 @@ app.whenReady().then(async () => {
       if (result.canceled || !result.filePath) return { ok: false, canceled: true }
 
       const { writeFile, unlink } = await import('node:fs/promises')
-      const tmpPath = join(app.getPath('temp'), `wolffish-chat-export-${Date.now()}.html`)
+      const tmpPath = join(app.getPath('temp'), `wfc-chat-export-${Date.now()}.html`)
       let printWin: BrowserWindow | null = null
       try {
         await writeFile(tmpPath, payload.html, 'utf8')
@@ -5607,12 +4859,12 @@ app.whenReady().then(async () => {
   })
 
   protocol.handle('wolffish-media', (request) => {
-    const relativePath = decodeURIComponent(request.url.replace('wolffish-media://', ''))
+    const relativePath = decodeURIComponent(request.url.replace('wfc-media://', ''))
     const absolutePath = join(workspaceRoot(), relativePath)
     return net.fetch(`file://${absolutePath}`)
   })
 
-  // The CLI socket serves BOTH modes: a desktop user gets `wolffish` in a
+  // The CLI socket serves BOTH modes: a desktop user gets `wfc` in a
   // terminal alongside the app, a headless box gets it as the only surface.
   // Started after the IPC handlers above are registered — the server's whole
   // job is forwarding into that map.
@@ -5646,11 +4898,11 @@ app.whenReady().then(async () => {
   })
   void cliServer.start().catch((err) => wlog.error('[cli]', `socket start failed: ${err}`))
 
-  // Install the `wolffish` shim on every boot, not just on first run. It is
+  // Install the `wfc` shim on every boot, not just on first run. It is
   // idempotent and it has to be re-pointed after an update anyway (the app
   // binary's path can move), so writing it unconditionally is both simpler
   // and more correct than tracking whether it was ever installed. Silent and
-  // best-effort: it writes into the user's own ~/.wolffish/bin, needs no
+  // best-effort: it writes into the user's own ~/.wfc/bin, needs no
   // privilege, and a failure only means the Channels → CLI panel shows its
   // "not on PATH" card with the fix.
   // Skipped in dev, where process.execPath is the electron-vite binary.
@@ -5688,7 +4940,6 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', (event) => {
   isQuittingFromTray = true
-  if (updateInstallInProgress) return
   if (quitInProgress) {
     event.preventDefault()
     return

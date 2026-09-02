@@ -156,7 +156,7 @@ Wolffish maps each of those fifteen regions to a runtime module under
 interface and a single responsibility. Every brain region in section 1
 has a counterpart here.
 
-The workspace lives at `~/.wolffish/workspace` and is the source of
+The workspace lives at `~/.wfc/workspace` and is the source of
 truth for everything the agent knows. The agent reads markdown at
 runtime instead of having logic baked into code. The cortex's SQLite
 index is _derived_ from the markdown; if you delete it, it rebuilds
@@ -164,10 +164,10 @@ itself.
 
 ### thalamus.ts — sensory gateway
 
-**Region:** Thalamus. **Job:** classify incoming messages and route LLM
-calls through the provider cascade (Claude → OpenAI → Local Ollama).
-**Reads/writes:** none directly — it talks to the providers in
-`src/main/runtime/providers/`. **Interfaces:** `route()`, `classify()`,
+**Region:** Thalamus. **Job:** classify incoming messages and route every LLM
+call through the one lane — the org's Wolffish Cloud router, with the model the
+user picked from the org's catalog (`src/main/runtime/providers/cloud.ts`).
+**Reads/writes:** none directly. **Interfaces:** `route()`, `classify()`,
 `getActiveProvider()`, `healthCheck()`, plus the existing `streamChat()`
 and `cascade()`. **Bus:** emits `input.received`, `input.classified`,
 `input.routed`, `llm.error`.
@@ -222,6 +222,13 @@ frontmatter + markdown body) and an optional `plugin/index.mjs` that
 exports executable tools. Parse the frontmatter for triggers, tool
 schemas, and danger/confirm patterns. Match incoming messages to
 relevant skills.
+
+The folder is cloud-first: nothing ships in the app. On session ready,
+`cloud/capabilitySync.ts` mirrors the org registry (R2 + D1 behind
+`api.wolffi.sh`) — official capabilities land dot-prefixed (`.git`,
+`.browser`, …), admin adds/updates/removes propagate on the next pull,
+and the user's own imports sync user-scoped across their devices. Folder
+swaps wait until no runs are active, then the cerebellum reloads.
 **Reads:** `cerebellum/<capability>/**`.
 **Interfaces:** `loadAll()`, `findRelevantSkills()`, `getPluginTools()`,
 `registerPlugin()`. **Bus:** emits `skill.matched`, `plugin.loaded`,
@@ -349,8 +356,8 @@ the same gates, in the same order:
 The user types: **"Create a git commit for my current changes."**
 
 1. **thalamus** classifies the input — kind: command, language: en,
-   urgency: normal, complexity: low — and selects the active provider
-   (Claude if there's a key, otherwise Ollama).
+   urgency: normal, complexity: low — and resolves the one lane: the org
+   router, with the model the user picked from the org's catalog.
 2. **ras** scores the candidate context fragments against the message.
    Skills tagged `git`, `commit`, or `version-control` score high.
    Knowledge files about decisions and preferences score moderately.
@@ -412,13 +419,16 @@ prefrontal reads markdown and assembles a system prompt every turn. To
 change behavior, you edit a file. This is the difference between an
 agent you have to redeploy and one you can teach.
 
-### The 3-tier LLM cascade
+### One lane, governed by the org
 
-The thalamus tries providers in order: Claude → OpenAI → Local Ollama.
-If Claude is down, it falls back to OpenAI. If OpenAI is down, it falls
-back to Ollama. Ollama is the floor — the user always has a working
-agent, even with no network and no API keys. The cloud providers are
-upgrades when available, not requirements.
+Every model call goes through the org's Wolffish Cloud router with the
+device's session token — never an API key. The router enforces the user's
+model allowlist and daily quota, meters the call into the org's usage
+table, and streams the answer back. The thalamus runs exactly the model
+the user picked from the org's catalog and retries it on transient
+failures; there is no cascade and no silent substitution, so a failed
+turn fails honestly and an admin's policy change lands on the next
+catalog refresh.
 
 ### Resilient task execution
 

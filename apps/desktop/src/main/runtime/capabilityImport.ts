@@ -77,10 +77,10 @@ function isJunk(base: string): boolean {
     lower === '.git' ||
     lower === '.ds_store' ||
     lower === '__macosx' || // mac zip cruft
-    lower === '.wolffish-installed' || // npm-install marker
+    lower === '.wfc-installed' || // npm-install marker
     // The tested-state marker is earned by a real successful call in THIS
     // install — an imported copy must never arrive pre-claimed as tested.
-    lower === '.wolffish-tested'
+    lower === '.wfc-tested'
   )
 }
 

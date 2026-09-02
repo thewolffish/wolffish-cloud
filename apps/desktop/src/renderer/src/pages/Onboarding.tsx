@@ -20,8 +20,6 @@ export function Onboarding(): React.JSX.Element {
   const onContinue = async (): Promise<void> => {
     if (!isReentry) {
       await window.api.workspace.completeOnboarding()
-      goTo('ollama-setup')
-      return
     }
     goTo('chat')
   }

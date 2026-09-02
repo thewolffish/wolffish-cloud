@@ -17,19 +17,6 @@ export type ThemeState = {
   shouldUseDarkColors: boolean
 }
 
-export type ModelFamily = 'gemma' | 'qwen' | 'llama' | 'deepseek' | 'kimi'
-export type SizeKey = 'nano' | 'mini' | 'compact' | 'standard' | 'pro' | 'max' | 'extreme' | 'ultra'
-
-export type ModelEntry = {
-  family: ModelFamily
-  sizeKey: SizeKey
-  ollamaName: string
-  sizeBytes: number
-  ramBytes: number
-  paramsBillions?: number
-  releaseDate?: string
-}
-
 export type SystemInfo = {
   totalRamBytes: number
   freeDiskBytes: number | null
@@ -38,32 +25,6 @@ export type SystemInfo = {
   arch: string
   cpuCount: number
   cpuModel: string
-}
-
-export type LocalModelConfig = {
-  enabled: boolean
-  provider: 'ollama'
-  model: string | null
-  endpoint: string
-}
-
-export type CloudProviderConfig = {
-  id:
-    | 'anthropic'
-    | 'openai'
-    | 'openrouter'
-    | 'deepseek'
-    | 'mimo'
-    | 'kimi'
-    | 'minimax'
-    | 'xai'
-    | 'qwen'
-    | 'stepfun'
-    | 'zai'
-  model: string
-  apiKey: string
-  models?: string[]
-  reasoningModels?: string[]
 }
 
 export type SafetyConfig = {
@@ -305,16 +266,11 @@ export type WeekStartsOn = 0 | 1
 export type WorkspaceConfig = {
   version: 1
   launchAtStartup?: boolean
-  ollamaModelsFolder?: string
   llm: {
-    local: LocalModelConfig
-    providers: CloudProviderConfig[]
-    /** The single user-chosen cloud model — the Brain. */
-    brain?: BrainSelection | null
+    /** The selected model id; the org API serves the allowed catalog. */
+    model: string | null
     /** Chat mode: 'single' (default, solo turns) vs 'workflow' (model-led agents). */
     mode?: 'single' | 'workflow'
-    localOnly?: boolean
-    restrictPowerfulModels?: boolean
     /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
     thinkingModes?: Record<string, ThinkingMode>
   }
@@ -346,12 +302,9 @@ export type WorkspaceConfig = {
 export type WorkspaceStatus = {
   rootPath: string
   initialized: boolean
-  hasLocalModel: boolean
   onboardingCompleted: boolean
   config: WorkspaceConfig | null
 }
-
-export type OllamaTag = { name: string; size: number }
 
 export type PullProgressEvent = {
   modelName: string
@@ -698,7 +651,79 @@ export type SystemApi = {
 export type WorkspaceApi = {
   getStatus: () => Promise<WorkspaceStatus>
   completeOnboarding: () => Promise<WorkspaceConfig>
-  getModelCatalog: () => Promise<readonly ModelEntry[]>
+}
+
+// ── Cloud auth ────────────────────────────────────────────────────────────
+// Tokens never cross this bridge: the renderer drives the auth screens off
+// this redacted state and the main process owns the session.
+
+export type AuthStatus =
+  | 'initializing'
+  | 'loggedOut'
+  | 'mustChangePassword'
+  | 'needsPin'
+  | 'locked'
+  | 'ready'
+
+export type AuthState = {
+  status: AuthStatus
+  user: { email: string; name: string; role: 'owner' | 'admin' | 'support' | 'employee' } | null
+  orgName: string | null
+  pinAttemptsLeft: number | null
+  lastError: string | null
+  lastErrorDetail: string | null
+}
+
+export type CloudProfile = {
+  name: string
+  email: string
+  phone: string
+  position: string
+  bio: string
+  role: 'owner' | 'admin' | 'support' | 'employee'
+  orgName: string | null
+  pinSet: boolean
+  hasAvatar: boolean
+}
+
+export type AuthApi = {
+  getState: () => Promise<AuthState>
+  login: (email: string, password: string) => Promise<AuthState>
+  changePassword: (newPassword: string) => Promise<AuthState>
+  setPin: (pin: string) => Promise<AuthState>
+  unlock: (pin: string) => Promise<AuthState>
+  signOut: () => Promise<AuthState>
+  /** Re-locks the app behind the PIN immediately. */
+  lock: () => Promise<AuthState>
+  changePin: (currentPin: string, nextPin: string) => Promise<AuthState>
+  getProfile: () => Promise<CloudProfile | null>
+  updateProfile: (patch: {
+    name?: string
+    phone?: string
+    position?: string
+    bio?: string
+  }) => Promise<AuthState>
+  changePasswordSelf: (currentPassword: string, newPassword: string) => Promise<AuthState>
+  /** Emailed-code password reset (no session). */
+  resetRequest: (email: string) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  resetConfirm: (
+    email: string,
+    code: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  /** Avatar travels as a data URL; null means none set. */
+  getAvatar: () => Promise<string | null>
+  setAvatar: (
+    bytes: ArrayBuffer,
+    mime: string
+  ) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  removeAvatar: () => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  onChanged: (listener: (state: AuthState) => void) => () => void
+  /**
+   * Fires when the cached avatar actually changes — an upload, a removal,
+   * or a background revalidation discovering a change made elsewhere.
+   */
+  onAvatarChanged: (listener: (dataUrl: string | null) => void) => () => void
 }
 
 export type AppClosingPendingEvent = { tasks: number }
@@ -790,7 +815,6 @@ export type RuntimeApi = {
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
   setThinkingMode: (model: string, mode: ThinkingMode) => Promise<void>
-  setUpdatesEnabled: (value: boolean) => Promise<{ value: boolean }>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
   setLastSettingsState: (patch: Record<string, string>) => Promise<void>
   /** A preference saved anywhere — this window, another window. Payload is the patch. */
@@ -854,29 +878,6 @@ export type ReflectionConfig = {
   cards: boolean
 }
 
-export type OllamaModelDetail = {
-  name: string
-  tag: string
-  fullName: string
-  sizeBytes: number
-  family: string | null
-  parameterSize: string | null
-  quantization: string | null
-  format: string | null
-}
-
-export type OllamaApi = {
-  detect: () => Promise<{ reachable: boolean; installed: boolean }>
-  installUrl: () => Promise<string>
-  openInstallPage: () => Promise<{ opened: boolean }>
-  start: () => Promise<{ ok: boolean; error?: string }>
-  listInstalled: () => Promise<OllamaTag[]>
-  scanAvailable: () => Promise<OllamaModelDetail[]>
-  getModelsFolder: () => Promise<string>
-  setModelsFolder: (folder: string) => Promise<{ ok: true; folder: string }>
-  pickModelsFolder: () => Promise<string | null>
-}
-
 export type ModelCapabilities = {
   provider: string | null
   model: string | null
@@ -887,55 +888,33 @@ export type ModelCapabilities = {
 }
 
 export type ModelApi = {
-  select: (modelName: string) => Promise<SelectModelResult>
-  cancelPull: () => Promise<{ canceled: boolean }>
-  clear: () => Promise<{ cleared: boolean }>
-  status: () => Promise<{ model: string | null }>
   capabilities: () => Promise<ModelCapabilities>
-  onPullProgress: (listener: (event: PullProgressEvent) => void) => () => void
-  onPullDone: (listener: (event: PullDoneEvent) => void) => () => void
+  catalog: () => Promise<{ models: CatalogModelEntry[] }>
 }
 
-export type ProviderListEntry = {
-  id: CloudProviderConfig['id']
-  model: string
-  apiKey: string
-  models?: string[]
-  reasoningModels?: string[]
+/** One row of the org's model catalog (GET /v1/models, cached in main). */
+export type CatalogModelEntry = {
+  id: string
+  name: string
+  reasoning: boolean
+  vision: boolean
+  contextWindow: number
+  inPerMtokMicroUsd: number
+  outPerMtokMicroUsd: number
+  default: boolean
 }
 
-export type ProviderTestErrorKind =
-  | 'invalid_key'
-  | 'rate_limited'
-  | 'invalid_model'
-  | 'network'
-  | 'generic'
-
-export type ProviderTestResult =
-  | { ok: true; models: string[]; reasoningModels?: string[] }
-  | { ok: false; kind: ProviderTestErrorKind; message?: string }
-
-// `id` is null for events not tied to a specific provider (e.g. the Brain
-// was cleared). Listeners that filter by provider id simply won't match.
-export type ProviderUpdatedEvent = { id: CloudProviderConfig['id'] | null }
-
-/** The single user-chosen cloud model — the Brain. */
-export type BrainSelection = { providerId: CloudProviderConfig['id']; model: string }
+// `id` is null for events not tied to a specific selection (e.g. cleared).
+export type ProviderUpdatedEvent = { id: 'cloud' | null }
 
 export type ProviderApi = {
-  list: () => Promise<ProviderListEntry[]>
-  test: (payload: { id: CloudProviderConfig['id']; apiKey?: string }) => Promise<ProviderTestResult>
-  save: (payload: {
-    id: CloudProviderConfig['id']
-    model: string
-    apiKey?: string
-    models?: string[]
-    reasoningModels?: string[]
-  }) => Promise<{ ok: true } | { ok: false; error: string }>
-  remove: (id: CloudProviderConfig['id']) => Promise<{ ok: true }>
-  setBrain: (brain: BrainSelection | null) => Promise<{ ok: true }>
   setMode: (mode: 'single' | 'workflow') => Promise<{ ok: true }>
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
+}
+
+export type ModelSelectApi = {
+  /** Persist the selected model (null clears). Validity is the org API's call. */
+  select: (model: string | null) => Promise<{ ok: true }>
 }
 
 // Canonical reasoning scale (see src/main/runtime/reasoning.ts). Inlined here
@@ -1061,6 +1040,35 @@ export type ConversationApi = {
   onMessageMirror: (
     listener: (payload: { conversationId: string; message: ConversationMessage }) => void
   ) => () => void
+  /**
+   * Download this conversation's media from the org if any of it is missing
+   * on disk (nothing is predownloaded at restore — media hydrates on open,
+   * like the phone). Resolves with the final summary; live ticks stream
+   * through onHydrationProgress. Idempotent — a hydrated conversation
+   * resolves immediately with filesTotal 0.
+   */
+  hydrate: (id: string) => Promise<ConversationHydrationProgress>
+  /** Streamed hydration ticks (throttled ~100ms; first and final always). */
+  onHydrationProgress: (listener: (progress: ConversationHydrationProgress) => void) => () => void
+}
+
+/**
+ * Live progress of one conversation's on-open media download (dual decl —
+ * mirrors HydrationProgress in src/main/cloud/sync.ts). `filesTotal` counts
+ * only files that actually need downloading; 0 means nothing to fetch.
+ */
+export type ConversationHydrationProgress = {
+  conversationId: string
+  filesTotal: number
+  filesDone: number
+  totalBytes: number
+  doneBytes: number
+  /** Workspace-relative path currently downloading, null between files. */
+  current: string | null
+  /** Paths still waiting or mid-download — drives per-card download states. */
+  pending: string[]
+  failed: number
+  done: boolean
 }
 
 export type ViewerTreeNode =
@@ -1070,19 +1078,7 @@ export type ViewerTreeNode =
 export type UsageTimeRange = 'today' | 'this_month' | '3_months' | '6_months' | 'ytd' | 'all_time'
 
 export type UsageProviderSummary = {
-  provider:
-    | 'anthropic'
-    | 'openai'
-    | 'openrouter'
-    | 'deepseek'
-    | 'mimo'
-    | 'kimi'
-    | 'minimax'
-    | 'xai'
-    | 'qwen'
-    | 'stepfun'
-    | 'zai'
-    | 'local'
+  provider: 'cloud'
   totalInputTokens: number
   totalOutputTokens: number
   totalCost: number
@@ -1723,39 +1719,36 @@ export type TelegramApi = {
  * uses Brave as the primary provider when enabled, falling back to
  * DuckDuckGo on failure.
  */
-export type BraveErrorKind =
-  | 'missing_key'
-  | 'invalid_key'
-  | 'rate_limit'
-  | 'subscription'
-  | 'network'
-  | 'unknown'
+/**
+ * Brave Search is provided by the organization — one key behind the API's
+ * /v1/search lane, never on this device — so the service has no config,
+ * only a status: the lane's state and this user's standing against the
+ * org's allowances (main/brave.ts, from GET /v1/search/status).
+ */
+export type BraveLaneState = 'ready' | 'disabled' | 'unconfigured' | 'signed_out' | 'unreachable'
 
 export type BraveStatus = {
-  status: 'disabled' | 'configured' | 'error'
-  errorKind: BraveErrorKind | null
-  /** Raw error from the last test attempt, surfaced when kind is `unknown`. */
-  error: string | null
-}
-
-export type BraveConfig = {
+  provider: 'brave'
+  managed: true
+  state: BraveLaneState
+  configured: boolean
   enabled: boolean
-  apiKey: string
+  usedToday: number
+  /** 0 = unlimited. */
+  dailyCap: number
+  orgUsedMonth: number
+  /** 0 = unlimited. */
+  orgMonthlyCap: number
+  pricePerQueryUsd: number
+  planQps: number
+  limitPerSec: number | null
+  error: string | null
+  fetchedAt: number
 }
-
-export type BraveTestResult =
-  | { ok: true; resultsCount: number }
-  | { ok: false; kind: BraveErrorKind; message?: string }
 
 export type BraveApi = {
-  getConfig: () => Promise<BraveConfig>
-  setConfig: (patch: Partial<BraveConfig>) => Promise<{
-    ok: true
-    status: BraveStatus
-    config: BraveConfig
-  }>
-  status: () => Promise<BraveStatus>
-  test: (apiKey: string) => Promise<BraveTestResult>
+  /** The org lane's status; `refresh` bypasses main's short cache. */
+  status: (opts?: { refresh?: boolean }) => Promise<BraveStatus>
 }
 
 export type GoogleConfig = {
@@ -1776,9 +1769,13 @@ export type GoogleErrorKind =
   | 'unknown'
 
 export type GoogleStatus = {
-  status: 'inactive' | 'active' | 'error'
+  status: 'inactive' | 'active' | 'error' | 'needsReconnect'
   errorKind: GoogleErrorKind | null
   error: string | null
+  /** The synced config says this user set Google up (on some device). */
+  cloudConfigured: boolean
+  /** Accounts gogcli holds on THIS device. */
+  accountsOnDevice: number
 }
 
 export type GoogleBinaryStatus = {
@@ -2026,62 +2023,6 @@ export type BrowserExtensionApi = {
   onStatusChange: (callback: (status: ExtensionServerStatus) => void) => () => void
 }
 
-export type UpdateAvailableEvent = {
-  version: string
-  releaseNotes: string | null
-}
-
-export type UpdateDownloadProgressEvent = {
-  percent: number
-}
-
-export type UpdateReadyEvent = {
-  version: string
-  releaseNotes: string | null
-}
-
-export type UpdaterPhase =
-  | 'idle'
-  | 'checking'
-  | 'downloading'
-  | 'verifying'
-  | 'ready'
-  | 'installing'
-  | 'error'
-
-export type UpdaterErrorCode = 'checksum' | 'network' | 'timeout' | 'filesystem' | 'unknown'
-
-export type UpdaterErrorInfo = {
-  code: UpdaterErrorCode
-  message: string
-  detail: string | null
-}
-
-export type UpdaterState = {
-  phase: UpdaterPhase
-  version: string | null
-  percent: number
-  releaseNotes: string | null
-  error: UpdaterErrorInfo | null
-}
-
-export type UpdateCheckResult = { ok: true; version: string | null } | { ok: false; error: string }
-
-export type UpdaterApi = {
-  install: () => Promise<void>
-  check: () => Promise<UpdateCheckResult>
-  getVersion: () => Promise<string>
-  getReady: () => Promise<UpdateReadyEvent | null>
-  getState: () => Promise<UpdaterState>
-  consumePostUpdate: () => Promise<boolean>
-  listChangelogMonths: () => Promise<string[]>
-  readChangelog: (month: string, locale?: string) => Promise<string>
-  onAvailable: (listener: (event: UpdateAvailableEvent) => void) => () => void
-  onProgress: (listener: (event: UpdateDownloadProgressEvent) => void) => () => void
-  onReady: (listener: (event: UpdateReadyEvent) => void) => () => void
-  onState: (listener: (state: UpdaterState) => void) => () => void
-}
-
 export type SttTranscribeResult =
   | { ok: true; transcript: string; language?: string }
   | { ok: false; error: string }
@@ -2224,8 +2165,9 @@ export type WolffishApi = {
   locale: LocaleApi
   system: SystemApi
   workspace: WorkspaceApi
-  ollama: OllamaApi
+  auth: AuthApi
   model: ModelApi
+  modelSelect: ModelSelectApi
   provider: ProviderApi
   chat: ChatApi
   conversation: ConversationApi
@@ -2264,7 +2206,6 @@ export type WolffishApi = {
   tts: TtsApi
   computerUse: ComputerUseApi
   browserExtension: BrowserExtensionApi
-  updater: UpdaterApi
   spellcheck: SpellcheckApi
 }
 
@@ -2291,35 +2232,38 @@ const api: WolffishApi = {
   },
   workspace: {
     getStatus: () => ipcRenderer.invoke('workspace:getStatus'),
-    completeOnboarding: () => ipcRenderer.invoke('workspace:completeOnboarding'),
-    getModelCatalog: () => ipcRenderer.invoke('workspace:getModelCatalog')
+    completeOnboarding: () => ipcRenderer.invoke('workspace:completeOnboarding')
   },
-  ollama: {
-    detect: () => ipcRenderer.invoke('ollama:detect'),
-    installUrl: () => ipcRenderer.invoke('ollama:installUrl'),
-    openInstallPage: () => ipcRenderer.invoke('ollama:openInstallPage'),
-    start: () => ipcRenderer.invoke('ollama:start'),
-    listInstalled: () => ipcRenderer.invoke('ollama:listInstalled'),
-    scanAvailable: () => ipcRenderer.invoke('ollama:scanAvailable'),
-    getModelsFolder: () => ipcRenderer.invoke('ollama:getModelsFolder'),
-    setModelsFolder: (folder) => ipcRenderer.invoke('ollama:setModelsFolder', folder),
-    pickModelsFolder: () => ipcRenderer.invoke('ollama:pickModelsFolder')
+  auth: {
+    getState: () => ipcRenderer.invoke('auth:getState'),
+    login: (email, password) => ipcRenderer.invoke('auth:login', email, password),
+    changePassword: (newPassword) => ipcRenderer.invoke('auth:changePassword', newPassword),
+    setPin: (pin) => ipcRenderer.invoke('auth:setPin', pin),
+    unlock: (pin) => ipcRenderer.invoke('auth:unlock', pin),
+    signOut: () => ipcRenderer.invoke('auth:signOut'),
+    lock: () => ipcRenderer.invoke('auth:lock'),
+    changePin: (currentPin, nextPin) => ipcRenderer.invoke('auth:changePin', currentPin, nextPin),
+    getProfile: () => ipcRenderer.invoke('auth:profileGet'),
+    updateProfile: (patch) => ipcRenderer.invoke('auth:profileUpdate', patch),
+    resetRequest: (email) => ipcRenderer.invoke('auth:resetRequest', email),
+    resetConfirm: (email, code, newPassword) =>
+      ipcRenderer.invoke('auth:resetConfirm', email, code, newPassword),
+    getAvatar: () => ipcRenderer.invoke('auth:avatarGet'),
+    setAvatar: (bytes, mime) => ipcRenderer.invoke('auth:avatarSet', bytes, mime),
+    removeAvatar: () => ipcRenderer.invoke('auth:avatarRemove'),
+    changePasswordSelf: (currentPassword, newPassword) =>
+      ipcRenderer.invoke('auth:passwordChangeSelf', currentPassword, newPassword),
+    onChanged: (listener) => subscribe('auth:changed', listener),
+    onAvatarChanged: (listener) => subscribe('auth:avatarChanged', listener)
   },
   model: {
-    select: (modelName) => ipcRenderer.invoke('model:select', modelName),
-    cancelPull: () => ipcRenderer.invoke('model:cancelPull'),
-    clear: () => ipcRenderer.invoke('model:clear'),
-    status: () => ipcRenderer.invoke('model:status'),
     capabilities: () => ipcRenderer.invoke('model:capabilities'),
-    onPullProgress: (listener) => subscribe('model:pullProgress', listener),
-    onPullDone: (listener) => subscribe('model:pullDone', listener)
+    catalog: () => ipcRenderer.invoke('model:catalog')
+  },
+  modelSelect: {
+    select: (model) => ipcRenderer.invoke('model:select', model)
   },
   provider: {
-    list: () => ipcRenderer.invoke('provider:list'),
-    test: (payload) => ipcRenderer.invoke('provider:test', payload),
-    save: (payload) => ipcRenderer.invoke('provider:save', payload),
-    remove: (id) => ipcRenderer.invoke('provider:remove', id),
-    setBrain: (brain) => ipcRenderer.invoke('provider:setBrain', brain),
     setMode: (mode) => ipcRenderer.invoke('provider:setMode', mode),
     onUpdated: (listener) => subscribe('provider:updated', listener)
   },
@@ -2349,7 +2293,9 @@ const api: WolffishApi = {
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
     onDeleted: (listener) => subscribe('conversation:deleted', listener),
     onChanged: (listener) => subscribe('conversation:changed', listener),
-    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener)
+    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener),
+    hydrate: (id) => ipcRenderer.invoke('conversation:hydrate', id),
+    onHydrationProgress: (listener) => subscribe('conversation:hydrationProgress', listener)
   },
   task: {
     cancel: (taskId) => ipcRenderer.invoke('task:cancel', { taskId }),
@@ -2443,7 +2389,6 @@ const api: WolffishApi = {
     setRestrictPowerfulModels: (value) =>
       ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),
     setThinkingMode: (model, mode) => ipcRenderer.invoke('runtime:setThinkingMode', model, mode),
-    setUpdatesEnabled: (value) => ipcRenderer.invoke('runtime:setUpdatesEnabled', value),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
     setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),
     onPreferencesChanged: (listener) => subscribe('preferences:changed', listener),
@@ -2565,10 +2510,7 @@ const api: WolffishApi = {
     onStatusChange: (callback) => subscribe('mcp:statusChange', callback)
   },
   brave: {
-    getConfig: () => ipcRenderer.invoke('brave:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('brave:setConfig', patch),
-    status: () => ipcRenderer.invoke('brave:status'),
-    test: (apiKey) => ipcRenderer.invoke('brave:test', apiKey)
+    status: (opts) => ipcRenderer.invoke('brave:status', opts)
   },
   notion: {
     getConfig: () => ipcRenderer.invoke('notion:getConfig'),
@@ -2644,21 +2586,6 @@ const api: WolffishApi = {
     testConnection: (target) => ipcRenderer.invoke('browserExtension:testConnection', target),
     openExtensionsPage: () => ipcRenderer.invoke('browserExtension:openExtensionsPage'),
     onStatusChange: (listener) => subscribe('extension:statusChange', listener)
-  },
-  updater: {
-    install: () => ipcRenderer.invoke('updater:install'),
-    check: () => ipcRenderer.invoke('updater:check'),
-    getVersion: () => ipcRenderer.invoke('updater:getVersion'),
-    getReady: () => ipcRenderer.invoke('updater:getReady'),
-    getState: () => ipcRenderer.invoke('updater:getState'),
-    consumePostUpdate: () => ipcRenderer.invoke('updater:consumePostUpdate'),
-    listChangelogMonths: () => ipcRenderer.invoke('updater:listChangelogMonths'),
-    readChangelog: (month: string, locale?: string) =>
-      ipcRenderer.invoke('updater:readChangelog', month, locale),
-    onAvailable: (listener) => subscribe('updater:available', listener),
-    onProgress: (listener) => subscribe('updater:progress', listener),
-    onReady: (listener) => subscribe('updater:ready', listener),
-    onState: (listener) => subscribe('updater:state', listener)
   },
   spellcheck: {
     onContextMenu: (listener) => subscribe('spellcheck:contextMenu', listener),

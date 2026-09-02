@@ -204,6 +204,7 @@ export function landingPage(version: string): string {
     <p><strong>One door.</strong> Every employee's agent sends every model request to this single endpoint — there is no other road to a model, and the provider keys exist only behind it, never on a device.</p>
     <p><strong>Every policy, every request.</strong> At this door the session is verified, the company's model allowlist is checked, and the employee's token budget is enforced — before anything is forwarded anywhere.</p>
     <p><strong>Metered, then forwarded.</strong> Allowed requests stream from the model provider on zero data retention; tokens, cost, and latency are metered to the employee. Denials are recorded the same way — the meter never blinks.</p>
+    <p><strong>The web, same door.</strong> Every web search an agent runs goes through <code>/v1/search</code> on the company's one Brave Search key — queued fairly across employees behind the plan's rate limit, capped per person and per month, metered per query. Search results are never stored; the query text is never logged.</p>
   </section>
   <section class="how">
     <h2>What the master holds</h2>

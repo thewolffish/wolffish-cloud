@@ -54,6 +54,9 @@ export type SnapshotSources = {
   serializeCapabilities: CapabilitySerializer
   /** Optional extras — omitted from the snapshot when they throw or are absent. */
   dataAnalytics?: () => Promise<Record<string, unknown>>
+  /** The org's web-search lane (main/brave.ts): its state feeds the phone's
+   * Brave switch as read-only status — the key lives at the edge, not here. */
+  searchLane?: () => Promise<{ state: string }>
   usageDays?: () => Promise<unknown[]>
   ollamaRunning?: () => Promise<boolean>
   ollamaModels?: () => Promise<string[]>
@@ -359,10 +362,12 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
           detail: str(connection?.name, str(connection?.email))
         })
       ),
-      braveEnabled: bool(config.brave?.enabled),
-      // The credential itself, not a mask: the phone's field EDITS it, and
-      // both devices are the same person's — the tunnel is end-to-end sealed.
-      braveApiKey: str(config.brave?.apiKey),
+      // Web search is the org's lane: "on" means the org has it switched on
+      // with a key at the edge. Sent as '' rather than omitted — an omitted
+      // key makes the phone show its demo placeholder, and a phone write to
+      // either field is refused by applyMobileSettings.
+      braveEnabled: (await attempt(sources.searchLane))?.state === 'ready',
+      braveApiKey: '',
       // Video generation (MiniMax H3): same shape as Brave — an enabled flag
       // (the capability isn't switched off) plus the editable credential.
       // Deliberately NOT the MiniMax chat provider's key (see VideoConfig).
@@ -390,7 +395,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       screenshotMaxWidth: str(computerUse.screenshotMaxWidth, '1280'),
       screenshotFormat: str(computerUse.screenshotFormat, 'jpeg'),
       browserExtension: {
-        port: int(browserExtension.port, 23151),
+        port: int(browserExtension.port, 23152),
         screenshotMaxWidth: int(browserExtension.screenshotMaxWidth, 1280),
         screenshotFormat: str(browserExtension.screenshotFormat, 'jpeg'),
         screenshotQuality: int(browserExtension.screenshotQuality, 80),

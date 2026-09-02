@@ -1,5 +1,5 @@
 /**
- * `wolffish pair` — phone, WhatsApp, Telegram.
+ * `wfc pair` — phone, WhatsApp, Telegram.
  *
  * Pairing is the one flow where the terminal has to draw a picture, and the
  * picture has a hard size. Measured against the payloads these channels
@@ -197,7 +197,7 @@ async function printQr(client, text, { reserveRows = 6 } = {}) {
  * One SIGINT listener, and it always comes off again.
  *
  * `process.once('SIGINT', …)` looks equivalent and is not: these flows also run
- * inside `wolffish settings`, in a process that lives for the whole session, so
+ * inside `wfc settings`, in a process that lives for the whole session, so
  * a listener left behind by a cancelled attempt is still armed when the next
  * one starts. Two attempts, one Ctrl-C, both resolve — and the second one
  * resolves a promise nobody is waiting on any more.
@@ -211,9 +211,9 @@ export async function pair(client, args) {
   const [target, ...rest] = args
   if (!target) {
     heading('Pairing')
-    out('  wolffish pair phone [--code]        pair the mobile app')
-    out('  wolffish pair whatsapp [--number]   link a WhatsApp account')
-    out('  wolffish pair telegram              set the bot token')
+    out('  wfc pair phone [--code]        pair the mobile app')
+    out('  wfc pair whatsapp [--number]   link a WhatsApp account')
+    out('  wfc pair telegram              set the bot token')
     out()
     out(
       wrapText(
@@ -228,9 +228,9 @@ export async function pair(client, args) {
     // browsing to it — this is the page someone reads when they want the
     // opposite of what it does.
     out(c.gray('  to UNLINK:'))
-    out(c.gray('    wolffish settings whatsapp   ' + g.chevron + '  Disconnect'))
-    out(c.gray('    wolffish settings telegram   ' + g.chevron + '  Disconnect the bot'))
-    out(c.gray('    wolffish settings mobile     ' + g.chevron + '  Unpair'))
+    out(c.gray('    wfc settings whatsapp   ' + g.chevron + '  Disconnect'))
+    out(c.gray('    wfc settings telegram   ' + g.chevron + '  Disconnect the bot'))
+    out(c.gray('    wfc settings mobile     ' + g.chevron + '  Unpair'))
     out()
     return 2
   }
@@ -384,14 +384,14 @@ async function pairWhatsApp(client, rest) {
       `  ${icon.ok()} already linked${status.connectedName ? c.gray(` — ${status.connectedName}`) : ''}`
     )
     out(c.gray('  to link a different account, disconnect first:'))
-    out(c.gray('    wolffish settings whatsapp   →   Disconnect'))
+    out(c.gray('    wfc settings whatsapp   →   Disconnect'))
     return 0
   }
 
   const numberFlag = rest.findIndex((arg) => arg === '--number' || arg === '--code')
   let number = numberFlag >= 0 ? (rest[numberFlag + 1] ?? '') : null
   if (numberFlag >= 0 && !number) {
-    if (!interactive()) return usage('wolffish pair whatsapp --number +15551234567')
+    if (!interactive()) return usage('wfc pair whatsapp --number +15551234567')
     number = await question(
       `  ${c.bold('your WhatsApp number')} ${c.gray('(with country code)')}: `
     )
@@ -567,7 +567,7 @@ async function pairTelegram(client) {
   out()
   if (!interactive()) {
     err(c.red('  a token has to be typed — run this from a terminal'))
-    err(c.gray('  or set it non-interactively: wolffish settings set channels.telegram.enabled on'))
+    err(c.gray('  or set it non-interactively: wfc settings set channels.telegram.enabled on'))
     return 1
   }
   const token = await question(`  ${c.bold('bot token')} ${c.dim('(hidden)')}: `, { hidden: true })
@@ -626,9 +626,9 @@ function waitForTelegram(client) {
     })
     const offCancel = onCancel(() => finish(1))
     // Bounded: a bot that has not answered in fifteen seconds is a story for
-    // `wolffish status`, not a reason to hold the terminal.
+    // `wfc status`, not a reason to hold the terminal.
     const timer = setTimeout(() => {
-      out(c.gray('  still starting — check it with: wolffish status'))
+      out(c.gray('  still starting — check it with: wfc status'))
       finish(0)
     }, 15000)
   })

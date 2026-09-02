@@ -132,7 +132,7 @@ export function createMarkdownStream({ write, columns } = {}) {
   }
 }
 
-/** One-shot render of a complete markdown string. Used by `wolffish show`. */
+/** One-shot render of a complete markdown string. Used by `wfc show`. */
 export function renderMarkdown(text, { columns } = {}) {
   const parts = []
   const stream = createMarkdownStream({ write: (chunk) => parts.push(chunk), columns })

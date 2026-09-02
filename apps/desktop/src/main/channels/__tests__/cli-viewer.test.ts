@@ -145,7 +145,7 @@ async function main(): Promise<void> {
       providers: [{ id: 'openai', apiKey: 'sk-abcdefghijklmnopqrstuvwxyz012345', model: 'gpt' }],
       telegram: { botToken: '8012345678:AAH-lorem-ipsum-dolor-sit-amet-xyz' },
       notion: { token: 'ntn_1234567890abcdefghijklmnopqrstuvwxyz' },
-      port: 23151,
+      port: 23152,
       enabled: true
     },
     null,
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     !masked.text.includes('ntn_1234567890abcdefghijklmnopqrstuvwxyz')
   )
   check('the count is reported', masked.count >= 3, `count was ${masked.count}`)
-  check('a port number survives', masked.text.includes('23151'))
+  check('a port number survives', masked.text.includes('23152'))
   check('a model name survives', masked.text.includes('"gpt"'))
   check('a boolean survives', masked.text.includes('true'))
 

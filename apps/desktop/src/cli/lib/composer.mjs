@@ -294,7 +294,7 @@ export function attachComposer(rl, { contPrompt, isBusy, onRestorePrompt } = {})
 }
 
 /**
- * One multi-line read OUTSIDE a session — `wolffish procedures paste <id>` at a
+ * One multi-line read OUTSIDE a session — `wfc procedures paste <id>` at a
  * plain shell prompt. Borrows nothing (there is nothing to borrow); builds a
  * throwaway terminal readline, composes on it, and puts everything back.
  *

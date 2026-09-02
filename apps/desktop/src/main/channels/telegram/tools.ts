@@ -670,7 +670,7 @@ function resolveTarget(
 /**
  * Resolve a workspace-relative path to an absolute path on disk,
  * refusing absolute paths and `..` traversal so the LLM tool can only
- * read files inside ~/.wolffish/workspace. Returns null when the
+ * read files inside ~/.wfc/workspace. Returns null when the
  * path would escape the workspace.
  */
 function resolveWorkspaceFilePath(relativePath: string): string | null {

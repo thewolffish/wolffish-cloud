@@ -12,15 +12,13 @@ import { useNetworkToasts } from '@hooks/use-network-toasts/useNetworkToasts'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
 import { ActiveRunCard } from '@components/common/active-run-card/ActiveRunCard'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
+import { AuthGate } from '@pages/auth/AuthGate'
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
-import { OllamaSetup } from '@pages/OllamaSetup'
-import { ModelPicker } from '@pages/ModelPicker'
 import { Chat } from '@pages/Chat'
 import { Settings } from '@pages/settings/Settings'
 import { ViewerPage } from '@pages/ViewerPage'
 import { History } from '@pages/History'
-import { Changelog } from '@pages/Changelog'
 import { Heartbeat } from '@pages/Heartbeat'
 import { Procedures } from '@pages/Procedures'
 import { Projects } from '@pages/Projects'
@@ -61,39 +59,38 @@ function useReindexActive(): boolean {
 // stay mounted for the whole set so navigating anywhere and back never tears
 // live state down — with concurrent sessions, an unmount would silently
 // reset every feed to its open-time seed and orphan in-flight turns.
-// ollama-setup and model-picker are included because both are reachable
-// mid-session (Settings' "install Ollama" button, clearing the model);
-// only the pre-conversation launch screens (welcome, low-disk-space) stay
+// Only the pre-conversation launch screens (welcome, low-disk-space) stay
 // out — no session can exist there yet.
 const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'chat',
   'settings',
   'viewer',
   'history',
-  'changelog',
   'heartbeat',
   'procedures',
   'projects',
   'soul',
   'user',
-  'agents',
-  'ollama-setup',
-  'model-picker'
+  'agents'
 ])
+
+function AuthScreen(): React.JSX.Element | null {
+  const { auth } = useFlow()
+  if (!auth) return null
+  return <AuthGate auth={auth} />
+}
 
 // Every screen EXCEPT chat, which is rendered persistently by Screens() so its
 // live state (context meter, timeline, scroll, in-flight stream) survives
 // navigation instead of reloading on every return.
 function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null {
   switch (screen) {
+    case 'auth':
+      return <AuthScreen />
     case 'welcome':
       return <Onboarding />
     case 'low-disk-space':
       return <LowDiskSpace />
-    case 'ollama-setup':
-      return <OllamaSetup />
-    case 'model-picker':
-      return <ModelPicker />
     case 'chat':
       return null
     case 'settings':
@@ -102,8 +99,6 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <ViewerPage />
     case 'history':
       return <History />
-    case 'changelog':
-      return <Changelog />
     case 'heartbeat':
       return <Heartbeat />
     case 'procedures':

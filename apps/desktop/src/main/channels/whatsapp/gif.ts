@@ -22,7 +22,7 @@ export function isGifMime(mimetype: string | null | undefined): boolean {
   return (mimetype ?? '').toLowerCase().startsWith('image/gif')
 }
 
-// Prefer the wolffish-managed ffmpeg (~/.wolffish/bin/ffmpeg/ffmpeg — a sibling
+// Prefer the wolffish-managed ffmpeg (~/.wfc/bin/ffmpeg/ffmpeg — a sibling
 // of the workspace, the layout voice-engines installs); fall back to a bare
 // `ffmpeg` resolved off PATH.
 function ffmpegBinary(): string {

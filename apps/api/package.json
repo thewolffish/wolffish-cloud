@@ -1,17 +1,19 @@
 {
   "name": "wfc-api",
-  "version": "1.0.6",
+  "version": "1.4.1",
   "private": true,
-  "description": "Wolffish Cloud master API — the single choke-point Worker at api.wolffi.sh: auth, sessions, model routing (DeepInfra), sync, admin.",
+  "description": "Wolffish Cloud master API \u2014 the single choke-point Worker at api.wolffi.sh: auth, sessions, model routing (DeepInfra), web search (Brave), sync, admin.",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "tsc --noEmit && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply wfc-master --local",
-    "db:migrate:remote": "wrangler d1 migrations apply wfc-master --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply wfc-master --remote",
+    "verify": "node scripts/verify-live.mjs",
+    "seed:remote": "node scripts/seed-demo.mjs --remote"
   },
   "dependencies": {
     "hono": "^4.6.0",

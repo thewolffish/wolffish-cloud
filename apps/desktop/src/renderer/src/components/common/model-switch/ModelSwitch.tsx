@@ -1,17 +1,7 @@
-import { OllamaLogo } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
-import { formatBytesL } from '@lib/utils/format'
+import { formatCompact } from '@lib/utils/format'
 import type { ReasoningMode } from '@main/runtime/reasoning'
-import {
-  BADGE_STYLES,
-  isModelDisabled,
-  findModelSpec,
-  PROVIDER_LOGOS,
-  PROVIDER_ORDER,
-  shortModelName,
-  sortOpenRouterModelIds
-} from '@pages/settings/modelCatalog'
-import type { BrainSelection, CloudProviderConfig, OllamaTag } from '@preload/index'
+import type { CatalogModelEntry } from '@preload/index'
 import {
   AiBrain01Icon,
   BrainIcon,
@@ -19,11 +9,11 @@ import {
   CloudIcon,
   FireIcon,
   FlashIcon,
-  Search01Icon,
+  SecurityCheckIcon,
   Tick02Icon,
   WorkflowSquare03Icon
 } from 'hugeicons-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type ChatMode = 'single' | 'workflow'
@@ -55,73 +45,59 @@ const MODE_ICON: Record<ReasoningMode, typeof BrainIcon> = {
   max: FireIcon
 }
 
+/** Model ids read best without their vendor path (`deepseek-ai/…`). */
+function shortModelName(model: string): string {
+  const slash = model.lastIndexOf('/')
+  return slash === -1 ? model : model.slice(slash + 1)
+}
+
 /**
- * Composer model switch: ONE control that is both the Local/Cloud switch and
- * the model selector. Two tabs — Local (Ollama logo + the local model's name)
- * and Cloud (active provider's logo + the cloud model's name) — with the
- * searchable, scrollable model-picker card built in (the ContextMeter
- * hover/pin recipe). Hovering previews the card; clicking a tab pins the card
- * open (switching runtime first when that tab wasn't the active one), so
- * "switch to local" and "pick WHICH local model" are one gesture.
+ * Composer model control, cloud-first: ONE lane, so the trigger is a single
+ * chip naming the selected model, and the hover/pin card carries the
+ * per-turn knobs — reasoning effort, chat mode, and the permissions
+ * (ask/bypass) switch — as chip rows above the model section.
  *
- * The list carries both runtimes: the installed Ollama models first (read
- * live from `ollama:listInstalled` each time the card opens, so a model
- * pulled in a terminal shows up without a relaunch), then one group per
- * connected cloud provider. One search box filters across all of them.
- * Picking writes the local model or the Brain — and flips the runtime switch
- * when you picked from the other side — the card is the ONLY model-selection
- * surface; settings keeps just the API keys.
- *
- * The card also carries the two per-turn knobs that used to be their own
- * composer pills — reasoning effort and chat mode — as one chip row each,
- * sitting above the search input. Same selections, same handlers, one panel.
+ * The model section renders the org catalog (GET /v1/models via the main
+ * cache): every allowed model is a row, the selection persists through
+ * modelSelect.select and the runtime follows live. Admin edits the policy
+ * → the list changes on the next open.
  */
 export function ModelSwitch({
-  localOnly,
-  localModel,
-  providers,
-  brain,
+  model,
   disabled,
   reasoningModes,
   reasoningMode,
   chatMode,
+  bypass,
   showControls,
-  onModeChange,
-  onSelectModel,
-  onSelectLocalModel,
   onSelectReasoning,
-  onSelectChatMode
+  onSelectChatMode,
+  onToggleBypass
 }: {
-  localOnly: boolean
-  localModel: string | null
-  providers: CloudProviderConfig[]
-  brain: BrainSelection | null
+  /** The selected model id (config llm.model). Null = nothing selected. */
+  model: string | null
   disabled: boolean
   /** Ordered reasoning modes this model honours (from reasoningModesFor). */
   reasoningModes: readonly ReasoningMode[]
   /** Active reasoning mode, already clamped to `reasoningModes`. */
   reasoningMode: ReasoningMode
   chatMode: ChatMode
+  /** Live bypass-permissions state (config safety.bypassPermissions). */
+  bypass: boolean
   /** Chip rows hidden while recording, exactly as the old pills were. */
   showControls: boolean
-  onModeChange: (localOnly: boolean) => void
-  onSelectModel: (sel: BrainSelection) => Promise<void>
-  /** Selects an already-installed Ollama model as the local model. */
-  onSelectLocalModel: (model: string) => Promise<void>
   onSelectReasoning: (next: ReasoningMode) => void
   onSelectChatMode: (next: ChatMode) => Promise<void>
+  onToggleBypass: (next: boolean) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [catalog, setCatalog] = useState<CatalogModelEntry[]>([])
   const [pinned, setPinned] = useState(false)
-  const [query, setQuery] = useState('')
-  const [optimistic, setOptimistic] = useState<BrainSelection | null>(null)
-  const [optimisticLocal, setOptimisticLocal] = useState<string | null>(null)
-  const [installed, setInstalled] = useState<OllamaTag[]>([])
   const [optimisticChatMode, setOptimisticChatMode] = useState<ChatMode | null>(null)
+  const [optimisticBypass, setOptimisticBypass] = useState<boolean | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rootRef = useRef<HTMLSpanElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
 
   // Escape unpins/closes; clicking outside while open closes.
   useEffect(() => {
@@ -152,14 +128,6 @@ export function ModelSwitch({
     }
   }, [])
 
-  // Autofocus the search only when pinned (deliberate open), never on hover —
-  // mousing across the composer must not steal focus from the textarea.
-  useEffect(() => {
-    if (!pinned) return
-    const id = requestAnimationFrame(() => searchRef.current?.focus())
-    return () => cancelAnimationFrame(id)
-  }, [pinned])
-
   const onEnter = (): void => {
     if (disabled) return
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
@@ -172,97 +140,22 @@ export function ModelSwitch({
   }
   const cardVisible = (open || pinned) && !disabled
 
-  // Installed Ollama models, re-read every time the card opens: `ollama pull`
-  // in a terminal (or an `ollama rm`) must be reflected without a relaunch.
-  // Main already swallows a dead daemon into [], so an unreachable Ollama
-  // simply leaves the local group empty.
+  // The catalog is a cheap cached IPC — refetch on every open so an admin
+  // policy edit shows up without a relaunch.
   useEffect(() => {
     if (!cardVisible) return
     let cancelled = false
-    void window.api.ollama
-      .listInstalled()
-      .then((tags) => {
-        if (!cancelled) setInstalled(tags)
-      })
-      .catch(() => {})
+    void window.api.model.catalog().then((r) => {
+      if (!cancelled) setCatalog(r.models)
+    })
     return () => {
       cancelled = true
     }
   }, [cardVisible])
 
-  const shown = optimistic ?? brain
-  const connected = useMemo(() => {
-    const withKey = providers.filter((p) => p.apiKey && p.apiKey.length > 0)
-    return [...withKey].sort((a, b) => PROVIDER_ORDER.indexOf(a.id) - PROVIDER_ORDER.indexOf(b.id))
-  }, [providers])
-
-  const activeCloud = useMemo(() => {
-    if (!shown) return null
-    return connected.some((p) => p.id === shown.providerId) ? shown : null
-  }, [shown, connected])
-
-  const q = query.trim().toLowerCase()
-  const groups = useMemo(
-    () =>
-      connected
-        .map((p) => {
-          let ids = (p.models ?? []).filter(Boolean)
-          if (ids.length === 0 && p.model) ids = [p.model]
-          if (p.id === 'openrouter') ids = sortOpenRouterModelIds(ids)
-          ids = ids.filter((m) => !isModelDisabled(m))
-          if (q) {
-            ids = ids.filter((m) => m.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
-          }
-          return { provider: p, ids }
-        })
-        .filter((g) => g.ids.length > 0),
-    [connected, q]
-  )
-
-  const shownLocal = optimisticLocal ?? localModel
-  const localIds = useMemo(() => {
-    const names = installed.map((tag) => tag.name).sort((a, b) => a.localeCompare(b))
-    if (!q) return names
-    return names.filter((m) => m.toLowerCase().includes(q) || 'ollama'.includes(q))
-  }, [installed, q])
-
-  // With a search on, an empty local group is just noise — hide it. With no
-  // search, the group always shows: its "nothing installed" line is the
-  // answer to "why is there nothing here?" after switching to Local.
-  const showLocalGroup = localIds.length > 0 || !q
-
-  // The tab text is the MODEL name (the icons already say local vs cloud) —
-  // with nothing configured it must say so, not echo the mode name as if
-  // "Local"/"Cloud" were a model.
-  const CloudLogo = activeCloud ? PROVIDER_LOGOS[activeCloud.providerId] : CloudIcon
-  const cloudName = activeCloud
-    ? shortModelName(activeCloud.model)
-    : t('chat.modeToggle.noModelShort')
-  const localName = shownLocal ? shortModelName(shownLocal) : t('chat.modeToggle.noModelShort')
-
-  const pick = async (providerId: CloudProviderConfig['id'], model: string): Promise<void> => {
-    const sel = { providerId, model }
-    setOptimistic(sel)
-    try {
-      await onSelectModel(sel)
-      // Picking a cloud model while running local means "use this model" —
-      // flip the switch too instead of leaving the choice inert.
-      if (localOnly) onModeChange(false)
-    } finally {
-      setOptimistic(null)
-    }
-  }
-
-  const pickLocal = async (model: string): Promise<void> => {
-    setOptimisticLocal(model)
-    try {
-      await onSelectLocalModel(model)
-      // Mirror of `pick`: choosing from the other side of the switch means
-      // "run this one", so flip the runtime too.
-      if (!localOnly) onModeChange(true)
-    } finally {
-      setOptimisticLocal(null)
-    }
+  const pickModel = (id: string): void => {
+    if (id === model) return
+    void window.api.modelSelect.select(id)
   }
 
   // Reasoning: unsupported models get the explanation line instead of chips,
@@ -304,6 +197,37 @@ export function ModelSwitch({
     }
   }
 
+  const shownBypass = optimisticBypass ?? bypass
+  const PERMISSION_MODES: Array<{
+    key: boolean
+    Icon: typeof BrainIcon
+    name: string
+    desc: string
+  }> = [
+    {
+      key: false,
+      Icon: SecurityCheckIcon,
+      name: t('chat.permissions.ask'),
+      desc: t('chat.permissions.askDesc')
+    },
+    {
+      key: true,
+      Icon: FlashIcon,
+      name: t('chat.permissions.bypass'),
+      desc: t('chat.permissions.bypassDesc')
+    }
+  ]
+
+  const pickBypass = async (next: boolean): Promise<void> => {
+    if (next === shownBypass) return
+    setOptimisticBypass(next)
+    try {
+      await onToggleBypass(next)
+    } finally {
+      setOptimisticBypass(null)
+    }
+  }
+
   const chipClass = (active: boolean, interactive: boolean): string =>
     cn(
       'inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium',
@@ -313,15 +237,12 @@ export function ModelSwitch({
       interactive ? 'cursor-pointer' : 'cursor-default'
     )
 
-  // Quiet footer chips (the composer card supplies the surface): the active
-  // runtime reads as a soft primary tint, the inactive one as muted text.
-  const tabClass = (active: boolean): string =>
-    cn(
-      'flex h-7 items-center gap-1.5 rounded-lg px-2',
-      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-      active ? 'bg-primary/10 text-primary' : cn('text-muted', !disabled && 'hover:text-fg'),
-      disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-    )
+  const triggerClass = cn(
+    'flex h-7 items-center gap-1.5 rounded-lg px-2',
+    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+    'bg-primary/10 text-primary',
+    disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+  )
 
   return (
     <span
@@ -330,76 +251,31 @@ export function ModelSwitch({
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
-      <div
-        role="tablist"
+      <button
+        type="button"
+        disabled={disabled}
+        aria-expanded={cardVisible}
         aria-label={t('chat.modeToggle.ariaLabel')}
-        className="inline-flex items-center gap-0.5"
+        onClick={() => {
+          if (disabled) return
+          setPinned((p) => {
+            const next = !p
+            if (next) setOpen(true)
+            return next
+          })
+        }}
+        onFocus={onEnter}
+        onBlur={onLeave}
+        className={triggerClass}
       >
-        <button
-          role="tab"
-          type="button"
-          disabled={disabled}
-          aria-selected={localOnly}
-          aria-expanded={cardVisible}
-          onClick={() => {
-            if (disabled) return
-            // Switching to Local opens the card on the installed-Ollama list:
-            // the switch and the choice of which model are one gesture.
-            if (!localOnly) {
-              onModeChange(true)
-              setPinned(true)
-              setOpen(true)
-              return
-            }
-            setPinned((p) => {
-              const next = !p
-              if (next) setOpen(true)
-              return next
-            })
-          }}
-          onFocus={onEnter}
-          onBlur={onLeave}
-          className={tabClass(localOnly)}
+        <CloudIcon size={14} />
+        <span
+          className="max-w-96 truncate text-[11px] leading-tight font-medium"
+          dir={model ? 'ltr' : 'auto'}
         >
-          <OllamaLogo size={14} />
-          <span
-            className="max-w-28 truncate text-[11px] leading-tight font-medium"
-            dir={shownLocal ? 'ltr' : 'auto'}
-          >
-            {localName}
-          </span>
-        </button>
-        <button
-          role="tab"
-          type="button"
-          disabled={disabled}
-          aria-selected={!localOnly}
-          aria-expanded={cardVisible}
-          onClick={() => {
-            if (disabled) return
-            if (localOnly) {
-              onModeChange(false)
-              return
-            }
-            setPinned((p) => {
-              const next = !p
-              if (next) setOpen(true)
-              return next
-            })
-          }}
-          onFocus={onEnter}
-          onBlur={onLeave}
-          className={tabClass(!localOnly)}
-        >
-          <CloudLogo size={14} />
-          <span
-            className="max-w-28 truncate text-[11px] leading-tight font-medium"
-            dir={activeCloud ? 'ltr' : 'auto'}
-          >
-            {cloudName}
-          </span>
-        </button>
-      </div>
+          {model ? shortModelName(model) : t('chat.modeToggle.noModelShort')}
+        </span>
+      </button>
 
       {cardVisible && (
         <div
@@ -470,139 +346,83 @@ export function ModelSwitch({
                   )
                 })}
               </div>
+              <div
+                role="group"
+                aria-label={t('chat.permissions.ariaLabel')}
+                className="flex items-center gap-1.5"
+              >
+                <span className="text-muted w-14 shrink-0 text-[10px] font-medium tracking-wide uppercase">
+                  {t('chat.permissions.label')}
+                </span>
+                {PERMISSION_MODES.map(({ key, Icon, name, desc }) => {
+                  const isActive = key === shownBypass
+                  return (
+                    <button
+                      key={String(key)}
+                      type="button"
+                      title={desc}
+                      onClick={() => void pickBypass(key)}
+                      className={chipClass(isActive, true)}
+                    >
+                      <Icon
+                        size={13}
+                        className={cn('shrink-0', isActive ? 'text-primary' : 'text-muted')}
+                      />
+                      {name}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
-          <div className="border-border flex items-center gap-2 border-b px-3 py-2">
-            <Search01Icon size={14} className="text-muted shrink-0" />
-            <input
-              ref={searchRef}
-              value={query}
-              // Engaging the search is a deliberate open — pin the card so the
-              // hover-leave timer can't close it out from under the typing.
-              onFocus={() => {
-                if (hoverTimer.current) clearTimeout(hoverTimer.current)
-                setPinned(true)
-                setOpen(true)
-              }}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setPinned(true)
-              }}
-              placeholder={t('chat.modelPicker.search')}
-              className="bg-transparent text-fg placeholder:text-muted/50 w-full text-sm outline-none"
-            />
-          </div>
-          {/* Model ids are technical LTR identifiers — the whole list renders
-              LTR (logo → id → badges → context → check) even in the RTL UI,
-              so rows never mirror around the ids. */}
-          <div className="max-h-[min(420px,60vh)] overflow-y-auto p-1.5" dir="ltr">
-            {groups.length === 0 && !showLocalGroup && (
-              <div className="text-muted px-2 py-4 text-center text-xs" dir="auto">
-                {t('chat.modelPicker.noResults')}
+          {/* Model ids are technical LTR identifiers — the section renders
+              LTR even in the RTL UI so rows never mirror around the ids. */}
+          <div className="p-1.5" dir="ltr">
+            <div className="text-muted flex items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide uppercase">
+              <CloudIcon size={12} />
+              <span dir="auto">{t('chat.modelPicker.orgSection')}</span>
+            </div>
+            {catalog.length === 0 && model ? (
+              <div className="bg-primary/10 text-fg flex w-full items-center gap-2 rounded-lg px-2 py-1.5">
+                <span className="min-w-0 flex-1 truncate text-xs" dir="ltr">
+                  {model}
+                </span>
+                <span className="w-4 shrink-0">
+                  <Tick02Icon size={14} className="text-primary" />
+                </span>
               </div>
-            )}
-            {showLocalGroup && (
-              <div className="mb-1.5 flex flex-col gap-1 last:mb-0">
-                <div className="text-muted flex items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide uppercase">
-                  <OllamaLogo size={12} />
-                  <span dir="auto">{t('settings.model.providers.ollama')}</span>
-                </div>
-                {localIds.length === 0 ? (
-                  <p className="text-muted px-2 pb-1 text-[11px] leading-snug" dir="auto">
-                    {t('chat.modelPicker.noLocalModels')}
-                  </p>
-                ) : (
-                  localIds.map((m) => {
-                    // The check means "selected for this runtime", exactly as
-                    // it does on the cloud rows — which runtime is LIVE is the
-                    // highlighted tab's job, not the checkmark's.
-                    const active = shownLocal === m
-                    const size = installed.find((tag) => tag.name === m)?.size
-                    return (
-                      <button
-                        key={`ollama::${m}`}
-                        type="button"
-                        onClick={() => void pickLocal(m)}
-                        className={cn(
-                          'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start',
-                          'focus-visible:ring-2 focus-visible:ring-accent',
-                          active ? 'bg-primary/10 text-fg' : 'text-fg hover:bg-border/40'
-                        )}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-xs" dir="ltr">
-                          {m}
-                        </span>
-                        {size ? (
-                          <span className="text-muted shrink-0 text-[10px] tabular-nums" dir="auto">
-                            {formatBytesL(size, t)}
-                          </span>
-                        ) : null}
-                        <span className="w-4 shrink-0">
-                          {active ? <Tick02Icon size={14} className="text-primary" /> : null}
-                        </span>
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            )}
-            {!q && connected.length === 0 && (
-              <div className="text-muted px-2 py-4 text-center text-xs" dir="auto">
-                {t('chat.modelPicker.noProviders')}
-              </div>
-            )}
-            {groups.map(({ provider, ids }) => {
-              const Logo = PROVIDER_LOGOS[provider.id]
+            ) : null}
+            {catalog.map((entry) => {
+              const isActive = entry.id === model
               return (
-                <div key={provider.id} className="mb-1.5 flex flex-col gap-1 last:mb-0">
-                  <div className="text-muted flex items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide uppercase">
-                    {Logo ? <Logo size={12} /> : null}
-                    <span dir="auto">{t(`settings.model.providers.${provider.id}`)}</span>
-                  </div>
-                  {ids.map((m) => {
-                    const active =
-                      activeCloud?.providerId === provider.id && activeCloud?.model === m
-                    const spec = findModelSpec(provider.id, m)
-                    return (
-                      <button
-                        key={`${provider.id}::${m}`}
-                        type="button"
-                        onClick={() => void pick(provider.id, m)}
-                        className={cn(
-                          'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start',
-                          'focus-visible:ring-2 focus-visible:ring-accent',
-                          active ? 'bg-primary/10 text-fg' : 'text-fg hover:bg-border/40'
-                        )}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-xs" dir="ltr">
-                          {m}
-                        </span>
-                        {spec?.badges?.slice(0, 2).map((b) => (
-                          <span
-                            key={b}
-                            dir="auto"
-                            className={cn(
-                              'inline-flex shrink-0 items-center rounded px-1 text-[9px] font-medium',
-                              BADGE_STYLES[b]
-                            )}
-                          >
-                            {t(`settings.model.cloud.breakdown.badges.${b}`)}
-                          </span>
-                        ))}
-                        {spec?.context ? (
-                          <span className="text-muted shrink-0 text-[10px] tabular-nums" dir="ltr">
-                            {spec.context}
-                          </span>
-                        ) : null}
-                        <span className="w-4 shrink-0">
-                          {active ? <Tick02Icon size={14} className="text-primary" /> : null}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => pickModel(entry.id)}
+                  className={cn(
+                    'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start',
+                    isActive ? 'bg-primary/10 text-fg' : 'text-fg hover:bg-border/40'
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs">{entry.name}</span>
+                    <span className="text-muted block truncate text-[10px]" dir="ltr">
+                      {entry.id}
+                      {' · '}
+                      {formatCompact(entry.contextWindow)} ctx
+                      {entry.reasoning ? ' · reasoning' : ''}
+                      {entry.vision ? ' · vision' : ''}
+                    </span>
+                  </span>
+                  <span className="w-4 shrink-0">
+                    {isActive ? <Tick02Icon size={14} className="text-primary" /> : null}
+                  </span>
+                </button>
               )
             })}
+            <p className="text-muted px-2 pt-1.5 pb-1 text-[11px] leading-snug" dir="auto">
+              {t('chat.modelPicker.orgManaged')}
+            </p>
           </div>
         </div>
       )}

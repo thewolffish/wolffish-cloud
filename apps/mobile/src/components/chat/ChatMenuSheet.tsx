@@ -6,7 +6,11 @@ import { useProjects } from '@/lib/sync/projects'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native'
-import { ContextMeterCard, ModeAndThinkingControls } from '@/components/chat/ChatControls'
+import {
+  ContextMeterCard,
+  ModeAndThinkingControls,
+  PermissionsSwitch
+} from '@/components/chat/ChatControls'
 import { ModelSelector, ModelSwitch } from '@/components/chat/ModelSwitch'
 
 /** The unfiled chip's value — the row keys on strings, so null needs one. */
@@ -154,7 +158,8 @@ function ProjectChips({
 
 /**
  * The chat controls themselves — everything that flanks the desktop composer
- * (model, mode, thinking, project, context meter), scrolling in one column.
+ * (model, permissions, mode, thinking, project, context meter), scrolling in
+ * one column.
  *
  * Separate from the sheet below because project mode shows the SAME panel from
  * inside the project dialog (the composer's menu button becomes the project
@@ -188,6 +193,7 @@ export function ChatControlsPanel({
     >
       <ModelSwitch />
       <ModelSelector />
+      <PermissionsSwitch />
       <ModeAndThinkingControls />
       {showProject && <ProjectChips conversation={conversation} onPicked={onProjectPicked} />}
       <ContextMeterCard conversation={conversation} />

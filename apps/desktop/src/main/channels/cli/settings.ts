@@ -42,7 +42,7 @@ export type CliSettingOption = {
 }
 
 export type CliSetting = {
-  /** What the user types: `wolffish settings set wolffish.bypassPermissions on`. */
+  /** What the user types: `wfc settings set wfc.bypassPermissions on`. */
   id: string
   group: CliSettingGroup
   /** The card this row sits in — a `CLI_SETTING_SECTIONS` id. */
@@ -85,8 +85,7 @@ export type CliSettingGroup =
   | 'knowledge'
   | 'usage'
   | 'data'
-  | 'updates'
-  | 'wolffish'
+  | 'wfc'
   | 'appearance'
 
 /**
@@ -116,8 +115,7 @@ export const CLI_SETTING_GROUPS: Array<{
   { id: 'knowledge', label: 'Knowledge' },
   { id: 'usage', label: 'Usage', interactive: true },
   { id: 'data', label: 'Data', interactive: true },
-  { id: 'updates', label: 'Updates' },
-  { id: 'wolffish', label: 'Preferences' },
+  { id: 'wfc', label: 'Preferences' },
   { id: 'appearance', label: 'Appearance' }
 ]
 
@@ -248,10 +246,9 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
   },
   { id: 'usage.report', group: 'usage', label: 'Usage' },
   { id: 'data.workspace', group: 'data', label: 'Data' },
-  { id: 'updates.app', group: 'updates', label: 'Updates' },
   {
-    id: 'wolffish.general',
-    group: 'wolffish',
+    id: 'wfc.general',
+    group: 'wfc',
     label: 'Preferences'
   },
   {
@@ -750,7 +747,7 @@ export const CLI_SETTINGS: CliSetting[] = [
     section: 'channels.browser',
     label: 'WebSocket Port',
     description:
-      "The port the extension connects to. Default is 23151. Change only if there's a conflict.",
+      "The port the extension connects to. Default is 23152. Change only if there's a conflict.",
     kind: 'number',
     read: 'services.browserExtension.port',
     channel: 'browserExtension:setConfig',
@@ -794,30 +791,9 @@ export const CLI_SETTINGS: CliSetting[] = [
   },
 
   // ── Services ─────────────────────────────────────────────────────────────
-  {
-    id: 'services.brave.enabled',
-    group: 'services',
-    section: 'services.brave',
-    label: 'Status',
-    description:
-      'When on, web searches go through Brave first. When off, DuckDuckGo is used directly.',
-    kind: 'boolean',
-    read: 'services.braveEnabled',
-    channel: 'brave:setConfig',
-    wrap: 'enabled'
-  },
-  {
-    id: 'services.brave.apiKey',
-    group: 'services',
-    section: 'services.brave',
-    label: 'API key',
-    description:
-      'Free key (2,000 searches a month) from api.search.brave.com. Stored locally in config.json.',
-    kind: 'secret',
-    read: 'services.braveApiKey',
-    channel: 'brave:setConfig',
-    wrap: 'apiKey'
-  },
+  // Brave Search has no rows: it is provided by the organization (one key
+  // behind the API's /v1/search lane), so the card carries only the "Check
+  // the org lane" action (settings-actions.mjs) that prints the lane's status.
   {
     /**
      * Memes has no enabled flag of its own — the switch IS the capability,
@@ -1068,24 +1044,11 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'cards'
   },
 
-  // ── Updates ──────────────────────────────────────────────────────────────
-  {
-    id: 'updates.enabled',
-    group: 'updates',
-    section: 'updates.app',
-    label: 'Automatic updates',
-    description: 'Check for and download updates automatically on launch.',
-    kind: 'boolean',
-    read: 'preferences.updatesEnabled',
-    channel: 'runtime:setUpdatesEnabled',
-    wrap: null
-  },
-
   // ── Preferences ──────────────────────────────────────────────────────────
   {
-    id: 'wolffish.launchAtStartup',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.launchAtStartup',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Launch at startup',
     description:
       'Automatically start Wolffish when you log into your computer. When enabled, Wolffish registers itself as a login item with your operating system — macOS, Windows, and Linux are all supported. This lets Wolffish be ready the moment your session begins, so you can jump straight into a conversation without opening it manually. Disable this if you prefer to launch Wolffish only when you need it.',
@@ -1096,9 +1059,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   },
   {
-    id: 'wolffish.voiceReplies',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.voiceReplies',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Voice replies',
     description:
       'When you send a voice prompt, Wolffish replies with a spoken voice memo. Files and text still arrive when the work needs them — the reply just ends spoken aloud. This one switch controls whether the model is given the voice-reply instructions at all: on means every conversation carries the standing policy, off removes it entirely and voice prompts get text replies. Stored with the text-to-speech settings and synced live with the desktop Preferences page and the phone.',
@@ -1108,9 +1071,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'voiceReplies'
   },
   {
-    id: 'wolffish.blockCredentials',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.blockCredentials',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Block sensitive data in messages',
     description:
       'When enabled, messages that appear to contain passwords, API keys, tokens, or private keys are immediately discarded — they never reach the agent, are never stored, and you get a short notification instead. Off by default so the agent can freely discuss credentials when needed. Turn it on if you want a hard guard against accidentally pasting secrets into chat.',
@@ -1120,9 +1083,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   },
   {
-    id: 'wolffish.bypassPermissions',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.bypassPermissions',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Bypass permissions mode',
     description:
       'When enabled, all tool actions auto-approve without showing the approval dialog. The amygdala still classifies every action and logs everything to the corpus event bus and feedback files exactly as before — only the human approval step is skipped. Use this for trusted environments where you want full agent autonomy. Disable it any time to restore manual approval.',
@@ -1132,9 +1095,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   },
   {
-    id: 'wolffish.restrictPowerfulModels',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.restrictPowerfulModels',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Restrict powerful local models',
     description:
       'When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive.',
@@ -1144,9 +1107,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   },
   {
-    id: 'wolffish.weekStartsOn',
-    group: 'wolffish',
-    section: 'wolffish.general',
+    id: 'wfc.weekStartsOn',
+    group: 'wfc',
+    section: 'wfc.general',
     label: 'Start of week',
     description:
       'Sets the day Wolffish treats as the first day of the week. Drives how the activity heatmap is laid out and how date ranges like "this week" line up in your head. Default is Monday (the ISO 8601 standard most of the world uses); pick Sunday if your calendar app and routines start there. Internal weekly memory files keep their existing ISO-week names so older summaries don\'t shift.',

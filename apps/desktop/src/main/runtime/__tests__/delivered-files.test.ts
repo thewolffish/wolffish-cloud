@@ -29,7 +29,7 @@ function ok(label: string, cond: boolean): void {
 ok(
   'document marker delivers',
   deliveredFileNames(
-    '[wolffish-output: /Users/y/.wolffish/workspace/files/report.pdf (document)]'
+    '[wolffish-output: /Users/y/.wfc/workspace/files/report.pdf (document)]'
   ).join() === 'report.pdf'
 )
 ok(

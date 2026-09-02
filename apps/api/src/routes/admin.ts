@@ -8,9 +8,11 @@
  * Every mutation writes an audit_log row.
  */
 import { Hono } from 'hono'
+import { deleteCapability, putCapability } from '@/lib/capabilities'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import {
   ClearPinSchema,
+  ConfigPutSchema,
   InviteSchema,
   OrgPatchSchema,
   PolicyPutSchema,
@@ -230,6 +232,20 @@ admin.post('/users/:id/clear-pin', async (c) => {
   return c.json({ ok: true })
 })
 
+/**
+ * Read a user's pending reset code. Admins already hold reset-password
+ * (which mints a temp password outright), so this exposes no new power —
+ * it exists so the release gate can prove the emailed-code flow live.
+ */
+admin.get('/users/:id/reset-code', async (c) => {
+  const auth = c.get('auth')
+  if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
+  const raw = await c.env.AUTH_KV.get(`reset:${c.req.param('id')}`)
+  if (!raw) return c.json({ error: 'not_found' }, 404)
+  const entry = JSON.parse(raw) as { code: string; attempts: number }
+  return c.json({ code: entry.code, attempts: entry.attempts })
+})
+
 admin.post('/users/:id/revoke-sessions', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
@@ -253,11 +269,12 @@ admin.put('/users/:id/policy', async (c) => {
   if (!user) return c.json({ error: 'not_found' }, 404)
 
   await c.env.DB.prepare(
-    `INSERT INTO model_policies (user_id, allowed_models, daily_token_cap, updated_at)
-     VALUES (?1, ?2, ?3, ?4)
+    `INSERT INTO model_policies (user_id, allowed_models, daily_token_cap, daily_search_cap, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)
      ON CONFLICT(user_id) DO UPDATE SET
        allowed_models = excluded.allowed_models,
        daily_token_cap = excluded.daily_token_cap,
+       daily_search_cap = excluded.daily_search_cap,
        updated_at = excluded.updated_at`
   )
     .bind(
@@ -266,6 +283,7 @@ admin.put('/users/:id/policy', async (c) => {
         ? null
         : JSON.stringify(body.allowed_models),
       body.daily_token_cap ?? null,
+      body.daily_search_cap ?? null,
       nowIso()
     )
     .run()
@@ -273,6 +291,68 @@ admin.put('/users/:id/policy', async (c) => {
   await c.env.CONFIG_KV.delete(`policy:${id}`)
   await audit(c.env, auth.sub, 'policy.set', id, body)
   return c.json({ ok: true })
+})
+
+// ── User config (the synced settings blob) ───────────────────────────────
+
+/**
+ * Read a user's synced config verbatim — the support tool for "my app is
+ * misbehaving", because this blob IS the user's desktop settings. It also
+ * carries the user's stored integration secrets, so unlike the other reads
+ * it stays above the support tier, an admin cannot open an owner's, and the
+ * disclosure itself is audited (the one audited read in this file).
+ */
+admin.get('/users/:id/config', async (c) => {
+  const auth = c.get('auth')
+  if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
+  const id = c.req.param('id')
+  if (!(await ownerGuard(c.env, auth.role, id))) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can view an owner' }, 403)
+  }
+  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+  const row = await c.env.DB.prepare('SELECT config, updated_at FROM settings WHERE user_id = ?1')
+    .bind(id)
+    .first<{ config: string; updated_at: string }>()
+  await audit(c.env, auth.sub, 'config.view', id)
+  // null (never synced) is a different answer than {} (synced empty / reset).
+  return c.json({
+    config: row ? JSON.parse(row.config) : null,
+    updated_at: row?.updated_at ?? null
+  })
+})
+
+/**
+ * Write — or reset, with `{config: {}}` — a user's synced config. The fresh
+ * server stamp this write mints is what makes it land: the desktop adopts
+ * any row stamped by someone else before it would re-push its own copy
+ * (see apps/desktop cloud/sync.ts), so an admin's fix survives the user's
+ * next launch instead of dying under the client's stale blob. Audited by
+ * size only — the content is the user's secrets and stays out of the log.
+ */
+admin.put('/users/:id/config', async (c) => {
+  const auth = c.get('auth')
+  const id = c.req.param('id')
+  const body = await parseJson(c, ConfigPutSchema)
+  if (body instanceof Response) return body
+  if (!(await ownerGuard(c.env, auth.role, id))) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
+  }
+  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+  const serialized = JSON.stringify(body.config)
+  const now = nowIso()
+  await c.env.DB.prepare(
+    `INSERT INTO settings (user_id, config, updated_at) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at`
+  )
+    .bind(id, serialized, now)
+    .run()
+  await audit(c.env, auth.sub, 'config.set', id, {
+    bytes: serialized.length,
+    keys: Object.keys(body.config).length
+  })
+  return c.json({ ok: true, updated_at: now })
 })
 
 // ── Org settings ─────────────────────────────────────────────────────────
@@ -326,7 +406,10 @@ admin.patch('/org', async (c) => {
        default_allowed_models = COALESCE(?3, default_allowed_models),
        user_daily_token_cap = COALESCE(?4, user_daily_token_cap),
        org_monthly_token_cap = COALESCE(?5, org_monthly_token_cap),
-       updated_at = ?6
+       search_enabled = COALESCE(?6, search_enabled),
+       user_daily_search_cap = COALESCE(?7, user_daily_search_cap),
+       org_monthly_search_cap = COALESCE(?8, org_monthly_search_cap),
+       updated_at = ?9
      WHERE id = 1`
   )
     .bind(
@@ -335,12 +418,46 @@ admin.patch('/org', async (c) => {
       body.default_allowed_models ? JSON.stringify(body.default_allowed_models) : null,
       body.user_daily_token_cap ?? null,
       body.org_monthly_token_cap ?? null,
+      body.search_enabled === undefined ? null : body.search_enabled ? 1 : 0,
+      body.user_daily_search_cap ?? null,
+      body.org_monthly_search_cap ?? null,
       nowIso()
     )
     .run()
   await c.env.CONFIG_KV.delete('org')
   await audit(c.env, auth.sub, 'org.update', 'org', body)
   return c.json({ ok: true })
+})
+
+// ── Org-wide capabilities ────────────────────────────────────────────────
+// The official set every client mirrors. Mutations land on the whole org
+// at each client's next sync pull, so both are audited; the shared
+// putCapability gate (hash, size, structure) is the blast-radius control.
+
+admin.get('/capabilities', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT slug, name, description, version, sha256, size, updated_by, created_at, updated_at, deleted_at
+     FROM capabilities WHERE scope = 'org' ORDER BY slug`
+  ).all()
+  return c.json({ capabilities: rows.results ?? [] })
+})
+
+admin.put('/capabilities/:slug', async (c) => {
+  const auth = c.get('auth')
+  const slug = c.req.param('slug')
+  const res = await putCapability(c, 'org', '', slug, auth.sub)
+  if (res.status === 200) {
+    await audit(c.env, auth.sub, 'capability.put', slug, { sha256: c.req.query('sha256') })
+  }
+  return res
+})
+
+admin.delete('/capabilities/:slug', async (c) => {
+  const auth = c.get('auth')
+  const slug = c.req.param('slug')
+  const res = await deleteCapability(c, 'org', '', slug)
+  if (res.status === 200) await audit(c.env, auth.sub, 'capability.delete', slug)
+  return res
 })
 
 // ── Usage & audit ────────────────────────────────────────────────────────
@@ -353,7 +470,8 @@ admin.get('/usage', async (c) => {
       `SELECT user_id, COUNT(*) AS requests,
          SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
          SUM(cost_microusd) AS cost_microusd,
-         SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) AS denied
+         SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) AS denied,
+         SUM(CASE WHEN kind = 'search' AND decision = 'allowed' THEN 1 ELSE 0 END) AS searches
        FROM usage WHERE created_at >= ?1 AND (?2 IS NULL OR user_id = ?2)
        GROUP BY user_id ORDER BY cost_microusd DESC`
     )

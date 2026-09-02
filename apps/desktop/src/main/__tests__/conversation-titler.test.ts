@@ -10,7 +10,7 @@
  *  - the LLM being unreachable falls back to a plain trim (never throws)
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/__tests__/conversation-titler.test.ts
  */
@@ -156,7 +156,7 @@ async function run(): Promise<void> {
     }
     const block =
       '<attachments>\nThe user attached 1 file to this message:\n' +
-      '  - q3-budget-final.xlsx (type=document, mime=application/vnd.ms-excel, size=1234b, path=/Users/x/.wolffish/uploads/q3-budget-final.xlsx, ext=.xlsx)\n' +
+      '  - q3-budget-final.xlsx (type=document, mime=application/vnd.ms-excel, size=1234b, path=/Users/x/.wfc/uploads/q3-budget-final.xlsx, ext=.xlsx)\n' +
       '</attachments>'
     const t = await titleFromMessage(block, llm, undefined, 'telegram')
     ok('caption-less: titled by the model, not Untitled', t === 'Q3 Budget Spreadsheet', t)
@@ -406,8 +406,8 @@ async function run(): Promise<void> {
         yield { type: 'text', text: 'A Fine Title' }
       }
     }
-    const th = new Thalamus(fakeLocal as never)
-    th.setLocalOnly(true)
+    const th = new Thalamus({ testProvider: fakeLocal as never })
+    th.setModel('llama3')
 
     const t = await th.title('draft my weekly report', 'SYSTEM')
     ok('thalamus.title: returns the model text', t.text === 'A Fine Title', t.text)

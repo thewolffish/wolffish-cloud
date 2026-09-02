@@ -3,7 +3,7 @@ import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/root'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -216,6 +216,16 @@ export type ConversationMeta = {
   messageCount: number
 }
 
+/**
+ * Cloud-sync notifier, injected by main at startup (keeps this module's
+ * import graph free of the cloud session). Fired AFTER a write lands.
+ */
+export type ConversationSyncHook = (event: 'written' | 'deleted', id: string) => void
+let conversationSyncHook: ConversationSyncHook | null = null
+export function setConversationSyncHook(hook: ConversationSyncHook | null): void {
+  conversationSyncHook = hook
+}
+
 function conversationsDir(): string {
   return path.join(workspaceRoot(), 'brain', 'conversations')
 }
@@ -373,6 +383,52 @@ export async function loadConversation(id: string): Promise<ConversationFile | n
 }
 
 /**
+ * A conversation plus the sha256 of its on-disk bytes. The digest is the
+ * cloud sync's change detector: the engine remembers the digest of what it
+ * last pushed per conversation, so a launch or lock/unlock re-pushes only
+ * what actually changed instead of every transcript in the workspace.
+ */
+export async function loadConversationWithDigest(
+  id: string
+): Promise<{ conv: ConversationFile; digest: string } | null> {
+  try {
+    const raw = await fs.readFile(filePathForId(id), 'utf8')
+    const conv = JSON.parse(raw) as ConversationFile
+    migrateSegments(conv)
+    return { conv, digest: createHash('sha256').update(raw).digest('hex') }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every conversation file's id and digest, without parsing any of them —
+ * one read + hash per file, the cheapest complete answer to "what changed
+ * since the last push?" for the sync engine's launch sweep.
+ */
+export async function listConversationDigests(): Promise<Array<{ id: string; digest: string }>> {
+  const dir = conversationsDir()
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return []
+  }
+  const out: Array<{ id: string; digest: string }> = []
+  for (const entry of entries) {
+    const id = idFromFilename(entry)
+    if (!id) continue
+    try {
+      const raw = await fs.readFile(path.join(dir, entry))
+      out.push({ id, digest: createHash('sha256').update(raw).digest('hex') })
+    } catch {
+      continue
+    }
+  }
+  return out
+}
+
+/**
  * Timestamp of the newest persisted message in a conversation, EXCLUDING the
  * message with `excludeMessageId` — the turn runner's "when did we last talk"
  * probe behind the conversation-resumed runtime notice.
@@ -441,6 +497,7 @@ export async function updateConversation(
   id: string,
   mutate: (current: ConversationFile | null) => ConversationFile | null
 ): Promise<void> {
+  let wrote = false
   await diskWriter.update(filePathForId(id), (raw) => {
     let current: ConversationFile | null = null
     if (raw !== null) {
@@ -453,8 +510,10 @@ export async function updateConversation(
     }
     const next = mutate(current)
     if (next === null) return null
+    wrote = true
     return JSON.stringify(next, null, 2)
   })
+  if (wrote) conversationSyncHook?.('written', id)
 }
 
 /**
@@ -657,11 +716,18 @@ export async function deleteConversation(id: string): Promise<void> {
   // unreadable is silently skipped.
   const dir = conversationDirName(id)
   const root = workspaceRoot()
-  for (const subroot of ['uploads', 'voice', 'speech', path.join('generations', 'video')]) {
+  for (const subroot of [
+    'uploads',
+    'voice',
+    'speech',
+    'screenshots',
+    path.join('generations', 'video')
+  ]) {
     await fs.rm(path.join(root, subroot, dir), { recursive: true, force: true }).catch(() => {
       // best-effort
     })
   }
+  conversationSyncHook?.('deleted', id)
 }
 
 export function createConversation(model: string | null): ConversationFile {

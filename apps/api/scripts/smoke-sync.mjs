@@ -22,7 +22,7 @@ const mkUser = (tag) =>
    VALUES ('usr_${tag}_${stamp}', '${tag}-${stamp}@wolffi.sh', '${tag}', 'employee', 'active', '${hash}', '${salt}', 0);`
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V3.1', '[]');`,
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
   mkUser('synca'),
   mkUser('syncb')
 ].join(' ')
@@ -67,7 +67,7 @@ check('two employees logged in', a?.access_token && b?.access_token)
 const put1 = await api('/v1/config', {
   token: a.access_token,
   method: 'PUT',
-  body: { config: { theme: 'dark', model: 'deepseek-ai/DeepSeek-V3.1' } }
+  body: { config: { theme: 'dark', model: 'deepseek-ai/DeepSeek-V4-Flash-0731' } }
 })
 check('config put', put1.status === 200 && put1.json?.updated_at)
 const got = await api('/v1/config', { token: a.access_token })
@@ -162,6 +162,159 @@ check(
     boot.json?.files?.length === 2,
   JSON.stringify(boot.json).slice(0, 200)
 )
+
+check(
+  'bootstrap carries pagination cursors',
+  boot.json?.conversations_next === null && boot.json?.files_next === null,
+  JSON.stringify({ c: boot.json?.conversations_next, f: boot.json?.files_next })
+)
+
+// ── The no-caps contract: everything pages, nothing truncates ────────────
+
+// Records: the terminator is next_after === null, NOT a short page.
+const rp1 = await api(`/v1/conversations/${convId}/records?after=0&limit=2`, { token: a.access_token })
+check('records limit honored', rp1.json?.records?.length === 2 && typeof rp1.json?.next_after === 'number')
+const rp2 = await api(`/v1/conversations/${convId}/records?after=${rp1.json.next_after}&limit=2`, {
+  token: a.access_token
+})
+check('records last page terminates with null', rp2.json?.records?.length === 1 && rp2.json?.next_after === null, JSON.stringify(rp2.json))
+
+// Conversation index: keyset pages walk EVERY conversation.
+const moreConvs = Array.from({ length: 7 }, (_, i) => ({
+  type: 'conversation',
+  id: `cnv_${stamp}_p${i}`,
+  title: `Paged ${i}`,
+  created_at: now,
+  updated_at: now
+}))
+await api('/v1/sync/batch', { token: a.access_token, body: { items: moreConvs } })
+const walked = []
+let convCursor = 0
+for (let i = 0; i < 10; i++) {
+  const pageRes = await api(`/v1/conversations?after=${convCursor}&limit=3`, { token: a.access_token })
+  walked.push(...(pageRes.json?.conversations ?? []))
+  if (pageRes.json?.next == null) break
+  convCursor = pageRes.json.next
+}
+check('conversation index fully paged (8 across pages of 3)', walked.length === 8, String(walked.length))
+
+// File rows upsert on (user, sha, name): a re-upload must not grow the table.
+await api(`/v1/files/upload?sha256=${sha}&name=note.txt&mime=text/plain`, { token: a.access_token, raw: content })
+const manAfterReupload = await api('/v1/files/manifest', { token: a.access_token })
+check('re-upload of same (sha,name) does not add a row', (manAfterReupload.json?.files ?? []).length === 2, String((manAfterReupload.json?.files ?? []).length))
+
+// Manifest keyset pagination walks every row.
+const manWalk = []
+let manCursor = null
+for (let i = 0; i < 10; i++) {
+  const q = manCursor ? `?limit=1&before=${encodeURIComponent(manCursor)}` : '?limit=1'
+  const pageRes = await api(`/v1/files/manifest${q}`, { token: a.access_token })
+  manWalk.push(...(pageRes.json?.files ?? []))
+  if (pageRes.json?.next == null) break
+  manCursor = pageRes.json.next
+}
+check('manifest fully paged (2 across pages of 1)', manWalk.length === 2, String(manWalk.length))
+
+// Empty files are real content under the one hash empty bytes have.
+const EMPTY_SHA = createHash('sha256').update(Buffer.alloc(0)).digest('hex')
+const emptyUp = await api(`/v1/files/upload?sha256=${EMPTY_SHA}&name=empty.marker&mime=text/plain`, {
+  token: a.access_token,
+  raw: Buffer.alloc(0)
+})
+check('empty file upload accepted', emptyUp.status === 200, JSON.stringify(emptyUp.json))
+const emptyDl = await api(`/v1/files/${EMPTY_SHA}`, { token: a.access_token })
+check('empty file round-trips', emptyDl.status === 200 && emptyDl.buf.length === 0)
+
+// Tombstones: delete by name, gone from the manifest, revived by re-upload.
+const del = await api('/v1/files/delete', { token: a.access_token, body: { names: ['note-copy.txt'] } })
+check('file tombstone', del.json?.deleted === 1, JSON.stringify(del.json))
+const manAfterDelete = await api('/v1/files/manifest', { token: a.access_token })
+check(
+  'tombstoned name gone from manifest',
+  !(manAfterDelete.json?.files ?? []).some((f) => f.name === 'note-copy.txt')
+)
+await api(`/v1/files/upload?sha256=${sha}&name=note-copy.txt&mime=text/plain`, { token: a.access_token, raw: content })
+const manAfterRevive = await api('/v1/files/manifest', { token: a.access_token })
+check(
+  're-upload revives the tombstoned row',
+  (manAfterRevive.json?.files ?? []).some((f) => f.name === 'note-copy.txt')
+)
+
+// Wipe (factory reset): tombstones B's whole record, touches nothing of A's.
+await api('/v1/sync/batch', {
+  token: b.access_token,
+  body: {
+    items: [
+      { type: 'conversation', id: `cnv_${stamp}_b`, title: 'B chat', created_at: now, updated_at: now }
+    ]
+  }
+})
+await api(`/v1/files/upload?sha256=${sha}&name=b-note.txt&mime=text/plain`, { token: b.access_token, raw: content })
+const wipe = await api('/v1/sync/wipe', { token: b.access_token, method: 'POST', body: {} })
+check('wipe tombstones own record', wipe.json?.conversations === 1 && wipe.json?.files === 1, JSON.stringify(wipe.json))
+const bBoot = await api('/v1/sync/bootstrap', { token: b.access_token })
+check('B bootstrap empty after wipe', bBoot.json?.conversations?.length === 0 && bBoot.json?.files?.length === 0)
+const aBoot = await api('/v1/sync/bootstrap', { token: a.access_token })
+check('A untouched by B wipe', aBoot.json?.conversations?.length === 8 && (aBoot.json?.files?.length ?? 0) >= 3)
+
+// ── 1.3.0: superseding, envelope compaction, batched phases, usage ──────
+
+// Newer content at the same path retires the older row (one live row per path).
+const v2 = Buffer.from(`hello wolffish cloud v2 ${stamp}`)
+const sha2 = createHash('sha256').update(v2).digest('hex')
+await api(`/v1/files/upload?sha256=${sha2}&name=note.txt&mime=text/plain`, { token: a.access_token, raw: v2 })
+const manSup = await api('/v1/files/manifest', { token: a.access_token })
+const noteRows = (manSup.json?.files ?? []).filter((f) => f.name === 'note.txt')
+check('new content supersedes the older row for the same path', noteRows.length === 1 && noteRows[0].sha256 === sha2, JSON.stringify(noteRows))
+check('superseded blob still serves while another path references it', (await api(`/v1/files/${sha}`, { token: a.access_token })).status === 200)
+
+// One envelope per conversation: the stable snapshot id upserts (newer seq wins), older rows retire.
+const snapConv = `cnv_${stamp}_snap`
+const snapItems = (seq, title) => [
+  { type: 'conversation', id: snapConv, title, created_at: now, updated_at: new Date(seq).toISOString() },
+  { type: 'record', id: `snap.${snapConv}`, conversation_id: snapConv, seq, kind: 'snapshot', content: { title }, created_at: now },
+  { type: 'record', id: `snap.legacy_${stamp}`, conversation_id: snapConv, seq: seq - 1, kind: 'snapshot', content: { title: 'legacy' }, created_at: now }
+]
+await api('/v1/sync/batch', { token: a.access_token, body: { items: snapItems(1_000, 'v1') } })
+const snap2 = await api('/v1/sync/batch', { token: a.access_token, body: { items: snapItems(2_000, 'v2') } })
+check('newer envelope accepted', snap2.json?.accepted >= 2, JSON.stringify(snap2.json))
+const snapStale = await api('/v1/sync/batch', {
+  token: a.access_token,
+  body: { items: [{ type: 'record', id: `snap.${snapConv}`, conversation_id: snapConv, seq: 500, kind: 'snapshot', content: { title: 'stale' }, created_at: now }] }
+})
+check('stale envelope ignored', snapStale.json?.ignored === 1, JSON.stringify(snapStale.json))
+const snapRecs = await api(`/v1/conversations/${snapConv}/records`, { token: a.access_token })
+const snaps = (snapRecs.json?.records ?? []).filter((r) => r.kind === 'snapshot')
+check('exactly one snapshot row per conversation, the newest (legacy rows retired)', snaps.length === 1 && snaps[0].content.title === 'v2', JSON.stringify(snaps))
+
+// Records may reference a conversation created in the SAME batch (phase order).
+const sameConv = `cnv_${stamp}_same`
+const same = await api('/v1/sync/batch', {
+  token: a.access_token,
+  body: {
+    items: [
+      { type: 'record', id: `rec_${stamp}_same`, conversation_id: sameConv, seq: 0, content: { x: 1 }, created_at: now },
+      { type: 'conversation', id: sameConv, title: 'same batch', created_at: now, updated_at: now }
+    ]
+  }
+})
+check('record may reference a conversation created in the same batch', same.json?.accepted === 2 && same.json?.rejected === 0, JSON.stringify(same.json))
+const hijack2 = await api('/v1/sync/batch', {
+  token: b.access_token,
+  body: { items: [{ type: 'record', id: `rec_evil2_${stamp}`, conversation_id: sameConv, seq: 1, content: { x: 2 }, created_at: now }] }
+})
+check('cross-user record rejected in the batched path', hijack2.json?.rejected === 1 && hijack2.json?.accepted === 0, JSON.stringify(hijack2.json))
+const big = await api('/v1/sync/batch', {
+  token: a.access_token,
+  body: {
+    items: Array.from({ length: 400 }, (_, k) => ({ type: 'record', id: `rec_${stamp}_bulk_${k}`, conversation_id: sameConv, seq: k + 10, content: { k }, created_at: now }))
+  }
+})
+check('400-record batch lands in full', big.json?.accepted === 400 && big.json?.rejected === 0, JSON.stringify(big.json))
+
+// The org's usage table, per user: what a purged install rebuilds its ledger from.
+const usage0 = await api('/v1/usage?after=0', { token: a.access_token })
+check('usage read is per user and keyset-paged', usage0.status === 200 && Array.isArray(usage0.json?.rows) && usage0.json?.next === null, JSON.stringify(usage0.json))
 
 console.log(failures === 0 ? '\nSYNC SMOKE: ALL PASS' : `\nSYNC SMOKE: ${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

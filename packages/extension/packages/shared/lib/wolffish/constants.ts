@@ -1,4 +1,4 @@
-export const DEFAULT_PORT = 23151;
+export const DEFAULT_PORT = 23152;
 export const LOG_PREFIX = '[Wolffish]';
 
 export const RECONNECT = {

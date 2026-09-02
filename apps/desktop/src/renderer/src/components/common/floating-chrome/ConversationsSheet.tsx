@@ -1,4 +1,6 @@
 import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
+import { Avatar } from '@components/common/profile/Avatar'
+import { useProfile } from '@lib/profile/profileStore'
 import { hasChannelIcon } from '@components/common/channel-icon/hasChannelIcon'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
@@ -22,6 +24,7 @@ import {
   PlayListIcon,
   Robot01Icon,
   Settings02Icon,
+  SquareLock01Icon,
   UserIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
@@ -65,9 +68,24 @@ const NAV: {
  * tokens while the sheet is closed. Enter animates via transform only
  * (.wf-sheet-panel); exit is an instant unmount like every other overlay.
  */
-export function ConversationsSheet({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function ConversationsSheet({
+  onClose,
+  onOpenProfile,
+  suspended = false
+}: {
+  onClose: () => void
+  /** Handled by FloatingChrome: opens the profile sheet ON TOP of this one. */
+  onOpenProfile: () => void
+  /**
+   * True while another sheet (the profile) is stacked above: this sheet
+   * stays mounted underneath but must ignore Escape — the top sheet owns
+   * dismissal until it closes.
+   */
+  suspended?: boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
-  const { goTo } = useFlow()
+  const { avatar } = useProfile()
+  const { goTo, auth } = useFlow()
   const {
     runStatuses,
     openConversation,
@@ -122,12 +140,13 @@ export function ConversationsSheet({ onClose }: { onClose: () => void }): React.
   }, [])
 
   useEffect(() => {
+    if (suspended) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, suspended])
 
   const rows = useMemo<ConversationRow[]>(() => {
     const all = buildConversationRows({
@@ -333,6 +352,43 @@ export function ConversationsSheet({ onClose }: { onClose: () => void }): React.
           )}
           {hasMore && <div ref={sentinelRef} aria-hidden className="h-px" />}
         </div>
+        {/* The signed-in user, pinned under the list: tap for the profile
+            card, the lock re-locks the app behind the PIN immediately. */}
+        {auth?.user && (
+          <div className="border-border/60 flex shrink-0 items-center gap-1 border-t px-2.5 py-2.5">
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              aria-label={t('profile.title')}
+              className={cn(
+                'hover:bg-surface flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-start',
+                'focus-visible:ring-2 focus-visible:ring-accent'
+              )}
+            >
+              <Avatar name={auth.user.name} size={30} src={avatar} />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-fg truncate text-[13px] leading-tight font-medium">
+                  {auth.user.name}
+                </span>
+                <span className="text-muted truncate text-[11px] leading-tight" dir="ltr">
+                  {auth.user.email}
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void window.api.auth.lock()}
+              aria-label={t('profile.lockNow')}
+              title={t('profile.lockNow')}
+              className={cn(
+                'text-muted hover:text-fg hover:bg-surface flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                'focus-visible:ring-2 focus-visible:ring-accent'
+              )}
+            >
+              <SquareLock01Icon size={16} />
+            </button>
+          </div>
+        )}
       </aside>
     </div>
   )

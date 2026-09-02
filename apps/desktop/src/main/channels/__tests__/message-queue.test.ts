@@ -15,7 +15,7 @@
  * reads), /cancel, queue-survives-/stop, and queue-cleared-on-/new.
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/channels/__tests__/message-queue.test.ts
  */
@@ -158,9 +158,8 @@ async function run(): Promise<void> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runner = new TurnRunner(agent as any)
-  const localProvider = { isReady: false }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channel = new TelegramChannel(agent as any, runner, localProvider as any)
+  const channel = new TelegramChannel(agent as any, runner)
 
   /** Everything the bot sent to the chat, in order. */
   const outbox: string[] = []

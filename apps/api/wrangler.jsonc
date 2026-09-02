@@ -9,6 +9,13 @@
  * Secrets (set via `wrangler secret put`, never committed):
  * - JWT_SECRET          HS256 signing secret for access tokens
  * - DEEPINFRA_API_KEY   the org's model-provider key; never on a device
+ * - BRAVE_API_KEY       the org's Brave Search key; never on a device
+ *                       (absent = the search lane reports itself unconfigured)
+ * - RESEND_API_KEY      transactional email (password reset codes)
+ *
+ * Optional vars (`.dev.vars` locally): BRAVE_BASE_URL / DEEPINFRA_BASE_URL
+ * point the lanes at mocks; BRAVE_QPS seeds the search gate's per-second
+ * limit before Brave's own headers teach it the plan's real one.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -44,5 +51,13 @@
     { "binding": "CONFIG_KV", "id": "efcd5249246149b3aa2b302febbd639d" }
   ],
 
-  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "wfc-blobs" }]
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "wfc-blobs" }],
+
+  // The search gate: one global instance queues every web search in front
+  // of Brave's per-plan rate limit (src/lib/search-gate.ts). No storage —
+  // SQLite-backed only because that is the class kind every plan supports.
+  "durable_objects": {
+    "bindings": [{ "name": "SEARCH_GATE", "class_name": "SearchGate" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SearchGate"] }]
 }

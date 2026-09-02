@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type {
   ApprovalDecision,
+  AuthState,
   ApprovalDescription,
   AskUserAnswer,
   AskUserQuestion,
@@ -14,15 +15,13 @@ import type {
 } from '@preload/index'
 
 export type Screen =
+  | 'auth'
   | 'welcome'
   | 'low-disk-space'
-  | 'ollama-setup'
-  | 'model-picker'
   | 'chat'
   | 'settings'
   | 'viewer'
   | 'history'
-  | 'changelog'
   | 'heartbeat'
   | 'procedures'
   | 'projects'
@@ -146,6 +145,7 @@ export type PendingProcedure = {
 
 export type FlowContextValue = {
   screen: Screen
+  auth: AuthState | null
   status: WorkspaceStatus | null
   /**
    * Navigate to a screen. Optional `returnTo` records where a follow-up
@@ -160,7 +160,6 @@ export type FlowContextValue = {
   systemInfo: SystemInfo | null
   refreshData: () => Promise<void>
   refreshStatus: () => Promise<void>
-  clearModel: () => Promise<void>
   /**
    * Re-run the launch routing decision. Used by gating screens (e.g.
    * low-disk-space) so that once the blocking condition clears, the user

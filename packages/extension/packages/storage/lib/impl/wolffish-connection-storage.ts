@@ -9,7 +9,7 @@ type WolffishConnectionStorageType = BaseStorageType<WolffishConnectionConfig>;
 
 const storage = createStorage<WolffishConnectionConfig>(
   'wolffish-connection-config',
-  { port: 23151 },
+  { port: 23152 },
   {
     storageEnum: StorageEnum.Local,
     liveUpdate: true,

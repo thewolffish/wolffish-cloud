@@ -434,8 +434,8 @@ export class WorkflowSession {
           ? `${args.task.slice(0, TASK_SNIPPET_CHARS - 1)}…`
           : args.task,
       phase: args.phase?.trim() || undefined,
-      provider: resolved?.provider ?? 'local',
-      model: resolved?.model ?? 'local',
+      provider: resolved?.provider ?? 'cloud',
+      model: resolved?.model ?? 'selected',
       status: 'queued',
       abort: new AbortController(),
       history: [{ role: 'user', content: args.task }],

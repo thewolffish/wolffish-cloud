@@ -95,7 +95,6 @@ export class Hypothalamus {
   private device: Device | null
   private intervalMs: number
   private getContextBudget: () => number
-  private getActiveLocalModel: () => string | null
 
   private timer: NodeJS.Timeout | null = null
   private startedAt: number
@@ -110,7 +109,6 @@ export class Hypothalamus {
     this.device = options.device ?? null
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
     this.getContextBudget = options.getContextBudget ?? (() => DEFAULT_CONTEXT_BUDGET)
-    this.getActiveLocalModel = options.getActiveModel ?? (() => null)
     this.startedAt = Date.now()
 
     if (this.corpus) {
@@ -340,9 +338,6 @@ export class Hypothalamus {
     if (!this.thalamus) return { active: null }
     const id = this.thalamus.getActiveProvider()
     if (!id) return { active: null }
-    if (id === 'local') {
-      return { active: { id, model: this.getActiveLocalModel() ?? 'local' } }
-    }
     const model = this.thalamus.getActiveModel()
     return { active: model ? { id, model } : null }
   }

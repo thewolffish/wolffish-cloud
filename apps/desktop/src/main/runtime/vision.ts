@@ -1,4 +1,5 @@
 import type { ChatMessage, UserContentBlock } from '@main/runtime/thalamus'
+import { catalogVision } from '@main/cloud/catalog'
 
 /**
  * Vision is the capability gate for multimodal content — it decides
@@ -29,6 +30,12 @@ import type { ChatMessage, UserContentBlock } from '@main/runtime/thalamus'
 const VISION_NAME_MARKERS = /vision|omni|llava|pixtral|qvq|(^|[-/_.:])vl([-/_.:]|$)/
 
 export function cloudModelSupportsVision(provider: string, model: string): boolean {
+  // The org catalog is authoritative for the one real lane; everything
+  // below is the legacy name-marker fallback for a cold cache.
+  if (provider === 'cloud') {
+    const fromCatalog = catalogVision(model)
+    if (fromCatalog !== null) return fromCatalog
+  }
   const m = model.toLowerCase()
   if (VISION_NAME_MARKERS.test(m)) return true
   switch (provider) {

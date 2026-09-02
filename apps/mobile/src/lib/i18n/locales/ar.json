@@ -59,7 +59,7 @@
       "compaction": "الضغط",
       "reflection": "المراجعة",
       "startup": "بدء النظام",
-      "bypass": "التجاوز",
+      "credentials": "بيانات الاعتماد",
       "today": "{{value}} اليوم"
     },
     "appearanceSubtitle": "السمة واللغة.",
@@ -453,8 +453,6 @@
       "weekStartsOn": "يبدأ الأسبوع يوم",
       "weekStartsOnDescription": "أول أيام الأسبوع في خريطة النشاط وفي نطاقات مثل \"هذا الأسبوع\". الاثنين هو معيار ISO.",
       "safetyTitle": "الأمان",
-      "bypassPermissions": "تجاوز الأذونات",
-      "bypassPermissionsDescription": "العمل دون طلب موافقة.",
       "blockCredentials": "حظر بيانات الاعتماد",
       "blockCredentialsDescription": "حظر كلمات المرور والمفاتيح."
     },
@@ -773,6 +771,13 @@
       "allTime": "الإجمالي",
       "turns": "جولة",
       "noStats": "لا توجد إحصاءات لهذه المحادثة بعد."
+    },
+    "permissions": {
+      "label": "الإجراءات",
+      "ask": "اسألني",
+      "askDesc": "اسأل قبل الإجراءات الحساسة — تظهر الموافقات في المحادثة.",
+      "bypass": "تجاوز",
+      "bypassDesc": "تخطَّ طلبات الإذن — ينفّذ الوكيل دون سؤال."
     },
     "editor": {
       "title": "تحرير الرسالة",

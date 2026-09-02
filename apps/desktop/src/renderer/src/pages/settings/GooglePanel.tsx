@@ -26,7 +26,8 @@ const GOOGLE_CONSOLE_URL = 'https://console.cloud.google.com/auth/clients'
 const STATUS_DOT: Record<GoogleStatus['status'], string> = {
   active: 'bg-emerald-500',
   error: 'bg-rose-500',
-  inactive: 'bg-border'
+  inactive: 'bg-border',
+  needsReconnect: 'bg-amber-500'
 }
 
 type Stage = 'idle' | 'setup' | 'updating' | 'validating' | 'authorizing'
@@ -34,13 +35,14 @@ type Stage = 'idle' | 'setup' | 'updating' | 'validating' | 'authorizing'
 const EMPTY_STATUS: GoogleStatus = {
   status: 'inactive',
   errorKind: null,
-  error: null
+  error: null,
+  cloudConfigured: false,
+  accountsOnDevice: 0
 }
 
 // Main owns the real setup/update progress; this module-level snapshot mirrors
 // it so a panel remounted after navigation restores the running install instead
 // of resetting. Registered once at import, never torn down — outlives any mount.
-// Same pattern as UpdatesPanel for the app updater.
 let cachedSetup: GoogleSetupStateEvent = { stage: 'idle', percent: 0 }
 window.api.google.onSetupState((s) => {
   cachedSetup = s
@@ -64,7 +66,12 @@ export function GooglePanel(): React.JSX.Element {
   // mid-install restores instantly rather than resetting to idle.
   const setupBusy = cachedSetup.stage !== 'idle'
   const [stage, setStage] = useState<Stage>(setupBusy ? cachedSetup.stage : 'idle')
-  const [credsDone, setCredsDone] = useState(initial?.config?.credentialsStored ?? false)
+  // Device-honest: the synced credentialsStored flag says "set up somewhere";
+  // a needsReconnect status means THIS machine holds nothing, so the setup
+  // steps must present as not-done here.
+  const [credsDone, setCredsDone] = useState(
+    (initial?.config?.credentialsStored ?? false) && initial?.status?.status !== 'needsReconnect'
+  )
   const [progress, setProgress] = useState(
     setupBusy ? cachedSetup.percent : initial?.binary.gogInstalled ? 100 : 0
   )
@@ -90,7 +97,7 @@ export function GooglePanel(): React.JSX.Element {
       setConfig(snap.config)
       setStatus(snap.status)
       setAccounts(snap.accounts)
-      setCredsDone(snap.config.credentialsStored)
+      setCredsDone(snap.config.credentialsStored && snap.status.status !== 'needsReconnect')
       if (snap.binary.gogInstalled) setProgress(100)
     })
     return () => {
@@ -267,7 +274,13 @@ export function GooglePanel(): React.JSX.Element {
     setConfig((prev) =>
       prev ? { ...prev, clientId: '', projectId: '', credentialsStored: false } : prev
     )
-    setStatus({ status: 'inactive', errorKind: null, error: null })
+    setStatus({
+      status: 'inactive',
+      errorKind: null,
+      error: null,
+      cloudConfigured: false,
+      accountsOnDevice: 0
+    })
     toast.show({
       message: t('settings.services.google.toasts.credentialsDeleted'),
       tone: 'success'
@@ -370,7 +383,13 @@ export function GooglePanel(): React.JSX.Element {
         const result = await window.api.google.authAdd(trimmed, opts)
         if (result.ok) {
           setConfig((prev) => (prev ? { ...prev, status: 'active' } : prev))
-          setStatus({ status: 'active', errorKind: null, error: null })
+          setStatus((prev) => ({
+            status: 'active',
+            errorKind: null,
+            error: null,
+            cloudConfigured: true,
+            accountsOnDevice: Math.max(1, prev.accountsOnDevice)
+          }))
           // Only the typed-in field gets cleared; a reconnect never touches it.
           if (!opts?.reauth) setEmail('')
           const refreshed = await window.api.google.listAccounts()
@@ -491,6 +510,8 @@ export function GooglePanel(): React.JSX.Element {
           onRemove={(acc) => void handleRemove(acc)}
           onReauth={(acc) => void handleReauth(acc)}
         />
+
+        {status.status === 'needsReconnect' && <ReconnectCallout />}
 
         {!credsDone && <OAuthGuide />}
 
@@ -1061,6 +1082,25 @@ function OAuthGuide(): React.JSX.Element {
         </>
       )}
     </section>
+  )
+}
+
+/**
+ * Shown when the SYNCED config says Google is set up but THIS device's
+ * gogcli store holds no credentials — the purge-restore / second-machine
+ * case. Google credentials never leave a device, so the fix is to walk the
+ * connect steps again here; the synced row is deliberately never rewritten
+ * (other devices with working credentials must keep their status).
+ */
+function ReconnectCallout(): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+      <div className="text-sm font-medium">{t('settings.services.google.reconnect.title')}</div>
+      <p className="text-muted mt-1 text-xs leading-relaxed">
+        {t('settings.services.google.reconnect.body')}
+      </p>
+    </div>
   )
 }
 

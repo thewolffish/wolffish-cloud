@@ -17,7 +17,7 @@
  * log entries to the right concurrent card by that id.
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/heartbeat-run-pool.test.ts
  */

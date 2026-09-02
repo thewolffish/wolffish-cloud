@@ -113,7 +113,7 @@ export const WOLFFISH_AUTHOR = 'wolffish'
  * entry file at the moment the call succeeded — so editing either file
  * invalidates it and the skill drops back to "untested" until it passes again.
  */
-const TESTED_MARKER_FILE = '.wolffish-tested'
+const TESTED_MARKER_FILE = '.wfc-tested'
 
 export type CapabilityStatus = 'ok' | 'error'
 
@@ -715,6 +715,19 @@ export type KnowledgeWriteResult =
   | { ok: true; message: string; warning?: string }
   | { ok: false; error: string }
 
+/**
+ * The org API seam a plugin may call through — the API base plus the
+ * session's access token, refreshed by the cloud session as needed.
+ * Present only when the host wired one in via setCloudHost; used by the
+ * `web-search` capability to route every search through the org's
+ * /v1/search lane (the org's Brave key lives behind that door, never on
+ * this device). Undefined for a headless host or in tests.
+ */
+export type CloudHost = {
+  apiBase: string
+  withAccessToken: <T>(fn: (token: string) => Promise<T>) => Promise<T>
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -796,6 +809,12 @@ export type PluginContext = {
    * other plugin.
    */
   videoTasks?: VideoTasksHost
+  /**
+   * The org API seam (base URL + session token). Present only when the host
+   * wired one in via setCloudHost — used by the `web-search` capability's
+   * plugin to call the org's search lane. Undefined for every other plugin.
+   */
+  cloud?: CloudHost
   /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
@@ -992,6 +1011,7 @@ export class Cerebellum {
   private cortexHost?: CortexHost
   private knowledgeHost?: KnowledgeHost
   private videoTasksHost?: VideoTasksHost
+  private cloudHost?: CloudHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1148,6 +1168,15 @@ export class Cerebellum {
    */
   setKnowledgeHost(host: KnowledgeHost): void {
     this.knowledgeHost = host
+  }
+
+  /**
+   * Wire the org API seam (API base + session token source) that the
+   * `web-search` capability's plugin receives in its init context. Set once
+   * at startup, next to connectCloudProvider; survives reload().
+   */
+  setCloudHost(host: CloudHost): void {
+    this.cloudHost = host
   }
 
   /**
@@ -2010,7 +2039,7 @@ export class Cerebellum {
   /**
    * If the capability has a package.json with declared deps, run `npm
    * install` in its folder once per session. Idempotent: a marker file in
-   * <capability>/node_modules/.wolffish-installed records the package.json
+   * <capability>/node_modules/.wfc-installed records the package.json
    * hash so the install is skipped on later sessions when nothing changed.
    * Generic — works for any capability with a package.json, no per-cap code.
    */
@@ -2029,7 +2058,7 @@ export class Cerebellum {
     }
 
     const pkgPath = path.join(cap.dir, 'package.json')
-    const markerPath = path.join(cap.dir, 'node_modules', '.wolffish-installed')
+    const markerPath = path.join(cap.dir, 'node_modules', '.wfc-installed')
 
     let pkgRaw: string
     try {
@@ -2153,6 +2182,7 @@ export class Cerebellum {
         cortex: this.cortexHost,
         knowledge: this.knowledgeHost,
         videoTasks: this.videoTasksHost,
+        cloud: this.cloudHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

@@ -52,10 +52,10 @@ Source: [thewolffish/wolffish-mobile](https://github.com/thewolffish/wolffish-mo
 
 ## How It Works
 
-The extension connects to the Wolffish desktop app over a local WebSocket (port 23151 by default). When the agent needs to do something in the browser, it sends a command through the WebSocket. The extension executes it and sends back the result.
+The extension connects to the Wolffish desktop app over a local WebSocket (port 23152 by default). When the agent needs to do something in the browser, it sends a command through the WebSocket. The extension executes it and sends back the result.
 
 ```
-Wolffish App ←→ WebSocket (localhost:23151) ←→ Extension Service Worker ←→ Content Script / Chrome APIs
+Wolffish App ←→ WebSocket (localhost:23152) ←→ Extension Service Worker ←→ Content Script / Chrome APIs
 ```
 
 ### Architecture

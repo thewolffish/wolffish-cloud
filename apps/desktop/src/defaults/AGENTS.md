@@ -1,6 +1,6 @@
 # Navigating Wolffish — A Guide for AI Assistants
 
-**You are reading this because someone pointed you at their `~/.wolffish/` folder.**
+**You are reading this because someone pointed you at their `~/.wfc/` folder.**
 
 This file is your map. It explains what Wolffish is, exactly what lives where in
 this folder, how the system works, and how to help the user read, repair, extend,
@@ -18,7 +18,7 @@ Wolffish, the markdown files *are* the source of truth.
 
 1. [The idea](#1-the-idea)
 2. [The stack](#2-the-stack)
-3. [The `.wolffish` folder — complete map](#3-the-wolffish-folder--complete-map)
+3. [The `.wfc` folder — complete map](#3-the-wolffish-folder--complete-map)
 4. [Where everything lives — quick reference](#4-where-everything-lives--quick-reference)
 5. [The brain — 15 modules](#5-the-brain--15-modules)
 6. [Available tools (capabilities)](#6-available-tools-capabilities)
@@ -27,7 +27,7 @@ Wolffish, the markdown files *are* the source of truth.
 9. [How to help the user navigate — recipes](#9-how-to-help-the-user-navigate--recipes)
 10. [How to write good prompts for Wolffish](#10-how-to-write-good-prompts-for-wolffish)
 11. [Safety & control](#11-safety--control)
-12. [Golden rules for working inside `.wolffish`](#12-golden-rules-for-working-inside-wolffish)
+12. [Golden rules for working inside `.wfc`](#12-golden-rules-for-working-inside-wolffish)
 
 ---
 
@@ -35,10 +35,13 @@ Wolffish, the markdown files *are* the source of truth.
 
 **Wolffish is a brain you own, not a chatbot you rent.**
 
-It's a local-first, markdown-powered personal AI desktop agent. It runs natively
-on macOS, Windows, and Linux — thinking, acting, and learning on the user's own
-machine. The core experience works fully offline through Ollama; cloud models
-(Claude, GPT, DeepSeek, …) are optional quality upgrades, never requirements.
+It's a markdown-powered personal AI desktop agent that belongs to an organization.
+It runs natively on macOS, Windows, and Linux — thinking, acting, and learning on
+the user's own machine — and it is **cloud-first**: the user signs into the org's
+Wolffish Cloud API, every model call is routed and metered by that API (no API keys
+on the device, no local models), and everything the agent knows is mirrored to the
+org's master record. This folder is that record's **cache**: purge it, sign in
+again, and the workspace walks back out of the org.
 
 Three ideas hold the whole design together:
 
@@ -52,10 +55,13 @@ Three ideas hold the whole design together:
   wired together by an event bus. Every message follows the *same* deterministic
   path through the *same* gates. The LLM is creative at exactly one point; the
   structure around it is predictable. Trust comes from that predictability.
-- **You own all of it.** Everything Wolffish is lives in this one folder,
-  `~/.wolffish/`. Back it up by copying a folder. Version it with git. Uninstall
-  with `rm -rf ~/.wolffish/`. There is no hidden cloud state, no opaque embedding
-  store, no vendor lock-in.
+- **The org holds the record; this folder is the cache.** Every file here that
+  carries meaning (conversations, config, the brain, deliverables, media, the usage
+  ledger) syncs to the org API within seconds of changing, and a fresh sign-in on
+  any machine restores it (§3, "What syncs"). Uninstall with `rm -rf ~/.wfc/` —
+  nothing is lost. Only device-bound plumbing (session tokens, pairing keys,
+  WhatsApp's Signal session, the search index) stays local, and each of those
+  regenerates or re-links.
 
 Built by Younes Alturkey. Tagline: *Wolffish. Bite through anything.* 🐺
 
@@ -70,7 +76,8 @@ Built by Younes Alturkey. Tagline: *Wolffish. Bite through anything.* 🐺
 | Build | Vite 7, electron-builder |
 | Search index | SQLite (`better-sqlite3`) with FTS5 full-text search |
 | Event bus | `mitt` (typed pub/sub) |
-| LLM providers | Pure `fetch()`, no vendor SDKs — Anthropic (Claude), OpenAI (GPT), DeepSeek & other OpenAI-compatible clouds, Ollama (local) |
+| LLM lane | One: the org's Wolffish Cloud API (`/ai/v1/chat/completions`, OpenAI-compatible, session-token auth). The API serves the model catalog (`/v1/models`), enforces allowlists and quotas, and meters every call. No API keys on the device. |
+| Cloud sync | The same API is the master record: conversations as records, workspace files as content-addressed blobs, config as one row, usage from the metering table (`src/main/cloud/sync.ts` in the app source) |
 | Messaging channels | `grammy` (Telegram), Baileys (WhatsApp) |
 | File processing | Sharp (images), pdf-parse, mammoth (docx), xlsx |
 | Speech | Whisper (speech-to-text), neural TTS (text-to-speech) |
@@ -80,22 +87,24 @@ Built by Younes Alturkey. Tagline: *Wolffish. Bite through anything.* 🐺
 
 The **application code** lives in a separate repo (`wolffish-app`), under
 `src/main/runtime/` (the brain), `src/renderer/` (the UI), etc. **This folder
-(`~/.wolffish/`) is the runtime data** the installed app reads and writes. You
+(`~/.wfc/`) is the runtime data** the installed app reads and writes. You
 generally help the user here, in their data — not in the app source.
 
 ---
 
-## 3. The `.wolffish` folder — complete map
+## 3. The `.wfc` folder — complete map
 
-`~/.wolffish/` is the app's entire footprint — delete it and you're back to a fresh
-install. It has three top-level subfolders plus this guide. Below, **every folder is
-listed and explained, nested ones included.** Folders that are pure machine state are
-flagged disposable; everything else is human-readable content you can open and edit.
+`~/.wfc/` is the app's entire local footprint — delete it and you're back to a fresh
+install, and signing in restores the workspace from the org. It has three top-level
+subfolders plus this guide. Below, **every folder is listed and explained, nested ones
+included.** Folders that are pure machine state are flagged disposable; everything
+else is human-readable content you can open and edit — and "What syncs" (end of this
+section) says which of it the org holds.
 
-### Root of `~/.wolffish/`
+### Root of `~/.wfc/`
 
 ```
-~/.wolffish/
+~/.wfc/
 ├── AGENTS.md     This guide. App-managed — rewritten from the bundle on every launch.
 ├── logs/         Reserved Electron app-logs path (app.setAppLogsPath). Usually EMPTY;
 │                 the live dated logs actually live under workspace/logs/ (see below).
@@ -106,7 +115,7 @@ flagged disposable; everything else is human-readable content you can open and e
 ### `runtime/` — Chromium engine state (disposable, never hand-edit)
 
 The embedded browser's own storage. You never need to read or edit it; it lives here
-only so `rm -rf ~/.wolffish` wipes browser state too. Every subfolder is Chromium-managed
+only so `rm -rf ~/.wfc` wipes browser state too. Every subfolder is Chromium-managed
 and self-regenerates — the exact set varies by OS and version.
 
 ```
@@ -128,7 +137,10 @@ runtime/
 ├── blob_storage/
 │   └── <uuid>/                in-flight Blob/File data, one folder per session
 └── (loose files: Preferences, Network Persistent State, Trust Tokens, SharedStorage,
-     DIPS, .updaterId — Chromium + auto-updater bookkeeping)
+     DIPS — Chromium bookkeeping; plus the cloud session, all device-local:
+     cloud-session.json   the signed-in session + PIN hash, sealed with the OS keychain
+     cloud-device.json    this machine's device id at the org (stable across launches)
+     cloud-avatar.json    cached profile photo, revalidated against the API)
 ```
 
 ### `workspace/` — the agent's world (top level)
@@ -136,16 +148,26 @@ runtime/
 ```
 workspace/
 ├── .lock              Single-instance guard (holds the running PID). Don't touch.
-├── config.json        All app config + provider API keys (schema in §8). Holds secrets.
+├── .sync-state.json   The sync engine's memory: owner, restore status, config stamp,
+│                      what was pushed, pending deletes. Don't touch.
+├── config.json        All app config (schema in §8): model choice, integrations,
+│                      secrets/variables, channels. SYNCS as one row. config.json.bak
+│                      is its last-known-good copy.
 ├── brain/             The 15-module brain state — detailed next.
 ├── extension/         The bundled browser extension the ext_* tools drive (multi-browser).
-├── usage/             Token & cost accounting.
+├── usage/             Token & cost accounting (rebuilt from the org's metering table).
 ├── logs/              Live application + extension logs.
-├── files/             Working files the agent reads/writes during tasks.
-├── uploads/           Files you handed the agent to process (docs, images, audio).
-├── screenshots/       Screenshots captured by computer-use / browser tools.
-├── speech/            Speech-to-text scratch (incoming audio being transcribed).
-└── voice/             Text-to-speech output (generated voice memos).
+├── files/             Deliverables the agent wrote (PDFs, charts, exports). SYNCS.
+├── uploads/           Files handed to the agent: uploads/conv-*/ per conversation,
+│                      uploads/project-*/ and uploads/procedure-*/ per project/procedure.
+├── screenshots/       screenshots/conv-*/ — browser/computer-use captures per conversation.
+├── voice/             voice/conv-*/ — recorded voice notes (the transcript is the prompt).
+├── speech/            speech/conv-*/ — generated TTS replies.
+├── generations/       video/registry.json + video/conv-*/ — generated video per conversation.
+├── telegram/          chat → conversation maps and dedupe ids (thread continuity).
+├── whatsapp/          same maps — plus whatsapp/auth/, the device-bound Signal session.
+├── mobile/            pairing.json — this machine's phone-pairing keypair (device-bound).
+└── bin/               Downloaded helper binaries (ffmpeg). Machine state.
 ```
 
 ### `workspace/brain/` — every module, every nested folder
@@ -235,9 +257,17 @@ extension/
 ```
 usage/
 ├── daily/                 YYYY-MM-DD.md — one line per model call (tokens + $ cost)
-└── providers/             <provider>.md — the same lines grouped per provider
-                           (anthropic, openai, deepseek, kimi, mimo, minimax, ollama, …)
+└── providers/
+    ├── cloud.md           the same lines, all of them — the Usage panel reads THIS
+    └── brave.md           one line per web search through the org's Brave lane
 ```
+
+The org meters every model call and every web search itself (`/v1/usage`; searches are
+`kind=search`). `cloud.md`, `daily/` and `brave.md` are a cache of that table: this
+machine appends its own calls and searches the moment they finish, folds in the user's
+other devices' rows every couple of minutes, and rebuilds every ledger from the org
+after a purge. Search lines folded in from the org carry no query text — the org
+records that a search happened, never what was searched.
 
 ### `workspace/logs/` — runtime logs
 
@@ -248,6 +278,24 @@ logs/
     ├── YYYY-MM-DD_HH-MM-SS.jsonl   one JSON line per browser event (navigate/click/…)
     └── .debug/                     extra extension debug dumps
 ```
+
+### What syncs to the org — and what doesn't
+
+Everything below the line "device-local" is a cache of the org's record. Delete
+`~/.wfc/`, sign in on this or any other machine, and it comes back.
+
+| What | How it syncs | After a purge + sign-in |
+|---|---|---|
+| `brain/conversations/*.json` | As records: one row per message (content-hashed id, replays are no-ops) plus one envelope row per conversation; pushed a few seconds after every turn, incrementally | Every transcript rebuilt from the org, in full, before the chat screen opens |
+| Message media — `uploads/conv-*/`, `voice/conv-*/`, `speech/conv-*/`, `screenshots/conv-*/`, `generations/video/conv-*/` | Content-addressed blobs (SHA-256; identical bytes stored once) | Downloaded **when the conversation is opened**, with a progress banner — never all at once |
+| `files/`, `uploads/project-*/`, `uploads/procedure-*/`, `generations/video/registry.json` | Blobs, swept after every drain; a changed file replaces the org's newest copy | Restored eagerly, before first use |
+| `brain/` (identity, prefrontal/agents.md, hippocampus, reflection, basalganglia, motor/tasks, brainstem/heartbeat.md + run-history.md, projects.json, procedures.json) | Blobs — the durable mind and its automations | Restored eagerly; a customized `soul.md` or `heartbeat.md` wins over the bundled default |
+| `config.json` | One row, last-write-wins by server stamp; an admin can fix a user's config from the console and the app adopts it within ~2 minutes | Adopted from the org before anything else; a fresh install never overwrites it with defaults |
+| `usage/providers/cloud.md`, `usage/providers/brave.md`, `usage/daily/` | Not a file sync: rebuilt/reconciled from the org's metering table (`/v1/usage`), every device's calls and searches included | Rebuilt |
+| `logs/extension/*.jsonl`, `telegram/`, `whatsapp/*.json` | Blobs | Restored eagerly |
+| `brain/cerebellum/` (capabilities) | The org's capability registry (versioned packages; user-scoped imports sync two-way) | Mirrored on session ready |
+| Deletions | A deleted conversation or file is tombstoned at the org, durably (queued even offline or mid-restore) | Stays deleted |
+| **Device-local (never synced)** | `runtime/` (session, device id, avatar cache), `mobile/pairing.json`, `whatsapp/auth/` (Signal session — re-link with a QR), `brain/cortex.db` (rebuilt), `brain/corpus/` and `brain/prefrontal/.debug/` (diagnostics), `logs/*.log`, `bin/`, `extension/`, `.lock`, `.sync-state.json`, app-managed prompt files (`agents.core.md`, `workflow*.md`) | Regenerated or re-linked |
 
 > **Reality vs. older diagrams.** `conversations/` and `cortex.db` live **under `brain/`**
 > (not at the workspace root); capabilities are **dot-prefixed**; and
@@ -274,14 +322,15 @@ When the user asks "where is …", this is your lookup table.
 | Inspect a **multi-step task run** | `workspace/brain/motor/tasks/TASK-*.md` |
 | Understand **why the agent decided X** | `workspace/brain/prefrontal/.debug/*.md` (the assembled prompt) |
 | Schedule a **recurring background job** | `workspace/brain/brainstem/heartbeat.md` |
-| Check **token spend / costs** | `workspace/usage/daily/*.md` and `workspace/usage/providers/*.md` |
-| Change **providers, API keys, model, theme, locale, safety** | `workspace/config.json` |
+| Check **token spend / costs** | `workspace/usage/providers/cloud.md` (every device's calls) and `usage/daily/*.md` |
+| Change **model, theme, locale, safety, integrations, secrets** | `workspace/config.json` (models are whatever the org allows — `/v1/models`) |
 | Debug **app crashes / updater / extension** | `workspace/logs/*.log` and `workspace/logs/extension/*.jsonl` |
 | See **what the agent learned worked/failed** | `workspace/brain/basalganglia/YYYY-MM-DD.md` |
-| Find generated files / screenshots / voice memos | `workspace/files/`, `screenshots/`, `voice/` |
-| **Reset** to factory state | `rm -rf ~/.wolffish/` (nukes everything — last resort) |
+| Find generated files / screenshots / voice notes | `workspace/files/`, `screenshots/conv-*/`, `voice/conv-*/`, `generations/video/` |
+| **Reset** this machine's cache | `rm -rf ~/.wfc/` — sign in again and the org restores the workspace |
+| **Wipe** the data for real (org copy too) | Settings → factory reset (tombstones the org record, keeps preferences) |
 | **Repair** a slow/odd search index | delete `workspace/brain/cortex.db*` — it rebuilds |
-| **Back up** the whole brain | copy `~/.wolffish/workspace/` (skip `runtime/`) |
+| **Move** to another machine | just sign in there; the org holds the record (WhatsApp re-links with a QR) |
 
 ---
 
@@ -343,7 +392,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.python` | Hermetic uv-managed CPython for native Python plugins — `python_check`, `python_install` |
 | | `.package-manager` | Cross-platform packages (brew/winget/apt/dnf) — `pkg_install`, `pkg_check` |
 | | `.system` | Apps & power — `app_open`, `app_quit`, `app_list`, `open_path`, `system_power` |
-| **Web** | `.web-search` | `web_search` (Brave), `web_fetch` (read a page) |
+| **Web** | `.web-search` | `web_search` (Brave, through the org's `/v1/search` lane — no key on the device), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** browsers (Chrome, Edge, Brave, Firefox — several can be connected at once) via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_screenshot`, `ext_wait`, …; `ext_browsers` lists connections, `ext_use_browser` picks one per conversation) |
 | | `.cloudflared` | Expose a local service — `cloudflared_tunnel` |
@@ -414,13 +463,13 @@ The model streams a response; tool calls are parsed out, safety-checked, execute
 with retries, and the result is streamed back. The turn is saved to an episode and
 the outcome recorded.
 
-**Single Brain.** The thalamus resolves exactly one user-chosen model — the
-Brain (`llm.brain`, a `{ providerId, model }` set on the Brain settings page) —
-or the local Ollama model when the chat switcher is in local-only mode
-(`llm.localOnly`). There is no cascade and no automatic substitution: the chosen
-model runs and retries itself on transient failures (429/5xx/timeouts), or the
-turn fails honestly. Switching cloud↔local is a manual, explicit act via the
-chat switcher.
+**One lane, one chosen model.** The thalamus resolves exactly one user-chosen model
+(`llm.model`, picked from the catalog the org API serves at `/v1/models`) and streams
+every call through the org's router, which enforces the user's allowlist and daily
+quota and meters the call. There is no cascade and no automatic substitution: the
+chosen model runs and retries itself on transient failures (429/5xx/timeouts), or the
+turn fails honestly. When an admin narrows the allowlist, the picker follows on the
+next catalog refresh and a no-longer-allowed selection falls back to the org default.
 
 **Three-tier memory (+ the learning tier).**
 - *Episodes* (`hippocampus/episodes/`) — appended every turn, zero-latency, no LLM.
@@ -477,27 +526,31 @@ Reading these confidently lets you answer almost any question about the agent.
   "version": 1,
   "launchAtStartup": false,
   "llm": {
-    "local":   { "enabled": false, "provider": "ollama", "model": "", "endpoint": "http://localhost:11434" },
-    "providers": [
-      { "id": "deepseek", "model": "deepseek-v4-pro", "apiKey": "***", "models": ["deepseek-v4-flash", "deepseek-v4-pro"] }
-    ],
-    "brain": { "providerId": "deepseek", "model": "deepseek-v4-pro" },  // the single chosen cloud model
-    "localOnly": false,                     // chat switcher: cloud (false) vs local-only (true)
-    "restrictPowerfulModels": true,
-    "thinkingModes": { "deepseek-v4-pro": "max" }
+    "model": "deepseek-ai/DeepSeek-V4-Flash-0731",   // the chosen model — one of the ids the org serves at /v1/models
+    "mode": "single",                                // single | workflow
+    "thinkingModes": { "deepseek-ai/DeepSeek-V4-Pro-0813": "max" }
   },
   "safety": { "bypassPermissions": true, "blockCredentials": false },
-  "updates": { "enabled": true },
   "weekStartsOn": 1,
   "locale": "en",                            // en | ar
   "theme": "light",                          // light | dark | system
   "onboardingCompleted": true,
-  "lastSettingsState": { … },                // UI state, safe to ignore
-  "brave": { "enabled": true, "apiKey": "***" }
+  "variables": [ { "name": "SECRET", "value": "***", "sensitive": true } ],  // user secrets the agent may use
+  "telegram": { "enabled": false, "botToken": "***", "allowedUserIds": [] },
+  "whatsapp": { … }, "mobile": { … }, "google": { … }, "notion": { … }, "github": { … },
+  "mcp": { … },                              // MCP servers + their OAuth state
+  "compaction": { … }, "reflection": { … },
+  "disabledCapabilities": [], "pinnedCapabilities": [],
+  "lastSettingsState": { … }                 // UI state, safe to ignore
 }
 ```
-> ⚠️ `apiKey` fields are **live secrets**. Never print them, paste them into chats,
-> commit them, or send them anywhere. When showing this file, redact the keys.
+There are no provider entries and no model API keys: the org's router holds the
+provider key, and the catalog and policy come from the API. The whole file is one
+synced row — an admin can repair it from the console, and a fresh install adopts the
+org's copy instead of writing defaults over it.
+> ⚠️ `variables`, channel tokens and integration credentials are **live secrets**.
+> Never print them, paste them into chats, commit them, or send them anywhere. When
+> showing this file, redact them.
 
 ### Conversation — `brain/conversations/conv-*.json`
 Top-level keys: `id`, `title`, `model`, `messages[]`, `createdAt`, `updatedAt`,
@@ -597,25 +650,27 @@ Add a `##` job to `brain/brainstem/heartbeat.md` using one of the schedule kinds
 §7. Keep the instruction in the body, plain prose.
 
 **"What am I spending?"**
-Sum `usage/daily/*.md`, or read a single provider's ledger in
-`usage/providers/<provider>.md`. Each line already has the dollar cost.
+Read `usage/providers/cloud.md` (every device's calls, rebuilt from the org's
+metering table) or the per-day files in `usage/daily/`. Each line already has the
+dollar cost.
 
 **"It's acting weird / search seems stale."**
 Delete `brain/cortex.db*` (the index rebuilds from markdown on launch). If a turn
 half-wrote something, the markdown files are still the truth — fix them directly.
 
-**"Switch model / add an API key / go fully offline."**
-Edit `config.json → llm`. Add a provider object (with `id`, `model`, `apiKey`),
-point `llm.brain` at the `{ providerId, model }` you want, or set
-`llm.local.enabled = true` and `llm.localOnly = true` to run on Ollama only.
-**Redact keys when you echo this file.**
+**"Switch model."**
+Pick one in the chat's model card — the list is exactly what the org allows
+(`/v1/models`); it lands in `config.json → llm.model`. There are no API keys to add
+and no offline mode: every call goes through the org's router.
+**Redact `variables` and integration tokens when you echo `config.json`.**
 
-**"Back up / move my agent to another machine."**
-Copy `~/.wolffish/workspace/`. Skip `runtime/` (disposable Chromium state) and
-`cortex.db*` (regenerates). The brain is just files.
+**"Move my agent to another machine."**
+Sign in there. The org holds the record; the workspace restores itself (WhatsApp
+needs a fresh QR link, the phone needs re-pairing — those keys are device-bound).
 
 **"Start over."**
-`rm -rf ~/.wolffish/` returns a clean slate. There is nothing stored anywhere else.
+`rm -rf ~/.wfc/` clears this machine only — signing in restores everything. To erase
+the data for real, use the app's factory reset, which tombstones the org copy too.
 
 ---
 
@@ -685,20 +740,23 @@ run from spinning.
 
 ---
 
-## 12. Golden rules for working inside `.wolffish`
+## 12. Golden rules for working inside `.wfc`
 
 1. **Markdown is truth; the DB is cache.** Fix behavior by editing markdown. Never
    hand-edit `cortex.db` — delete it to rebuild instead.
-2. **Stay inside `~/.wolffish/`.** The whole agent is here by design. Don't scatter
-   state elsewhere; uninstall must remain `rm -rf ~/.wolffish/`.
+2. **Stay inside `~/.wfc/`.** The whole local agent is here by design. Don't scatter
+   state elsewhere; uninstall must remain `rm -rf ~/.wfc/` — and because the org
+   holds the record, that never loses data.
 3. **Capability folders are dot-prefixed (hidden).** Use `ls -a` in
    `brain/cerebellum/`.
 4. **`agents.md` ≠ `agents.core.md`.** Put user customizations in `agents.md` (never
    overwritten, wins on conflict); leave `agents.core.md` alone.
-5. **Don't touch `runtime/` or `.lock`.** Chromium plumbing and the single-instance
-   guard — editing them only breaks things.
-6. **Protect secrets.** Redact `apiKey`/token values whenever you display
-   `config.json` or service state.
+5. **Don't touch `runtime/`, `.lock` or `.sync-state.json`.** Chromium plumbing, the
+   single-instance guard and the sync engine's memory — editing them only breaks
+   things (a damaged `.sync-state.json` just makes the next launch re-check, never
+   lose data).
+6. **Protect secrets.** Redact `variables`, channel tokens and integration
+   credentials whenever you display `config.json` or service state.
 7. **Prefer reading before writing.** The corpus log, task transcripts, and
    `.debug/` prompt dumps usually answer "why" before you change anything.
 8. **This guide is orientation, not the agent's manual.** For how the agent itself

@@ -15,7 +15,14 @@ import {
   timingSafeEqualHex
 } from '@/lib/crypto'
 import { signJwt, verifyJwt, type AccessClaims } from '@/lib/jwt'
-import { LoginSchema, PasswordChangeSchema, RefreshSchema } from '@/lib/schemas'
+import { sendSystemEmail } from '@/lib/email'
+import {
+  LoginSchema,
+  PasswordChangeSchema,
+  RefreshSchema,
+  ResetConfirmSchema,
+  ResetRequestSchema
+} from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
 import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS, killKey } from '@/middleware/auth'
 import type { Env } from '@/index'
@@ -106,14 +113,15 @@ auth.post('/login', async (c) => {
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?1')
     .bind(email)
     .first<UserRow>()
-  if (!user) return c.json({ error: 'invalid_credentials' }, 401)
+  // Internal tool by design: precise failure codes beat enumeration-proofing.
+  if (!user) return c.json({ error: 'email_not_found' }, 401)
   if (user.status === 'suspended' || user.status === 'removed') {
     return c.json({ error: 'account_disabled' }, 403)
   }
 
   const hash = await hashPassword(body.password, user.password_salt)
   if (!timingSafeEqualHex(hash, user.password_hash)) {
-    return c.json({ error: 'invalid_credentials' }, 401)
+    return c.json({ error: 'wrong_password' }, 401)
   }
 
   if (user.must_change_password) {
@@ -184,6 +192,22 @@ auth.post('/password', async (c) => {
 
   const body = await parseJson(c, PasswordChangeSchema)
   if (body instanceof Response) return body
+
+  // A voluntary change (normal session) must prove the current password;
+  // the forced first-login flow's change token already proved it at login.
+  if (claims.scope === 'session') {
+    const row = await c.env.DB.prepare(
+      'SELECT password_hash, password_salt FROM users WHERE id = ?1'
+    )
+      .bind(claims.sub)
+      .first<{ password_hash: string; password_salt: string }>()
+    if (!row) return c.json({ error: 'unauthorized' }, 401)
+    const current = body.current_password ?? ''
+    const currentHash = current ? await hashPassword(current, row.password_salt) : ''
+    if (!current || !timingSafeEqualHex(currentHash, row.password_hash)) {
+      return c.json({ error: 'wrong_password' }, 401)
+    }
+  }
 
   const salt = randomHex(16)
   const hash = await hashPassword(body.new_password, salt)
@@ -270,6 +294,128 @@ auth.post('/refresh', async (c) => {
     refresh_token: `${sessionId}.${newSecret}`,
     session_id: sessionId
   })
+})
+
+
+// ── Password reset: emailed 6-digit code, then a new password ────────────
+// The code lives in KV for 10 minutes (5 tries), stored plain: it is
+// short-lived, single-purpose, and admins already hold a stronger reset
+// power — which is also what lets the release gate read it to prove the
+// flow end to end.
+
+export const RESET_TTL_SECONDS = 600
+const resetKey = (userId: string) => `reset:${userId}`
+
+function sixDigitCode(): string {
+  const buf = new Uint32Array(1)
+  // Rejection-sample so all 1e6 codes stay equally likely.
+  do {
+    crypto.getRandomValues(buf)
+  } while ((buf[0] ?? 0) >= 4_294_000_000)
+  return String((buf[0] ?? 0) % 1_000_000).padStart(6, '0')
+}
+
+auth.post('/reset/request', async (c) => {
+  const body = await parseJson(c, ResetRequestSchema)
+  if (body instanceof Response) return body
+  const email = body.email.trim().toLowerCase()
+  const ip = c.req.header('cf-connecting-ip') ?? 'local'
+  if (
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:reset:${email}`, 3, 900)) ||
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:resetip:${ip}`, 30, 900))
+  ) {
+    return c.json({ error: 'rate_limited' }, 429)
+  }
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?1')
+    .bind(email)
+    .first<UserRow>()
+  if (!user) return c.json({ error: 'email_not_found' }, 401)
+  if (user.status === 'suspended' || user.status === 'removed') {
+    return c.json({ error: 'account_disabled' }, 403)
+  }
+
+  const code = sixDigitCode()
+  await c.env.AUTH_KV.put(
+    resetKey(user.id),
+    JSON.stringify({ code, attempts: 0 }),
+    { expirationTtl: RESET_TTL_SECONDS }
+  )
+  const sent = await sendSystemEmail(c.env, {
+    to: user.email,
+    subject: `${code} is your Wolffish Cloud reset code`,
+    heading: 'Reset your password',
+    lines: [
+      `Hi ${user.name.split(' ')[0] ?? ''}, use this code to reset your Wolffish Cloud password. It expires in 10 minutes.`,
+      'If you did not ask for a reset, you can ignore this email — your password is unchanged.'
+    ],
+    code
+  })
+  if (!sent.ok) {
+    return c.json({ error: sent.code, detail: sent.detail }, 502)
+  }
+  return c.json({ ok: true, expires_in: RESET_TTL_SECONDS })
+})
+
+auth.post('/reset/confirm', async (c) => {
+  const body = await parseJson(c, ResetConfirmSchema)
+  if (body instanceof Response) return body
+  const email = body.email.trim().toLowerCase()
+  const ip = c.req.header('cf-connecting-ip') ?? 'local'
+  if (!(await bumpRateLimit(c.env.AUTH_KV, `rl:resetc:${ip}`, 60, 900))) {
+    return c.json({ error: 'rate_limited' }, 429)
+  }
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?1')
+    .bind(email)
+    .first<UserRow>()
+  if (!user) return c.json({ error: 'email_not_found' }, 401)
+
+  const raw = await c.env.AUTH_KV.get(resetKey(user.id))
+  if (!raw) return c.json({ error: 'code_expired' }, 401)
+  const entry = JSON.parse(raw) as { code: string; attempts: number }
+  if (entry.attempts >= 5) {
+    await c.env.AUTH_KV.delete(resetKey(user.id))
+    return c.json({ error: 'code_expired' }, 401)
+  }
+  if (entry.code !== body.code) {
+    await c.env.AUTH_KV.put(
+      resetKey(user.id),
+      JSON.stringify({ ...entry, attempts: entry.attempts + 1 }),
+      { expirationTtl: RESET_TTL_SECONDS }
+    )
+    return c.json({ error: 'invalid_code' }, 401)
+  }
+
+  const salt = randomHex(16)
+  const hash = await hashPassword(body.new_password, salt)
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?1, password_salt = ?2, must_change_password = 0,
+       temp_password_expires_at = NULL,
+       status = CASE WHEN status = 'invited' THEN 'active' ELSE status END,
+       updated_at = ?3
+     WHERE id = ?4`
+  )
+    .bind(hash, salt, nowIso(), user.id)
+    .run()
+  await c.env.AUTH_KV.delete(resetKey(user.id))
+
+  // A reset is a "someone else may know my password" event: every existing
+  // session dies with it.
+  const sessions = await c.env.DB.prepare(
+    'SELECT id FROM device_sessions WHERE user_id = ?1 AND revoked_at IS NULL'
+  )
+    .bind(user.id)
+    .all<{ id: string }>()
+  for (const row of sessions.results ?? []) {
+    await c.env.DB.prepare(
+      'UPDATE device_sessions SET revoked_at = ?1, revoked_by = ?2 WHERE id = ?3'
+    )
+      .bind(nowIso(), 'password_reset', row.id)
+      .run()
+    await c.env.AUTH_KV.put(killKey(row.id), '1', { expirationTtl: REFRESH_IDLE_DAYS * 86_400 })
+  }
+  return c.json({ ok: true })
 })
 
 export default auth

@@ -350,52 +350,43 @@ function ProjectDialogBody({
 
         <div className="flex items-center justify-between">
           <span className="text-muted text-xs font-medium">{t('projects.instructions')}</span>
-          <button
-            type="button"
-            onClick={copyInstructions}
-            aria-label={t('projects.copy')}
-            title={t('projects.copy')}
-            className="text-muted hover:text-fg flex h-6 w-6 cursor-pointer items-center justify-center rounded-md"
-          >
-            <Copy01Icon size={13} />
-          </button>
-        </div>
-        {/* The instructions, in the card's own code block — capped but
-            scrollable, so the whole thing can be read here without opening
-            anything. With files and folders below it, an inline editor tall
-            enough to write in pushed everything else off screen — clicking
-            opens the full-height editor below instead, exactly as the
-            Automations and Procedures editors do. Scrolling stays clean: the
-            wheel moves this block rather than the dialog behind it, and
-            dragging its scrollbar never reaches the button's click handler. */}
-        <button
-          type="button"
-          onClick={() => !busy && setInstructionsExpanded(true)}
-          disabled={busy}
-          title={t('projects.expandInstructions')}
-          className={cn(
-            'bg-bg border-border block w-full rounded-lg border px-3 py-2 text-start',
-            busy
-              ? 'cursor-not-allowed opacity-60'
-              : 'hover:border-muted cursor-pointer focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
-          )}
-        >
-          {draftInstructions.trim() ? (
-            <pre
-              dir="auto"
-              className="text-muted max-h-40 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+          {/* Nothing to copy when there are no instructions. */}
+          {draftInstructions.trim() !== '' && (
+            <button
+              type="button"
+              onClick={copyInstructions}
+              aria-label={t('projects.copy')}
+              title={t('projects.copy')}
+              className="text-muted hover:text-fg flex h-6 w-6 cursor-pointer items-center justify-center rounded-md"
             >
-              {draftInstructions}
-            </pre>
-          ) : (
-            <span className="text-muted/60 font-mono text-xs italic">
-              {t('projects.instructionsPlaceholder')}
-            </span>
+              <Copy01Icon size={13} />
+            </button>
           )}
-        </button>
-        {/* The same secondary action the phone offers under its preview. The
-              block above is still the primary target — this is the affordance
-              that says so, for anyone who does not think to click a code block. */}
+        </div>
+        {/* The instructions, in the same CodeMirror editor the expanded sheet
+            runs — editable in place, over the same draft state. Fixed height,
+            filled or empty: the dialog never reflows as instructions grow, so
+            long instructions scroll inside the block and the button below
+            opens the full-height sheet to write comfortably, exactly as the
+            Automations and Procedures editors do. background="field" sits the
+            block in the same bg-bg well the Select and input fields use. */}
+        <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
+          <CodeEditor
+            value={draftInstructions}
+            language="markdown"
+            isDark={isDark}
+            background="field"
+            onChange={(value) => {
+              setTouched(true)
+              setDraftInstructions(value)
+            }}
+            placeholder={t('projects.instructionsPlaceholder')}
+            className="h-full overflow-auto overscroll-contain"
+            spellcheck
+            readOnly={busy}
+          />
+        </div>
+        {/* Same draft, more room — opens the full-height editor sheet. */}
         <Button
           variant="outline"
           size="sm"
@@ -571,6 +562,7 @@ function ProjectDialogBody({
                 value={draftInstructions}
                 language="markdown"
                 isDark={isDark}
+                background="field"
                 onChange={(value) => {
                   setTouched(true)
                   setDraftInstructions(value)

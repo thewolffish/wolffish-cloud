@@ -4,8 +4,11 @@
  * D1 is the source of truth; CONFIG_KV holds short-TTL caches (admin
  * mutations delete the cached keys, so edits land within a minute even
  * before TTL expiry). Quota counters live in AUTH-adjacent KV too: they
- * are advisory speed bumps — the authoritative tally is the usage table,
- * and cron re-syncs counters from it.
+ * are advisory speed bumps — best-effort, bumped non-atomically per call,
+ * and reset only by their UTC period key rolling over. The usage table is
+ * the authoritative RECORD, but nothing reconciles the counters against
+ * it (no such cron exists), so racing calls can undercount a period
+ * slightly. Acceptable: caps are guardrails, not billing.
  */
 import type { Env } from '@/index'
 
@@ -15,34 +18,50 @@ export type OrgConfig = {
   default_allowed_models: string[]
   user_daily_token_cap: number
   org_monthly_token_cap: number
+  /** The web-search lane's switch and caps (queries; 0 = unlimited). */
+  search_enabled: boolean
+  user_daily_search_cap: number
+  org_monthly_search_cap: number
 }
 
 export type EffectivePolicy = {
   allowed: string[] // empty means "org default model only"
   dailyCap: number
+  /** Searches per day for this user (0 = unlimited). */
+  dailySearchCap: number
 }
 
 const ORG_TTL = 60
 const POLICY_TTL = 60
 
+/**
+ * One shape from either source: the D1 row (integers for booleans, JSON
+ * text for the list) or our own cached copy (already typed). Search-lane
+ * fields default when absent — a cached copy from before migration 0008
+ * lives at most ORG_TTL seconds, and must not crash the lane meanwhile.
+ */
+function normalizeOrg(o: Record<string, unknown>): OrgConfig {
+  const list = o.default_allowed_models
+  return {
+    name: typeof o.name === 'string' ? o.name : '',
+    default_model: typeof o.default_model === 'string' ? o.default_model : '',
+    default_allowed_models: Array.isArray(list)
+      ? list.filter((x): x is string => typeof x === 'string')
+      : safeArray(typeof list === 'string' ? list : null),
+    user_daily_token_cap: Number(o.user_daily_token_cap ?? 0),
+    org_monthly_token_cap: Number(o.org_monthly_token_cap ?? 0),
+    search_enabled: o.search_enabled === undefined ? true : Boolean(Number(o.search_enabled)),
+    user_daily_search_cap: Number(o.user_daily_search_cap ?? 200),
+    org_monthly_search_cap: Number(o.org_monthly_search_cap ?? 100_000)
+  }
+}
+
 export async function getOrgConfig(env: Env): Promise<OrgConfig | null> {
   const cached = await env.CONFIG_KV.get('org', 'json')
-  if (cached) return cached as OrgConfig
-  const row = await env.DB.prepare('SELECT * FROM org WHERE id = 1').first<{
-    name: string
-    default_model: string
-    default_allowed_models: string
-    user_daily_token_cap: number
-    org_monthly_token_cap: number
-  }>()
+  if (cached) return normalizeOrg(cached as Record<string, unknown>)
+  const row = await env.DB.prepare('SELECT * FROM org WHERE id = 1').first<Record<string, unknown>>()
   if (!row) return null
-  const org: OrgConfig = {
-    name: row.name,
-    default_model: row.default_model,
-    default_allowed_models: safeArray(row.default_allowed_models),
-    user_daily_token_cap: row.user_daily_token_cap,
-    org_monthly_token_cap: row.org_monthly_token_cap
-  }
+  const org = normalizeOrg(row)
   await env.CONFIG_KV.put('org', JSON.stringify(org), { expirationTtl: ORG_TTL })
   return org
 }
@@ -59,20 +78,31 @@ function safeArray(json: string | null): string[] {
 export async function getEffectivePolicy(env: Env, userId: string): Promise<EffectivePolicy> {
   const key = `policy:${userId}`
   const cached = await env.CONFIG_KV.get(key, 'json')
-  if (cached) return cached as EffectivePolicy
+  if (cached) {
+    const p = cached as Omit<EffectivePolicy, 'dailySearchCap'> & { dailySearchCap?: number }
+    if (typeof p.dailySearchCap === 'number') return p as EffectivePolicy
+    // A copy cached before the search lane existed (≤ POLICY_TTL old).
+    const org = await getOrgConfig(env)
+    return { ...p, dailySearchCap: org?.user_daily_search_cap ?? 0 }
+  }
 
   const org = await getOrgConfig(env)
   const row = await env.DB.prepare(
-    'SELECT allowed_models, daily_token_cap FROM model_policies WHERE user_id = ?1'
+    'SELECT allowed_models, daily_token_cap, daily_search_cap FROM model_policies WHERE user_id = ?1'
   )
     .bind(userId)
-    .first<{ allowed_models: string | null; daily_token_cap: number | null }>()
+    .first<{
+      allowed_models: string | null
+      daily_token_cap: number | null
+      daily_search_cap: number | null
+    }>()
 
   const allowed =
     row?.allowed_models != null ? safeArray(row.allowed_models) : (org?.default_allowed_models ?? [])
   const policy: EffectivePolicy = {
     allowed,
-    dailyCap: row?.daily_token_cap ?? org?.user_daily_token_cap ?? 0
+    dailyCap: row?.daily_token_cap ?? org?.user_daily_token_cap ?? 0,
+    dailySearchCap: row?.daily_search_cap ?? org?.user_daily_search_cap ?? 0
   }
   await env.CONFIG_KV.put(key, JSON.stringify(policy), { expirationTtl: POLICY_TTL })
   return policy
@@ -116,5 +146,48 @@ export async function bumpQuota(env: Env, userId: string, tokens: number): Promi
   await Promise.all([
     env.CONFIG_KV.put(dk, String(parseInt(d ?? '0', 10) + tokens), { expirationTtl: 2 * 86_400 }),
     env.CONFIG_KV.put(mk, String(parseInt(m ?? '0', 10) + tokens), { expirationTtl: 40 * 86_400 })
+  ])
+}
+
+// ── The search lane's counters: same shape, counted in queries ───────────
+
+const searchDayKey = (userId: string) =>
+  `qs:d:${userId}:${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
+const searchMonthKey = () => `qs:m:${new Date().toISOString().slice(0, 7).replace(/-/g, '')}`
+
+export async function searchQuotaStanding(
+  env: Env,
+  userId: string,
+  policy: EffectivePolicy,
+  org: OrgConfig
+): Promise<{
+  ok: boolean
+  scope?: 'user_daily' | 'org_monthly'
+  used: number
+  cap: number
+  orgUsed: number
+  orgCap: number
+}> {
+  const [used, orgUsed] = await Promise.all([
+    env.CONFIG_KV.get(searchDayKey(userId)).then((v) => parseInt(v ?? '0', 10)),
+    env.CONFIG_KV.get(searchMonthKey()).then((v) => parseInt(v ?? '0', 10))
+  ])
+  const cap = policy.dailySearchCap
+  const orgCap = org.org_monthly_search_cap
+  if (cap > 0 && used >= cap) return { ok: false, scope: 'user_daily', used, cap, orgUsed, orgCap }
+  if (orgCap > 0 && orgUsed >= orgCap) {
+    return { ok: false, scope: 'org_monthly', used, cap, orgUsed, orgCap }
+  }
+  return { ok: true, used, cap, orgUsed, orgCap }
+}
+
+/** One more search on the user's day and the org's month. */
+export async function bumpSearchQuota(env: Env, userId: string): Promise<void> {
+  const dk = searchDayKey(userId)
+  const mk = searchMonthKey()
+  const [d, m] = await Promise.all([env.CONFIG_KV.get(dk), env.CONFIG_KV.get(mk)])
+  await Promise.all([
+    env.CONFIG_KV.put(dk, String(parseInt(d ?? '0', 10) + 1), { expirationTtl: 2 * 86_400 }),
+    env.CONFIG_KV.put(mk, String(parseInt(m ?? '0', 10) + 1), { expirationTtl: 40 * 86_400 })
   ])
 }

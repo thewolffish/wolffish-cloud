@@ -13,11 +13,7 @@
  * as governance-working, not errors.
  */
 const BASE = process.env.API_BASE ?? 'http://localhost:8787'
-const PASSWORD = process.env.WFC_DEMO_PASSWORD
-if (!PASSWORD) {
-  console.error('WFC_DEMO_PASSWORD required (the seed printed it)')
-  process.exit(1)
-}
+const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`)
   return i > 0 ? Number(process.argv[i + 1]) : dflt

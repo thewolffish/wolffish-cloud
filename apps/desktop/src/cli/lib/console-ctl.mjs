@@ -1,7 +1,7 @@
 /**
  * Asking the Windows launcher to stop echoing what the user types.
  *
- * Only ever does anything under wolffish-cli.exe. There, the CLI runs on the
+ * Only ever does anything under wfc-cli.exe. There, the CLI runs on the
  * far side of a pipe and the CONSOLE is what echoes keystrokes — so the two
  * ways this codebase masks a secret both stop working. `setRawMode` is
  * unavailable (a pipe has no raw mode), and muting readline's `_writeToOutput`
@@ -10,7 +10,7 @@
  *
  * Echo belongs to whoever owns the console, which is the launcher, so the
  * launcher is asked. It publishes a named pipe and its path in
- * WOLFFISH_CONSOLE_CTL; see build/win-cli-launcher/wolffish-cli.cs.
+ * WOLFFISH_CONSOLE_CTL; see build/win-cli-launcher/wfc-cli.cs.
  *
  * Every function here reports whether it actually worked, and callers are
  * expected to warn rather than assume. Silently believing input is hidden is

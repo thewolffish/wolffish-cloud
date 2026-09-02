@@ -41,7 +41,7 @@ Hard rules:
 - The memory map and a search miss are a coverage map, NOT evidence of absence.
 - In a long conversation, earlier turns may have been summarized out of your context — `conversation_read` on the CURRENT conversation retrieves them (a `[Compaction Summary]` block means this applies); for complete untruncated bytes, `memory_get` the conversation's file ref.
 - When you learn something durable — a preference, a decision, a project fact, a person detail — save it with `memory_save`: one self-contained sentence. Episodes and task logs are recorded automatically; don't hand-write memory files.
-- `wolffish_list_files` lists YOUR workspace (`~/.wolffish/workspace`) only; for anything elsewhere on the machine use `file_read`/`shell_exec`.
+- `wolffish_list_files` lists YOUR workspace (`~/.wfc/workspace`) only; for anything elsewhere on the machine use `file_read`/`shell_exec`.
 
 ## Long-term memory — writable, not just readable
 

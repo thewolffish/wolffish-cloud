@@ -33,8 +33,8 @@ import { createMarkdownStream, renderMarkdown } from './markdown.mjs'
 // the whole output); output that merely QUOTES the marker template mid-line —
 // a grep/cat over code or docs — must never render as a delivered file.
 const OUTPUT_MARKER =
-  /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((image|audio|video|document|file|chart)\)\][ \t]*$/gm
-const PATH_MARKER = /^[ \t]*\[wolffish-path:[ \t]*([^\]\n]+?)[ \t]+\((folder|file)\)\][ \t]*$/gm
+  /^[ \t]*\[wfc-output:[ \t]*([^\]\n]+?)[ \t]+\((image|audio|video|document|file|chart)\)\][ \t]*$/gm
+const PATH_MARKER = /^[ \t]*\[wfc-path:[ \t]*([^\]\n]+?)[ \t]+\((folder|file)\)\][ \t]*$/gm
 
 /**
  * Tool results that are purely a delivery marker carry no other information,
@@ -82,7 +82,7 @@ function summarizeArgs(args) {
 export class TurnRenderer {
   /**
    * `raw` writes the model's markdown through untouched. It is the default off
-   * a TTY for the same reason colour is: `wolffish -p … | pbcopy` must give the
+   * a TTY for the same reason colour is: `wfc -p … | pbcopy` must give the
    * real markdown, and someone redirecting to a file wants the source, not
    * ANSI. Interactive terminals get it rendered.
    */
@@ -401,7 +401,7 @@ export function basename(p) {
   return cut >= 0 ? cleaned.slice(cut + 1) : cleaned
 }
 
-/** Render a stored conversation message — used by `wolffish show`. */
+/** Render a stored conversation message — used by `wfc show`. */
 export function renderStoredMessage(message, { verbose = false, showTools = '--tools' } = {}) {
   if (message.role === 'user') {
     out()

@@ -27,7 +27,7 @@ import { useTranslation } from 'react-i18next'
  * Mirrors TelegramPanel / GitHubPanel / GooglePanel.
  *
  * It matters more here than on those panels, because three of these four
- * values come from shelling out (`command -v wolffish`, `systemctl`,
+ * values come from shelling out (`command -v wfc`, `systemctl`,
  * `launchctl`). Those are tens of milliseconds each — long enough that a
  * fetch-on-mount panel visibly assembles itself.
  *
@@ -93,7 +93,7 @@ window.api?.runtime?.onPreferencesChanged(() => {
  * Settings → Channels → CLI.
  *
  * Two things this screen exists to do, in this order. First, tell the truth
- * about whether the `wolffish` command actually works — that failure is
+ * about whether the `wfc` command actually works — that failure is
  * invisible from inside the app and shows up in a terminal as nothing but
  * "command not found", so it gets the top card and a real error state rather
  * than a hint buried in prose. Second, explain the handful of ways the CLI
@@ -421,9 +421,9 @@ export function CliPanel(): React.JSX.Element {
           <div className="flex flex-col gap-1.5">
             <span className="text-muted text-xs">{t('settings.channels.cli.path.verify')}</span>
             <CodeLine
-              text="wolffish path status"
+              text="wfc path status"
               copied={copied === 'verify'}
-              onCopy={() => void copy('wolffish path status', 'verify')}
+              onCopy={() => void copy('wfc path status', 'verify')}
             />
           </div>
         </section>
@@ -573,7 +573,7 @@ export function CliPanel(): React.JSX.Element {
               )}
             >
               {t('settings.channels.cli.service.openSetting', {
-                tab: t('settings.tabs.wolffish')
+                tab: t('settings.tabs.wfc')
               })}
             </button>
           </div>
@@ -830,7 +830,7 @@ function CodeLine({
 }
 
 /**
- * The command reference. Grouped the way `wolffish help` groups them, so the
+ * The command reference. Grouped the way `wfc help` groups them, so the
  * two never read as different products.
  */
 function CommandReference({
@@ -846,19 +846,19 @@ function CommandReference({
       {
         key: 'chat',
         rows: [
-          ['wolffish', 'open an interactive session'],
-          ['wolffish "why is the disk full"', 'ask once, print, exit'],
-          ['wolffish -p "summarize" -f report.pdf', 'attach files by path'],
-          ['cat error.log | wolffish -p "what broke?"', 'pipe context in']
+          ['wfc', 'open an interactive session'],
+          ['wfc "why is the disk full"', 'ask once, print, exit'],
+          ['wfc -p "summarize" -f report.pdf', 'attach files by path'],
+          ['cat error.log | wfc -p "what broke?"', 'pipe context in']
         ]
       },
       {
         key: 'conversations',
         rows: [
-          ['wolffish conversations', 'list conversations'],
-          ['wolffish conversations show <id>', 'print a transcript'],
-          ['wolffish resume <id>', 'continue one'],
-          ['wolffish conversations rm <id>', 'delete one']
+          ['wfc conversations', 'list conversations'],
+          ['wfc conversations show <id>', 'print a transcript'],
+          ['wfc resume <id>', 'continue one'],
+          ['wfc conversations rm <id>', 'delete one']
         ]
       },
       {
@@ -866,32 +866,32 @@ function CommandReference({
         // card, then row. These are the words that open each level.
         key: 'settings',
         rows: [
-          ['wolffish settings', 'browse every page and card'],
-          ['wolffish settings channels telegram', 'straight to one card'],
-          ['wolffish settings list', 'every setting and its value'],
-          ['wolffish settings set <id> <value>', 'change one'],
-          ['wolffish settings providers', 'keys and the brain']
+          ['wfc settings', 'browse every page and card'],
+          ['wfc settings channels telegram', 'straight to one card'],
+          ['wfc settings list', 'every setting and its value'],
+          ['wfc settings set <id> <value>', 'change one'],
+          ['wfc settings providers', 'keys and the brain']
         ]
       },
       {
         key: 'workspace',
         rows: [
-          ['wolffish projects', 'projects'],
-          ['wolffish procedures run <id>', 'run a procedure'],
-          ['wolffish automations edit', 'edit the automation file'],
-          ['wolffish documents soul', 'edit Soul in $EDITOR'],
-          ['wolffish files', 'browse the workspace'],
-          ['wolffish settings usage', 'tokens and cost']
+          ['wfc projects', 'projects'],
+          ['wfc procedures run <id>', 'run a procedure'],
+          ['wfc automations edit', 'edit the automation file'],
+          ['wfc documents soul', 'edit Soul in $EDITOR'],
+          ['wfc files', 'browse the workspace'],
+          ['wfc settings usage', 'tokens and cost']
         ]
       },
       {
         key: 'machine',
         rows: [
-          ['wolffish status', 'daemon, brain, autostart, channels'],
-          ['wolffish service install --headless', 'run as a background service'],
-          ['wolffish path status', 'is the command findable'],
-          ['wolffish pair phone', 'QR (or a typed code over SSH)'],
-          ['wolffish service logs -f', 'follow the log']
+          ['wfc status', 'daemon, brain, autostart, channels'],
+          ['wfc service install --headless', 'run as a background service'],
+          ['wfc path status', 'is the command findable'],
+          ['wfc pair phone', 'QR (or a typed code over SSH)'],
+          ['wfc service logs -f', 'follow the log']
         ]
       }
     ],

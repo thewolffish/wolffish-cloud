@@ -12,7 +12,7 @@
  * persistence, and the delete-while-active guard.
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/channels/__tests__/concurrent-edge.test.ts
  */

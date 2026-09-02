@@ -24,7 +24,7 @@
  *    automation_edit round-trip of a user-authored prompt never bounces
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/__tests__/heartbeat-escape.test.ts
  */
@@ -206,7 +206,7 @@ async function run(): Promise<void> {
   // surface, not its internals) so this pins the real guard.
   const pluginSrc = fs.readFileSync(
     new URL(
-      '../../defaults/workspace/brain/cerebellum/automations/plugin/index.mjs',
+      '../../../../../capabilities/automations/plugin/index.mjs',
       import.meta.url
     ),
     'utf8'

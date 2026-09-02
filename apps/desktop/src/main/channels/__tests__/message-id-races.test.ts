@@ -2,7 +2,7 @@
  * Race matrix for id-keyed conversation reconciliation — the REAL
  * updateConversation/saveConversation/diskWriter queue and the REAL titler,
  * against a throwaway workspace (os.homedir is shimmed to a temp dir before
- * anything imports workspace/root.ts, so ~/.wolffish is never touched).
+ * anything imports workspace/root.ts, so ~/.wfc is never touched).
  *
  *  (a) an in-app end-of-turn whole-file save racing a channel's
  *      dispatch-time user-message append — same-index divergence, the case
@@ -63,7 +63,7 @@ async function run(): Promise<void> {
   type ConversationMessage = import('@main/conversations').ConversationMessage
   const { ensureConversationTitle } = await import('@main/conversation-titler')
 
-  const convDir = path.join(tmpHome, '.wolffish', 'workspace', 'brain', 'conversations')
+  const convDir = path.join(tmpHome, '.wfc', 'workspace', 'brain', 'conversations')
   await fs.mkdir(convDir, { recursive: true })
 
   const msg = (

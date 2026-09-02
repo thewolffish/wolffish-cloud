@@ -114,7 +114,7 @@ export type CliSettingSectionCard = {
  *
  * The config snapshot carries these unmasked on purpose — the phone EDITS
  * them, and the tunnel is end-to-end sealed. A terminal is not that: whatever
- * `wolffish config` prints lands in scrollback, in a tmux buffer, in a
+ * `wfc config` prints lands in scrollback, in a tmux buffer, in a
  * screen recording, and in whatever the user pastes when asking for help. So
  * the masking happens here, at the surface, rather than in the shared
  * assembler that the phone also depends on.
@@ -158,7 +158,7 @@ export type CliIpcDeps = {
   /** Broadcast a config change, so open panels + the phone stay in step. */
   broadcast: (channel: string, payload: unknown) => void
   /**
-   * Everything `wolffish status` prints that isn't config. `callerPath` is the
+   * Everything `wfc status` prints that isn't config. `callerPath` is the
    * asking terminal's own PATH, when it has one — a daemon under systemd or
    * launchd cannot answer "is the command on your PATH" from its own.
    */
@@ -339,7 +339,7 @@ export function registerCliIpc(deps: CliIpcDeps): void {
    * Stop a turn — whichever surface started it.
    *
    * The CLI channel only knows its OWN turns, so this used to be able to stop
-   * a terminal run and nothing else. But `wolffish status` lists every active
+   * a terminal run and nothing else. But `wfc status` lists every active
    * run on the box, including automations and channel replies, and on a
    * headless machine the terminal is the only place a runaway one can be
    * stopped from: a list you cannot act on is worse than no list. `deps.cancel`

@@ -1,8 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
-import { PROVIDER_LOGOS } from '@pages/settings/modelCatalog'
-import type { CloudProviderConfig } from '@preload/index'
 import {
   Alert02Icon,
   ArrowDown01Icon,
@@ -229,7 +227,8 @@ function AgentRow({ agent, now }: { agent: WorkflowAgentView; now: number }): Re
   const elapsedMs =
     agent.status === 'queued' ? 0 : Math.max(0, (agent.endedAt ?? now) - agent.startedAt)
   const tokens = agent.inputTokens + agent.cacheReadTokens + agent.cacheWriteTokens
-  const Logo = PROVIDER_LOGOS[agent.provider as CloudProviderConfig['id']]
+  // One lane: agents run through the org API, so no per-vendor logo row.
+  const Logo = null as React.ComponentType<{ size?: number }> | null
 
   // The status dot is the row's heartbeat: primary + pulse while working,
   // success green on a clean landing, error red on failure, warning amber

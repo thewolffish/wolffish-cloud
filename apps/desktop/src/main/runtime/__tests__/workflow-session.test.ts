@@ -37,7 +37,7 @@ function harness(): {
   const session = new WorkflowSession(
     'wf_test',
     run,
-    () => ({ provider: 'anthropic', model: 'claude-test' }),
+    () => ({ provider: 'cloud', model: 'claude-test' }),
     (snap) => snapshots.push(snap)
   )
   return { session, pending, snapshots }
@@ -61,7 +61,7 @@ async function testSpawnAwaitTelemetry(): Promise<void> {
   // Harness telemetry callbacks drive the deterministic counters.
   pending[0].args.onToolCall()
   pending[0].args.onToolCall()
-  pending[0].args.onLlmCall('anthropic', 'claude-test', {
+  pending[0].args.onLlmCall('cloud', 'claude-test', {
     inputTokens: 100,
     outputTokens: 50,
     cacheReadTokens: 400,
@@ -95,7 +95,7 @@ async function testSpawnAwaitTelemetry(): Promise<void> {
   assert.ok(snapshots.length > 0, 'snapshots emitted on structural changes')
   // The master's own calls ride the snapshot too — the card shows the true
   // whole-turn spend, not agents-only.
-  session.recordMasterUsage('anthropic', 'claude-test', {
+  session.recordMasterUsage('cloud', 'claude-test', {
     inputTokens: 50,
     outputTokens: 25,
     cacheReadTokens: 200,

@@ -21,7 +21,7 @@
  *     the seam that actually carries them (TurnRunner → agent.respond)
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/procedure-attachments.test.ts
  */
@@ -59,7 +59,7 @@ function ok(label: string, cond: boolean, detail?: string): void {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** The workspace root the app derives from homedir — see workspace/root.ts. */
-const WORKSPACE = path.join(TEST_HOME, '.wolffish', 'workspace')
+const WORKSPACE = path.join(TEST_HOME, '.wfc', 'workspace')
 
 async function run(): Promise<void> {
   fs.mkdirSync(path.join(WORKSPACE, 'brain'), { recursive: true })

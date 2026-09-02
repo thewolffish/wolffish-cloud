@@ -20,7 +20,7 @@ const salt = '00112233445566778899aabbccddeeff'
 const hash = pbkdf2Sync(OWNER_PW, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').toString('hex')
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V3.1', '[]');`,
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
   `INSERT INTO users (id, email, name, role, status, password_hash, password_salt, must_change_password)
    VALUES ('usr_owner_${stamp}', '${ownerEmail}', 'The Owner', 'owner', 'active', '${hash}', '${salt}', 0);`
 ].join(' ')
@@ -104,7 +104,7 @@ check(
 const pol = await api(`/admin/users/${empId}/policy`, {
   token: ownerTok,
   method: 'PUT',
-  body: { allowed_models: ['deepseek-ai/DeepSeek-V3.1'], daily_token_cap: 50000 }
+  body: { allowed_models: ['deepseek-ai/DeepSeek-V4-Flash-0731'], daily_token_cap: 50000 }
 })
 check('policy set', pol.status === 200)
 const detail = await api(`/admin/users/${empId}`, { token: ownerTok })
@@ -133,6 +133,68 @@ check('reset revoked live session', (await api('/v1/me', { token: emp2.json.acce
 const t2 = await login(empEmail, reset.json.temp_password)
 check('reset temp demands change', t2.json?.must_change_password === true)
 
+// Config: the admin support loop — view a user's synced blob, author a fix
+// the user actually receives, reset to empty. Tier gates: support never sees
+// it (it holds the user's secrets), an admin never sees an owner's.
+await api('/auth/password', { token: t2.json.change_token, body: { new_password: 'emp-password-3' } })
+const emp3 = await login(empEmail, 'emp-password-3')
+const empTok3 = emp3.json.access_token
+await api('/v1/config', {
+  token: empTok3,
+  method: 'PUT',
+  body: { config: { theme: 'dark', variables: [{ name: 'API_KEY', value: 'sk-test', sensitive: true }] } }
+})
+const cfgView = await api(`/admin/users/${empId}/config`, { token: ownerTok })
+check(
+  'owner views user config',
+  cfgView.status === 200 &&
+    cfgView.json?.config?.theme === 'dark' &&
+    cfgView.json?.config?.variables?.[0]?.value === 'sk-test'
+)
+check(
+  'support cannot view config',
+  (await api(`/admin/users/${empId}/config`, { token: sup.json.access_token })).status === 403
+)
+check(
+  'config for unknown user 404',
+  (await api('/admin/users/usr_nobody/config', { token: ownerTok })).status === 404
+)
+check(
+  'admin-authored config write',
+  (await api(`/admin/users/${empId}/config`, {
+    token: ownerTok,
+    method: 'PUT',
+    body: { config: { theme: 'light' } }
+  })).status === 200
+)
+check('user receives admin write', (await api('/v1/config', { token: empTok3 })).json?.config?.theme === 'light')
+check(
+  'admin config reset',
+  (await api(`/admin/users/${empId}/config`, { token: ownerTok, method: 'PUT', body: { config: {} } })).status === 200
+)
+const afterReset = await api('/v1/config', { token: empTok3 })
+check(
+  'user config reset to empty',
+  afterReset.status === 200 && Object.keys(afterReset.json?.config ?? {}).length === 0
+)
+
+// Admin tier can serve employees but never open an owner's secrets.
+const admInvite = await api('/admin/users', {
+  token: ownerTok,
+  body: { email: `adm-${stamp}@wolffi.sh`, name: 'Ad Min', role: 'admin' }
+})
+const at = await login(`adm-${stamp}@wolffi.sh`, admInvite.json.temp_password)
+await api('/auth/password', { token: at.json.change_token, body: { new_password: 'admin-pw-1234' } })
+const adm = await login(`adm-${stamp}@wolffi.sh`, 'admin-pw-1234')
+check(
+  'admin views employee config',
+  (await api(`/admin/users/${empId}/config`, { token: adm.json.access_token })).status === 200
+)
+check(
+  'admin cannot view owner config',
+  (await api(`/admin/users/${owner.json.user.id}/config`, { token: adm.json.access_token })).status === 403
+)
+
 // Self-protection & owner guard
 check(
   'owner cannot self-suspend',
@@ -155,6 +217,15 @@ const aud = await api('/admin/audit', { token: ownerTok })
 check(
   'audit trail populated',
   aud.status === 200 && (aud.json?.entries ?? []).some((e) => e.action === 'user.invite')
+)
+const audActions = (aud.json?.entries ?? []).map((e) => e.action)
+check(
+  'config view and write audited',
+  audActions.includes('config.view') && audActions.includes('config.set')
+)
+check(
+  'config audit detail carries no content',
+  !(aud.json?.entries ?? []).some((e) => JSON.stringify(e.detail ?? '').includes('sk-test'))
 )
 
 console.log(failures === 0 ? '\nADMIN SMOKE: ALL PASS' : `\nADMIN SMOKE: ${failures} FAILURES`)

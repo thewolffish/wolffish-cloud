@@ -6,9 +6,12 @@ import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
+import { isPathHydrating, useHydrationFileVersion } from '@lib/hydration/hydrationStore'
 import { cn } from '@lib/utils/cn'
 import type { MessageAttachment } from '@preload/index'
+import { Loading03Icon } from 'hugeicons-react'
 import { Fragment, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type AttachmentListProps = {
   attachments: MessageAttachment[]
@@ -45,6 +48,9 @@ export function AttachmentList({
   variant = 'list'
 }: AttachmentListProps): React.JSX.Element | null {
   const existence = useExistenceMap(attachments)
+  // Re-render when a hydration flight starts or lands a file, so a card
+  // whose bytes just arrived flips from "downloading" to its real viewer.
+  useHydrationFileVersion()
   if (attachments.length === 0) return null
 
   if (variant === 'grid') {
@@ -90,6 +96,14 @@ export function AttachmentList({
 /** Dispatch one attachment to its type-appropriate viewer (no key — the caller
  *  owns keying so the same dispatch serves both the list and grid variants). */
 function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Element {
+  // A file that is absent because its download is still in flight (media
+  // hydrates on conversation open, never at restore) is DOWNLOADING, not
+  // deleted — show the in-progress card instead of the per-type
+  // "deleted" state. When the bytes land, useHydrationFileVersion re-runs
+  // the existence checks and the real viewer takes over.
+  if (!exists && isPathHydrating(att.filePath)) {
+    return <HydratingAttachment fileName={att.originalName} />
+  }
   if (att.type === 'audio') {
     return (
       <AudioPlayer
@@ -176,6 +190,31 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
   )
 }
 
+/** The downloading state a not-yet-hydrated attachment renders as — same
+ *  footprint as the FileCard/DeletedFile cards so nothing reflows when the
+ *  real viewer swaps in. */
+function HydratingAttachment({ fileName }: { fileName: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div
+      className={cn(
+        'border-border bg-surface flex w-full max-w-[85%] items-center gap-3 self-start',
+        'rounded-2xl border px-4 py-3'
+      )}
+    >
+      <div className="bg-muted/20 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+        <Loading03Icon size={18} className="text-muted animate-spin" />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span dir="ltr" className="text-muted truncate text-sm font-medium" title={fileName}>
+          {fileName}
+        </span>
+        <span className="text-muted text-xs italic">{t('chat.hydration.downloadingFile')}</span>
+      </div>
+    </div>
+  )
+}
+
 function isChartAttachment(att: MessageAttachment): boolean {
   // The full `.chart.json` suffix — not the mime type — is the chart-card
   // contract; a plain .json stays a generic file.
@@ -196,6 +235,9 @@ function isHtmlAttachment(att: MessageAttachment): boolean {
 
 function useExistenceMap(attachments: MessageAttachment[]): Record<string, boolean> {
   const [map, setMap] = useState<Record<string, boolean>>({})
+  // A hydration flight landing a file is exactly "existence may have
+  // changed" — re-run the checks then (never on byte ticks).
+  const hydrationFileVersion = useHydrationFileVersion()
 
   useEffect(() => {
     let cancelled = false
@@ -221,7 +263,7 @@ function useExistenceMap(attachments: MessageAttachment[]): Record<string, boole
     // a given message — depending on a stringified key avoids needless
     // refetches without forcing the parent to memoize the array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attachments.map((a) => a.filePath).join('|')])
+  }, [attachments.map((a) => a.filePath).join('|'), hydrationFileVersion])
 
   return map
 }

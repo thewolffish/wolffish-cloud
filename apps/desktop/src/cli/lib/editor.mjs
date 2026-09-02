@@ -147,7 +147,7 @@ export async function editText(content, fileName, { label = null } = {}) {
   }
 
   const scratch = path.join(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'wolffish-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'wfc-')),
     fileName || 'edit.md'
   )
   await fs.writeFile(scratch, content ?? '', 'utf8')
@@ -358,7 +358,7 @@ function showHelp() {
 }
 
 /**
- * What `wolffish status` and the CLI settings card say about editing, so
+ * What `wfc status` and the CLI settings card say about editing, so
  * "which editor will this use?" is answerable before something opens.
  */
 export function editorSummary() {

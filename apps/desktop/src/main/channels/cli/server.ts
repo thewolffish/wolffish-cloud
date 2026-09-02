@@ -1,5 +1,5 @@
 /**
- * The local control socket the `wolffish` command talks to.
+ * The local control socket the `wfc` command talks to.
  *
  * Deliberately the smallest protocol that could work: newline-delimited JSON
  * carrying exactly two things — an `invoke` (request/response, keyed by the
@@ -9,7 +9,7 @@
  * because there is no bespoke CLI API surface: index.ts registers every
  * handler through a map, and this server reaches into that map.
  *
- * Transport is a unix domain socket (`~/.wolffish/cli.sock`) or a Windows
+ * Transport is a unix domain socket (`~/.wfc/cli.sock`) or a Windows
  * named pipe. Both are single-user by construction — the socket is created
  * 0600 inside the user's own home, and a named pipe defaults to the creating
  * account — so authentication is the filesystem's job and there is no token to
@@ -44,19 +44,18 @@ export type CliInvokeHandler = (event: unknown, ...args: unknown[]) => unknown
  * rather than a dead end.
  */
 const GUI_ONLY: Record<string, string> = {
-  'upload:pickFile': 'pass file paths instead: wolffish -f <path>, or /attach <path> in the REPL',
+  'upload:pickFile': 'pass file paths instead: wfc -f <path>, or /attach <path> in the REPL',
   'upload:pickFolder': 'pass the folder path instead',
-  'projects:pickFiles': 'use: wolffish project files add <id> <path…>',
-  'ollama:pickModelsFolder': 'use: wolffish settings local — "Where models are stored"',
-  // These name `wolffish view`, not `wolffish open` — there is no `open`
+  'projects:pickFiles': 'use: wfc project files add <id> <path…>',
+  'ollama:pickModelsFolder': 'use: wfc settings local — "Where models are stored"',
+  // These name `wfc view`, not `wfc open` — there is no `open`
   // command, and a redirection to a command that does not exist is a dead end
   // wearing the costume of a helpful error.
-  'upload:revealInFolder': 'use: wolffish view <path>',
-  'viewer:revealInFolder': 'use: wolffish view <path>',
-  'voice:revealInFolder': 'use: wolffish view <path>',
-  'diagnostics:reveal': 'the archive path is printed by: wolffish conversations diagnose <id>',
-  'browserExtension:openExtensionFolder':
-    'the path is printed by: wolffish settings browserExtension',
+  'upload:revealInFolder': 'use: wfc view <path>',
+  'viewer:revealInFolder': 'use: wfc view <path>',
+  'voice:revealInFolder': 'use: wfc view <path>',
+  'diagnostics:reveal': 'the archive path is printed by: wfc conversations diagnose <id>',
+  'browserExtension:openExtensionFolder': 'the path is printed by: wfc settings browserExtension',
   'browserExtension:openExtensionsPage': 'open the browser extensions page yourself',
   'ollama:openInstallPage': 'install Ollama from ollama.com, then run: ollama serve',
   'spellcheck:replace': 'renderer-only',
@@ -87,21 +86,21 @@ export class CliServer {
   constructor(private readonly deps: CliServerDeps) {}
 
   /**
-   * `~/.wolffish/cli.sock`, or the Windows named pipe. `WOLFFISH_SOCKET`
+   * `~/.wfc/cli.sock`, or the Windows named pipe. `WOLFFISH_SOCKET`
    * overrides it — the client reads the same variable, so the two can be
    * pointed at a scratch endpoint together and never at different ones.
    */
   static socketPath(): string {
     if (process.env.WOLFFISH_SOCKET) return process.env.WOLFFISH_SOCKET
-    if (process.platform === 'win32') return '\\\\.\\pipe\\wolffish-cli'
-    return path.join(os.homedir(), '.wolffish', 'cli.sock')
+    if (process.platform === 'win32') return '\\\\.\\pipe\\wfc-cli'
+    return path.join(os.homedir(), '.wfc', 'cli.sock')
   }
 
   isListening(): boolean {
     return this.listening
   }
 
-  /** Number of attached clients — what `wolffish status` reports. */
+  /** Number of attached clients — what `wfc status` reports. */
   clientCount(): number {
     return this.sockets.size
   }
@@ -169,7 +168,7 @@ export class CliServer {
   }
 
   static pidPath(): string {
-    return path.join(os.homedir(), '.wolffish', 'cli.pid')
+    return path.join(os.homedir(), '.wfc', 'cli.pid')
   }
 
   async stop(): Promise<void> {

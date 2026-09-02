@@ -67,14 +67,12 @@ import {
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
-import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
   getTelegramConfig,
   readConfig,
-  setBrain as persistBrain,
-  setLocalOnly as persistLocalOnly,
+  setModel as persistModel,
   setMode as persistMode,
   workspaceRoot
 } from '@main/workspace/workspace'
@@ -128,8 +126,6 @@ const CURRENT_COMMAND = '/current'
 const RESUME_COMMAND = '/resume'
 const DELETE_COMMAND = '/delete'
 const CLEAR_COMMAND = '/clear'
-const LOCAL_COMMAND = '/local'
-const CLOUD_COMMAND = '/cloud'
 const MODE_COMMAND = '/mode'
 const MODEL_COMMAND = '/model'
 const PROJECT_COMMAND = '/project'
@@ -169,15 +165,6 @@ const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back
  * Strict instruction not to attempt the request — we want the user to
  * resend after the active turn finishes.
  */
-const BUSY_SYSTEM_PROMPT =
-  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural. Write plain conversational text only — no Markdown, no formatting markup of any kind (your reply is delivered verbatim to a phone chat)."
-
-/**
- * Cap how long we wait for the local model to produce the decline.
- * If the model is slow (cold start, big quant), bail and use the
- * fallback so the user isn't left hanging.
- */
-const BUSY_REPLY_TIMEOUT_MS = 8000
 
 /**
  * Telegram bot API limits file downloads to 20 MB. Anything larger
@@ -550,16 +537,7 @@ export class TelegramChannel {
 
   constructor(
     private readonly agent: Agent,
-    private readonly runner: TurnRunner,
-    /**
-     * Used for the "I'm busy" decline replies when a new message
-     * arrives while another Telegram turn is in flight. Going through
-     * the full agent.respond pipeline would either queue the decline
-     * (defeats the point) or interrupt the active turn (worse). The
-     * local provider can answer instantly without touching shared
-     * agent state.
-     */
-    private readonly localProvider: LocalProvider
+    private readonly runner: TurnRunner
   ) {}
 
   /**
@@ -727,9 +705,7 @@ export class TelegramChannel {
         { command: 'deny', description: 'Deny a pending action' },
         { command: 'status', description: 'Wolffish current status' },
         { command: 'mode', description: 'Set single or workflow mode' },
-        { command: 'model', description: 'Pick the cloud model' },
-        { command: 'local', description: 'Switch to local model' },
-        { command: 'cloud', description: 'Switch to cloud model' }
+        { command: 'model', description: 'Show or pick the model' }
       ])
       .catch(() => undefined)
 
@@ -1032,21 +1008,6 @@ export class TelegramChannel {
     // /resume picker uses for each item.
     if (command === CURRENT_COMMAND) {
       await this.handleCurrentCommand(chatId)
-      return
-    }
-
-    // /local and /cloud — flip the same llm.localOnly setting the
-    // chat input's mode switch toggles. Busy-blocked for the same
-    // reason the renderer disables the toggle mid-stream: switching
-    // mid-turn would leave the in-flight stream running on the old
-    // provider while the user thinks the next message is from the new
-    // one. Caller can /stop first if they want to switch immediately.
-    if (command === LOCAL_COMMAND || command === CLOUD_COMMAND) {
-      if (this.activeByChat.size > 0) {
-        await this.sendBusyReply(chatId, trimmed)
-        return
-      }
-      await this.handleLocalCloudCommand(chatId, command === LOCAL_COMMAND)
       return
     }
 
@@ -1505,25 +1466,6 @@ export class TelegramChannel {
   }
 
   /**
-   * Handle /local and /cloud — flip llm.localOnly via the same code
-   * path the chat input's local/cloud switch uses: persist the config,
-   * then push the new value into the live thalamus so the next turn's
-   * model resolution picks it up. The IPC handler in main does the same
-   * two steps; we mirror them here so a Telegram-driven switch and an
-   * Electron-driven switch leave the runtime in identical state.
-   * (Distinct from /mode, which is single-vs-workflow — see
-   * handleModeCommand.)
-   */
-  private async handleLocalCloudCommand(chatId: number, localOnly: boolean): Promise<void> {
-    await persistLocalOnly(localOnly)
-    this.agent.thalamus.setLocalOnly(localOnly)
-    await this.safeSend(
-      chatId,
-      localOnly ? '🖥 Switched to local model.' : '☁️ Switched to cloud model.'
-    )
-  }
-
-  /**
    * Handle /mode — read or set the global chat mode (single vs workflow),
    * mirroring the in-app mode picker's two steps: persist (setMode) + live
    * (agent.setMode). Bare `/mode` reports the current mode. Setting is
@@ -1564,57 +1506,42 @@ export class TelegramChannel {
   }
 
   /**
-   * Handle /model — list connected cloud models and switch the Brain. Bare
-   * `/model` lists them numbered (read-only, so allowed even mid-turn) and
-   * arms a numbered picker; `/model <query>` filters by substring and, on a
-   * single match, switches directly. The switch mirrors the in-app model
-   * picker (persist setBrain + live thalamus.setBrain) and also clears
-   * localOnly — a deliberately chosen cloud model would otherwise be ignored
-   * while local-only mode is on (resolveEntry short-circuits to the local
-   * model).
+   * Handle /model — show or pick the model. One lane: until the org API's
+   * per-user catalog is wired in, the only listable option is the current
+   * selection, so bare `/model` reads as "here is your model".
    */
   private async handleModelCommand(chatId: number, query: string, raw: string): Promise<void> {
-    const options = collectModelOptions(this.agent.thalamus.getCloudProviders())
+    const options = collectModelOptions(this.agent.thalamus.getActiveModel())
     if (options.length === 0) {
-      await this.sendHtml(
-        chatId,
-        'No cloud providers connected. Add an API key in Settings, or use <code>/local</code> for the on-device model.'
-      )
+      await this.sendHtml(chatId, 'No model selected — models are managed by your organization.')
       return
     }
     const matches = filterModelOptions(options, query)
-    // A query that pins exactly one model switches straight to it.
     if (query && matches.length === 1) {
       await this.applyModelSelection(chatId, matches[0], raw)
       return
     }
     if (matches.length === 0) {
-      await this.sendHtml(chatId, `No cloud model matches <b>${escapeHtml(query)}</b>.`)
+      await this.sendHtml(chatId, `No model matches <b>${escapeHtml(query)}</b>.`)
       return
     }
-    const activeProvider = this.agent.thalamus.getActiveProvider()
     const activeModel = this.agent.thalamus.getActiveModel()
     const shown = matches.slice(0, MODEL_LIST_CAP)
     this.pendingSelections.set(chatId, { command: 'model', models: shown })
     const lines = shown.map((o, i) => {
-      const current = o.providerId === activeProvider && o.model === activeModel ? ' ✅' : ''
-      return `${i + 1}. <b>${escapeHtml(o.providerId)}</b> · ${escapeHtml(o.model)}${current}`
+      const current = o.model === activeModel ? ' ✅' : ''
+      return `${i + 1}. <b>${escapeHtml(o.model)}</b>${current}`
     })
-    const header =
-      query && matches.length !== options.length
-        ? `<b>Models matching “${escapeHtml(query)}”</b> — reply with the number:`
-        : '<b>Pick a model</b> — reply with the number:'
-    const more =
-      matches.length > shown.length
-        ? `\n\n…and ${matches.length - shown.length} more — narrow with <code>/model &lt;name&gt;</code>.`
-        : ''
-    await this.sendHtml(chatId, `${header}\n\n${lines.join('\n')}${more}`)
+    await this.sendHtml(
+      chatId,
+      `<b>Pick a model</b> — reply with the number:\n\n${lines.join('\n')}`
+    )
   }
 
   /**
-   * Commit a chosen cloud model as the Brain (persist + live), clearing
-   * localOnly so it actually takes effect. Busy-blocked: the Brain is global,
-   * so swapping it mid-turn would change the in-flight turn's next iteration.
+   * Commit a chosen model (persist + live). Busy-blocked: the selection is
+   * global, so swapping it mid-turn would change the in-flight turn's next
+   * iteration.
    */
   private async applyModelSelection(
     chatId: number,
@@ -1625,23 +1552,11 @@ export class TelegramChannel {
       await this.sendBusyReply(chatId, raw)
       return
     }
-    // Capture the prior local-only state before switching — only to decide
-    // whether to note the mode flip in the reply.
-    const config = await readConfig()
-    const wasLocalOnly = config?.llm.localOnly ?? false
-    await persistBrain(option)
-    this.agent.thalamus.setBrain(option)
-    // Choosing a specific cloud model IS a request to run on the cloud, so
-    // force localOnly OFF — unconditionally, so a failed config read can never
-    // leave the pick shadowed by local mode (resolveEntry would keep serving
-    // the on-device model). Mirrors the in-app ModelSwitch, which flips to
-    // cloud on select.
-    await persistLocalOnly(false)
-    this.agent.thalamus.setLocalOnly(false)
-    const note = wasLocalOnly ? ' (switched to cloud)' : ''
-    // sendPlain: code-composed text embedding dynamic provider/model ids —
-    // entity-escaped so an id containing < or & can't bounce the HTML parse.
-    await this.sendPlain(chatId, `☁️ Model: ${option.providerId} · ${option.model}${note}`)
+    const updated = await persistModel(option.model)
+    this.agent.thalamus.setModel(updated.llm.model)
+    // sendPlain: code-composed text embedding a dynamic model id — entity-
+    // escaped so an id containing < or & can't bounce the HTML parse.
+    await this.sendPlain(chatId, `☁️ Model: ${option.model}`)
   }
 
   /**
@@ -1964,37 +1879,11 @@ export class TelegramChannel {
    * BUSY_REPLY_TIMEOUT_MS — keeps the user from hanging on a slow
    * cold-start.
    */
-  private async sendBusyReply(chatId: number, userText: string): Promise<void> {
-    if (!this.localProvider.isReady) {
-      await this.safeSend(chatId, FALLBACK_BUSY_REPLY)
-      return
-    }
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), BUSY_REPLY_TIMEOUT_MS)
-
-    let response = ''
-    try {
-      for await (const chunk of this.localProvider.stream({
-        system: BUSY_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userText }],
-        signal: controller.signal
-      })) {
-        if (chunk.type === 'text') response += chunk.text
-        if (chunk.type === 'turn_meta') break
-        if (chunk.type === 'error') {
-          response = ''
-          break
-        }
-      }
-    } catch {
-      response = ''
-    } finally {
-      clearTimeout(timer)
-    }
-
-    const trimmed = response.trim()
-    await this.safeSend(chatId, trimmed.length > 0 ? trimmed : FALLBACK_BUSY_REPLY)
+  private async sendBusyReply(chatId: number, _userText: string): Promise<void> {
+    // No on-device model exists to improvise a quip — the constant reply is
+    // the whole feature now.
+    void _userText
+    await this.safeSend(chatId, FALLBACK_BUSY_REPLY)
   }
 
   /**

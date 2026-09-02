@@ -31,7 +31,7 @@
  *     removes exactly the one line it names)
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/automation-attachments.test.ts
  */
@@ -69,7 +69,7 @@ function ok(label: string, cond: boolean, detail?: string): void {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** The workspace root the app derives from homedir — see workspace/root.ts. */
-const WORKSPACE = path.join(TEST_HOME, '.wolffish', 'workspace')
+const WORKSPACE = path.join(TEST_HOME, '.wfc', 'workspace')
 
 /**
  * The phone port's surface, declared HERE rather than reached for as
@@ -419,7 +419,7 @@ async function run(): Promise<void> {
     // The automations plugin: parses the same block AND composes it back, which
     // is what stops an agent edit from silently dropping an attachment.
     const pluginUrl = new URL(
-      '../../../defaults/workspace/brain/cerebellum/automations/plugin/index.mjs',
+      '../../../../../../capabilities/automations/plugin/index.mjs',
       import.meta.url
     )
     // The plugin exports its tool surface, not its internals — the two pure

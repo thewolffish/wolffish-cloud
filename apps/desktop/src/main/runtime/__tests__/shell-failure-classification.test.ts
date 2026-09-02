@@ -19,7 +19,7 @@
  */
 
 import { classifyError } from '../motor'
-import shellPlugin from '../../../defaults/workspace/brain/cerebellum/shell/plugin/index.mjs'
+import shellPlugin from '../../../../../../capabilities/shell/plugin/index.mjs'
 
 let passed = 0
 let failed = 0

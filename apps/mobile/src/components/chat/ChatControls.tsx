@@ -14,6 +14,7 @@ import {
   FlashIcon,
   HourglassIcon,
   RepeatIcon,
+  SecurityCheckIcon,
   WorkflowSquare03Icon
 } from '@/components/core/icons'
 import { PROVIDER_LOGOS } from '@/components/core/providerLogos'
@@ -37,8 +38,11 @@ import { Pressable, Text, View } from 'react-native'
 /**
  * The composer's control cluster, desktop composer parity: chat mode
  * (single/workflow), thinking level (off/on/high/max with the desktop's
- * Flash/Brain/AiBrain/Fire icons), model picker, and the context meter.
- * Rendered inside the chat menu sheet and the Model settings panel.
+ * Flash/Brain/AiBrain/Fire icons), permission mode (ask/bypass), model
+ * picker, and the context meter. Rendered inside the chat menu sheet and
+ * the Model settings panel — except the permission switch, which rides only
+ * with the chat sheet: it left Preferences on purpose, so no settings tab
+ * gets it back.
  */
 
 type Option<T extends string> = {
@@ -200,6 +204,51 @@ export function ModeAndThinkingControls(): React.JSX.Element {
           onChange={(level) => setConfigValue('thinkingMode', level)}
         />
       </View>
+    </View>
+  )
+}
+
+const PERMISSION_MODES = ['ask', 'bypass'] as const
+type PermissionMode = (typeof PERMISSION_MODES)[number]
+
+const PERMISSION_ICONS: Record<PermissionMode, typeof FlashIcon> = {
+  ask: SecurityCheckIcon,
+  bypass: FlashIcon
+}
+
+/**
+ * Permission mode — the desktop composer's Ask/Bypass pair, in the
+ * ModelSwitch's own track. It used to be a Preferences toggle; it rides with
+ * the model selection now because it is a per-conversation working stance,
+ * not a set-and-forget setting. Bypass is the default: the agent acts
+ * without asking. Ask routes sensitive actions through approval cards in
+ * chat. The value is `bypassPermissions`, pushed to the desktop through the
+ * same setter the old toggle used.
+ */
+export function PermissionsSwitch(): React.JSX.Element {
+  const { t } = useTranslation()
+  const bypass = useConfigValue('bypassPermissions')
+  const mode: PermissionMode = bypass ? 'bypass' : 'ask'
+
+  const options = PERMISSION_MODES.map((value) => ({
+    value,
+    label: t(`chat.permissions.${value}`),
+    icon: PERMISSION_ICONS[value]
+  }))
+
+  return (
+    <View className="flex-col gap-2">
+      <Text className="text-muted font-sans-medium text-left text-sm">
+        {t('chat.permissions.label')}
+      </Text>
+      <SegmentedSwitch<PermissionMode>
+        value={mode}
+        options={options}
+        onChange={(next) => setConfigValue('bypassPermissions', next === 'bypass')}
+      />
+      <Text className="text-muted text-left font-sans text-xs leading-5">
+        {bypass ? t('chat.permissions.bypassDesc') : t('chat.permissions.askDesc')}
+      </Text>
     </View>
   )
 }

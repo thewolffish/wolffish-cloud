@@ -1,13 +1,13 @@
 /**
- * `wolffish settings` — the settings browser.
+ * `wfc settings` — the settings browser.
  *
  * It is the window's own shape, walked in a terminal: PAGE → CARD → SETTING.
  *
- *   wolffish settings                     the pages
- *   wolffish settings channels            that page's cards
- *   wolffish settings channels telegram   that card's settings and flows
- *   wolffish settings telegram            the same card, named directly
- *   wolffish settings verbose             everything matching, wherever it lives
+ *   wfc settings                     the pages
+ *   wfc settings channels            that page's cards
+ *   wfc settings channels telegram   that card's settings and flows
+ *   wfc settings telegram            the same card, named directly
+ *   wfc settings verbose             everything matching, wherever it lives
  *
  * The hierarchy is not decoration. Labels in this app are CARD-SCOPED — inside
  * a Telegram card, a row called "Status" or "Verbose task results" is
@@ -162,7 +162,7 @@ export async function settingsBrowser(client, args, { json = false } = {}) {
 
     /**
      * A page whose only content is one card is a menu with one door in it.
-     * Walk straight through — Appearance, Updates, Preferences, Usage and the
+     * Walk straight through — Appearance, Preferences, Usage and the
      * flow pages are all single cards, and pressing 1 to see two rows is
      * friction for its own sake.
      *
@@ -524,7 +524,7 @@ export async function editSetting(client, card) {
   out()
 
   if (!interactive()) {
-    out(c.gray(`  wolffish settings set ${card.id} <value>`))
+    out(c.gray(`  wfc settings set ${card.id} <value>`))
     return 0
   }
 
@@ -618,7 +618,7 @@ async function promptForValue(card) {
 }
 
 /**
- * `wolffish settings list` — every setting, page by page and card by card,
+ * `wfc settings list` — every setting, page by page and card by card,
  * with credentials already masked by the daemon before they reach this
  * process. The read surface: it pipes, it takes a filter, it never prompts.
  */
@@ -685,13 +685,13 @@ export async function listAllSettings(client, { json = false, long = false, grou
     c.gray(
       `  ${wanted.length} settings` +
         (long ? '' : ' · --long for descriptions') +
-        ' · wolffish settings to configure interactively'
+        ' · wfc settings to configure interactively'
     )
   )
   return 0
 }
 
-/** `wolffish settings pages` — the map, one line per card. */
+/** `wfc settings pages` — the map, one line per card. */
 export async function listPages(client) {
   stale()
   const { groups, cards } = await load(client)
@@ -709,7 +709,7 @@ export async function listPages(client) {
     })
   )
   out()
-  out(c.gray('  wolffish settings <page>          the cards on a page'))
-  out(c.gray('  wolffish settings <page> <card>   straight into one card'))
+  out(c.gray('  wfc settings <page>          the cards on a page'))
+  out(c.gray('  wfc settings <page> <card>   straight into one card'))
   return 0
 }

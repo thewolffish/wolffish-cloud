@@ -747,10 +747,9 @@ export class Agent {
     // file becomes a reference note and the model pulls what it needs via
     // tools (pdf_read/pdf_search, file_read, image_view). supportsVision
     // only picks the image note's wording (view-on-demand vs can't-see).
-    const isLocal = provider === null || provider === 'local'
-    const supportsVision = isLocal
-      ? await this.thalamus.localSupportsVision()
-      : cloudModelSupportsVision(provider, modelSel?.model ?? this.thalamus.getActiveModel() ?? '')
+    const supportsVision =
+      provider !== null &&
+      cloudModelSupportsVision(provider, modelSel?.model ?? this.thalamus.getActiveModel() ?? '')
 
     // Attachment aging: reference notes (with their type facts and tool
     // guidance) are generated only for attachments in the RECENT window —
@@ -1004,9 +1003,7 @@ export class Agent {
     // not logic. The old stateless/restrict lobotomies existed because the
     // full-fat context drowned small models; the lean assembly removed the
     // reason they existed. A per-agent model override is always cloud.
-    const isLocalProvider = turn.modelOverride
-      ? false
-      : this.thalamus.getActiveProvider() === 'local'
+    const isLocalProvider = false
 
     // Resolve the local model's real context window up front — before the
     // system prompt is built and the conversation runs — by hitting Ollama's

@@ -239,7 +239,7 @@ You are talking with the user over WhatsApp: EVERY prose block you write — ful
 - ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no formatting markers.
 - Emojis render natively — use them naturally to aid scanning; a leading emoji on a *bold* line does a heading's job (✈️ *Flight details*).
 - Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with whatsapp_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
-- Voice notes and audio that are meant to PLAY in WhatsApp (a voice reply, a spoken memo, any audio the user will tap and hear) MUST be OGG/Opus (audio/ogg; codecs=opus): WhatsApp PTT voice notes only play that container. Default to OGG/Opus — if your audio is MP3/WAV (e.g. a TTS voice reply comes out as mp3), transcode it to OGG/Opus first: ~/.wolffish/bin/ffmpeg/ffmpeg -i in.mp3 -c:a libopus -b:a 24k out.ogg, then pass the .ogg path to whatsapp_send_audio. Only send an MP3 as-is when the user explicitly needs or asks for an MP3 (a file to save or share, not a voice note to play) — a bare mp3 sent as a voice note will not play.
+- Voice notes and audio that are meant to PLAY in WhatsApp (a voice reply, a spoken memo, any audio the user will tap and hear) MUST be OGG/Opus (audio/ogg; codecs=opus): WhatsApp PTT voice notes only play that container. Default to OGG/Opus — if your audio is MP3/WAV (e.g. a TTS voice reply comes out as mp3), transcode it to OGG/Opus first: ~/.wfc/bin/ffmpeg/ffmpeg -i in.mp3 -c:a libopus -b:a 24k out.ogg, then pass the .ogg path to whatsapp_send_audio. Only send an MP3 as-is when the user explicitly needs or asks for an MP3 (a file to save or share, not a voice note to play) — a bare mp3 sent as a voice note will not play.
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`,
   telegram: `<channel>
@@ -426,25 +426,30 @@ The ONLY exception: the user's own message explicitly asks for something else ("
    * so it is byte-stable across iterations.
    */
   private async workflowModelsBlock(): Promise<string> {
+    // One lane: the selectable per-agent models are the org catalog, which
+    // the API integration phase will serve. Until then only the selected
+    // model is listed, so the master pins agents to it (or omits).
     const cfg = await readConfig().catch(() => null)
-    if (!cfg) return ''
-    const connected = cfg.llm.providers.filter((p) => p.apiKey)
-    if (connected.length === 0) return ''
-    const brain = cfg.llm.brain
+    if (!cfg?.llm.model) return ''
+    const connected = [{ id: 'cloud' as const, model: cfg.llm.model, models: [cfg.llm.model] }]
+    const brain = { model: cfg.llm.model }
     const lines: string[] = []
     for (const p of connected) {
       const models = (p.models ?? []).filter(Boolean).slice(0, MODELS_BLOCK_PER_PROVIDER)
       // A provider with an empty cached catalog still has its saved model.
       if (models.length === 0 && p.model) models.push(p.model)
       for (const m of models) {
-        const openrouterReasoning =
-          p.id === 'openrouter' ? (p.reasoningModels?.includes(m) ?? false) : false
-        const modes = reasoningModesFor(p.id, m, { openrouterReasoning })
+        const modes = reasoningModesFor(p.id, m)
         const traits: string[] = []
-        traits.push(`~${Math.round(contextWindowForModel(m) / 1000)}k ctx`)
+        const ctx = contextWindowForModel(m)
+        traits.push(
+          ctx >= 1_000_000
+            ? `~${Math.round(ctx / 100_000) / 10}m ctx`
+            : `~${Math.round(ctx / 1000)}k ctx`
+        )
         if (modes.length > 0) traits.push(`effort: ${modes.join('/')}`)
         if (cloudModelSupportsVision(p.id, m)) traits.push('vision')
-        const isBrain = brain && brain.providerId === p.id && brain.model === m
+        const isBrain = brain.model === m
         lines.push(`- ${p.id}/${m} (${traits.join(', ')})${isBrain ? ' ← your own model' : ''}`)
       }
     }

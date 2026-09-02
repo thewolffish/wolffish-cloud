@@ -48,54 +48,69 @@ export type CodeEditorProps = {
   /** Turn on Chromium's spellcheck (red squiggles) for the editor content. Off by
    *  default — code shouldn't be spellchecked; the prose composer opts in. */
   spellcheck?: boolean
+  /** Canvas color: panel chrome ('surface', default) or input field ('field'). */
+  background?: CodeEditorBackground
 }
 
-const baseTheme = EditorView.theme({
-  '&': {
-    height: '100%',
-    fontSize: '13px',
-    backgroundColor: 'var(--color-surface)',
-    color: 'var(--color-fg)'
-  },
-  '.cm-scroller': {
-    fontFamily:
-      "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
-    lineHeight: '1.55'
-  },
-  '.cm-content': {
-    caretColor: 'var(--color-fg)',
-    padding: '12px 0'
-  },
-  '.cm-gutters': {
-    backgroundColor: 'transparent',
-    color: 'var(--color-muted)',
-    border: 'none'
-  },
-  '.cm-activeLine': {
-    backgroundColor: 'transparent'
-  },
-  '.cm-activeLineGutter': {
-    backgroundColor: 'transparent',
-    color: 'var(--color-fg)'
-  },
-  '.cm-cursor, .cm-dropCursor': {
-    borderLeftColor: 'var(--color-fg)'
-  },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)'
-  },
-  '.cm-lineNumbers .cm-gutterElement': {
-    padding: '0 12px 0 8px',
-    minWidth: '2ch'
-  },
-  '&.cm-focused': {
-    outline: 'none'
-  },
-  '.cm-placeholder': {
-    color: 'var(--color-muted)',
-    fontStyle: 'italic'
-  }
-})
+/**
+ * The editor's canvas color. 'surface' blends into panel chrome (viewer,
+ * markdown editor); 'field' is the input treatment (bg token) for editors
+ * that stand in for a form field, like the project instructions prompt.
+ */
+export type CodeEditorBackground = 'surface' | 'field'
+
+const themeFor = (background: CodeEditorBackground): ReturnType<typeof EditorView.theme> =>
+  EditorView.theme({
+    '&': {
+      height: '100%',
+      fontSize: '13px',
+      backgroundColor: background === 'field' ? 'var(--color-bg)' : 'var(--color-surface)',
+      color: 'var(--color-fg)'
+    },
+    '.cm-scroller': {
+      fontFamily:
+        "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+      lineHeight: '1.55'
+    },
+    '.cm-content': {
+      caretColor: 'var(--color-fg)',
+      padding: '12px 0'
+    },
+    '.cm-gutters': {
+      backgroundColor: 'transparent',
+      color: 'var(--color-muted)',
+      border: 'none'
+    },
+    '.cm-activeLine': {
+      backgroundColor: 'transparent'
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'transparent',
+      color: 'var(--color-fg)'
+    },
+    '.cm-cursor, .cm-dropCursor': {
+      borderLeftColor: 'var(--color-fg)'
+    },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)'
+    },
+    '.cm-lineNumbers .cm-gutterElement': {
+      padding: '0 12px 0 8px',
+      minWidth: '2ch'
+    },
+    '&.cm-focused': {
+      outline: 'none'
+    },
+    '.cm-placeholder': {
+      color: 'var(--color-muted)',
+      fontStyle: 'italic'
+    }
+  })
+
+const baseThemes: Record<CodeEditorBackground, ReturnType<typeof EditorView.theme>> = {
+  surface: themeFor('surface'),
+  field: themeFor('field')
+}
 
 // Highlight styles tuned to our hljs token palette so prose and code feel
 // consistent across the app. Light & dark variants pull straight from the
@@ -142,7 +157,8 @@ export function CodeEditor({
   onChange,
   className,
   placeholder,
-  spellcheck = false
+  spellcheck = false,
+  background = 'surface'
 }: CodeEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -191,7 +207,9 @@ export function CodeEditor({
         compartments.spellcheck.of(
           spellcheck ? EditorView.contentAttributes.of({ spellcheck: 'true' }) : []
         ),
-        baseTheme,
+        // Static per mount, like the rest of the creation-time extensions —
+        // no host swaps canvases at runtime.
+        baseThemes[background],
         ...(placeholder ? [cmPlaceholder(placeholder)] : []),
         EditorView.theme({}, { dark: isDark }),
         EditorView.updateListener.of((update) => {

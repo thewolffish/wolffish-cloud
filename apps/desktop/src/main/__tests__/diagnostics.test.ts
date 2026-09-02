@@ -16,7 +16,7 @@
  *  - the model opinion is one call, and its absence is not a failure
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
- * nothing touches the real ~/.wolffish workspace.
+ * nothing touches the real ~/.wfc workspace.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/__tests__/diagnostics.test.ts
  */
@@ -51,7 +51,7 @@ function ok(label: string, cond: boolean, detail?: string): void {
   console.error(`FAIL ${label}${detail ? `: ${detail}` : ''}`)
 }
 
-const WS = path.join(TEST_HOME, '.wolffish', 'workspace')
+const WS = path.join(TEST_HOME, '.wfc', 'workspace')
 
 function write(rel: string, content: string): void {
   const abs = path.join(WS, rel)

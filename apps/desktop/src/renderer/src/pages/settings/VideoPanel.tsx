@@ -24,7 +24,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
-import { PROVIDER_LOGOS } from './modelCatalog'
 
 const MINIMAX_PLATFORM_URL = 'https://platform.minimax.io'
 
@@ -336,20 +335,11 @@ function DirectorCard({
   // logo — is what turns "your chat model directs this" from a claim into
   // something the user can see.
   const director = useMemo(() => {
-    const llm = status?.config?.llm
-    if (!llm) return null
-    const brain = llm.brain
-    if (brain && !llm.localOnly) {
-      const provider = llm.providers?.find((p) => p.id === brain.providerId)
-      if (provider?.apiKey && provider.apiKey.length > 0) {
-        return { kind: 'cloud' as const, providerId: brain.providerId, model: brain.model }
-      }
-    }
-    if (llm.local?.model) return { kind: 'local' as const, model: llm.local.model }
-    return null
-  }, [status?.config?.llm])
+    const model = status?.config?.llm.model
+    return model ? { kind: 'cloud' as const, model } : null
+  }, [status?.config?.llm.model])
 
-  const Logo = director?.kind === 'cloud' ? PROVIDER_LOGOS[director.providerId] : null
+  const Logo = null as React.ComponentType<{ size?: number }> | null
 
   return (
     <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">

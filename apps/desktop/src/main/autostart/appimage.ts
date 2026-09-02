@@ -6,14 +6,14 @@
  * `process.resourcesPath` both point INSIDE a directory that is gone the moment
  * the app closes — and that has a different name next time. Anything this app
  * writes for later therefore recorded a path that could never work again: the
- * CLI shim (`wolffish: No such file or directory` from the first day), the
+ * CLI shim (`wfc: No such file or directory` from the first day), the
  * systemd unit, the XDG autostart entry. Each of those is written once and read
  * by something else much later, which is exactly the worst case for a path that
  * expires; the app itself never noticed, because within a single run the mount
  * is real.
  *
  * The runtime exports `APPIMAGE` holding the path of the .AppImage FILE, which
- * is the stable handle to the same app. electron-updater already depends on it
+ * is the stable handle to the same app. Upstream's electron-updater depends on it
  * to find the file it replaces on update, so it is as load-bearing as it looks.
  *
  * Everything here is a no-op off the AppImage path: a .deb, .rpm, .dmg or NSIS
@@ -69,15 +69,15 @@ export function appImageLaunchEnv(): string | null {
  * The CLI client, at a path that outlives the process that copied it.
  *
  * Pointing the shim at the .AppImage fixes the binary but not the script it has
- * to run: `<mount>/resources/cli/wolffish.mjs` expires with the mount, and its
+ * to run: `<mount>/resources/cli/wfc.mjs` expires with the mount, and its
  * replacement is unknowable from outside (the mount name is random per run, so
  * no fixed string can name it). The client is 400 KB of plain ESM importing
  * nothing but node builtins, so the honest fix is to lift it out of the image
- * and keep a copy under ~/.wolffish, where `rm -rf ~/.wolffish` still ends it.
+ * and keep a copy under ~/.wfc, where `rm -rf ~/.wfc` still ends it.
  *
  * Re-copied on every boot rather than once: an AppImage self-updates in place,
  * and a CLI a version behind its daemon is a bug report nobody can reproduce.
- * Overwrite-in-place, never delete-then-copy — a `wolffish` starting up during
+ * Overwrite-in-place, never delete-then-copy — a `wfc` starting up during
  * the gap would import half a client.
  *
  * Best-effort. If the copy fails the caller gets the in-mount path back, which
@@ -86,7 +86,7 @@ export function appImageLaunchEnv(): string | null {
 export async function stableCliEntry(entry: string): Promise<string> {
   if (!appImagePath()) return entry
 
-  const dest = path.join(os.homedir(), '.wolffish', 'cli')
+  const dest = path.join(os.homedir(), '.wfc', 'cli')
   try {
     await fs.mkdir(path.dirname(dest), { recursive: true })
     await fs.cp(path.dirname(entry), dest, { recursive: true, force: true })

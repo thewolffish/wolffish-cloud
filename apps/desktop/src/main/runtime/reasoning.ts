@@ -41,6 +41,22 @@ export function reasoningModesFor(
 ): ReasoningMode[] {
   const m = model.toLowerCase()
   switch (provider) {
+    // ── Wolffish Cloud (org API → DeepInfra) ───────────────────────────
+    // The one real lane in this build. Catalog is the frontier DeepSeek V4
+    // pair (Flash-0731 / Pro-0813). Verified live 2026-09-01 through
+    // api.wolffi.sh: top-level `reasoning_effort` is honoured with a
+    // genuinely validated enum (none|minimal|low|medium|high|xhigh|max —
+    // 'banana' 400s), 'none' produces zero reasoning, higher rungs stream
+    // `reasoning_content` deltas, effort coexists with tool calls, and
+    // WITHOUT the param these models do not reason at all — so the
+    // provider must send it in both directions. Effort is a ceiling:
+    // high and max converge on easy turns and separate on hard ones
+    // (Pro at max rode a 4k cap that high stopped short of, n=2).
+    // Anything outside the v4 line answers [] until verified.
+    case 'cloud':
+      if (m.includes('deepseek-v4')) return ['off', 'high', 'max']
+      return []
+
     // ── Anthropic ──────────────────────────────────────────────────────
     // Extended thinking via thinking.type + budget_tokens (verified live;
     // output_config.effort is NOT a thinking control). Haiku's small output

@@ -1,19 +1,9 @@
 import type { Corpus } from '@main/runtime/corpus'
 import { shapeOutbound } from '@main/runtime/outbound'
-import { AnthropicProvider } from '@main/runtime/providers/anthropic'
-import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
-import { KimiProvider } from '@main/runtime/providers/kimi'
-import { LocalProvider } from '@main/runtime/providers/local'
-import { MimoProvider } from '@main/runtime/providers/mimo'
-import { MiniMaxProvider } from '@main/runtime/providers/minimax'
-import { OpenAIProvider } from '@main/runtime/providers/openai'
-import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
-import { QwenProvider } from '@main/runtime/providers/qwen'
-import { StepfunProvider } from '@main/runtime/providers/stepfun'
+import { CloudProvider } from '@main/runtime/providers/cloud'
 // Safe runtime import: usage.ts only imports the ProviderId TYPE from here.
+import { catalogContextWindow } from '@main/cloud/catalog'
 import { calculateCost } from '@main/runtime/usage'
-import { XAIProvider } from '@main/runtime/providers/xai'
-import { ZaiProvider } from '@main/runtime/providers/zai'
 import {
   cloudModelSupportsVision,
   hasVisualContent,
@@ -68,19 +58,13 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId =
-  | 'anthropic'
-  | 'openai'
-  | 'openrouter'
-  | 'deepseek'
-  | 'mimo'
-  | 'kimi'
-  | 'minimax'
-  | 'xai'
-  | 'qwen'
-  | 'stepfun'
-  | 'zai'
-  | 'local'
+/**
+ * One lane. Every model call goes through the Wolffish Cloud org API —
+ * there are no vendor providers and no local models on the device. The id
+ * survives as a type because usage records, stream chunks and renderer
+ * chips all carry it on the wire.
+ */
+export type ProviderId = 'cloud'
 
 export type ToolDefinition = {
   name: string
@@ -96,6 +80,12 @@ export type ThinkingMode = import('@main/runtime/reasoning').ReasoningMode
 export type ProviderStreamOptions = {
   system: string
   messages: ChatMessage[]
+  /**
+   * The resolved model id for this call. Injected by thalamus at dispatch
+   * (streamOnce / completeSingle) from the resolved entry — providers read
+   * it, callers never set it.
+   */
+  model?: string
   tools?: ToolDefinition[]
   signal?: AbortSignal
   thinkingMode?: ThinkingMode
@@ -174,35 +164,6 @@ export type StreamChunk =
   | { type: 'active_model'; provider: ProviderId; model: string }
   | { type: 'no_provider_available'; failures: NoProviderAvailableInfo[] }
 
-export type CloudProviderConfig = {
-  id:
-    | 'anthropic'
-    | 'openai'
-    | 'openrouter'
-    | 'deepseek'
-    | 'mimo'
-    | 'kimi'
-    | 'minimax'
-    | 'xai'
-    | 'qwen'
-    | 'stepfun'
-    | 'zai'
-  model: string
-  apiKey: string
-  models?: string[]
-  reasoningModels?: string[]
-  // Anthropic cache breakpoint TTL. '1h' costs 2x base on cache writes but
-  // survives tasks whose individual steps outlast the 5-minute default
-  // (slow browser automation, long shell commands). Anthropic-only.
-  cacheTtl?: '5m' | '1h'
-}
-
-/**
- * The single user-chosen cloud model — the Brain. Sole source of truth for
- * which cloud provider+model runs when not in local-only mode.
- */
-export type BrainSelection = { providerId: CloudProviderConfig['id']; model: string }
-
 export type ProviderHealth = {
   id: ProviderId
   healthy: boolean
@@ -240,18 +201,7 @@ const COOLDOWN_STEPS_MS = [30_000, 60_000, 120_000, 300_000]
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 90_000]
 
 const PROVIDER_LOGO: Record<ProviderId, string> = {
-  anthropic: 'anthropic',
-  openai: 'openai',
-  openrouter: 'openrouter',
-  deepseek: 'deepseek',
-  mimo: 'mimo',
-  kimi: 'kimi',
-  minimax: 'minimax',
-  xai: 'xai',
-  qwen: 'qwen',
-  stepfun: 'stepfun',
-  zai: 'zai',
-  local: 'ollama'
+  cloud: 'wolffish'
 }
 
 // Short English labels surfaced to the local fallback model via the
@@ -302,20 +252,19 @@ type CascadeEntry = {
  * touch, taste — everything except smell) up to the cortex. Nothing
  * reaches conscious processing without being routed by the thalamus first.
  *
- * In Wolffish, Thalamus resolves the single user-chosen model — the Brain
- * (one cloud provider+model) when cloud is active, or the local Ollama model
- * when the chat switcher is in local-only mode. It retries the same model on
+ * In Wolffish Cloud, Thalamus resolves the single user-chosen model and
+ * streams it through the one lane that exists: the org's API. It retries on
  * transient failures and exposes a single async-generator interface so
- * downstream regions don't need to know which provider is responding. Model
- * resolution lives behind one seam (resolveEntry) so a different resolver
- * can swap in without touching any caller.
+ * downstream regions don't need to know what is answering. Resolution lives
+ * behind one seam (resolveEntry) so the API integration phase swaps the
+ * placeholder CloudProvider for the real client without touching callers.
  */
 export class Thalamus {
-  private cloudProviders: CloudProviderConfig[] = []
-  private brain: BrainSelection | null = null
+  /** The selected model id; the org API is the authority on validity. */
+  private model: string | null = null
+  private cloud: StreamableProvider = new CloudProvider()
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
-  private localOnly = false
   private testProvider: StreamableProvider | null
   /**
    * provider:model → the strip scope that actually cured a modality 400,
@@ -339,10 +288,7 @@ export class Thalamus {
     { scope: VisualStripScope; remaining: number }
   >()
 
-  constructor(
-    private local: LocalProvider,
-    options: ThalamusOptions = {}
-  ) {
+  constructor(options: ThalamusOptions = {}) {
     this.corpus = options.corpus ?? null
     this.testProvider = options.testProvider ?? null
   }
@@ -351,53 +297,22 @@ export class Thalamus {
     this.corpus = corpus
   }
 
-  setCloudProviders(providers: CloudProviderConfig[]): void {
-    this.cloudProviders = providers.filter((p) => p.apiKey && p.model)
-  }
-
-  getCloudProviders(): CloudProviderConfig[] {
-    return [...this.cloudProviders]
-  }
-
   /**
-   * Set the Brain — the single user-chosen cloud provider+model that runs
-   * when not in local-only mode. Null clears it (no cloud model selected).
+   * Set the selected model. Null clears it (nothing selected yet). The
+   * catalog and policy live at the org API; this is just the choice.
    */
-  setBrain(brain: BrainSelection | null): void {
-    this.brain = brain ? { ...brain } : null
+  setModel(model: string | null): void {
+    this.model = model
   }
 
-  setLocalOnly(value: boolean): void {
-    this.localOnly = value
-  }
-
-  /**
-   * The provider that would handle the next turn — the Brain's provider, or
-   * 'local' in local-only mode. Null when nothing is selected/ready.
-   */
+  /** The lane that would handle the next turn; null when nothing selected. */
   getActiveProvider(): ProviderId | null {
     return this.resolveEntry()?.id ?? null
   }
 
-  /**
-   * Model name that getActiveProvider() points at. Null when nothing is
-   * selected/ready.
-   */
+  /** Model name for the next turn. Null when nothing is selected. */
   getActiveModel(): string | null {
     return this.resolveEntry()?.model ?? null
-  }
-
-  getLocalModelName(): string | null {
-    return this.local.currentModel
-  }
-
-  /**
-   * Whether the active local model supports image input. Queries
-   * Ollama's /api/show on first call and caches the result. Returns
-   * false when no local model is configured.
-   */
-  async localSupportsVision(): Promise<boolean> {
-    return this.local.supportsVision()
   }
 
   /**
@@ -417,10 +332,7 @@ export class Thalamus {
     // dominate cost. Keep only the newest few (batched, cache-friendly).
     const limited = limitToolResultImages(options.messages)
     if (limited !== options.messages) options = { ...options, messages: limited }
-    const vision =
-      entry.id === 'local'
-        ? await this.local.supportsVision()
-        : cloudModelSupportsVision(entry.id, entry.model)
+    const vision = cloudModelSupportsVision(entry.id, entry.model)
     if (!vision) {
       return { ...options, messages: stripVisualContent(options.messages) }
     }
@@ -453,18 +365,13 @@ export class Thalamus {
   }
 
   /**
-   * Async sibling of {@link getActiveContextWindow}. For local models this
-   * awaits the real window Ollama reports (warming the LocalProvider cache)
-   * rather than returning the name-based estimate while the cache is still
-   * cold. Used by the model:capabilities IPC so the renderer's context meter
-   * gets the true window the instant a model is switched — not a stale
-   * fallback that would otherwise never be corrected (nothing re-fetches once
-   * the cache warms). Cloud models resolve synchronously, as before.
+   * Async sibling of {@link getActiveContextWindow}, kept for the
+   * model:capabilities IPC. Cloud models resolve synchronously today; the
+   * API integration phase can make this consult the org catalog.
    */
   async resolveActiveContextWindow(): Promise<number> {
     const entry = this.resolveEntry()
     if (!entry) return 8_000
-    if (entry.id === 'local') return this.local.resolveContextWindow()
     return this.windowForEntry(entry)
   }
 
@@ -502,36 +409,18 @@ export class Thalamus {
   }
 
   /**
-   * Spawn-time validation for a master-supplied model choice. Returns an
-   * error string when the provider isn't connected (immediate, deterministic
-   * tool error), null when the choice is streamable. A model id missing from
-   * the provider's cached catalog is deliberately accepted — the catalog can
-   * lag the provider; a genuinely dead id surfaces as that agent's failure.
+   * Spawn-time validation for a master-supplied model choice. There is one
+   * lane and the org's router is the authority on which model ids are
+   * allowed, so every choice is streamable from here — a disallowed id
+   * surfaces as that agent's deterministic API refusal.
    */
-  validateModelChoice(sel: { provider: ProviderId; model: string }): string | null {
-    if (sel.provider === 'local') {
-      return 'per-agent model choices are cloud only — omit the model to run the agent on your own model'
-    }
-    const cfg = this.cloudProviders.find((p) => p.id === sel.provider)
-    if (!cfg) {
-      const connected = this.cloudProviders.map((p) => p.id).join(', ') || 'none'
-      return `provider "${sel.provider}" is not connected (connected: ${connected}) — pick a model from <workflow_models> or omit for your own model`
-    }
+  validateModelChoice(_sel: { provider: ProviderId; model: string }): string | null {
+    void _sel
     return null
   }
 
-  /**
-   * Context window for a resolved entry. Cloud models map by name; local
-   * models use the real window Ollama reports for the model (cached by the
-   * LocalProvider after the first /api/show), falling back to the name-based
-   * estimate until that cache is warm. Without this a local model whose name
-   * isn't recognized would be budgeted at the 8 000 fallback even though it
-   * may have a far larger (or smaller) real window.
-   */
+  /** Context window for a resolved entry, mapped by model name. */
   private windowForEntry(entry: CascadeEntry): number {
-    if (entry.id === 'local') {
-      return this.local.cachedContextWindow() ?? contextWindowForModel(entry.model)
-    }
     return contextWindowForModel(entry.model)
   }
 
@@ -639,13 +528,7 @@ export class Thalamus {
    * run it through here first.
    */
   private reasoningModesForEntry(entry: CascadeEntry): ThinkingMode[] {
-    const openrouterReasoning =
-      entry.id === 'openrouter'
-        ? (this.cloudProviders
-            .find((p) => p.id === 'openrouter')
-            ?.reasoningModels?.includes(entry.model) ?? false)
-        : false
-    return reasoningModesFor(entry.id, entry.model, { openrouterReasoning })
+    return reasoningModesFor(entry.id, entry.model)
   }
 
   /**
@@ -681,6 +564,7 @@ export class Thalamus {
       system,
       messages: msgs,
       signal,
+      model: entry.model,
       thinkingMode: normalizeReasoningMode('off', this.reasoningModesForEntry(entry))
     }
 
@@ -788,11 +672,7 @@ export class Thalamus {
       ? this.resolveOverride(options.modelOverride)
       : this.resolveEntry()
     if (!entry) {
-      const message = options.modelOverride
-        ? `provider "${options.modelOverride.provider}" is not connected — the requested model ${options.modelOverride.model} cannot stream`
-        : this.localOnly
-          ? 'no local model loaded — pick one in the model picker'
-          : 'no model selected — choose a model in the chat composer or switch to local'
+      const message = 'no model selected — choose a model in the chat composer'
       this.emit('llm.error', { provider: 'none', error: message })
       yield { type: 'error', message, recoverable: false }
       return
@@ -820,12 +700,11 @@ export class Thalamus {
       opts = { ...options, thinkingMode: normalizeReasoningMode('off', modes) }
     }
 
-    // Same-model retry: the cloud Brain (master / single) gets the transient
-    // retry budget. AGENTS do NOT — an agent is single-shot and any failure
-    // surfaces immediately to the master, which owns all agent retry decisions
-    // end-to-end (re-run, re-scope, or report). The local model never retries
-    // either (Ollama errors are local and effectively permanent).
-    const retry = entry.id !== 'local' && options.role !== 'agent'
+    // Same-model retry: the selected model (master / single) gets the
+    // transient retry budget. AGENTS do NOT — an agent is single-shot and any
+    // failure surfaces immediately to the master, which owns all agent retry
+    // decisions end-to-end (re-run, re-scope, or report).
+    const retry = options.role !== 'agent'
     const result = yield* this.streamOnce(entry, opts, { retry })
     if (result.kind === 'success') return
     if (result.kind === 'committed-error') {
@@ -848,6 +727,7 @@ export class Thalamus {
     | { kind: 'failed'; failure: ProviderFailure }
   > {
     let guarded = await this.guardVisualContent(entry, shapeOutbound(options))
+    guarded = { ...guarded, model: entry.model }
     const overallStartedAt = Date.now()
     let attempt = 0
     let lastFailure: ProviderFailure | null = null
@@ -869,8 +749,8 @@ export class Thalamus {
         }
       }
 
-      // Offline halts the cloud retries early; local can still try.
-      if (entry.id !== 'local' && !net.isOnline()) {
+      // Offline halts the retries early — the only lane is a network lane.
+      if (!net.isOnline()) {
         return {
           kind: 'failed',
           failure: {
@@ -1071,80 +951,22 @@ export class Thalamus {
   }
 
   /**
-   * The resolution seam — the ONE place that answers "which provider+model
-   * handles this request". Local-only mode resolves to the local model; the
-   * Brain otherwise; null when nothing is selected/ready. Swapping the
-   * resolution policy means swapping only this method body — callers never change.
+   * The resolution seam — the ONE place that answers "which model handles
+   * this request". Null when nothing is selected yet. Swapping the
+   * resolution policy means swapping only this method body — callers never
+   * change.
    */
   private resolveEntry(): CascadeEntry | null {
-    if (this.localOnly) {
-      if (!this.local.isReady) return null
-      return { id: 'local', model: this.local.currentModel ?? 'local', provider: this.local }
-    }
-    if (!this.brain) return null
-    const cfg = this.cloudProviders.find((p) => p.id === this.brain!.providerId)
-    if (!cfg) return null
-    return this.instantiate(cfg, this.brain.model)
+    if (!this.model) return null
+    return { id: 'cloud', model: this.model, provider: this.testProvider ?? this.cloud }
   }
 
   /**
-   * Resolve an explicit per-agent model choice (workflow mode) — a pure cloud
-   * selection, independent of localOnly. Null when the provider isn't
-   * connected; the caller surfaces that as a deterministic error, never a
-   * silent fallback.
+   * Resolve an explicit per-agent model choice (workflow mode). Same lane,
+   * different model id — the org's router decides whether it's allowed.
    */
   private resolveOverride(sel: { provider: ProviderId; model: string }): CascadeEntry | null {
-    if (sel.provider === 'local') return null
-    const cfg = this.cloudProviders.find((p) => p.id === sel.provider)
-    if (!cfg) return null
-    return this.instantiate(cfg, sel.model)
-  }
-
-  /** Construct the provider client for one cloud config + the Brain's model. */
-  private instantiate(cfg: CloudProviderConfig, model: string): CascadeEntry {
-    if (this.testProvider) {
-      return { id: cfg.id, model, provider: this.testProvider }
-    }
-    switch (cfg.id) {
-      case 'anthropic':
-        return {
-          id: 'anthropic',
-          model,
-          provider: new AnthropicProvider(cfg.apiKey, model, undefined, undefined, cfg.cacheTtl)
-        }
-      case 'openai':
-        return {
-          id: 'openai',
-          model,
-          provider: new OpenAIProvider(cfg.apiKey, model, undefined, this.corpus)
-        }
-      case 'deepseek':
-        return { id: 'deepseek', model, provider: new DeepSeekProvider(cfg.apiKey, model) }
-      case 'mimo':
-        return { id: 'mimo', model, provider: new MimoProvider(cfg.apiKey, model) }
-      case 'kimi':
-        return { id: 'kimi', model, provider: new KimiProvider(cfg.apiKey, model) }
-      case 'minimax':
-        return { id: 'minimax', model, provider: new MiniMaxProvider(cfg.apiKey, model) }
-      case 'xai':
-        return { id: 'xai', model, provider: new XAIProvider(cfg.apiKey, model) }
-      case 'qwen':
-        return { id: 'qwen', model, provider: new QwenProvider(cfg.apiKey, model) }
-      case 'stepfun':
-        return { id: 'stepfun', model, provider: new StepfunProvider(cfg.apiKey, model) }
-      case 'zai':
-        return { id: 'zai', model, provider: new ZaiProvider(cfg.apiKey, model) }
-      case 'openrouter':
-        return {
-          id: 'openrouter',
-          model,
-          provider: new OpenRouterProvider(cfg.apiKey, model, undefined, cfg.reasoningModels)
-        }
-      default: {
-        const _exhaustive: never = cfg.id
-        throw new Error(`unknown provider: ${String(_exhaustive)}`)
-      }
-    }
+    return { id: 'cloud', model: sel.model, provider: this.testProvider ?? this.cloud }
   }
 
   private markHealthy(id: ProviderId): void {
@@ -1281,156 +1103,31 @@ function extractProviderDetail(raw: string): string | null {
   }
 }
 
+/**
+ * Context window (input tokens) by model name. PLACEHOLDER heuristics for
+ * the DeepSeek lane the org serves today — the API integration phase should
+ * serve authoritative per-model metadata alongside the catalog and replace
+ * this local table.
+ */
 export function contextWindowForModel(model: string): number {
+  // The org catalog is authoritative when it has landed; name heuristics
+  // cover the cold start before the first /v1/models fetch.
+  const fromCatalog = catalogContextWindow(model)
+  if (fromCatalog !== null) return fromCatalog
   const m = model.toLowerCase()
-  // Claude Fable 5 and 4.6+ — Fable 5, Opus 4.6/4.7/4.8, Sonnet 4.6 have 1M windows
-  if (m.includes('fable')) return 1_000_000
-  if (m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('opus-4-6')) return 1_000_000
-  if (m.includes('sonnet-4-6')) return 1_000_000
-  // Claude 4.0–4.5 and Haiku — 200k
-  if (m.includes('opus-4') || m.includes('sonnet-4')) return 200_000
-  if (m.includes('haiku-4')) return 200_000
-  // Claude 3.x
-  if (m.includes('3-7-sonnet') || m.includes('3.7-sonnet')) return 200_000
-  if (m.includes('3-5-sonnet') || m.includes('3.5-sonnet')) return 200_000
-  if (m.includes('3-5-haiku') || m.includes('3.5-haiku')) return 200_000
-  if (m.includes('opus') || m.includes('sonnet') || m.includes('haiku')) return 200_000
-  // DeepSeek
   if (m.includes('deepseek-v4')) return 1_000_000
-  // Xiaomi Mimo
-  if (m.includes('mimo-v2.5')) return 1_000_000
-  if (m.includes('mimo-v2')) return 256_000
-  if (m.includes('mimo')) return 256_000
-  // Kimi / Moonshot
-  if (m.includes('kimi-k3')) return 1_048_576
-  if (m.includes('kimi-k2')) return 262_144
-  if (m.includes('moonshot-v1-128k')) return 131_072
-  if (m.includes('moonshot-v1-32k')) return 32_768
-  if (m.includes('moonshot-v1-8k')) return 8_192
-  if (m.includes('moonshot')) return 131_072
-  // MiniMax
-  if (m.includes('minimax-m3')) return 1_000_000
-  if (m.includes('minimax-m2')) return 200_000
-  // Qwen Cloud
-  if (m.includes('qwen3.8')) return 1_000_000
-  if (m.includes('qwen3.7-max') || m.includes('qwen3.7-plus')) return 1_000_000
-  if (m.includes('qwen3.6')) return 1_000_000
-  if (m.includes('qwen3.5-plus') || m.includes('qwen3.5-flash')) return 1_000_000
-  if (m.includes('qwen3-max') || m.includes('qwen3-coder')) return 131_072
-  if (m.includes('qwen-max') || m.includes('qwen-plus')) return 131_072
-  if (m.includes('qwen-turbo') || m.includes('qwen-flash')) return 131_072
-  // Stepfun
-  if (m.includes('step-3')) return 128_000
-  if (m.includes('step-2-16k')) return 16_000
-  if (m.includes('step-2')) return 128_000
-  if (m.includes('step-1-200k')) return 200_000
-  if (m.includes('step-1-128k')) return 128_000
-  if (m.includes('step-1')) return 64_000
-  // Z.ai / GLM (Zhipu). Specific versions before the bare-family checks
-  // since "glm-5" is a substring of glm-5.1 / glm-5.2 / glm-5-turbo.
-  if (m.includes('glm-5.2')) return 1_000_000
-  if (m.includes('glm-5.1')) return 204_800
-  if (m.includes('glm-5-turbo')) return 204_800
-  if (m.includes('glm-5')) return 204_800
-  if (m.includes('glm-4.7')) return 204_800
-  if (m.includes('glm-4.6')) return 204_800
-  if (m.includes('glm-4.5')) return 131_072
-  if (m.includes('glm')) return 131_072
-  // OpenRouter — model IDs are prefixed with provider slug (e.g. "anthropic/claude-…")
-  // so the checks above for bare model names won't match. Catch the common ones here.
-  if (m.includes('anthropic/claude')) return 200_000
-  if (m.includes('openai/gpt-5') || m.includes('openai/gpt-4.1')) return 1_000_000
-  if (m.includes('openai/gpt-4o')) return 128_000
-  if (m.includes('openai/o3') || m.includes('openai/o4')) return 200_000
-  if (m.includes('google/gemini-2')) return 1_000_000
-  if (m.includes('deepseek/deepseek')) return 128_000
-  if (m.includes('meta-llama/')) return 131_072
-  if (m.includes('mistralai/')) return 131_072
-  if (m.includes('qwen/')) return 131_072
-  // xAI / Grok — verified against GET /v1/models `context_length` (2026-08-13).
-  if (m.includes('grok-4.6') || m.includes('grok-4.5')) return 500_000
-  if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 1_000_000
-  if (m.includes('grok-build')) return 256_000
-  if (m.includes('grok-4')) return 256_000
-  if (m.includes('grok-3')) return 131_072
-  if (m.includes('grok-2')) return 131_072
-  // OpenAI
-  if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
-  if (m.includes('gpt-5')) return 400_000
-  if (m.includes('gpt-4.1')) return 1_000_000
-  if (m.includes('gpt-4o')) return 128_000
-  if (m.includes('gpt-4')) return 128_000
-  if (m.includes('o1-mini')) return 128_000
-  if (m.includes('o1')) return 128_000
-  if (m.includes('o3') || m.includes('o4')) return 200_000
-  if (m.includes('gpt-3.5')) return 16_000
-  return 8_000
+  if (m.includes('deepseek')) return 128_000
+  return 128_000
 }
 
 /**
- * Max output tokens (max_tokens / max_completion_tokens) that the provider
- * sends for a given model. Used by getContextBudget() to reserve space.
- * For Anthropic the input/output budgets are independent so this returns 0.
+ * Max output tokens the provider requests for a model. Reserved out of the
+ * context budget. Same placeholder posture as contextWindowForModel.
  */
 function maxOutputForModel(model: string): number {
   const m = model.toLowerCase()
-  // Anthropic — input and output windows are separate
-  if (m.includes('opus-4') || m.includes('sonnet-4') || m.includes('haiku-4')) return 0
-  if (m.includes('claude')) return 0
-  if (/3\.[57]-(sonnet|haiku)/.test(m)) return 0
-  // DeepSeek — must match maxTokensFor in providers/deepseek.ts (65,536 for
-  // the v4 line; the API cap is 384K but we request 64K).
   if (m.includes('deepseek-v4')) return 65_536
-  // Xiaomi Mimo
-  if (m.includes('mimo-v2.5-pro')) return 65_536
-  if (m.includes('mimo')) return 32_768
-  // Kimi / Moonshot
-  if (m.includes('kimi-k3')) return 131_072
-  if (m.includes('kimi-k2')) return 65_536
-  if (m.includes('moonshot-v1-128k')) return 16_384
-  if (m.includes('moonshot-v1-32k')) return 8_192
-  if (m.includes('moonshot-v1-8k')) return 4_096
-  if (m.includes('moonshot')) return 8_192
-  // MiniMax
-  if (m.includes('minimax-m3')) return 65_536
-  if (m.includes('minimax-m2')) return 32_768
-  // Qwen
-  if (m.includes('qwen3.8')) return 131_072
-  if (m.includes('qwen3.7') || m.includes('qwen3.6') || m.includes('qwen3.5')) return 65_536
-  if (m.includes('qwen3')) return 32_768
-  if (m.includes('qwen-plus')) return 32_768
-  if (m.includes('qwen')) return 8_192
-  // Stepfun
-  if (m.includes('step-3')) return 32_768
-  if (m.includes('step-2') || m.includes('step-1')) return 8_192
-  // Z.ai / GLM — uniform 65,536 output budget (under every model's cap:
-  // glm-4.5/4.5-air = 98,304, glm-4.6+ = 131,072). Matches maxTokensFor
-  // in providers/zai.ts.
-  if (m.includes('glm')) return 65_536
-  // xAI / Grok
-  if (
-    m.includes('grok-4.6') ||
-    m.includes('grok-4.5') ||
-    m.includes('grok-4.3') ||
-    m.includes('grok-4.20')
-  )
-    return 65_536
-  if (m.includes('grok-4') || m.includes('grok-build')) return 32_768
-  if (m.includes('grok')) return 32_768
-  // OpenAI
-  if (m.includes('gpt-5')) return 65_536
-  if (m.includes('gpt-4.1')) return 32_768
-  if (m.includes('gpt-4o') || m.includes('gpt-4')) return 16_384
-  if (m.includes('o1')) return 32_768
-  if (m.includes('o3') || m.includes('o4')) return 65_536
-  // OpenRouter prefixed models — match provider slug patterns
-  if (m.includes('anthropic/')) return 0
-  if (m.includes('openai/gpt-5')) return 65_536
-  if (m.includes('openai/o3') || m.includes('openai/o4')) return 65_536
-  if (m.includes('openai/gpt-4.1')) return 32_768
-  if (m.includes('openai/gpt-4o')) return 16_384
-  if (m.includes('deepseek/')) return 32_768
-  if (m.includes('google/gemini')) return 65_536
+  if (m.includes('deepseek')) return 32_768
   return 32_768
 }
 

@@ -1053,7 +1053,7 @@ async function prepareImage(source: string, slot = 'an image input'): Promise<Pr
 // ── Video / audio preparation (ffmpeg) ───────────────────────────────────
 
 /**
- * Prefer the wolffish-managed ffmpeg (~/.wolffish/bin/ffmpeg/ffmpeg — the
+ * Prefer the wolffish-managed ffmpeg (~/.wfc/bin/ffmpeg/ffmpeg — the
  * layout the ffmpeg capability installs); fall back to PATH. Same
  * resolution the WhatsApp GIF transcoder uses.
  */

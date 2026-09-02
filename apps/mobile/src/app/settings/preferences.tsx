@@ -8,12 +8,14 @@ import { PanelScreen, Section } from '@/components/settings/SettingsUI'
 import { useTranslation } from 'react-i18next'
 
 /**
- * Preferences — the desktop WolffishPanel, mirrored. The RAM guard, the two
- * agent safety switches and the week-start choice are editable here:
+ * Preferences — the desktop WolffishPanel, mirrored. The RAM guard, the
+ * credentials guard and the week-start choice are editable here:
  * setConfigValue routes them through the outbox to the desktop, which
  * persists them exactly as its own panel would and announces the change
  * back. Launch at startup stays display-only — it registers a login item
  * with that machine's OS, an act only the desktop can perform on itself.
+ * Bypass permissions is not a preference any more: it rides with the model
+ * selection in the chat controls (PermissionsSwitch), as on the desktop.
  */
 export default function PreferencesScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.
@@ -47,11 +49,6 @@ export default function PreferencesScreen(): React.JSX.Element {
         />
       </Section>
       <Section title={t('settings.preferences.safetyTitle')}>
-        <ConfigSwitchRow
-          field="bypassPermissions"
-          label={t('settings.preferences.bypassPermissions')}
-          description={t('settings.preferences.bypassPermissionsDescription')}
-        />
         <ConfigSwitchRow
           field="blockCredentials"
           label={t('settings.preferences.blockCredentials')}

@@ -1,4 +1,5 @@
-import type { DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
+import { clearProfile, prefetchProfile, setAvatarLocal } from '@lib/profile/profileStore'
+import type { AuthState, DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
 import { FlowContext, type FlowContextValue, type Screen } from '@providers/flow/useFlow'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
@@ -10,7 +11,8 @@ export const MIN_FREE_DISK_BYTES = 5 * 1024 ** 3
 
 export function FlowProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [status, setStatus] = useState<WorkspaceStatus | null>(null)
-  const [screen, setScreen] = useState<Screen>('welcome')
+  const [auth, setAuth] = useState<AuthState | null>(null)
+  const [screen, setScreen] = useState<Screen>('auth')
   const [returnTo, setReturnTo] = useState<Screen | null>(null)
   const [ready, setReady] = useState(false)
   const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
@@ -25,8 +27,16 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const decideInitialScreen = useCallback(async (): Promise<{
     screen: Screen
     status: WorkspaceStatus
+    auth: AuthState
   }> => {
-    let s = await window.api.workspace.getStatus()
+    const s = await window.api.workspace.getStatus()
+
+    // -1. The cloud session gates everything: until it is ready, the only
+    //     screen is the auth gate (splash → sign in → change → PIN).
+    const a = await window.api.auth.getState()
+    if (a.status !== 'ready') {
+      return { screen: 'auth' as Screen, status: s, auth: a }
+    }
 
     // 0. Free disk warning. If we can't read free disk (null), don't block —
     //    let the user through and surface real errors downstream rather
@@ -38,52 +48,57 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       sys.freeDiskBytes != null &&
       sys.freeDiskBytes < MIN_FREE_DISK_BYTES
     ) {
-      return { screen: 'low-disk-space', status: s }
+      return { screen: 'low-disk-space' as Screen, status: s, auth: a }
     }
 
-    const selectedModel = s.config?.llm.local.model ?? null
-    const ollama = await window.api.ollama.detect()
-
-    // 1. Selected model + Ollama reachable: verify the model is still
-    //    installed in Ollama. If it was removed via `ollama rm` or never
-    //    actually finished pulling, clear our selection and route to picker
-    //    so the user can re-select.
-    if (selectedModel && ollama.reachable) {
-      const installed = await window.api.ollama.listInstalled()
-      const stillThere = installed.some((tag) => tag.name === selectedModel)
-      if (stillThere) {
-        return { screen: 'chat', status: s }
-      }
-      await window.api.model.clear()
-      s = await window.api.workspace.getStatus()
-      return { screen: 'model-picker', status: s }
-    }
-
-    // 2. Onboarding incomplete → welcome (theme/locale)
+    // Onboarding incomplete → welcome (theme/locale); otherwise straight to
+    // chat. Model availability is the org API's concern — sign-in and the
+    // server-driven catalog land with the auth + API integration phases.
     if (!s.onboardingCompleted) {
-      return { screen: 'welcome', status: s }
+      return { screen: 'welcome' as Screen, status: s, auth: a }
     }
-
-    // 3. Ollama not reachable → chat (Ollama is optional; in-chat notice
-    //    guides the user to configure a model if nothing is available).
-    if (!ollama.reachable) {
-      return { screen: 'chat', status: s }
-    }
-
-    // 4. Ollama reachable, no model → picker
-    return { screen: 'model-picker', status: s }
+    return { screen: 'chat' as Screen, status: s, auth: a }
   }, [])
+
+  // Live auth transitions: a session becoming ready leaves the gate via
+  // the normal initial-screen decision; losing it (sign-out, revocation,
+  // PIN lockout) drops every surface back to the gate immediately.
+  const screenRef = useRef<Screen>('auth')
+  useEffect(() => {
+    screenRef.current = screen
+  }, [screen])
+  // Avatar revalidations (an update or removal, here or on another device)
+  // land in the profile store so the sheet and sidebar card stay current.
+  useEffect(() => {
+    return window.api.auth.onAvatarChanged((dataUrl) => setAvatarLocal(dataUrl))
+  }, [])
+  useEffect(() => {
+    return window.api.auth.onChanged((state) => {
+      setAuth(state)
+      if (state.status === 'ready') {
+        prefetchProfile()
+        if (screenRef.current === 'auth') {
+          void decideInitialScreen().then((r) => {
+            setAuth(r.auth)
+            setStatus(r.status)
+            setScreen(r.screen)
+          })
+        }
+      } else if (state.status !== 'initializing') {
+        clearProfile()
+        setScreen('auth')
+      }
+    })
+  }, [decideInitialScreen])
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([
-      decideInitialScreen(),
-      window.api.system.getInfo(),
-      window.api.updater.consumePostUpdate().catch(() => false)
-    ]).then(([r, sys, justUpdated]) => {
+    void Promise.all([decideInitialScreen(), window.api.system.getInfo()]).then(([r, sys]) => {
       if (cancelled) return
+      setAuth(r.auth)
+      if (r.auth.status === 'ready') prefetchProfile()
       setStatus(r.status)
-      setScreen(justUpdated && r.screen === 'chat' ? 'changelog' : r.screen)
+      setScreen(r.screen)
       setSystemInfo(sys)
       setReady(true)
     })
@@ -118,12 +133,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     setScreen(next)
   }, [])
 
-  const clearModel = useCallback(async () => {
-    await window.api.model.clear()
-    await refreshStatus()
-    setScreen('model-picker')
-  }, [refreshStatus])
-
   const revalidateScreen = useCallback(async () => {
     const r = await decideInitialScreen()
     setStatus(r.status)
@@ -138,6 +147,7 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const value = useMemo<FlowContextValue>(
     () => ({
       screen,
+      auth,
       status,
       dataAnalytics,
       systemInfo,
@@ -145,12 +155,12 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       goTo,
       returnTo,
       refreshStatus,
-      clearModel,
       revalidateScreen,
       dismissDiskGate
     }),
     [
       screen,
+      auth,
       status,
       dataAnalytics,
       systemInfo,
@@ -158,7 +168,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       goTo,
       returnTo,
       refreshStatus,
-      clearModel,
       revalidateScreen,
       dismissDiskGate
     ]

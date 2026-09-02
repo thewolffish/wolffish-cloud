@@ -15,6 +15,7 @@
 import { generateKeypair, type Keypair } from '@main/tunnel/noise'
 import { fromBase64Url, rendezvousId, toBase64Url, toHex } from '@main/tunnel/pairing'
 import { workspaceRoot } from '@main/workspace/root'
+import { patchConfig, readConfig } from '@main/workspace/workspace'
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -173,18 +174,40 @@ export async function clearPairing(): Promise<void> {
   await write({ identity: state.identity, pairing: null, relayUrl: state.relayUrl ?? null })
 }
 
-/** The stored relay override, or null when the default applies. */
+/**
+ * The stored relay override, or null when the default applies.
+ *
+ * config.json (cloud-synced) is the durable home; the pairing file is the
+ * pre-sync legacy location, adopted into config once when found so an old
+ * install's override starts syncing without the user touching anything.
+ */
 export async function loadRelayUrl(): Promise<string | null> {
-  return (await read())?.relayUrl ?? null
+  const cfg = await readConfig()
+  const fromConfig = cfg?.mobile?.relayUrl
+  if (typeof fromConfig === 'string' && fromConfig) return fromConfig
+  const legacy = (await read())?.relayUrl ?? null
+  if (legacy) {
+    await patchConfig((c) => ({ ...c, mobile: { ...c.mobile, relayUrl: legacy } })).catch(
+      () => undefined
+    )
+  }
+  return legacy
 }
 
 /** Persist (or clear, with null) the relay override. Survives unpairing. */
 export async function saveRelayUrl(url: string | null): Promise<void> {
-  // loadIdentity() mints and persists a keypair when none exists, so the
-  // override is never written into a key-less file.
+  // The synced copy is authoritative; write it first so the override can
+  // never exist only on this device.
+  await patchConfig((c) => {
+    const mobile = { ...c.mobile }
+    if (url) mobile.relayUrl = url
+    else delete mobile.relayUrl
+    return { ...c, mobile }
+  })
+  // Keep the legacy file coherent for older builds sharing this workspace.
   await loadIdentity()
   const state = await read()
-  if (!state) throw new Error('mobile identity unavailable')
+  if (!state) return
   await write({ identity: state.identity, pairing: state.pairing ?? null, relayUrl: url })
 }
 

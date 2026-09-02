@@ -6,7 +6,7 @@
 // trigger it explicitly with a progress bar — and check whether it's ready so
 // the panels can gate voice/model selection until then. It is purely additive:
 // it reuses the shared python runtime (the exact code the plugins use) and the
-// same on-disk layout (~/.wolffish/bin), so a manual install and a lazy
+// same on-disk layout (~/.wfc/bin), so a manual install and a lazy
 // first-use install converge on the same cached artifacts — neither redoes the
 // other's work.
 //
@@ -90,12 +90,12 @@ async function fileSized(p: string): Promise<boolean> {
   }
 }
 
-// The managed bin tree (~/.wolffish/bin) — a sibling of the workspace, mirroring
+// The managed bin tree (~/.wfc/bin) — a sibling of the workspace, mirroring
 // pythonRuntime()'s own BIN computation so the model cache dir matches the
 // plugin's modelDir() byte-for-byte.
 function binBase(): string {
   const ws = workspaceRoot()
-  return ws ? join(dirname(ws), 'bin') : join(homedir(), '.wolffish', 'bin')
+  return ws ? join(dirname(ws), 'bin') : join(homedir(), '.wfc', 'bin')
 }
 
 function kokoroModelDir(): string {
@@ -213,11 +213,11 @@ export async function sttStatus(): Promise<EngineStatus> {
 let ttsInFlight: Promise<EngineInstallResult> | null = null
 let sttInFlight: Promise<EngineInstallResult> | null = null
 
-// Authoritative in-flight state, mirroring updater.ts. A renderer that mounts
-// (or reloads) mid-install queries this to recover live progress instead of
-// resetting — the install keeps running in main regardless of the UI. The
-// progress stream still flows via the IPC handler's onProgress; this just makes
-// the current value queryable at any moment.
+// Authoritative in-flight state. A renderer that mounts (or reloads)
+// mid-install queries this to recover live progress instead of resetting —
+// the install keeps running in main regardless of the UI. The progress stream
+// still flows via the IPC handler's onProgress; this just makes the current
+// value queryable at any moment.
 const ttsRuntime: EngineRuntimeState = { installing: false, progress: null, error: null }
 const sttRuntime: EngineRuntimeState = { installing: false, progress: null, error: null }
 

@@ -40,7 +40,7 @@ function ok(label: string, cond: boolean, detail?: string): void {
   console.error(`FAIL ${label}${detail ? `: ${detail}` : ''}`)
 }
 
-/** A throwaway workspace — nothing here ever touches ~/.wolffish. */
+/** A throwaway workspace — nothing here ever touches ~/.wfc. */
 async function makeWorkspace(): Promise<{ root: string; topicBumps: () => number }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wolffish-knowledge-'))
   for (const dir of [

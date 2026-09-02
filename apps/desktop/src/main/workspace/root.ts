@@ -8,7 +8,7 @@ import path from 'node:path'
  * of them keeps the import graph acyclic — add nothing here that imports from
  * the rest of the app.
  */
-export const WORKSPACE_ROOT = path.join(os.homedir(), '.wolffish', 'workspace')
+export const WORKSPACE_ROOT = path.join(os.homedir(), '.wfc', 'workspace')
 
 export function workspaceRoot(): string {
   return WORKSPACE_ROOT

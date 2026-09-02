@@ -9,7 +9,7 @@ const manifest = {
   name: '__MSG_extensionName__',
   browser_specific_settings: {
     gecko: {
-      id: 'wolffish@wolffi.sh',
+      id: 'wolffish-cloud@wolffi.sh',
       strict_min_version: '109.0',
     },
   },

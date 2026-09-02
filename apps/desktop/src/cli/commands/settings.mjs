@@ -116,13 +116,13 @@ function suggest(cards, id) {
     out(c.gray('  did you mean:'))
     for (const candidate of close) out(`    ${candidate}`)
   } else {
-    out(c.gray('  list them all with: wolffish settings list'))
+    out(c.gray('  list them all with: wfc settings list'))
   }
 }
 
 /**
  * Provider keys, entered without echo and never as an argv token. A key typed
- * as `wolffish settings set … sk-live-…` lands in the shell history file; this
+ * as `wfc settings set … sk-live-…` lands in the shell history file; this
  * path does not.
  */
 export async function manageKeys(client, args) {
@@ -150,7 +150,7 @@ export async function manageKeys(client, args) {
       )
     }
     out()
-    out(c.gray('  add or replace a key from this card, or: wolffish keys set <provider>'))
+    out(c.gray('  add or replace a key from this card, or: wfc keys set <provider>'))
     return 0
   }
 
@@ -168,7 +168,7 @@ export async function manageKeys(client, args) {
     const known = providers.length > 0 ? providers : KNOWN_PROVIDERS.map((id) => ({ id }))
     if (known.length === 0) {
       out(c.yellow('  no providers configured yet'))
-      out(c.gray('  wolffish keys set <provider> — anthropic, openai, deepseek, xai, ...'))
+      out(c.gray('  wfc keys set <provider> — anthropic, openai, deepseek, xai, ...'))
       return 1
     }
     heading('Provider')
@@ -195,7 +195,7 @@ export async function manageKeys(client, args) {
   if (sub === 'set') {
     const [provider, model] = rest
     if (!provider) {
-      out(c.red('usage: wolffish keys set <provider> [model]'))
+      out(c.red('usage: wfc keys set <provider> [model]'))
       return 2
     }
     // A key has to be TYPED. On a non-TTY with no session there is nobody to
@@ -222,7 +222,7 @@ export async function manageKeys(client, args) {
      *
      * `provider:test` is what fetches the provider's model catalogue, and
      * `provider:save` stores whatever it is handed. Saving a bare key stored
-     * `models: undefined`, so `wolffish brain <provider> <model>` had nothing
+     * `models: undefined`, so `wfc brain <provider> <model>` had nothing
      * to offer and nothing to validate against: the key was accepted, the
      * provider looked configured, and the first real turn failed on a model
      * name the user had to guess. A wrong key also failed here rather than
@@ -253,12 +253,12 @@ export async function manageKeys(client, args) {
     }
     out(`${icon.ok()} saved key for ${c.bold(provider)}`)
     if (models.length) {
-      out(c.gray(`  ${models.length} models available — wolffish brain ${provider} <model>`))
+      out(c.gray(`  ${models.length} models available — wfc brain ${provider} <model>`))
     }
     return 0
   }
 
-  out(c.red(`unknown: wolffish keys ${sub}`))
+  out(c.red(`unknown: wfc keys ${sub}`))
   return 2
 }
 
@@ -277,7 +277,7 @@ export async function brain(client, args) {
   if (args.length > 0) {
     const [providerId, model] = args
     if (!providerId || !model) {
-      out(c.red('usage: wolffish brain <provider> <model>'))
+      out(c.red('usage: wfc brain <provider> <model>'))
       return 2
     }
     await client.invoke('provider:setBrain', { providerId, model })
@@ -289,7 +289,7 @@ export async function brain(client, args) {
   const connected = providers.filter((p) => Boolean(p.apiKey))
   if (connected.length === 0) {
     out(c.yellow('  no provider has a key yet'))
-    out(c.gray('  add one from this card, or: wolffish keys set <provider>'))
+    out(c.gray('  add one from this card, or: wfc keys set <provider>'))
     return 1
   }
 
@@ -320,7 +320,7 @@ export async function brain(client, args) {
       ])
     )
     out()
-    out(c.gray('  wolffish brain <provider> <model>'))
+    out(c.gray('  wfc brain <provider> <model>'))
     return 0
   }
 
@@ -349,7 +349,7 @@ export async function brain(client, args) {
   return 0
 }
 
-/** `wolffish vars` — prompt variables, the one list the phone also edits. */
+/** `wfc vars` — prompt variables, the one list the phone also edits. */
 export async function variables(client, args) {
   const [sub, name, ...valueParts] = args
   const current = await client.invoke('variables:list').catch(() => [])
@@ -367,14 +367,14 @@ export async function variables(client, args) {
   }
   if (sub === 'set') {
     if (!name) {
-      out(c.red('usage: wolffish vars set <name> <value>'))
+      out(c.red('usage: wfc vars set <name> <value>'))
       return 2
     }
     const value = valueParts.join(' ')
     const next = current.filter((v) => v.name !== name)
     /**
      * A variable whose name reads like a credential is stored sensitive, so
-     * `wolffish vars` masks it the way the desktop does. Every CLI-created
+     * `wfc vars` masks it the way the desktop does. Every CLI-created
      * variable used to be `sensitive: false`, which meant a key put in from the
      * terminal printed in full on every later listing — the one surface where
      * the listing lands in scrollback.
@@ -394,11 +394,11 @@ export async function variables(client, args) {
     out(`${icon.ok()} removed ${name}`)
     return 0
   }
-  out(c.red(`unknown: wolffish vars ${sub}`))
+  out(c.red(`unknown: wfc vars ${sub}`))
   return 2
 }
 
-/** `wolffish capabilities` — the same list and toggles the panel shows. */
+/** `wfc capabilities` — the same list and toggles the panel shows. */
 export async function capabilities(client, args) {
   const [sub, name] = args
   const list = await client.invoke('cerebellum:listCapabilities').catch(() => [])
@@ -414,12 +414,12 @@ export async function capabilities(client, args) {
       ])
     )
     out()
-    out(c.gray('  wolffish capabilities on|off <name>'))
+    out(c.gray('  wfc capabilities on|off <name>'))
     return 0
   }
   if (sub === 'on' || sub === 'off') {
     if (!name) {
-      out(c.red(`usage: wolffish capabilities ${sub} <name>`))
+      out(c.red(`usage: wfc capabilities ${sub} <name>`))
       return 2
     }
     try {
@@ -446,6 +446,6 @@ export async function capabilities(client, args) {
     out(`${icon.ok()} ${name} ${sub}`)
     return 0
   }
-  out(c.red(`unknown: wolffish capabilities ${sub}`))
+  out(c.red(`unknown: wfc capabilities ${sub}`))
   return 2
 }

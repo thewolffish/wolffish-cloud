@@ -243,6 +243,11 @@
         "sunday": "Sunday",
         "monday": "Monday",
         "description": "Sets the day Wolffish treats as the first day of the week. Drives how the activity heatmap is laid out and how date ranges like \"this week\" line up in your head. Default is Monday (the ISO 8601 standard most of the world uses); pick Sunday if your calendar app and routines start there. Internal weekly memory files keep their existing ISO-week names so older summaries don't shift."
+      },
+      "account": {
+        "title": "Account",
+        "signOut": "Sign out",
+        "signOutDescription": "Ends this device’s session with Wolffish Cloud and returns to the sign-in screen."
       }
     },
     "knowledge": {
@@ -470,13 +475,21 @@
           "network": "Can't reach {{provider}} — check connection.",
           "generic": "Test failed: {{message}}"
         }
-      }
+      },
+      "title": "Models",
+      "orgSubtitle": "Models available to this account, set by your organization.",
+      "orgExplainer": "No provider keys live on this device — every call flows through your organization, which enforces the allowlist and quotas server-side. Admins change the catalog per user or org-wide, and this list follows.",
+      "catalogTitle": "Your models",
+      "loading": "Loading your catalog…",
+      "defaultBadge": "org default",
+      "ctx": "ctx",
+      "perMtok": "per Mtok",
+      "reasoningChip": "reasoning",
+      "visionChip": "vision"
     },
     "channels": {
       "tabs": {
         "inapp": "In-App",
-        "telegram": "Telegram",
-        "whatsapp": "WhatsApp",
         "mobile": "Mobile",
         "cli": "CLI",
         "browser": "Browser"
@@ -490,7 +503,7 @@
           "description": "Off (default) prints a clean feed: what the agent says, the files it delivers, and anything that failed. On adds the model chip and every tool call and result, the same way the in-app verbose toggle does."
         },
         "path": {
-          "title": "The wolffish command",
+          "title": "The wfc command",
           "installed": "Ready",
           "missing": "Not on your PATH",
           "install": "Install command",
@@ -498,7 +511,7 @@
           "remove": "Remove",
           "installed_at": "Installed at",
           "resolves": "Your shell runs",
-          "shadowed": "Another program named \"wolffish\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
+          "shadowed": "Another program named \"wfc\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
           "needsEntry": "Its folder is not on your PATH yet. Add this line, then open a new terminal:",
           "failed": "Could not install the command: {{error}}",
           "hint": "Wolffish writes this automatically on every launch, so it stays pointed at the current version after an update.",
@@ -507,7 +520,7 @@
           "toast": {
             "installed": "Command installed",
             "needsPath": "Installed — add its folder to your PATH",
-            "shadowed": "Installed, but another wolffish runs first",
+            "shadowed": "Installed, but another wfc runs first",
             "failed": "Could not install the command",
             "removed": "Command removed",
             "removeFailed": "Could not remove the command"
@@ -586,7 +599,9 @@
         "google": "Google Workspace",
         "memes": "Memes",
         "computerUse": "Computer Use",
-        "video": "Video generation"
+        "video": "Video generation",
+        "telegram": "Telegram",
+        "whatsapp": "WhatsApp"
       },
       "gate": {
         "missingTitle": "Capability not installed",
@@ -685,8 +700,8 @@
       },
       "telegram": {
         "title": "Telegram",
-        "subtitle": "Talk to Wolffish from Telegram. Same agent, same memory, same history.",
-        "enable": "Enable Telegram channel",
+        "subtitle": "Integration with Telegram — reach your agent from the Telegram app. Same agent, same memory, same history.",
+        "enable": "Enable Telegram integration",
         "enableDescription": "Message Wolffish from Telegram to access it remotely.",
         "toggle": {
           "on": "On",
@@ -773,49 +788,37 @@
       "brave": {
         "title": "Brave Search",
         "platform": "Platform",
-        "subtitle": "Use Brave Search API as the primary web-search provider, with DuckDuckGo as fallback.",
-        "enable": "Enable Brave Search",
-        "enableDescription": "When on, web searches go through Brave first. When off, DuckDuckGo is used directly.",
-        "toggle": {
-          "on": "On",
-          "off": "Off"
+        "subtitle": "Web search for your agent, provided by your organization through Brave Search.",
+        "managedTitle": "Provided by your organization",
+        "managedBadge": "org managed",
+        "refresh": "Refresh",
+        "refreshing": "Refreshing…",
+        "rows": {
+          "provider": "Provider",
+          "status": "Status",
+          "today": "Your searches today",
+          "month": "Organization this month",
+          "price": "Price per search",
+          "rate": "Plan rate limit",
+          "unlimited": "unlimited",
+          "perSecond": "{{count}} per second",
+          "of": "{{used}} of {{cap}}"
         },
-        "apiKey": "API key",
-        "apiKeyPlaceholder": "BSA_…",
-        "apiKeyHint": "Free key (2,000/mo) from <link>api.search.brave.com</link>. Stored locally in config.json.",
-        "showKey": "Show",
-        "hideKey": "Hide",
-        "test": "Save",
-        "testConnection": "Test connection",
-        "testHint": "Sends a tiny query to Brave to verify the key works. Counts toward your monthly quota.",
-        "save": "Save",
-        "status": {
-          "label": "Status",
-          "configured": "Active",
-          "disabled": "Inactive",
-          "error": "Error"
+        "state": {
+          "ready": "Active",
+          "disabled": "Turned off by your organization",
+          "unconfigured": "Not set up yet by your organization",
+          "signed_out": "Sign in to see your allowance",
+          "unreachable": "Can't reach your organization"
         },
-        "testSuccess": "Brave API key works ({{count}} results returned)",
-        "testFailure": "Test failed: {{message}}",
-        "saveSuccess": "Brave settings saved",
-        "validation": {
-          "keyRequired": "API key is required when enabled."
-        },
-        "errors": {
-          "missing_key": "API key is required.",
-          "invalid_key": "Key rejected — copy a new one from Brave.",
-          "rate_limit": "Rate-limited by Brave — wait and retry.",
-          "subscription": "Brave subscription expired — check your plan.",
-          "network": "Can't reach Brave — check connection.",
-          "unknown": "Brave returned an error: {{message}}"
-        },
+        "attribution": "Powered by Brave",
         "howItWorksTitle": "How it works",
         "howItWorks": {
-          "primary": "Brave runs first when enabled with a valid key.",
-          "fallback": "Falls back to DuckDuckGo on rate-limit, error, or timeout.",
-          "free": "Free tier: 2,000 queries/month, 1 per second.",
-          "paid": "Heavier use needs a paid plan.",
-          "privacy": "Key stays in your config.json — no proxy, no telemetry."
+          "lane": "Every web search goes through your organization's API, which holds the one Brave Search key — no key on this device, nothing to paste.",
+          "fair": "Searches from everyone in the company are queued fairly behind the plan's rate limit, so a busy colleague never gets you rate-limited.",
+          "caps": "Admins set a daily allowance per person and a monthly budget for the company; when either is reached the agent says so instead of failing silently.",
+          "meter": "Each search is metered to your account at the plan price and shows in Usage, on the phone and in the CLI.",
+          "privacy": "The query is sent to Brave with the company key only. Your organization records that a search happened — never what you searched for."
         }
       },
       "notion": {
@@ -1040,7 +1043,8 @@
           "inactive": "Inactive",
           "error": "Error",
           "accounts": "Connected accounts",
-          "project": "Project ID"
+          "project": "Project ID",
+          "needsReconnect": "Reconnect needed"
         },
         "errors": {
           "platform_unsupported": "Unsupported OS / architecture",
@@ -1073,6 +1077,10 @@
             "Encrypted backups — export account data to age-encrypted Git shards",
             "Email tracking — track opens for sent mail"
           ]
+        },
+        "reconnect": {
+          "title": "Reconnect Google on this device",
+          "body": "Google Workspace is set up in your synced settings, but this device holds no Google credentials — they never leave a device. Upload your OAuth client and add your account below to reconnect."
         }
       },
       "memes": {
@@ -1129,7 +1137,7 @@
       },
       "whatsapp": {
         "title": "WhatsApp",
-        "subtitle": "Connect Wolffish to WhatsApp. Scan the QR code to link your account.",
+        "subtitle": "Integration with WhatsApp — link your account with a QR scan and reach your agent from WhatsApp.",
         "enable": "Enable WhatsApp",
         "enableDescription": "Connect to WhatsApp and listen for messages.",
         "toggle": {
@@ -1241,7 +1249,7 @@
         "revealWindows": "Reveal in Explorer",
         "revealLinux": "Open in Files",
         "portLabel": "WebSocket Port",
-        "portHint": "The port the extension connects to. Default is 23151. Change only if there's a conflict.",
+        "portHint": "The port the extension connects to. Default is 23152. Change only if there's a conflict.",
         "savePort": "Save",
         "resolutionLabel": "Screenshot resolution",
         "resolutionHint": "Maximum width in pixels. Lower values use less tokens but reduce detail.",
@@ -1549,18 +1557,7 @@
         "dailyAverage": "Daily Average"
       },
       "providers": {
-        "local": "Ollama",
-        "anthropic": "Anthropic",
-        "openai": "OpenAI",
-        "deepseek": "DeepSeek",
-        "mimo": "Xiaomi Mimo",
-        "kimi": "Kimi",
-        "minimax": "MiniMax",
-        "xai": "xAI",
-        "qwen": "Qwen",
-        "stepfun": "Stepfun",
-        "zai": "Z.ai",
-        "openrouter": "OpenRouter",
+        "cloud": "Wolffish Cloud",
         "brave": "Brave Search"
       },
       "tokens": "tokens",
@@ -1733,14 +1730,6 @@
       "unpairHint": "Forget this phone and drop its keys. Pairing again needs a new QR or code."
     }
   },
-  "update": {
-    "available": "Update available",
-    "install": "Update",
-    "changelog": "Changelog"
-  },
-  "changelog": {
-    "empty": "No changelog entries yet."
-  },
   "chat": {
     "placeholder": "Message Wolffish",
     "send": "Send",
@@ -1820,6 +1809,11 @@
       "copying": "Copying",
       "copyingFile": "Copying {{name}} into Wolffish",
       "copyingWait": "Wait for the file to finish copying"
+    },
+    "hydration": {
+      "downloading": "Downloading conversation files",
+      "count": "{{done}} of {{total}}",
+      "downloadingFile": "Downloading…"
     },
     "pdfViewer": {
       "loading": "Loading PDF",
@@ -2090,7 +2084,9 @@
       "search": "Search models",
       "noProviders": "Connect a provider API key in Settings first.",
       "noResults": "No models match your search.",
-      "noLocalModels": "No Ollama models installed yet."
+      "noLocalModels": "No Ollama models installed yet.",
+      "orgSection": "Your model",
+      "orgManaged": "Your organization manages this catalog."
     },
     "modePicker": {
       "ariaLabel": "Choose the chat mode",
@@ -2128,6 +2124,14 @@
         "cost": "Cost"
       },
       "tokens": "{{compact}} tok"
+    },
+    "permissions": {
+      "ariaLabel": "Permissions",
+      "label": "Actions",
+      "ask": "Ask",
+      "askDesc": "Ask before sensitive actions — approvals appear in chat.",
+      "bypass": "Bypass",
+      "bypassDesc": "Skip permission prompts — the agent acts without asking."
     }
   },
   "workspace": {
@@ -2285,7 +2289,6 @@
       "folders": "Working folders ({{count}})",
       "addFolders": "Add folders",
       "removeFolder": "Remove folder",
-      "expandPrompt": "Click to edit the prompt",
       "prompt": "Prompt",
       "promptPlaceholder": "Write the prompt to run…",
       "autosaveHint": "Saved automatically once the schedule and prompt are valid.",
@@ -2335,7 +2338,6 @@
     "titleRequired": "A title is required",
     "instructions": "Instructions",
     "instructionsPlaceholder": "Write the instructions every conversation in this project starts from…",
-    "expandInstructions": "Click to edit the instructions",
     "noInstructions": "No instructions yet.",
     "copy": "Copy instructions",
     "copied": "Instructions copied",
@@ -2393,7 +2395,6 @@
     "projectIcon": "Uses the project’s icon",
     "titleRequired": "A title is required",
     "prompt": "Prompt",
-    "expandPrompt": "Click to edit the prompt",
     "files": "Files ({{count}})",
     "addFiles": "Add files",
     "removeFile": "Remove file",
@@ -2474,5 +2475,116 @@
       "timeout": "provider timed out",
       "serverError": "provider unavailable"
     }
+  },
+  "auth": {
+    "working": "Working…",
+    "continue": "Continue",
+    "backToSignIn": "Back to sign in",
+    "signIn": {
+      "title": "Wolffish Cloud",
+      "subtitle": "Sign in with your work account.",
+      "email": "Work email",
+      "password": "Password",
+      "submit": "Sign in"
+    },
+    "change": {
+      "title": "Set your password",
+      "subtitle": "Replace your temporary password to continue.",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm new password",
+      "policy": "At least 10 characters.",
+      "mismatch": "Passwords don’t match.",
+      "submit": "Set password & sign in"
+    },
+    "pin": {
+      "createTitle": "Create your PIN",
+      "createSubtitle": "A 4-digit quick lock for this device.",
+      "confirmPrompt": "Enter it again to confirm.",
+      "setSubmit": "Set PIN",
+      "mismatch": "PINs didn’t match — start over.",
+      "note": "Local to this device — your admin can clear it."
+    },
+    "lock": {
+      "title": "Welcome back{{name}}",
+      "wrongWithAttempts": "Wrong PIN — {{count}} left before sign-out.",
+      "signOutInstead": "Sign out and use your password instead"
+    },
+    "errors": {
+      "invalid_credentials": "Wrong email or password.",
+      "rate_limited": "Too many attempts — try again soon.",
+      "account_disabled": "This account is disabled. Contact your admin.",
+      "temp_password_expired": "Temp password expired — ask your admin.",
+      "weak_password": "Password too weak — use at least 10 characters.",
+      "network": "Can’t reach Wolffish Cloud.",
+      "pin_wrong": "Wrong PIN.",
+      "pin_format": "PIN must be 4 digits.",
+      "pin_lockout": "Too many wrong PINs — signed out.",
+      "session_expired": "Session ended. Sign in again.",
+      "session_revoked": "Session ended by your organization.",
+      "generic": "Something went wrong. Try again.",
+      "email_not_found": "No account with that email.",
+      "wrong_password": "Wrong password.",
+      "invalid_code": "Wrong code — check the email and try again.",
+      "code_expired": "That code expired or was used up. Request a new one.",
+      "email_send_failed": "Couldn't send the email. Try again.",
+      "email_not_configured": "Email is not configured on the server yet."
+    },
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "signedInToast": "Signed in as {{name}}",
+    "reset": {
+      "link": "Forgot password?",
+      "title": "Reset your password",
+      "requestSubtitle": "We'll email you a 6-digit code.",
+      "confirmSubtitle": "Enter the code we emailed to {{email}}, then choose a new password.",
+      "sendCode": "Send code",
+      "codePlaceholder": "6-digit code",
+      "submit": "Reset password",
+      "done": "Password reset — sign in with your new password",
+      "resend": "Send a new code"
+    }
+  },
+  "profile": {
+    "title": "Profile",
+    "sectionProfile": "Profile",
+    "name": "Full name",
+    "phone": "Mobile number",
+    "save": "Save",
+    "saved": "Saved.",
+    "sectionPassword": "Change password",
+    "currentPassword": "Current password",
+    "passwordChanged": "Password changed.",
+    "changePassword": "Change password",
+    "sectionPin": "Change PIN",
+    "currentPin": "Current PIN",
+    "newPin": "New PIN",
+    "pinChanged": "PIN changed.",
+    "changePin": "Change PIN",
+    "lockNow": "Lock now",
+    "discard": "Discard changes",
+    "position": "Position",
+    "positionPlaceholder": "e.g. Software Engineer",
+    "email": "Work email",
+    "emailLocked": "Email is managed by your admin.",
+    "bio": "Bio",
+    "bioPlaceholder": "A line or two about you.",
+    "validation": {
+      "nameRequired": "Name is required.",
+      "nameLong": "Name is too long (max 200).",
+      "positionLong": "Position is too long (max 120).",
+      "phoneFormat": "Phone can use digits, spaces, + ( ) - only.",
+      "phoneLong": "Phone is too long (max 32).",
+      "bioLong": "Bio is too long (max 500).",
+      "currentRequired": "Current password is required.",
+      "photoType": "Use a PNG, JPEG or WebP image.",
+      "photoTooLarge": "Image must be under 2 MB."
+    },
+    "signOut": "Sign out",
+    "signOutTitle": "Sign out?",
+    "signOutBody": "You'll need your password to sign back in.",
+    "uploadPhoto": "Upload photo",
+    "removePhoto": "Remove photo",
+    "photoUpdated": "Photo updated",
+    "photoRemoved": "Photo removed"
   }
 }

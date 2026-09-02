@@ -4,7 +4,9 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 /**
  * The Preferences row's summary: whether the desktop comes up on its own, then
- * whether the agent still stops to ask.
+ * whether the credentials guard is holding. (Bypass was the second half until
+ * it moved to the chat controls with the model selection — the summary
+ * follows the tab it summarises.)
  *
  * Both halves are read from the store per render rather than at mount, because
  * both are the desktop's to change while this list is open — `launchAtStartup`
@@ -12,9 +14,10 @@ jest.mock('@react-native-async-storage/async-storage', () =>
  * way every other mirrored preference does, through a snapshot.
  *
  * The colour is the other assertion, and each half carries its own: green when
- * the machine acts on its own, amber when it will not — an off that is
- * announced from the list rather than found by opening the tab. A tone that
- * followed the wrong half would look exactly as deliberate as the right one.
+ * the guard holds or the machine starts itself, amber when it will not — an
+ * off that is announced from the list rather than found by opening the tab. A
+ * tone that followed the wrong half would look exactly as deliberate as the
+ * right one.
  *
  * No hand-rolled `act`: store writes are settled by waitFor.
  */
@@ -43,34 +46,34 @@ afterEach(cleanup)
 
 describe('Preferences summary', () => {
   it('states both preferences, startup first, in the panel’s own order', async () => {
-    useDemoConfig.setState({ launchAtStartup: true, bypassPermissions: true })
+    useDemoConfig.setState({ launchAtStartup: true, blockCredentials: true })
     await draw()
     expect(screen.getByText('Startup On')).toBeTruthy()
-    expect(screen.getByText('Bypass On')).toBeTruthy()
+    expect(screen.getByText('Credentials On')).toBeTruthy()
   })
 
   it('follows the store, so a desktop change moves the row without a remount', async () => {
-    useDemoConfig.setState({ launchAtStartup: false, bypassPermissions: true })
+    useDemoConfig.setState({ launchAtStartup: false, blockCredentials: true })
     await draw()
     expect(screen.getByText('Startup Off')).toBeTruthy()
     // What a snapshot carrying the desktop's own preferences amounts to.
-    useDemoConfig.setState({ launchAtStartup: true, bypassPermissions: false })
+    useDemoConfig.setState({ launchAtStartup: true, blockCredentials: false })
     await waitFor(() => expect(screen.getByText('Startup On')).toBeTruthy())
-    expect(screen.getByText('Bypass Off')).toBeTruthy()
+    expect(screen.getByText('Credentials Off')).toBeTruthy()
   })
 
   it('colours each half from its own state, never from its neighbour’s', async () => {
-    useDemoConfig.setState({ launchAtStartup: true, bypassPermissions: false })
+    useDemoConfig.setState({ launchAtStartup: true, blockCredentials: false })
     await draw()
     expect(classesOf('Startup On')).toContain(OK)
-    expect(classesOf('Bypass Off')).toContain(WARN)
+    expect(classesOf('Credentials Off')).toContain(WARN)
   })
 
   it('turns amber the moment either one goes off', async () => {
-    useDemoConfig.setState({ launchAtStartup: false, bypassPermissions: true })
+    useDemoConfig.setState({ launchAtStartup: false, blockCredentials: true })
     await draw()
     expect(classesOf('Startup Off')).toContain(WARN)
-    expect(classesOf('Bypass On')).toContain(OK)
+    expect(classesOf('Credentials On')).toContain(OK)
     // Neither half falls back to the muted grey the plain summaries print.
     expect(classesOf('Startup Off')).not.toContain(MUTED)
   })
