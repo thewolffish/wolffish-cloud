@@ -131,6 +131,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promi
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
+async function affinityId(cacheKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cacheKey))
+  return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 ai.post('/v1/chat/completions', async (c) => {
   const auth = c.get('auth')
 
@@ -161,6 +166,15 @@ ai.post('/v1/chat/completions', async (c) => {
     body.stream_options = { ...(body.stream_options as object | undefined), include_usage: true }
   }
   const cacheKey = typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
+  // Cache affinity, both ways the OpenAI wire expresses it: the client's
+  // prompt_cache_key passes through, and the `user` field (which some hosts
+  // use to route a session's calls to one replica) is derived from it — a
+  // hash, so nothing identity-shaped ever goes upstream. Measured live on
+  // DeepInfra 2026-09-02 (two 31-call agentic runs, 3–5 s between calls):
+  // warm calls cache 94–98% of the prompt, but ~40% of calls land on a cold
+  // replica with either field, so on that host this hint changes nothing;
+  // it stays for hosts that honor it.
+  if (cacheKey && body.user === undefined) body.user = await affinityId(cacheKey)
 
   // ── Governance ───────────────────────────────────────────────────────
   const org = await getOrgConfig(c.env)
