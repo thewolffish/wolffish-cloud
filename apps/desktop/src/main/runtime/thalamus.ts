@@ -645,7 +645,7 @@ export class Thalamus {
           }`
         })
         if (attempt >= 4) return null
-        await sleep(delays[attempt], signal)
+        await sleep(retryDelayMs(err, delays[attempt] ?? 90_000), signal)
       }
     }
     return null
@@ -910,7 +910,7 @@ export class Thalamus {
         if (attempt >= RETRY_DELAYS_MS.length) {
           return { kind: 'failed', failure: lastFailure }
         }
-        const delay = RETRY_DELAYS_MS[attempt]
+        const delay = retryDelayMs(err, RETRY_DELAYS_MS[attempt] ?? 90_000)
         attempt += 1
         this.emit('llm.retry', {
           provider: entry.id,
@@ -1048,6 +1048,22 @@ function toInfo(f: ProviderFailure): NoProviderAvailableInfo {
   }
 }
 
+/**
+ * How long to wait before the next attempt: the server's own hint when it
+ * gave one (the org API's Retry-After / retry_after_ms — its gate knows when
+ * the hosts reopen), else the ladder — either way with ±25% jitter, so five
+ * hundred clients that failed in the same second never retry in the same
+ * second.
+ */
+function retryDelayMs(err: unknown, ladder: number): number {
+  const hinted = (err as { retryAfterMs?: unknown } | null)?.retryAfterMs
+  const base =
+    typeof hinted === 'number' && Number.isFinite(hinted) && hinted > 0
+      ? Math.max(1_000, Math.min(hinted, 120_000))
+      : ladder
+  return Math.round(base * (0.75 + Math.random() * 0.5))
+}
+
 function isAbortError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const name = (err as { name?: string }).name
@@ -1064,6 +1080,12 @@ function classifyError(err: unknown): { statusCode: number | null; errorClass: E
   const message = err instanceof Error ? err.message : String(err)
   const status = parseHttpStatus(message)
   if (status !== null) {
+    // The org's own quota refusal is a 429 that no amount of waiting cures
+    // today (an admin raises the cap, or the UTC day rolls over): hard, so a
+    // capped employee sees the refusal at once instead of a five-step ladder.
+    if (status === 429 && /"quota_exceeded"/.test(message)) {
+      return { statusCode: status, errorClass: 'hard' }
+    }
     if (TRANSIENT_STATUSES.has(status)) return { statusCode: status, errorClass: 'transient' }
     if (HARD_STATUSES.has(status)) return { statusCode: status, errorClass: 'hard' }
     return { statusCode: status, errorClass: 'unknown' }

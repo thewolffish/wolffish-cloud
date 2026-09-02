@@ -126,6 +126,25 @@ export function reasoningEffortFor(
   return effort === 'off' ? 'none' : effort
 }
 
+/**
+ * The API's own advice on when to try again: a Retry-After header (seconds)
+ * or a retry_after_ms field in the JSON body. The org gate sends one when
+ * every host is resting; honoring it beats a blind ladder.
+ */
+export function retryAfterMs(header: string | null, bodyText: string): number | undefined {
+  const secs = Number(header)
+  if (header && Number.isFinite(secs) && secs >= 0) return Math.round(secs * 1000)
+  try {
+    const j = JSON.parse(bodyText) as { retry_after_ms?: unknown }
+    if (typeof j?.retry_after_ms === 'number' && j.retry_after_ms >= 0) {
+      return Math.round(j.retry_after_ms)
+    }
+  } catch {
+    // not JSON — no hint
+  }
+  return undefined
+}
+
 export function mapFinishReason(reason: string | null | undefined): StopReason {
   switch (reason) {
     case 'stop':
@@ -250,7 +269,12 @@ export class CloudProvider {
     })
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '')
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 400)}`)
+      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 400)}`) as Error & {
+        retryAfterMs?: number
+      }
+      const hinted = retryAfterMs(res.headers.get('retry-after'), text)
+      if (hinted !== undefined) err.retryAfterMs = hinted
+      throw err
     }
 
     const assembler = new ToolCallAssembler()

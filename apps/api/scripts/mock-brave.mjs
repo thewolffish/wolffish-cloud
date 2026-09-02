@@ -10,9 +10,10 @@
  * requests in any second answer 429. That is what lets the smoke prove the
  * gate: a burst through the Worker must reach here with zero 429s.
  *
- * A query containing MOCK_MONTH_EXHAUSTED answers 429 with a zero monthly
- * remainder and a 2-second reset, so the gate's fail-fast path is provable
- * without waiting a month. A query containing MOCK_NO_MONTH answers 200
+ * A query containing MOCK_MONTH_EXHAUSTED (or MOCK_EXHAUST_TOKEN, so a pool
+ * test can spend one instance and not the other) answers 429 with a zero
+ * monthly remainder and a 2-second reset, so the gate's fail-fast and
+ * fail-over paths are provable without waiting a month. A query containing MOCK_NO_MONTH answers 200
  * with the headers a pay-as-you-go plan really sends (monthly limit and
  * remainder both 0, a month-long reset — seen live 2026-09-02): the gate
  * must NOT read that as an exhausted month. GET /stats reports what
@@ -23,6 +24,9 @@ import { createServer } from 'node:http'
 const PORT = Number(process.env.PORT ?? 9091)
 const KEY = process.env.MOCK_BRAVE_KEY ?? 'mock-brave-key'
 const QPS = Number(process.env.MOCK_BRAVE_QPS ?? 5)
+// The query token that makes THIS instance answer "month exhausted" — per
+// instance, so a pool test can spend one plan while the other keeps serving.
+const EXHAUST_TOKEN = process.env.MOCK_EXHAUST_TOKEN ?? 'MOCK_MONTH_EXHAUSTED'
 const MONTH = 15_000
 
 let sent = []
@@ -73,7 +77,7 @@ createServer((req, res) => {
     return
   }
 
-  if (q.includes('MOCK_MONTH_EXHAUSTED')) {
+  if (q.includes(EXHAUST_TOKEN)) {
     stats.rateLimited++
     res.writeHead(429, headers(0, 0, 2))
     res.end(JSON.stringify({ type: 'ErrorResponse', error: { status: 429, code: 'RATE_LIMITED' } }))

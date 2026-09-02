@@ -4,8 +4,85 @@
     {
       "name": "desktop-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/desktop", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/desktop",
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "api-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && npx wrangler dev --port 8787"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "mock-deepinfra",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && node scripts/mock-deepinfra.mjs"
+      ],
+      "port": 9090
+    },
+    {
+      "name": "mock-deepinfra-b",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && PORT=9092 node scripts/mock-deepinfra.mjs"
+      ],
+      "port": 9092
+    },
+    {
+      "name": "mock-deepinfra-load",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && MOCK_CONCURRENCY=120 MOCK_STREAM_CHUNKS=6 MOCK_CHUNK_DELAY_MS=300 MOCK_REALISTIC=1 node scripts/mock-deepinfra.mjs"
+      ],
+      "port": 9090
+    },
+    {
+      "name": "mock-deepinfra-b-load",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && PORT=9092 MOCK_CONCURRENCY=100 MOCK_STREAM_CHUNKS=6 MOCK_CHUNK_DELAY_MS=300 MOCK_REALISTIC=1 node scripts/mock-deepinfra.mjs"
+      ],
+      "port": 9092
+    },
+    {
+      "name": "mock-brave",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && node scripts/mock-brave.mjs"
+      ],
+      "port": 9091
+    },
+    {
+      "name": "mock-brave-b",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && PORT=9093 MOCK_EXHAUST_TOKEN=MOCK_MONTH_EXHAUSTED_B node scripts/mock-brave.mjs"
+      ],
+      "port": 9093
+    },
+    {
+      "name": "mock-deepinfra-slow",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/api && PORT=9094 MOCK_TTFB_MS=200000 node scripts/mock-deepinfra.mjs"
+      ],
+      "port": 9094
     }
   ]
 }

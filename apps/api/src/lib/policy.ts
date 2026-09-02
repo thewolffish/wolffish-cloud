@@ -1,14 +1,19 @@
 /**
- * Model governance: effective allowlists and token quotas.
+ * Model governance: effective allowlists and caps.
  *
- * D1 is the source of truth; CONFIG_KV holds short-TTL caches (admin
- * mutations delete the cached keys, so edits land within a minute even
- * before TTL expiry). Quota counters live in AUTH-adjacent KV too: they
- * are advisory speed bumps — best-effort, bumped non-atomically per call,
- * and reset only by their UTC period key rolling over. The usage table is
- * the authoritative RECORD, but nothing reconciles the counters against
- * it (no such cron exists), so racing calls can undercount a period
- * slightly. Acceptable: caps are guardrails, not billing.
+ * D1 is the source of truth; CONFIG_KV holds cached copies so the hot path
+ * never reads D1 for config. Two rules keep the cache from ever becoming a
+ * failure: a cache write is best-effort (KV allows one write per key per
+ * second and throws a 429 above it — a burst of concurrent misses all
+ * re-filling the same key is normal at scale, and only one of them needs to
+ * land), and a miss simply reads D1. Admin mutations delete the cached keys,
+ * so edits land within the edge cache window (~a minute) regardless of the
+ * long expiry.
+ *
+ * The live quota COUNTERS no longer live here: they are kept by the gates
+ * (ModelGate for tokens, SearchGate for queries) in durable object storage,
+ * incremented atomically by the call they already admit. The usage table
+ * remains the authoritative record.
  */
 import type { Env } from '@/index'
 
@@ -31,14 +36,16 @@ export type EffectivePolicy = {
   dailySearchCap: number
 }
 
-const ORG_TTL = 60
-const POLICY_TTL = 60
+/** How long a cached copy lives centrally; misses are rare, refills are cheap. */
+const CACHE_TTL_SECONDS = 3600
+/** Edge read cache: the propagation window an admin edit is allowed to take. */
+const EDGE_TTL_SECONDS = 60
 
 /**
  * One shape from either source: the D1 row (integers for booleans, JSON
  * text for the list) or our own cached copy (already typed). Search-lane
- * fields default when absent — a cached copy from before migration 0008
- * lives at most ORG_TTL seconds, and must not crash the lane meanwhile.
+ * fields default when absent so a cached copy from before migration 0008
+ * can never crash the lane.
  */
 function normalizeOrg(o: Record<string, unknown>): OrgConfig {
   const list = o.default_allowed_models
@@ -56,13 +63,32 @@ function normalizeOrg(o: Record<string, unknown>): OrgConfig {
   }
 }
 
+/** Best-effort cache fill: a lost race to write is not an error. */
+async function cachePut(env: Env, key: string, value: unknown): Promise<void> {
+  try {
+    await env.CONFIG_KV.put(key, JSON.stringify(value), { expirationTtl: CACHE_TTL_SECONDS })
+  } catch {
+    // Another isolate refilled this key within the same second; its copy is
+    // as good as ours. KV's per-key write limit must never surface as a 500.
+  }
+}
+
+async function cacheGet(env: Env, key: string): Promise<Record<string, unknown> | null> {
+  try {
+    const v = await env.CONFIG_KV.get(key, { type: 'json', cacheTtl: EDGE_TTL_SECONDS })
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
 export async function getOrgConfig(env: Env): Promise<OrgConfig | null> {
-  const cached = await env.CONFIG_KV.get('org', 'json')
-  if (cached) return normalizeOrg(cached as Record<string, unknown>)
+  const cached = await cacheGet(env, 'org')
+  if (cached) return normalizeOrg(cached)
   const row = await env.DB.prepare('SELECT * FROM org WHERE id = 1').first<Record<string, unknown>>()
   if (!row) return null
   const org = normalizeOrg(row)
-  await env.CONFIG_KV.put('org', JSON.stringify(org), { expirationTtl: ORG_TTL })
+  await cachePut(env, 'org', org)
   return org
 }
 
@@ -77,11 +103,10 @@ function safeArray(json: string | null): string[] {
 
 export async function getEffectivePolicy(env: Env, userId: string): Promise<EffectivePolicy> {
   const key = `policy:${userId}`
-  const cached = await env.CONFIG_KV.get(key, 'json')
+  const cached = await cacheGet(env, key)
   if (cached) {
     const p = cached as Omit<EffectivePolicy, 'dailySearchCap'> & { dailySearchCap?: number }
     if (typeof p.dailySearchCap === 'number') return p as EffectivePolicy
-    // A copy cached before the search lane existed (≤ POLICY_TTL old).
     const org = await getOrgConfig(env)
     return { ...p, dailySearchCap: org?.user_daily_search_cap ?? 0 }
   }
@@ -104,90 +129,11 @@ export async function getEffectivePolicy(env: Env, userId: string): Promise<Effe
     dailyCap: row?.daily_token_cap ?? org?.user_daily_token_cap ?? 0,
     dailySearchCap: row?.daily_search_cap ?? org?.user_daily_search_cap ?? 0
   }
-  await env.CONFIG_KV.put(key, JSON.stringify(policy), { expirationTtl: POLICY_TTL })
+  await cachePut(env, key, policy)
   return policy
 }
 
 export function modelAllowed(model: string, policy: EffectivePolicy, org: OrgConfig): boolean {
   if (policy.allowed.length > 0) return policy.allowed.includes(model)
   return model === org.default_model
-}
-
-/** UTC period keys — reset happens by the key changing, cron just tidies. */
-const dayKey = (userId: string) =>
-  `q:d:${userId}:${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
-const monthKey = () => `q:m:${new Date().toISOString().slice(0, 7).replace(/-/g, '')}`
-
-export async function quotaStanding(
-  env: Env,
-  userId: string,
-  policy: EffectivePolicy,
-  org: OrgConfig
-): Promise<{ ok: boolean; scope?: 'user_daily' | 'org_monthly'; used: number; cap: number }> {
-  const [userUsed, orgUsed] = await Promise.all([
-    env.CONFIG_KV.get(dayKey(userId)).then((v) => parseInt(v ?? '0', 10)),
-    env.CONFIG_KV.get(monthKey()).then((v) => parseInt(v ?? '0', 10))
-  ])
-  if (policy.dailyCap > 0 && userUsed >= policy.dailyCap) {
-    return { ok: false, scope: 'user_daily', used: userUsed, cap: policy.dailyCap }
-  }
-  if (org.org_monthly_token_cap > 0 && orgUsed >= org.org_monthly_token_cap) {
-    return { ok: false, scope: 'org_monthly', used: orgUsed, cap: org.org_monthly_token_cap }
-  }
-  return { ok: true, used: userUsed, cap: policy.dailyCap }
-}
-
-/** Non-atomic KV bump: races undercount slightly; usage rows stay exact. */
-export async function bumpQuota(env: Env, userId: string, tokens: number): Promise<void> {
-  if (tokens <= 0) return
-  const dk = dayKey(userId)
-  const mk = monthKey()
-  const [d, m] = await Promise.all([env.CONFIG_KV.get(dk), env.CONFIG_KV.get(mk)])
-  await Promise.all([
-    env.CONFIG_KV.put(dk, String(parseInt(d ?? '0', 10) + tokens), { expirationTtl: 2 * 86_400 }),
-    env.CONFIG_KV.put(mk, String(parseInt(m ?? '0', 10) + tokens), { expirationTtl: 40 * 86_400 })
-  ])
-}
-
-// ── The search lane's counters: same shape, counted in queries ───────────
-
-const searchDayKey = (userId: string) =>
-  `qs:d:${userId}:${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
-const searchMonthKey = () => `qs:m:${new Date().toISOString().slice(0, 7).replace(/-/g, '')}`
-
-export async function searchQuotaStanding(
-  env: Env,
-  userId: string,
-  policy: EffectivePolicy,
-  org: OrgConfig
-): Promise<{
-  ok: boolean
-  scope?: 'user_daily' | 'org_monthly'
-  used: number
-  cap: number
-  orgUsed: number
-  orgCap: number
-}> {
-  const [used, orgUsed] = await Promise.all([
-    env.CONFIG_KV.get(searchDayKey(userId)).then((v) => parseInt(v ?? '0', 10)),
-    env.CONFIG_KV.get(searchMonthKey()).then((v) => parseInt(v ?? '0', 10))
-  ])
-  const cap = policy.dailySearchCap
-  const orgCap = org.org_monthly_search_cap
-  if (cap > 0 && used >= cap) return { ok: false, scope: 'user_daily', used, cap, orgUsed, orgCap }
-  if (orgCap > 0 && orgUsed >= orgCap) {
-    return { ok: false, scope: 'org_monthly', used, cap, orgUsed, orgCap }
-  }
-  return { ok: true, used, cap, orgUsed, orgCap }
-}
-
-/** One more search on the user's day and the org's month. */
-export async function bumpSearchQuota(env: Env, userId: string): Promise<void> {
-  const dk = searchDayKey(userId)
-  const mk = searchMonthKey()
-  const [d, m] = await Promise.all([env.CONFIG_KV.get(dk), env.CONFIG_KV.get(mk)])
-  await Promise.all([
-    env.CONFIG_KV.put(dk, String(parseInt(d ?? '0', 10) + 1), { expirationTtl: 2 * 86_400 }),
-    env.CONFIG_KV.put(mk, String(parseInt(m ?? '0', 10) + 1), { expirationTtl: 40 * 86_400 })
-  ])
 }

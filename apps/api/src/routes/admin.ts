@@ -19,6 +19,7 @@ import {
   UserPatchSchema
 } from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
+import { runNightly } from '@/lib/nightly'
 import {
   requireAuth,
   requireAdmin,
@@ -465,17 +466,22 @@ admin.delete('/capabilities/:slug', async (c) => {
 admin.get('/usage', async (c) => {
   const since = c.req.query('since') ?? new Date(Date.now() - 30 * 86_400_000).toISOString()
   const userId = c.req.query('user_id') ?? null
+  // Totals come from the per-day rollup the meter keeps (one row per user,
+  // day and lane), never from a scan of raw rows — a month of a 500-person
+  // org is ~30k rollup rows against millions of raw ones, and the totals
+  // survive the raw-row retention sweep. The recent list is raw.
   const [totals, recent] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT user_id, COUNT(*) AS requests,
+      `SELECT user_id, SUM(requests) AS requests,
          SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+         SUM(tokens_cached) AS tokens_cached,
          SUM(cost_microusd) AS cost_microusd,
-         SUM(CASE WHEN decision != 'allowed' THEN 1 ELSE 0 END) AS denied,
-         SUM(CASE WHEN kind = 'search' AND decision = 'allowed' THEN 1 ELSE 0 END) AS searches
-       FROM usage WHERE created_at >= ?1 AND (?2 IS NULL OR user_id = ?2)
+         SUM(denied) AS denied,
+         SUM(CASE WHEN kind = 'search' THEN requests - denied ELSE 0 END) AS searches
+       FROM usage_daily WHERE day >= ?1 AND (?2 IS NULL OR user_id = ?2)
        GROUP BY user_id ORDER BY cost_microusd DESC`
     )
-      .bind(since, userId)
+      .bind(since.slice(0, 10), userId)
       .all(),
     c.env.DB.prepare(
       `SELECT * FROM usage WHERE created_at >= ?1 AND (?2 IS NULL OR user_id = ?2)
@@ -485,6 +491,36 @@ admin.get('/usage', async (c) => {
       .all()
   ])
   return c.json({ since, totals: totals.results ?? [], recent: recent.results ?? [] })
+})
+
+/**
+ * The gates' live state — queue depth, in-flight per host, cooldowns, what
+ * each host has served — the numbers an admin watches when the org grows.
+ */
+admin.get('/gates', async (c) => {
+  const modelGate = c.env.MODEL_GATE.get(c.env.MODEL_GATE.idFromName('org'))
+  const searchGate = c.env.SEARCH_GATE.get(c.env.SEARCH_GATE.idFromName('org'))
+  const userId = c.req.query('user_id') ?? null
+  const [model, search, tokens, searches] = await Promise.all([
+    modelGate.stats().catch(() => null),
+    searchGate.stats().catch(() => null),
+    userId ? modelGate.standing(userId).catch(() => null) : null,
+    userId ? searchGate.standing(userId).catch(() => null) : null
+  ])
+  return c.json({ model, search, ...(userId ? { standing: { user_id: userId, tokens, searches } } : {}) })
+})
+
+/**
+ * Run the nightly maintenance now — the same bounded jobs the cron runs
+ * (blob GC, purge of deleted conversations, archive of idle conversations,
+ * raw usage retirement). For an operator draining a backlog on demand, and
+ * for the simulations that prove the archive path. Audited.
+ */
+admin.post('/maintenance/run', async (c) => {
+  const auth = c.get('auth')
+  const report = await runNightly(c.env, Date.now())
+  await audit(c.env, auth.sub, 'maintenance.run', 'nightly', report)
+  return c.json({ ok: true, report })
 })
 
 admin.get('/audit', async (c) => {

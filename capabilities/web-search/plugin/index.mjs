@@ -14,7 +14,10 @@ import path from 'node:path'
 
 const DEFAULT_MAX_RESULTS = 5
 const DEFAULT_MAX_LENGTH = 15_000
-const ORG_SEARCH_TIMEOUT_MS = 30_000
+// The org gate queues a busy burst itself for up to two minutes before it
+// answers "busy"; the client must outwait that, or it would abandon a query
+// the lane was about to serve.
+const ORG_SEARCH_TIMEOUT_MS = 150_000
 
 // Workspace root captured at init() for the local usage ledger line.
 let workspaceRoot = null
@@ -237,6 +240,21 @@ async function searchOrg(query, maxResults) {
 // A refusal the org meant: the agent must relay it, not route around it.
 const FINAL_LANE_CODES = new Set(['search_quota_exceeded', 'search_quota_exhausted', 'search_busy'])
 
+// "Busy" is rare by construction (the lane queues for up to two minutes
+// first) and transient by definition, so one more try after the delay the
+// lane names covers it — an employee should never see a busy notice for a
+// burst that was draining.
+async function searchOrgWithOneRetry(query, maxResults) {
+  try {
+    return await searchOrg(query, maxResults)
+  } catch (err) {
+    if (err?.code !== 'search_busy') throw err
+    const wait = Math.min(5_000, Math.max(500, Number(err?.body?.retry_after_ms) || 2_000))
+    await new Promise((r) => setTimeout(r, wait))
+    return searchOrg(query, maxResults)
+  }
+}
+
 function describeLaneRefusal(err) {
   const body = err?.body ?? {}
   switch (err?.code) {
@@ -327,7 +345,7 @@ async function executeSearch(args) {
   // falls through to the DDG scrapers so the tool still answers.
   if (cloud) {
     try {
-      results = await searchOrg(query, maxResults)
+      results = await searchOrgWithOneRetry(query, maxResults)
       provider = 'brave'
       recordBraveUsage(query)
     } catch (err) {

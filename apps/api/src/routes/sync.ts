@@ -11,6 +11,7 @@
 import { Hono } from 'hono'
 import type { z } from 'zod'
 import { newId, toHex } from '@/lib/crypto'
+import { readArchive, type ArchiveBlob, type ArchivedRecord } from '@/lib/archive'
 import { BatchItemSchema, BatchSchema, ConfigPutSchema, FilesDeleteSchema } from '@/lib/schemas'
 import { issuesOf, parseJson } from '@/lib/validate'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
@@ -308,12 +309,38 @@ sync.get('/conversations', async (c) => {
   })
 })
 
+/**
+ * Parsed archive blobs, per isolate: a restore pages one conversation 200
+ * records at a time, and re-reading and inflating the same blob for every
+ * page would multiply R2 traffic by the page count. Small and short-lived.
+ */
+const archiveCache = new Map<string, { at: number; blob: ArchiveBlob }>()
+const ARCHIVE_CACHE_TTL_MS = 120_000
+const ARCHIVE_CACHE_MAX = 16
+
+/** Keyed by blob AND archive time, so a re-merged blob is never served stale. */
+async function cachedArchive(env: Env, key: string, archivedAt: string): Promise<ArchiveBlob | null> {
+  const cacheKey = `${key}@${archivedAt}`
+  const hit = archiveCache.get(cacheKey)
+  if (hit && Date.now() - hit.at < ARCHIVE_CACHE_TTL_MS) return hit.blob
+  const blob = await readArchive(env, key)
+  if (!blob) return null
+  if (archiveCache.size >= ARCHIVE_CACHE_MAX) {
+    const oldest = [...archiveCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+    if (oldest) archiveCache.delete(oldest[0])
+  }
+  archiveCache.set(cacheKey, { at: Date.now(), blob })
+  return blob
+}
+
 sync.get('/conversations/:id/records', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  const owns = await c.env.DB.prepare('SELECT user_id FROM conversations WHERE id = ?1')
+  const owns = await c.env.DB.prepare(
+    'SELECT user_id, archive_key, archived_at FROM conversations WHERE id = ?1'
+  )
     .bind(id)
-    .first<{ user_id: string }>()
+    .first<{ user_id: string; archive_key: string | null; archived_at: string | null }>()
   if (!owns || owns.user_id !== auth.sub) return c.json({ error: 'not_found' }, 404)
 
   // Message versions share a seq (the id carries the content hash, the seq the
@@ -339,32 +366,95 @@ sync.get('/conversations/:id/records', async (c) => {
   }
 
   const after = parseInt(c.req.query('after') ?? '0', 10)
-  const cursor = Number.isFinite(after) ? after : 0
+  const cursor = Number.isFinite(after) && after > 0 ? after : 0
   // `limit` lets the client pick a page size it can also use as its stop
   // condition (a short page = the last page). Clamped to the old fixed 200.
   const limitRaw = parseInt(c.req.query('limit') ?? '200', 10)
   const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 200)
-  const rows = await c.env.DB.prepare(
-    `SELECT rowid AS rid, id, seq, kind, content, created_at FROM conversation_records
-     WHERE conversation_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`
-  )
-    .bind(id, cursor, limit)
-    .all<{ rid: number; id: string; seq: number; kind: string; content: string; created_at: string }>()
-  const results = rows.results ?? []
-  const records = results.map((r) => ({
+
+  // One monotonic cursor space over two stores. An archived conversation
+  // serves its blob first: archived record i (1-based, blob order) has cursor
+  // value i, and a live row with rowid r has cursor value N + r, where N is
+  // the blob's record count. The client's "send back next_after" loop needs
+  // no change, pages are always full until the terminator, and N is stable
+  // for the life of the blob (a skipped archived record is skipped, not
+  // removed, so indices never shift under a restore in progress).
+  //
+  // Live wins: a live row with an archived record's id is the newer write
+  // (a re-sent message, or the envelope re-sent since archiving), so the
+  // archived copy is skipped and the live one served — the same rule the
+  // archive merge applies, so the read agrees with the next merge.
+  type Row = { id: string; seq: number; kind: string; content: string; created_at: string }
+  const wire = (r: Row) => ({
     id: r.id,
     seq: r.seq,
     kind: r.kind,
     content: JSON.parse(r.content),
     created_at: r.created_at
-  }))
+  })
+  const page: Array<ReturnType<typeof wire>> = []
+  let nextAfter: number | null = null
+  let n = 0
+
+  const blob =
+    owns.archive_key && owns.archived_at
+      ? await cachedArchive(c.env, owns.archive_key, owns.archived_at)
+      : null
+  if (blob) {
+    const archived: ArchivedRecord[] = blob.records
+    n = archived.length
+    if (cursor < n) {
+      const live = await c.env.DB.prepare(
+        `SELECT id, seq, kind FROM conversation_records WHERE conversation_id = ?1`
+      )
+        .bind(id)
+        .all<{ id: string; seq: number; kind: string }>()
+      const liveIds = new Set((live.results ?? []).map((r) => r.id))
+      // The client must see exactly one envelope: a live snapshot supersedes
+      // an archived one of lower or equal seq.
+      const liveSnapshotSeq = Math.max(
+        -1,
+        ...(live.results ?? []).filter((r) => r.kind === 'snapshot').map((r) => r.seq)
+      )
+      for (let i = cursor; i < n && page.length < limit; i++) {
+        const r = archived[i]!
+        nextAfter = i + 1
+        if (liveIds.has(r.id)) continue
+        if (r.kind === 'snapshot' && liveSnapshotSeq >= 0 && r.seq <= liveSnapshotSeq) continue
+        page.push(wire(r))
+      }
+      if (page.length === limit) {
+        // More archived records, or live rows, may follow: never a false terminator.
+        return c.json({ records: page, next_after: nextAfter })
+      }
+    }
+  }
+
+  // Live rows after the cursor (translated out of the offset space), refilled
+  // until the page is full or the rows are exhausted.
+  let liveCursor = cursor > n ? cursor - n : 0
+  let exhausted = false
+  while (page.length < limit && !exhausted) {
+    const want = limit - page.length
+    const rows = await c.env.DB.prepare(
+      `SELECT rowid AS rid, id, seq, kind, content, created_at FROM conversation_records
+       WHERE conversation_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`
+    )
+      .bind(id, liveCursor, want + 1)
+      .all<Row & { rid: number }>()
+    const results = rows.results ?? []
+    exhausted = results.length <= want
+    for (const r of results.slice(0, want)) {
+      liveCursor = r.rid
+      nextAfter = n + r.rid
+      page.push(wire(r))
+    }
+    if (results.length === 0) break
+  }
   // `next_after: null` = this was the last page. The explicit terminator is
   // the contract (not "a short page"), so the client stays correct even if
   // the server's max page size ever shrinks below what was requested.
-  return c.json({
-    records,
-    next_after: results.length === limit ? results[results.length - 1]!.rid : null
-  })
+  return c.json({ records: page, next_after: exhausted ? null : nextAfter })
 })
 
 sync.delete('/conversations/:id', async (c) => {

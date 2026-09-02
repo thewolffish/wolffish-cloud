@@ -1,10 +1,11 @@
 /**
- * The web-search lane — the model router's twin, for Brave Search.
+ * The web-search lane — the model router's twin, for the search providers.
  *
- * POST /v1/search: session → org switch → per-user daily cap → org monthly
- * cap → the SearchGate (one global queue in front of Brave, see
- * lib/search-gate.ts) → normalize → meter. The desktop's web-search plugin
- * points here with the session token; the org's Brave key exists only
+ * POST /v1/search: session → org switch → the SearchGate (one global queue
+ * in front of the org's search plans, see lib/search-gate.ts — it also
+ * holds the per-user daily and org monthly counters and refuses a capped
+ * employee before queueing) → normalize → meter. The desktop's web-search
+ * plugin points here with the session token; the org's keys exist only
  * behind this door, never on a device.
  *
  * GET /v1/search/status is the "auto configured" half — what the settings
@@ -17,17 +18,14 @@
  */
 import { Hono } from 'hono'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
-import {
-  bumpSearchQuota,
-  getEffectivePolicy,
-  getOrgConfig,
-  searchQuotaStanding
-} from '@/lib/policy'
+import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
 import { SearchSchema } from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
+import { recordUsageSafe, type UsageEvent } from '@/lib/meter'
 import {
   BRAVE_DEFAULT_QPS,
   SEARCH_PRICE_MICROUSD,
+  loadSearchProviders,
   type BraveWebBody,
   type GateResult
 } from '@/lib/search-gate'
@@ -40,33 +38,6 @@ const search = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 search.use('*', requireAuth)
 
 const gateOf = (env: Env) => env.SEARCH_GATE.get(env.SEARCH_GATE.idFromName('org'))
-
-type SearchMeter = {
-  userId: string
-  deviceId: string
-  latencyMs: number
-  decision: 'allowed' | 'denied_quota' | 'error'
-  error?: string
-}
-
-async function meter(env: Env, m: SearchMeter): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO usage (user_id, device_id, model, kind, tokens_in, tokens_out, tokens_cached,
-       cost_microusd, latency_ms, decision, error)
-     VALUES (?1, ?2, ?3, 'search', 0, 0, 0, ?4, ?5, ?6, ?7)`
-  )
-    .bind(
-      m.userId,
-      m.deviceId,
-      SEARCH_MODEL,
-      m.decision === 'allowed' ? SEARCH_PRICE_MICROUSD : 0,
-      m.latencyMs,
-      m.decision,
-      m.error ?? null
-    )
-    .run()
-  if (m.decision === 'allowed') await bumpSearchQuota(env, m.userId)
-}
 
 export type SearchResult = { title: string; snippet: string; url: string }
 
@@ -90,21 +61,23 @@ search.get('/search/status', async (c) => {
   const org = await getOrgConfig(c.env)
   if (!org) return c.json({ error: 'org_not_provisioned' }, 500)
   const policy = await getEffectivePolicy(c.env, auth.sub)
-  const configured = Boolean(c.env.BRAVE_API_KEY)
-  const standing = await searchQuotaStanding(c.env, auth.sub, policy, org)
-  const gate = configured ? await gateOf(c.env).stats().catch(() => null) : null
+  const configured = loadSearchProviders(c.env).length > 0
+  const gate = gateOf(c.env)
+  const [stats, standing] = configured
+    ? await Promise.all([gate.stats().catch(() => null), gate.standing(auth.sub).catch(() => null)])
+    : [null, null]
   return c.json({
     provider: 'brave',
     configured,
     enabled: org.search_enabled,
     ready: configured && org.search_enabled,
-    daily_cap: standing.cap,
-    used_today: standing.used,
-    org_monthly_cap: standing.orgCap,
-    org_used_month: standing.orgUsed,
+    daily_cap: policy.dailySearchCap,
+    used_today: standing?.userDayUsed ?? 0,
+    org_monthly_cap: org.org_monthly_search_cap,
+    org_used_month: standing?.orgMonthUsed ?? 0,
     price_per_query_microusd: SEARCH_PRICE_MICROUSD,
-    plan_qps: gate?.planQps ?? BRAVE_DEFAULT_QPS,
-    gate
+    plan_qps: stats?.planQps ?? BRAVE_DEFAULT_QPS,
+    gate: stats
   })
 })
 
@@ -116,21 +89,14 @@ search.post('/search', async (c) => {
   const org = await getOrgConfig(c.env)
   if (!org) return c.json({ error: 'org_not_provisioned' }, 500)
   if (!org.search_enabled) return c.json({ error: 'search_disabled' }, 403)
-  if (!c.env.BRAVE_API_KEY) return c.json({ error: 'search_not_configured' }, 503)
+  if (loadSearchProviders(c.env).length === 0) return c.json({ error: 'search_not_configured' }, 503)
 
   const policy = await getEffectivePolicy(c.env, auth.sub)
-  const quota = await searchQuotaStanding(c.env, auth.sub, policy, org)
-  if (!quota.ok) {
-    await meter(c.env, {
-      userId: auth.sub,
-      deviceId: auth.dev,
-      latencyMs: 0,
-      decision: 'denied_quota'
-    })
-    return c.json(
-      { error: 'search_quota_exceeded', scope: quota.scope, used: quota.used, cap: quota.cap },
-      429
-    )
+  const base: Omit<UsageEvent, 'decision'> = {
+    userId: auth.sub,
+    deviceId: auth.dev,
+    kind: 'search',
+    model: SEARCH_MODEL
   }
 
   const count = body.count ?? 5
@@ -142,29 +108,30 @@ search.post('/search', async (c) => {
       count,
       country: body.country?.toUpperCase(),
       searchLang: body.search_lang,
-      freshness: body.freshness
+      freshness: body.freshness,
+      caps: { userDaily: policy.dailySearchCap, orgMonthly: org.org_monthly_search_cap }
     })
   } catch {
-    await meter(c.env, {
-      userId: auth.sub,
-      deviceId: auth.dev,
-      latencyMs: 0,
-      decision: 'error',
-      error: 'gate_unavailable'
-    })
-    return c.json({ error: 'search_unavailable' }, 503)
+    await recordUsageSafe(c.env, { ...base, decision: 'error', error: 'gate_unavailable' })
+    return c.json({ error: 'search_unavailable' }, 503, { 'retry-after': '5' })
   }
 
   if (!result.ok) {
-    await meter(c.env, {
-      userId: auth.sub,
-      deviceId: auth.dev,
+    if (result.error === 'search_quota_exceeded') {
+      await recordUsageSafe(c.env, { ...base, decision: 'denied_quota' })
+      return c.json(
+        { error: 'search_quota_exceeded', scope: result.scope, used: result.used, cap: result.cap },
+        429
+      )
+    }
+    await recordUsageSafe(c.env, {
+      ...base,
       latencyMs: result.latencyMs,
       decision: 'error',
       error: result.error
     })
     const headers = result.retryAfterMs
-      ? { 'retry-after': String(Math.ceil(result.retryAfterMs / 1000)) }
+      ? { 'retry-after': String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))) }
       : undefined
     switch (result.error) {
       case 'search_not_configured':
@@ -172,7 +139,7 @@ search.post('/search', async (c) => {
       case 'search_busy':
         return c.json({ error: 'search_busy', retry_after_ms: result.retryAfterMs ?? 2000 }, 503, headers)
       case 'search_quota_exhausted':
-        // Brave's own monthly window, not an org cap: the plan is spent.
+        // Every plan's own monthly window, not an org cap: the plans are spent.
         return c.json(
           { error: 'search_quota_exhausted', scope: 'plan_monthly', retry_after_ms: result.retryAfterMs ?? 0 },
           429,
@@ -188,11 +155,12 @@ search.post('/search', async (c) => {
 
   const results = normalizeResults(result.body, count)
   c.executionCtx.waitUntil(
-    meter(c.env, {
-      userId: auth.sub,
-      deviceId: auth.dev,
+    recordUsageSafe(c.env, {
+      ...base,
+      upstream: result.provider,
       latencyMs: result.latencyMs,
-      decision: 'allowed'
+      decision: 'allowed',
+      fixedCostMicroUsd: SEARCH_PRICE_MICROUSD
     })
   )
   return c.json({
@@ -202,8 +170,9 @@ search.post('/search', async (c) => {
       latency_ms: result.latencyMs,
       waited_ms: result.waitedMs,
       coalesced: result.coalesced,
-      used_today: quota.used + 1,
-      daily_cap: quota.cap
+      upstream: result.provider,
+      used_today: result.standing.userDayUsed,
+      daily_cap: policy.dailySearchCap
     }
   })
 })

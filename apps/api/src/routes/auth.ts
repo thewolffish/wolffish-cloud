@@ -53,8 +53,15 @@ async function bumpRateLimit(
   const current = parseInt((await kv.get(key)) ?? '0', 10)
   if (current >= limit) return false
   // Non-atomic by design: KV races undercount slightly, which only makes
-  // the limit marginally looser. Good enough for a login throttle.
-  await kv.put(key, String(current + 1), { expirationTtl: windowSeconds })
+  // the limit marginally looser. Good enough for a login throttle. KV also
+  // allows one write per key per second and throws a 429 above it — an
+  // office signing in together writes the same IP key many times a second,
+  // and a throttle's bookkeeping must never fail the login itself.
+  try {
+    await kv.put(key, String(current + 1), { expirationTtl: windowSeconds })
+  } catch {
+    // A concurrent login already bumped this key within the second.
+  }
   return true
 }
 
@@ -104,8 +111,9 @@ auth.post('/login', async (c) => {
   if (
     !(await bumpRateLimit(c.env.AUTH_KV, `rl:login:${email}`, 10, 900)) ||
     // Per-email is the brute-force guard; the IP cap only blunts sprays and
-    // must clear a whole office (or the 50-agent simulator) behind one NAT.
-    !(await bumpRateLimit(c.env.AUTH_KV, `rl:ip:${ip}`, 200, 900))
+    // must clear a whole 500-employee office (or the 500-agent load
+    // simulation) signing in behind one NAT within the window.
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:ip:${ip}`, 2000, 900))
   ) {
     return c.json({ error: 'rate_limited' }, 429)
   }

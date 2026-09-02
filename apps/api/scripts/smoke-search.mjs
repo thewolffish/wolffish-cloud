@@ -19,6 +19,9 @@ import { pbkdf2Sync } from 'node:crypto'
 
 const BASE = process.env.API_BASE ?? 'http://localhost:8787'
 const MOCK = process.env.MOCK_BRAVE_BASE ?? 'http://localhost:9091'
+// A second plan in the pool (.dev.vars SEARCH_PROVIDERS) — the smoke adapts
+// its pacing and spill expectations to however many plans the gate reports.
+const MOCK_B = process.env.MOCK_BRAVE_BASE_B ?? 'http://localhost:9093'
 const stamp = Date.now().toString(36)
 const ownerEmail = `searchowner-${stamp}@wolffi.sh`
 const PW = 'search-owner-pass-1'
@@ -61,7 +64,9 @@ const api = async (path, { token, body, method } = {}) => {
   return { status: res.status, json, text, headers: res.headers }
 }
 const mockStats = async () => (await fetch(`${MOCK}/stats`)).json()
+const mockStatsB = async () => (await fetch(`${MOCK_B}/stats`).then((r) => r.json()).catch(() => null))
 await fetch(`${MOCK}/reset`, { method: 'POST' })
+await fetch(`${MOCK_B}/reset`, { method: 'POST' }).catch(() => {})
 
 const owner = await api('/auth/login', { body: { email: ownerEmail, password: PW } })
 check('login', owner.status === 200)
@@ -174,42 +179,51 @@ await api('/admin/org', { token: tok, method: 'PATCH', body: { org_monthly_searc
 check('org cap restored', (await search({ query: 'org restored' })).status === 200)
 
 // ── the burst: the gate's whole point ────────────────────────────────────
-// 24 distinct queries at once against a 5-query-per-second plan (gate
-// admits 4/s). Every one must succeed and NOT ONE may reach the mock as a
-// 429 — the queue, not the employee, absorbs the plan limit.
+// 24 distinct queries at once against 5-query-per-second plans (gate
+// admits 4/s per plan). Every one must succeed and NOT ONE may reach a mock
+// as a 429 — the queue, not the employee, absorbs the plan limit.
+const plans = (await api('/v1/search/status', { token: tok })).json?.gate?.providers?.length ?? 1
 const before = await mockStats()
+const beforeB = await mockStatsB()
 const t0 = Date.now()
 const burst = await Promise.all(
   Array.from({ length: 24 }, (_, i) => search({ query: `burst ${stamp} ${i}`, count: 1 }))
 )
 const burstMs = Date.now() - t0
 const after = await mockStats()
+const afterB = await mockStatsB()
 check(
   'burst of 24 concurrent searches all served',
   burst.every((r) => r.status === 200),
   burst.map((r) => r.status).join(',')
 )
 check(
-  'zero upstream 429s during the burst',
-  after.rateLimited === before.rateLimited,
-  `mock saw ${after.rateLimited - before.rateLimited} rate-limited calls`
+  'zero upstream 429s during the burst (every plan)',
+  after.rateLimited === before.rateLimited && (afterB?.rateLimited ?? 0) === (beforeB?.rateLimited ?? 0),
+  `mocks saw ${after.rateLimited - before.rateLimited}/${(afterB?.rateLimited ?? 0) - (beforeB?.rateLimited ?? 0)} rate-limited calls`
 )
-check('burst was paced by the window (not fired at once)', burstMs >= 4_000, `${burstMs}ms`)
+const minPacedMs = (Math.ceil(24 / (4 * plans)) - 1) * 1000
+check(`burst was paced by the window (not fired at once; ${plans} plan(s) → ≥${minPacedMs}ms)`, burstMs >= minPacedMs, `${burstMs}ms`)
+if (plans > 1) {
+  check('spill-over: the second plan served part of the burst', (afterB?.calls ?? 0) > (beforeB?.calls ?? 0), `plan B calls ${(afterB?.calls ?? 0) - (beforeB?.calls ?? 0)}`)
+}
 check('burst waited inside the gate', burst.some((r) => (r.json?.meta?.waited_ms ?? 0) > 500))
 
 // ── coalescing ───────────────────────────────────────────────────────────
 const sameQuery = `same ${stamp}`
 const same = await Promise.all(Array.from({ length: 8 }, () => search({ query: sameQuery, count: 2 })))
 const statsSame = await mockStats()
+const statsSameB = await mockStatsB()
+const sameCalls = (statsSame.byQuery[sameQuery] ?? 0) + (statsSameB?.byQuery?.[sameQuery] ?? 0)
 check('identical concurrent queries all served', same.every((r) => r.status === 200))
-check('…from ONE upstream call', statsSame.byQuery[sameQuery] === 1, `${statsSame.byQuery[sameQuery]} calls`)
+check('…from ONE upstream call', sameCalls === 1, `${sameCalls} calls`)
 check('…and flagged as coalesced', same.filter((r) => r.json?.meta?.coalesced === true).length === 7)
 
 // ── the gate learned the plan ────────────────────────────────────────────
 const stGate = await api('/v1/search/status', { token: tok })
 check(
-  'gate learned the plan qps from the headers (5 → admits 4/s)',
-  stGate.json?.plan_qps === 5 && stGate.json?.gate?.limitPerSec === 4,
+  `gate learned the plan qps from the headers (5 → admits 4/s per plan, ${plans} plan(s))`,
+  stGate.json?.plan_qps === 5 && stGate.json?.gate?.limitPerSec === 4 * plans,
   JSON.stringify(stGate.json?.gate)
 )
 
@@ -224,16 +238,33 @@ check(
   (await api('/v1/search/status', { token: tok })).json?.gate?.monthExhaustedForMs === 0
 )
 
-// ── an exhausted monthly window fails fast, then reopens ─────────────────
-const exhausted = await search({ query: 'MOCK_MONTH_EXHAUSTED' })
-check(
-  'upstream month exhausted → 429 plan_monthly',
-  exhausted.status === 429 && exhausted.json?.error === 'search_quota_exhausted' && exhausted.json?.scope === 'plan_monthly',
-  JSON.stringify(exhausted.json)
-)
-const callsBefore = (await mockStats()).calls
-const failFast = await search({ query: 'during exhaustion' })
-check('while exhausted: fails fast without calling upstream', failFast.status === 429 && (await mockStats()).calls === callsBefore)
+// ── an exhausted monthly window: fail over, or fail fast, then reopen ─────
+// Plan A's mock spends its month on MOCK_MONTH_EXHAUSTED; plan B's mock (in
+// the pool run) is launched with its own token, so the query spends A only.
+// With one plan the lane closes until the reset; with a pool the query is
+// served by B, and A is skipped until its reset.
+// Let both windows go quiet first, so the query is dispatched to plan A (the
+// first open plan in preference order) rather than to whichever plan the
+// previous burst left open.
+await sleep(1_500)
+const exhausted = await search({ query: plans === 1 ? 'MOCK_MONTH_EXHAUSTED' : 'MOCK_MONTH_EXHAUSTED_A' })
+if (plans === 1) {
+  check(
+    'upstream month exhausted → 429 plan_monthly',
+    exhausted.status === 429 && exhausted.json?.error === 'search_quota_exhausted' && exhausted.json?.scope === 'plan_monthly',
+    JSON.stringify(exhausted.json)
+  )
+  const callsBefore = (await mockStats()).calls
+  const failFast = await search({ query: 'during exhaustion' })
+  check('while exhausted: fails fast without calling upstream', failFast.status === 429 && (await mockStats()).calls === callsBefore)
+} else {
+  check('upstream month exhausted on one plan → served by another (200)', exhausted.status === 200, JSON.stringify(exhausted.json))
+  const spent = (await api('/v1/search/status', { token: tok })).json?.gate?.providers?.filter((p) => p.monthExhaustedForMs > 0).length ?? 0
+  check('…and that plan is marked spent while the lane stays open', spent === 1 && (await api('/v1/search/status', { token: tok })).json?.gate?.monthExhaustedForMs === 0, `spent plans ${spent}`)
+  const aCallsBefore = (await mockStats()).calls
+  check('while one plan is spent: queries keep flowing', (await search({ query: 'during exhaustion' })).status === 200)
+  check('…served without touching the spent plan', (await mockStats()).calls === aCallsBefore)
+}
 await sleep(2_600)
 check('window reset reopens the lane', (await search({ query: 'after reset' })).status === 200)
 
