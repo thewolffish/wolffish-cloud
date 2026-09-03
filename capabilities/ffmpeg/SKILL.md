@@ -106,10 +106,18 @@ tools:
     parameters: {}
   - name: ffmpeg_install
     description: Install ffmpeg with no admin rights — reuse a global ffmpeg, else download a no-root static build into ~/.wfc/bin (no package manager, no password)
-    parameters: {}
+    parameters:
+      timeoutMs:
+        type: number
+        required: false
+        description: Optional. Abort the download after this many milliseconds. Omit for no time limit (recommended on slow connections — the install can be cancelled regardless).
   - name: ffmpeg_install_system
     description: Optional — install ffmpeg AND ffprobe system-wide via the OS (brew / winget / apt|dnf; admin on Linux). Use when a global ffmpeg or ffprobe (video metadata) is needed.
-    parameters: {}
+    parameters:
+      timeoutMs:
+        type: number
+        required: false
+        description: Optional. Abort the download after this many milliseconds. Omit for no time limit (recommended on slow connections — the install can be cancelled regardless).
   - name: ffmpeg_run
     description: "Run an ffmpeg command. IMPORTANT — save output files inside the workspace files/ directory. Never use /tmp/."
     parameters:

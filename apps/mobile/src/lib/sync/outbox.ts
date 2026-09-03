@@ -1,5 +1,5 @@
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc } from '@/lib/bridge/protocol'
 import type { DemoVariable } from '@/state/demoConfig'
 
 /**
@@ -124,7 +124,7 @@ let variablesSending = false
  * burst into few whole-array writes, always the newest.
  */
 export function pushVariables(variables: DemoVariable[]): void {
-  if (!tunnelClient.connected) return
+  if (!bridgeClient.connected) return
   markOutboxEdited('variables')
   variablesLatest = { seq: ++variablesSeq, variables: syncableVariables(variables) }
   scheduleVariablesFlush()
@@ -145,7 +145,7 @@ async function flushVariables(): Promise<void> {
   const batch = variablesLatest
   if (!batch) return
 
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel || !tunnel.connected) {
     // The link is gone, and settings flip read-only with it. The unsent tail
     // is abandoned here — reconnect reconciles from the desktop, which is the
@@ -161,7 +161,7 @@ async function flushVariables(): Promise<void> {
     await tunnel.rpc(Rpc.variablesSet, { variables: batch.variables })
   } catch (error) {
     failed = true
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
   } finally {
     variablesSending = false
   }
@@ -206,7 +206,7 @@ let capabilityRefused = false
 /** Queue one capability toggle for the desktop and send as soon as the wire
  *  is free. Called on every flip while paired and connected. */
 export function pushCapability(name: string, enabled: boolean): void {
-  if (!tunnelClient.connected) return
+  if (!bridgeClient.connected) return
   markOutboxEdited('capabilities')
   capabilityPending.set(name, enabled)
   void flushCapabilities()
@@ -219,7 +219,7 @@ async function flushCapabilities(): Promise<void> {
   const [name, enabled] = head.value
   capabilityPending.delete(name)
 
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel || !tunnel.connected) {
     // The link is gone, and settings flip read-only with it. Offline edits
     // do not exist — reconnect reconciles from the desktop.
@@ -240,7 +240,7 @@ async function flushCapabilities(): Promise<void> {
     }
   } catch (error) {
     failed = true
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
   } finally {
     capabilitySending = false
   }

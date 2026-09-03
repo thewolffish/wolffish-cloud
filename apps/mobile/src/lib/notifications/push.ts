@@ -14,9 +14,9 @@ import {
   type RegisterPushFrame,
   type SetBadgeFrame,
   type UnregisterPushFrame
-} from '@/lib/tunnel/protocol'
-import { toHex } from '@/lib/tunnel/pairing'
-import type { Tunnel } from '@/lib/tunnel/tunnel'
+} from '@/lib/bridge/protocol'
+import type { BridgeClient } from '@/lib/cloud/bridge'
+import * as Crypto from 'expo-crypto'
 import { invalidateConversation } from '@/lib/conversations/cache'
 import { markConversationDirty } from '@/lib/sync/dirty'
 import { badgeTotal, useBadges, whenBadgesHydrated } from '@/state/badges'
@@ -27,16 +27,16 @@ import { badgeTotal, useBadges, whenBadgesHydrated } from '@/state/badges'
  * Two delivery paths land here and the user must never see the same
  * notification twice:
  *
- * - IN-BAND: the relay sends a `notification` control frame over the live
+ * - IN-BAND: the bridge sends a `notification` control frame over the live
  *   tunnel; we render it locally and answer `notification_ack`. If our ack
- *   is not back at the relay within ~2 s it ALSO sends the Expo push, so…
+ *   is not back at the bridge within ~2 s it ALSO sends the Expo push, so…
  * - PUSH: …a remote push can arrive for a notification already rendered.
  *   The persisted `seen` LRU below is what folds the two into one: in-band
  *   renders mark the id seen, and the foreground handler refuses to show a
  *   remote push whose id it already knows. (A push arriving while the app
  *   is closed is displayed by the OS before we run — unavoidable, and only
  *   reachable when the tunnel died mid-ack, since a *live* tunnel is what
- *   makes the relay try in-band first.)
+ *   makes the bridge try in-band first.)
  *
  * Nothing here sends notifications. The phone registers where it can be
  * reached and renders what arrives; whether anything is sent at all is the
@@ -49,39 +49,9 @@ import { badgeTotal, useBadges, whenBadgesHydrated } from '@/state/badges'
  * launchDeeplink.
  */
 
-/** Stable device id — THE phoneId push registrations are keyed by. Minted
- *  once, kept in the OS keystore, deliberately random: it must not be
- *  derivable from (or leak) the tunnel identity key the relay never sees. */
-const KEY_DEVICE_ID = 'wolffish.tunnel.deviceId'
-
 /** Persisted ids of notifications this device already rendered. */
 const KEY_SEEN = 'wolffish.notifications.seen.v1'
 const SEEN_LIMIT = 200
-
-let cachedPhoneId: string | null = null
-
-export async function getPhoneId(): Promise<string> {
-  if (cachedPhoneId) return cachedPhoneId
-  try {
-    const stored = await SecureStore.getItemAsync(KEY_DEVICE_ID)
-    if (stored && /^[a-f0-9]{32}$/.test(stored)) {
-      cachedPhoneId = stored
-      return stored
-    }
-  } catch {
-    // fall through to minting — worst case we mint again next launch
-  }
-  const minted = toHex(crypto.getRandomValues(new Uint8Array(16)))
-  cachedPhoneId = minted
-  try {
-    await SecureStore.setItemAsync(KEY_DEVICE_ID, minted, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY
-    })
-  } catch {
-    // keystore refused — the in-memory id still keys this session consistently
-  }
-  return minted
-}
 
 // ------------------------------------------------------------------ dedupe
 
@@ -177,7 +147,7 @@ function recordNotification(notificationId: string, url: unknown): void {
  * arrived while the app was DEAD are counted: nothing of ours ran when the OS
  * displayed them, but they are still sitting in the tray with their payloads.
  * Runs at launch (after the store rehydrates) and on every foreground; ends by
- * pushing the resulting absolute count to the OS icon and the relay, which is
+ * pushing the resulting absolute count to the OS icon and the bridge, which is
  * also what wipes general notifications off the icon the moment the app opens.
  */
 export async function reconcilePresentedNotifications(): Promise<void> {
@@ -206,7 +176,7 @@ export async function reconcilePresentedNotifications(): Promise<void> {
 
 /**
  * The user opened a conversation: its badge is done. Clears the bucket (the
- * store change propagates to the icon and the relay via the subscription in
+ * store change propagates to the icon and the bridge via the subscription in
  * initNotifications) and dismisses the conversation's own notifications from
  * the tray, so what the badge said is gone stops being said anywhere.
  */
@@ -217,8 +187,8 @@ export function clearConversationBadges(conversationId: string): void {
 
 /**
  * Unpairing: every badge goes at once — the buckets, the tray, the icon, and
- * the relay's per-device count. Must run BEFORE the tunnel drops and before
- * the wipe: the relay's counter is reachable only over the live socket, and
+ * the bridge's per-device count. Must run BEFORE the tunnel drops and before
+ * the wipe: the bridge's counter is reachable only over the live socket, and
  * once it closes a stale count would ride every push until the next pairing.
  * The tray is emptied wholesale — general notifications included — because
  * everything in it deep-links into the pairing being severed. Awaited so the
@@ -235,25 +205,21 @@ export async function clearAllBadges(): Promise<void> {
 }
 
 /**
- * Unpairing: tell the relay to forget this device — token, platform, badge.
+ * Unpairing: tell the bridge to forget this device — token, platform, badge.
  * A registration left behind keeps routing pushes (badge counts stamped on)
  * at a phone that no longer holds the conversations they describe; deleted,
  * every later notify answers `dropped` — the honest result — and re-pairing
  * registers afresh. Must run while the socket is still up: once it drops,
- * this pairing's relay state is unreachable forever (re-pairing derives a
- * new rendezvous). Never throws — an offline unpair cannot reach the relay
+ * this pairing's bridge state is unreachable forever (re-pairing derives a
+ * new rendezvous). Never throws — an offline unpair cannot reach the bridge
  * and must still complete locally.
  */
 export async function unregisterPush(): Promise<void> {
   const tunnel = activeTunnel
   if (!tunnel) return
   try {
-    const frame: UnregisterPushFrame = {
-      v: PUSH_WIRE_VERSION,
-      type: 'unregister_push',
-      phoneId: await getPhoneId()
-    }
-    ;(activeTunnel ?? tunnel).sendControl(frame)
+    const frame: UnregisterPushFrame = { v: PUSH_WIRE_VERSION, type: 'unregister_push' }
+    ;(activeTunnel ?? tunnel).sendPush(frame)
   } catch {
     // Socket already dead — the registration outlives the pairing until the
     // token itself dies; nothing more can be done from this side.
@@ -317,7 +283,7 @@ function installForegroundHandler(): void {
         shouldPlaySound: !duplicate,
         // False, deliberately: the badges store is the single writer of the
         // icon count (via syncBadge), so a push's own badge number — computed
-        // by the relay for the app-is-dead case — never fights it while the
+        // by the bridge for the app-is-dead case — never fights it while the
         // app is up.
         shouldSetBadge: false
       }
@@ -438,8 +404,8 @@ function lastNotificationResponse(): Notifications.NotificationResponse | null {
 
 // ----------------------------------------------------------- registration
 
-/** The tunnel push frames ride on — whichever connection is current. */
-let activeTunnel: Tunnel | null = null
+/** The bridge push frames ride on — whichever connection is current. */
+let activeTunnel: BridgeClient | null = null
 
 let listenersInstalled = false
 
@@ -463,7 +429,7 @@ export function initNotifications(): void {
   Notifications.addPushTokenListener(() => {
     void refreshPushRegistration()
   })
-  // Every badge change reaches the OS icon and the relay from ONE place —
+  // Every badge change reaches the OS icon and the bridge from ONE place —
   // whoever moved the store (a count, a clear, a prune) never syncs it too.
   useBadges.subscribe((state, previous) => {
     if (state.counts !== previous.counts) void syncBadge()
@@ -478,9 +444,9 @@ export function initNotifications(): void {
  * ack them. Called for every tunnel the client builds (handlers are per
  * tunnel instance); also remembers the tunnel for later registrations.
  */
-export function attachNotificationHandlers(tunnel: Tunnel): void {
+export function attachNotificationHandlers(tunnel: BridgeClient): void {
   activeTunnel = tunnel
-  tunnel.onControl('notification', (raw) => {
+  tunnel.onFrame('notification', (raw) => {
     void (async () => {
       const frame = parseNotification(raw)
       if (!frame) return // malformed or from-the-future — ignored, not acked
@@ -505,20 +471,20 @@ export function attachNotificationHandlers(tunnel: Tunnel): void {
           trigger: null
         }).catch(() => undefined)
       }
-      // Ack even a duplicate: the relay is holding a fallback timer for this
+      // Ack even a duplicate: the bridge is holding a fallback timer for this
       // id, and the ack is what tells it the phone has the notification.
       try {
-        tunnel.sendControl({
+        tunnel.sendPush({
           v: PUSH_WIRE_VERSION,
           type: 'notification_ack',
           notificationId: frame.notificationId
         })
       } catch {
-        // Socket died between delivery and ack — the relay's fallback push
+        // Socket died between delivery and ack — the bridge's fallback push
         // fires and the seen-set above is what keeps it invisible.
       }
       // Count it — the main badge path while the app is alive. After the ack
-      // on purpose: the relay's fallback clock must not wait on store writes.
+      // on purpose: the bridge's fallback clock must not wait on store writes.
       recordNotification(frame.notificationId, frame.deeplink)
     })()
   })
@@ -547,7 +513,7 @@ const TOKEN_TIMEOUT_MS = 10_000
 
 /** Bound a promise that may never settle. The loser is abandoned, not
  *  cancelled — harmless here, and a token that lands late still reaches the
- *  relay through the push-token listener's re-registration. */
+ *  bridge through the push-token listener's re-registration. */
 function withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise<T>((resolve) => {
     const timer = setTimeout(() => resolve(fallback), ms)
@@ -572,7 +538,7 @@ async function acquireExpoPushToken(): Promise<string | null> {
   try {
     if (!Device.isDevice) return null
     // The channel must exist BEFORE any token work on Android; HIGH matches
-    // the urgency the relay sends and must keep the exact id it names.
+    // the urgency the bridge sends and must keep the exact id it names.
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
         name: 'Agent runs',
@@ -603,7 +569,7 @@ let registering: Promise<void> | null = null
  * phoneId; a null token is a valid registration (permission denied). Never
  * throws — a failed registration must not disturb pairing or startup.
  *
- * REGISTRATION MUST HAPPEN, TOKEN OR NOT. The relay's routing table is keyed
+ * REGISTRATION MUST HAPPEN, TOKEN OR NOT. The bridge's routing table is keyed
  * by phoneId, and a notify for a phoneId it has never seen is dropped before
  * it considers any delivery path — including the live socket. So a phone that
  * fails to register gets nothing at all, not even in-band notifications it is
@@ -622,16 +588,15 @@ export function refreshPushRegistration(): Promise<void> {
       const frame: RegisterPushFrame = {
         v: PUSH_WIRE_VERSION,
         type: 'register_push',
-        phoneId: await getPhoneId(),
         expoPushToken: await withTimeout(acquireExpoPushToken(), TOKEN_TIMEOUT_MS, null),
         platform: Platform.OS,
         appVersion: Constants.expoConfig?.version ?? null
       }
-      // Re-read: the tunnel may have been replaced while we awaited the
+      // Re-read: the socket may have been replaced while we awaited the
       // token; register on whichever connection is current now.
-      ;(activeTunnel ?? tunnel).sendControl(frame)
+      ;(activeTunnel ?? tunnel).sendPush(frame)
       // A fresh registration is also the moment to re-assert the badge
-      // count: this relay (or a redeployed one) may hold a stale number.
+      // count: this bridge (or a redeployed one) may hold a stale number.
       await syncBadge(true)
     } catch {
       // No socket right now — the next foreground/connect registers again.
@@ -653,35 +618,30 @@ export function refreshPushRegistration(): Promise<void> {
 
 // ------------------------------------------------------------- badge sync
 
-/** The last count the relay was told, to keep quiet syncs from re-sending
+/** The last count the bridge was told, to keep quiet syncs from re-sending
  *  the same number on every foreground. Reset by force (re-registration). */
 let lastSentBadge: number | null = null
 
 /**
  * Push the store's absolute total to both counters the app cannot render:
- * the OS icon and the relay's per-device integer (which stamps `badge` onto
+ * the OS icon and the bridge's per-device integer (which stamps `badge` onto
  * Expo pushes while the app is dead). Store subscriptions call it on every
  * badge change; reconciliation and registration call it directly — with
- * force after (re)registration, because that relay may hold a stale count.
+ * force after (re)registration, because that bridge may hold a stale count.
  */
 async function syncBadge(force = false): Promise<void> {
   const total = badgeTotal(useBadges.getState())
   try {
     await Notifications.setBadgeCountAsync(total)
   } catch {
-    // No icon badge on this runtime — the relay count still matters.
+    // No icon badge on this runtime — the bridge count still matters.
   }
   const tunnel = activeTunnel
   if (!tunnel) return
   if (!force && lastSentBadge === total) return
   try {
-    const frame: SetBadgeFrame = {
-      v: PUSH_WIRE_VERSION,
-      type: 'set_badge',
-      phoneId: await getPhoneId(),
-      count: total
-    }
-    ;(activeTunnel ?? tunnel).sendControl(frame)
+    const frame: SetBadgeFrame = { v: PUSH_WIRE_VERSION, type: 'set_badge', count: total }
+    ;(activeTunnel ?? tunnel).sendPush(frame)
     lastSentBadge = total
   } catch {
     // Socket died — the next connect's registration re-asserts the count.

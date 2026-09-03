@@ -7,9 +7,12 @@
  * a user's devices, and against the seeded org packages (the API repo's
  * scripts/lib/zip.mjs writes the identical format).
  *
- * Junk (node_modules, install/test markers, VCS and OS litter) never
- * enters a package: clients rematerialize node_modules locally via the
- * cerebellum's lazy npm install, and markers must be earned per-install.
+ * Junk (node_modules, npm lockfiles, install/test markers, VCS and OS
+ * litter) never enters a package: clients rematerialize node_modules locally
+ * via the cerebellum's lazy npm install — which also writes a
+ * package-lock.json the package must not carry, or every user capability
+ * would hash differently after its first install and be pushed again — and
+ * markers must be earned per-install.
  *
  * Electron-free so the sync engine and its tests run headless.
  */
@@ -19,6 +22,8 @@ import path from 'node:path'
 
 const JUNK = new Set([
   'node_modules',
+  'package-lock.json',
+  'npm-shrinkwrap.json',
   '.git',
   '.ds_store',
   '__macosx',

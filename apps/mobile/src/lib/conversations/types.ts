@@ -11,8 +11,7 @@
  * kinds and tool names.
  */
 
-export type ConversationChannel =
-  'electron' | 'telegram' | 'whatsapp' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
 
 export type SegmentTurnEndReason =
   'end_turn' | 'tool_use' | 'max_tokens' | 'error' | 'no_provider_available'
@@ -58,38 +57,6 @@ export type WorkflowSnapshot = {
     cacheReadTokens: number
     cacheWriteTokens: number
     cost: number
-  }
-}
-
-export type TaskStatus = 'submitted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-
-/**
- * Async generation task (MiniMax H3 video today; `kind` leaves room for
- * future generators). Mirrors the desktop's TaskSnapshot in broca.ts —
- * snapshots REPLACE each other by taskId, so one card renders per task.
- */
-export type TaskSnapshot = {
-  taskId: string
-  kind: 'video'
-  conversationId: string | null
-  title: string
-  status: TaskStatus
-  detail?: string
-  createdAt: number
-  updatedAt: number
-  endedAt?: number
-  /** Wall-clock estimate for the progress bar; the API reports no true %. */
-  estimateSeconds: number
-  /** Workspace-relative artifact path once downloaded. */
-  outputPath?: string
-  outputBytes?: number
-  error?: string
-  video?: {
-    model: string
-    resolution: string
-    durationSeconds: number
-    ratio?: string
-    inputSummary: string
   }
 }
 
@@ -149,7 +116,6 @@ export type Segment =
     }
   | { kind: 'separator'; turnId: string; segmentId: string }
   | { kind: 'workflow'; turnId: string; segmentId: string; snapshot: WorkflowSnapshot }
-  | { kind: 'task'; turnId: string; segmentId: string; snapshot: TaskSnapshot }
   | {
       kind: 'compaction_started'
       turnId: string
@@ -184,6 +150,9 @@ export type MessageAttachment = {
   originalName: string
   mimeType: string
   sizeBytes: number
+  /** Content hash of the bytes at the org — stamped by whichever side
+   *  uploaded them, so the other can fetch the blob directly. */
+  sha256?: string
   width?: number
   height?: number
   durationSeconds?: number

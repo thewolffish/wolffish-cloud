@@ -76,7 +76,7 @@ const ARCHIVE_EXTS = new Set(['.zip'])
 /**
  * Document mimetypes → the extension whose extractor handles them. Used as a
  * fallback when a file arrives with no usable filename extension — inbound
- * channel media (WhatsApp/Telegram) whose sender omitted or stripped the
+ * channel media (the phone) whose sender omitted or stripped the
  * extension. Without this an extension-less docx/xlsx/pptx would reach the
  * model as an opaque path with no extracted text, the same silent drop the
  * channel fix set out to prevent (the PDF case is already handled by the

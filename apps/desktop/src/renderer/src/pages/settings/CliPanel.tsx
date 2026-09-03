@@ -24,7 +24,7 @@ import { useTranslation } from 'react-i18next'
  * start — Settings.tsx imports this file eagerly, so the load below runs
  * during startup. By the time anyone opens the tab the data is in memory and
  * paints on the first frame: no probe round-trip, no skeleton→content reflow.
- * Mirrors TelegramPanel / GitHubPanel / GooglePanel.
+ * Mirrors MobilePanel.
  *
  * It matters more here than on those panels, because three of these four
  * values come from shelling out (`command -v wfc`, `systemctl`,
@@ -70,7 +70,7 @@ function loadCliSnapshot(): Promise<CliSnapshot | null> {
 void loadCliSnapshot()
 
 // Keep the cache current while the panel is closed, so reopening paints the
-// real state rather than a stale one. Never torn down, like Telegram's status
+// real state rather than a stale one. Never torn down, like the mobile status
 // mirror: the app writes the shim on every launch, and "Launch at startup" can
 // be flipped from the Wolffish tab at any time.
 window.api?.cli?.onPathChange((path) => {
@@ -867,7 +867,7 @@ function CommandReference({
         key: 'settings',
         rows: [
           ['wfc settings', 'browse every page and card'],
-          ['wfc settings channels telegram', 'straight to one card'],
+          ['wfc settings channels mobile', 'straight to one card'],
           ['wfc settings list', 'every setting and its value'],
           ['wfc settings set <id> <value>', 'change one'],
           ['wfc settings providers', 'keys and the brain']

@@ -94,7 +94,7 @@ requires:
   - node
 tools:
   - name: web_search
-    description: Search the web. Returns titles, snippets and URLs — never a page. Fast, and each query is metered against the user's organization allowance, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability.
+    description: Search the web through your organization's search lane. Returns titles, snippets and URLs — never a page. Fast, and each query is metered against the user's organization allowance, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability. There is no other search provider — when the lane is unavailable the tool says so, and you relay that instead of retrying.
     parameters:
       query:
         type: string
@@ -113,6 +113,10 @@ tools:
         type: number
         required: false
         description: Maximum characters to return (default 15000)
+      timeout:
+        type: number
+        required: false
+        description: Seconds to wait before giving up on a slow or unresponsive page. Omit to wait indefinitely (no timeout).
 danger_patterns:
   - pattern: 'web_fetch.*127\.0\.0\.1'
     level: block
@@ -147,13 +151,19 @@ confirm_patterns:
 - `web_search` — search the web, returns titles + snippets + URLs
 - `web_fetch` — fetch and read full page content from a URL
 
+Every `web_search` goes through the organization's search lane (`POST /v1/search` with this
+device's session) and is metered against the user's allowance. There is no other search provider on
+this device and the tool never scrapes a public search engine: when the lane is closed, the search
+does not happen. `web_fetch` is different — a plain GET of a URL you already have is not a search
+provider, and it stays available.
+
 ## Search is one of three routes — pick deliberately
 
 These two tools are not the only way to reach the web, and often not the best one. The third is the **browser extension** (`tool_activate("browser-extension")`), which drives the user's real browser.
 
 | | reaches | costs |
 |---|---|---|
-| `web_search` | an index — snippets, never a page | real money per query; very fast |
+| `web_search` | an index — snippets, never a page | metered against the organization's allowance; very fast |
 | `web_fetch` | whatever a server returns to a bare GET | free, instant; blind to JS, paywalls, logins, bot checks |
 | browser extension | essentially any page the user can open, and can click/scroll/fill | more tokens, more seconds; needs a connected browser |
 
@@ -202,6 +212,17 @@ Do not search when the user is:
 - If multiple sources disagree, mention the disagreement
 - Include relevant URLs so the user can read more
 
-## Rate limiting
+## When the organization lane refuses or is unavailable
 
-If searches start failing, tell the user the search provider is temporarily unavailable and answer from your existing knowledge instead. Don't retry the same query more than twice.
+`web_search` never falls back to another provider. Read the error and relay it:
+
+- **Allowance used up** (`Web search is paused: …`) — the organization's decision. Tell the user in
+  one sentence which allowance is exhausted and who can raise it (the message says), then answer
+  from what you know. Do not retry.
+- **Lane busy** — the tool already waited and retried once; try the query once more after the delay
+  it names, then stop.
+- **Unavailable** (`Web search is provided by your organization and is currently unavailable:
+  <code>`) — switched off, not set up, no session on this device, upstream down, or offline. Tell
+  the user: "Web search is provided by your organization and is currently unavailable (<code>)";
+  then answer from your existing knowledge, or read a specific page with `web_fetch` or the browser
+  extension. Do not retry the same query, and never try to reach a search engine another way.

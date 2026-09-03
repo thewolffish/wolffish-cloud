@@ -21,14 +21,13 @@
  * tab (`CLI_SETTING_GROUPS`), the tab has cards (`CLI_SETTING_SECTIONS`), and
  * a card holds rows. Flattening that away is not a simplification — it is what
  * produced a terminal listing with "Verbose task results" four times and no
- * way to tell which was Telegram's. Labels are card-scoped in the app
- * ("Status" inside a Telegram card is unambiguous), so a row's label is only
+ * way to tell which was the phone's. Labels are card-scoped in the app
+ * ("Task results" inside a Mobile card is unambiguous), so a row's label is only
  * meaningful UNDER ITS SECTION, and a label never repeats the channel name
  * the section heading already prints.
  *
- * LIST-SHAPED state is deliberately absent: providers and their keys, local
- * models, capabilities, variables, MCP servers, Notion/GitHub/Google
- * connections, channel pairing. A table row is a poor way to edit a list, and
+ * LIST-SHAPED state is deliberately absent: capabilities, variables, MCP
+ * servers, channel pairing. A table row is a poor way to edit a list, and
  * each of those has an interactive flow instead (see the CLI's ACTIONS, which
  * are registered against these same group + section ids so they land on the
  * card the user is already looking at).
@@ -59,8 +58,8 @@ export type CliSetting = {
   channel: string
   /**
    * How the value reaches the handler. `null` = passed bare
-   * (`runtime:setLocalOnly(true)`); a dotted string = wrapped into that shape
-   * (`'giphy.apiKey'` → `[{ giphy: { apiKey: 'k' } }]`), which is how every
+   * (`runtime:setBypassPermissions(true)`); a dotted string = wrapped into that shape
+   * (`'a.b'` → `[{ a: { b: 'v' } }]`), which is how every
    * `*:setConfig` handler takes a partial.
    */
   wrap: string | null
@@ -125,8 +124,8 @@ export const CLI_SETTING_GROUPS: Array<{
  * service, Knowledge → Compaction and Reflection), and the panel's own title
  * where the page is a single card.
  *
- * Names are the window's: a card called Telegram in the app is called
- * Telegram here, because someone who knows where a setting lives on screen
+ * Names are the window's: a card called Mobile in the app is called
+ * Mobile here, because someone who knows where a setting lives on screen
  * should not have to learn a second taxonomy.
  */
 export type CliSettingSection = {
@@ -136,17 +135,11 @@ export type CliSettingSection = {
 }
 
 export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
-  // Models — the two chat-wide choices, then the provider keys and the local
-  // models, both of which are flows rather than rows.
+  // Models — the chat-wide choices. The catalog itself is the org's
+  // (GET /v1/models): nothing to configure here beyond the pick.
   { id: 'model.chat', group: 'model', label: 'Chat' },
-  { id: 'model.providers', group: 'model', label: 'Providers' },
-  {
-    id: 'model.local',
-    group: 'model',
-    label: 'Ollama'
-  },
 
-  // Channels — the desktop's six sub-tabs, in its order.
+  // Channels — the desktop's four sub-tabs, in its order.
   {
     id: 'channels.inapp',
     group: 'channels',
@@ -163,47 +156,12 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
     group: 'channels',
     label: 'Browser'
   },
-  {
-    id: 'channels.telegram',
-    group: 'channels',
-    label: 'Telegram'
-  },
-  {
-    id: 'channels.whatsapp',
-    group: 'channels',
-    label: 'WhatsApp'
-  },
 
-  // Services — the desktop's nine cards, in its grid order.
+  // Services — the desktop's one card.
   {
     id: 'services.brave',
     group: 'services',
     label: 'Brave Search'
-  },
-  {
-    id: 'services.google',
-    group: 'services',
-    label: 'Google Workspace'
-  },
-  {
-    id: 'services.memes',
-    group: 'services',
-    label: 'Memes'
-  },
-  {
-    id: 'services.video',
-    group: 'services',
-    label: 'Video generation'
-  },
-  {
-    id: 'services.notion',
-    group: 'services',
-    label: 'Notion'
-  },
-  {
-    id: 'services.github',
-    group: 'services',
-    label: 'GitHub'
   },
   {
     id: 'services.tts',
@@ -442,19 +400,6 @@ const STT_MODELS: CliSettingOption[] = [
   { value: 'large', label: 'Large' }
 ]
 
-/**
- * A comma-separated line the user typed, as the list the handler stores.
- * Both allow-lists are entered and displayed as one line (that is how the
- * snapshot serves them and how the desktop's field takes them), so the split
- * belongs here rather than at every call site.
- */
-function splitList(value: unknown): string[] {
-  return String(value ?? '')
-    .split(/[,\s]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-}
-
 export const CLI_SETTINGS: CliSetting[] = [
   // ── Models ───────────────────────────────────────────────────────────────
   {
@@ -471,18 +416,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     ],
     read: 'llm.chatMode',
     channel: 'provider:setMode',
-    wrap: null
-  },
-  {
-    id: 'model.localOnly',
-    group: 'model',
-    section: 'model.chat',
-    label: 'Local only',
-    description:
-      'On answers with the local Ollama model only. Off uses whichever provider the model switch selects.',
-    kind: 'boolean',
-    read: 'llm.localOnly',
-    channel: 'runtime:setLocalOnly',
     wrap: null
   },
 
@@ -584,160 +517,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     channel: 'mobile:setRunCards',
     wrap: null
   },
-  {
-    id: 'channels.telegram.enabled',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Status',
-    description: 'Turns the Telegram channel on or off.',
-    kind: 'boolean',
-    read: 'channels.telegram.enabled',
-    channel: 'telegram:setConfig',
-    wrap: 'enabled'
-  },
-  {
-    id: 'channels.telegram.allowedUserIds',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Allowed user IDs',
-    description:
-      'Comma-separated numeric Telegram user IDs; only these users can talk to the agent. Send /start to @userinfobot to get yours.',
-    kind: 'string',
-    hint: 'comma-separated',
-    read: 'channels.telegram.allowedUserIds',
-    channel: 'telegram:setConfig',
-    wrap: 'allowedUserIds',
-    // Stored as number[]. A string would be accepted by the handler and then
-    // never match an incoming numeric id — a silent allow-list of nobody.
-    argsFor: (value) => [
-      {
-        allowedUserIds: splitList(value)
-          .map((entry) => Number(entry))
-          .filter((entry) => Number.isFinite(entry))
-      }
-    ]
-  },
-  {
-    id: 'channels.telegram.verbose',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Verbose task results',
-    description:
-      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
-    kind: 'boolean',
-    read: 'channels.telegram.verbose',
-    channel: 'telegram:setConfig',
-    wrap: 'verbose'
-  },
-  {
-    id: 'channels.telegram.autoRefresh',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Auto-refresh conversations',
-    description:
-      'Start a fresh conversation after idle time. Previous ones stay accessible via /resume.',
-    kind: 'boolean',
-    read: 'channels.telegram.autoRefresh',
-    channel: 'telegram:setConfig',
-    wrap: 'autoRefresh'
-  },
-  {
-    id: 'channels.telegram.staleHours',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Idle timeout',
-    description: 'Hours a conversation sits idle before auto-refresh starts a fresh one.',
-    kind: 'number',
-    hint: 'hours',
-    read: 'channels.telegram.staleHours',
-    channel: 'telegram:setConfig',
-    wrap: 'staleHours'
-  },
-  {
-    id: 'channels.telegram.hideAutomations',
-    group: 'channels',
-    section: 'channels.telegram',
-    label: 'Hide automations from /resume',
-    description:
-      'Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app.',
-    kind: 'boolean',
-    read: 'channels.telegram.hideAutomations',
-    channel: 'telegram:setConfig',
-    wrap: 'hideAutomationsFromResume'
-  },
-  {
-    id: 'channels.whatsapp.enabled',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Status',
-    description: 'Turns the WhatsApp channel on or off.',
-    kind: 'boolean',
-    read: 'channels.whatsapp.enabled',
-    channel: 'whatsapp:setConfig',
-    wrap: 'enabled'
-  },
-  {
-    id: 'channels.whatsapp.allowedNumbers',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Allowed phone numbers',
-    description: 'Comma-separated phone numbers. Only messages from these numbers are processed.',
-    kind: 'string',
-    hint: 'comma-separated',
-    read: 'channels.whatsapp.allowedNumbers',
-    channel: 'whatsapp:setConfig',
-    wrap: 'allowedPhoneNumbers',
-    argsFor: (value) => [{ allowedPhoneNumbers: splitList(value) }]
-  },
-  {
-    id: 'channels.whatsapp.verbose',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Verbose task results',
-    description:
-      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
-    kind: 'boolean',
-    read: 'channels.whatsapp.verbose',
-    channel: 'whatsapp:setConfig',
-    wrap: 'verbose'
-  },
-  {
-    id: 'channels.whatsapp.autoRefresh',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Auto-refresh conversations',
-    description:
-      'Start a fresh conversation after idle time. Previous ones stay accessible via /resume.',
-    kind: 'boolean',
-    read: 'channels.whatsapp.autoRefresh',
-    channel: 'whatsapp:setConfig',
-    wrap: 'autoRefresh'
-  },
-  {
-    id: 'channels.whatsapp.staleHours',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Idle timeout',
-    description: 'Hours a conversation sits idle before auto-refresh starts a fresh one.',
-    kind: 'number',
-    hint: 'hours',
-    read: 'channels.whatsapp.staleHours',
-    channel: 'whatsapp:setConfig',
-    wrap: 'staleHours'
-  },
-  {
-    id: 'channels.whatsapp.hideAutomations',
-    group: 'channels',
-    section: 'channels.whatsapp',
-    label: 'Hide automations from /resume',
-    description:
-      'Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app.',
-    kind: 'boolean',
-    read: 'channels.whatsapp.hideAutomations',
-    channel: 'whatsapp:setConfig',
-    wrap: 'hideAutomationsFromResume'
-  },
-
   // Browser — the extension card, a channel on the desktop. The `read`
   // paths keep the snapshot's `services.browserExtension` shape: that is the
   // phone's wire contract, not this table's taxonomy.
@@ -794,93 +573,6 @@ export const CLI_SETTINGS: CliSetting[] = [
   // Brave Search has no rows: it is provided by the organization (one key
   // behind the API's /v1/search lane), so the card carries only the "Check
   // the org lane" action (settings-actions.mjs) that prints the lane's status.
-  {
-    /**
-     * Memes has no enabled flag of its own — the switch IS the capability,
-     * which is why this writes the capability toggle rather than a service
-     * config. Same path as the Capabilities screen, locked-core guard included.
-     */
-    id: 'services.memes.enabled',
-    group: 'services',
-    section: 'services.memes',
-    label: 'Status',
-    description: 'Captioned memes and reaction GIFs via Memegen, Giphy, or Imgflip.',
-    kind: 'boolean',
-    read: 'services.memesEnabled',
-    channel: 'cerebellum:toggleCapability',
-    wrap: null,
-    argsFor: (value) => ['memes', value === true]
-  },
-  {
-    id: 'services.memes.giphyApiKey',
-    group: 'services',
-    section: 'services.memes',
-    label: 'Giphy API key',
-    description: 'Search and download reaction GIFs. Requires a free API key.',
-    kind: 'secret',
-    read: 'services.memes.giphyApiKey',
-    channel: 'memes:setConfig',
-    wrap: 'giphy.apiKey'
-  },
-  {
-    id: 'services.memes.imgflipUsername',
-    group: 'services',
-    section: 'services.memes',
-    label: 'Imgflip username',
-    description:
-      'Create a free account at imgflip.com. Username and password are used to generate memes.',
-    kind: 'string',
-    read: 'services.memes.imgflipUsername',
-    channel: 'memes:setConfig',
-    wrap: 'imgflip.username'
-  },
-  {
-    id: 'services.memes.imgflipPassword',
-    group: 'services',
-    section: 'services.memes',
-    label: 'Imgflip password',
-    description: 'The password for the Imgflip account.',
-    kind: 'secret',
-    read: 'services.memes.imgflipPassword',
-    channel: 'memes:setConfig',
-    wrap: 'imgflip.password'
-  },
-  {
-    id: 'services.video.enabled',
-    group: 'services',
-    section: 'services.video',
-    label: 'Status',
-    description: 'Generate video with MiniMax H3 from text, images, frames, or reference media.',
-    kind: 'boolean',
-    read: 'services.videoEnabled',
-    channel: 'cerebellum:toggleCapability',
-    wrap: null,
-    argsFor: (value) => ['video', value === true]
-  },
-  {
-    id: 'services.video.apiKey',
-    group: 'services',
-    section: 'services.video',
-    label: 'MiniMax API key (video)',
-    description:
-      'The same MiniMax key you use elsewhere works here; it is stored separately on purpose.',
-    kind: 'secret',
-    read: 'services.videoApiKey',
-    channel: 'video:setConfig',
-    wrap: 'apiKey'
-  },
-  {
-    id: 'services.video.director',
-    group: 'services',
-    section: 'services.video',
-    label: 'Chat model as director',
-    description:
-      'The chat model rewrites your request into a full cinematic prompt — subject, camera, lighting — before it reaches the video model.',
-    kind: 'boolean',
-    read: 'services.videoDirector',
-    channel: 'video:setConfig',
-    wrap: 'director'
-  },
   {
     id: 'services.tts.voice',
     group: 'services',
@@ -1095,18 +787,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   },
   {
-    id: 'wfc.restrictPowerfulModels',
-    group: 'wfc',
-    section: 'wfc.general',
-    label: 'Restrict powerful local models',
-    description:
-      'When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive.',
-    kind: 'boolean',
-    read: 'llm.restrictPowerfulModels',
-    channel: 'runtime:setRestrictPowerfulModels',
-    wrap: null
-  },
-  {
     id: 'wfc.weekStartsOn',
     group: 'wfc',
     section: 'wfc.general',
@@ -1205,7 +885,7 @@ export function coerceSettingValue(
 
 /**
  * Build the handler arguments. `wrap` may be dotted, so a nested partial like
- * `{ giphy: { apiKey: 'k' } }` needs no special case at the call site.
+ * `{ a: { b: 'v' } }` needs no special case at the call site.
  */
 export function settingArgs(setting: CliSetting, value: unknown): unknown[] {
   if (setting.argsFor) return setting.argsFor(value)

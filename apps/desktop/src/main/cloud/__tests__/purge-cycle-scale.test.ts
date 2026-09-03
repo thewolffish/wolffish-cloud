@@ -10,7 +10,7 @@
  *                  agents, heartbeat automations, knowledge), a 300-line
  *                  usage ledger, 700 conversations (2..18 messages each;
  *                  images / PDFs / voice notes / TTS replies / generated
- *                  video / deliverables / screenshots / a 1.5 MB upload /
+ *                  downloads / deliverables / screenshots / a 1.5 MB upload /
  *                  an over-size message, distributed by residue classes).
  *                  Everything drains to the worker. Then one conversation
  *                  and one file are deleted, and six "turns" run on c1 so
@@ -137,7 +137,7 @@ function filesFor(n: number): Array<SeedFile & { attach?: SeedAttachment; voice?
       true
     )
   if (n % 13 === 0) push(`speech/${dir}/reply.mp3`, 30_000 + (n % 7) * 1_000, true)
-  if (n % 19 === 0) push(`generations/video/${dir}/clip.mp4`, 200_000 + (n % 3) * 10_000, true)
+  if (n % 19 === 0) push(`downloads/${dir}/clip.mp4`, 200_000 + (n % 3) * 10_000, true)
   if (n % 50 === 0)
     push(`uploads/${dir}/big-${n}.bin`, 1_500_000, true, {
       type: 'other',
@@ -203,9 +203,8 @@ function brainSeedFiles(): Array<[string, string]> {
       `logs/extension/${convId(3)}.jsonl`,
       '{"t":1,"kind":"navigate","url":"https://example.com"}\n'
     ],
-    ['telegram/chats.json', '{"123":"' + convId(2) + '"}'],
-    ['whatsapp/chats.json', '{"123@s.whatsapp.net":"' + convId(4) + '"}'],
-    ['whatsapp/auth/creds.json', '{"secret":"device-signal-keys"}'],
+    ['brain/channels/chats.json', '{"123":"' + convId(2) + '"}'],
+    ['brain/cerebellum/.local/creds.json', '{"secret":"device-local-keys"}'],
     ['files/temp-note.txt', 'to be deleted\n']
   ]
 }
@@ -286,7 +285,7 @@ const CONFIG_A = {
   locale: 'en',
   llm: { model: 'deepseek-ai/DeepSeek-V4-Flash-0731' },
   variables: [{ name: 'SECRET', value: 'sk-live-999', sensitive: true }],
-  telegram: { enabled: false, botToken: 'tg-token-abc', allowedUserIds: [] }
+  mobile: { notifications: true, verbose: true, runCards: false }
 }
 
 function seedConversation(n: number): Record<string, unknown> {
@@ -320,7 +319,7 @@ function seedConversation(n: number): Record<string, unknown> {
     messages,
     createdAt: BASE_TS + n * 100_000,
     updatedAt: BASE_TS + n * 100_000 + count * 1000,
-    ...(n % 4 === 0 ? { channel: 'telegram' } : {}),
+    ...(n % 4 === 0 ? { channel: 'mobile' } : {}),
     stats: { allTime: { turns: count / 2, cost: n / 1000 } }
   }
 }
@@ -328,7 +327,7 @@ function seedConversation(n: number): Record<string, unknown> {
 function expectedEagerNames(): string[] {
   const names = new Set<string>()
   for (const [rel] of brainSeedFiles())
-    if (!rel.startsWith('whatsapp/auth/') && !rel.startsWith('usage/')) names.add(rel)
+    if (!rel.startsWith('brain/cerebellum/') && !rel.startsWith('usage/')) names.add(rel)
   for (let n = 1; n <= CONV_COUNT; n++) for (const f of filesFor(n)) if (!f.lazy) names.add(f.rel)
   return [...names]
 }
@@ -994,8 +993,8 @@ async function orchestrate(): Promise<void> {
   )
   const manifestAfterSeed = await walkManifest(token)
   ok(
-    'whatsapp auth NEVER uploaded',
-    !manifestAfterSeed.some((r) => r.name.startsWith('whatsapp/auth/'))
+    'cerebellum-local keys NEVER uploaded',
+    !manifestAfterSeed.some((r) => r.name.startsWith('brain/cerebellum/'))
   )
   ok(
     'device-only log NEVER uploaded',
@@ -1106,10 +1105,10 @@ async function orchestrate(): Promise<void> {
   const read = (rel: string): Promise<Buffer> => fs.readFile(path.join(WORKSPACE, rel))
   const cfg = JSON.parse((await read('config.json')).toString()) as Record<string, unknown>
   ok(
-    'config restored (variables, telegram token, model, theme)',
+    'config restored (variables, mobile prefs, model, theme)',
     cfg.theme === 'dark' &&
       (cfg.variables as Array<{ value: string }>)?.[0]?.value === 'sk-live-999' &&
-      (cfg.telegram as { botToken: string })?.botToken === 'tg-token-abc' &&
+      (cfg.mobile as { verbose: boolean })?.verbose === true &&
       cfg.onboardingCompleted === true
   )
 
@@ -1131,7 +1130,7 @@ async function orchestrate(): Promise<void> {
   for (const [rel, content] of brainSeedFiles())
     if (
       rel !== 'files/temp-note.txt' &&
-      !rel.startsWith('whatsapp/auth/') &&
+      !rel.startsWith('brain/cerebellum/') &&
       !rel.startsWith('usage/')
     )
       eagerWant.set(rel, Buffer.from(content))
@@ -1155,7 +1154,10 @@ async function orchestrate(): Promise<void> {
     `missing ${eagerMissing.length} (${eagerMissing.slice(0, 3).join(', ')}) wrong ${eagerWrong.length} (${eagerWrong.slice(0, 3).join(', ')})`
   )
   ok('deleted file stayed deleted', !existsSync(path.join(WORKSPACE, 'files/temp-note.txt')))
-  ok('whatsapp auth NOT restored', !existsSync(path.join(WORKSPACE, 'whatsapp/auth/creds.json')))
+  ok(
+    'cerebellum-local keys NOT restored',
+    !existsSync(path.join(WORKSPACE, 'brain/cerebellum/.local/creds.json'))
+  )
   ok('device-only log NOT restored', !existsSync(path.join(WORKSPACE, 'logs/2020-01-01.log')))
 
   // The default-colliding paths: did the USER's versions come back, and what

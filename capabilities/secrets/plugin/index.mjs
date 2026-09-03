@@ -4,10 +4,16 @@ import { randomBytes } from 'node:crypto'
 
 // Secrets are the user's named variables (Settings > Variables), stored in
 // config.json under the `variables` array as { name, value, sensitive }. This
-// plugin reads and writes that same store so the agent can save a key the user
-// pastes in chat without hand-editing config.json — and the value then shows up
-// in the Settings UI and in the agent's <variables> context block exactly like
-// one added from the UI.
+// plugin reads and writes that same store so the agent can save a token the
+// user pastes in chat without hand-editing config.json — the value then shows
+// up in the Settings UI and in the agent's <variables> context block exactly
+// like one added from the UI.
+//
+// config.json syncs to the organization's master record (encrypted at rest
+// there), and every tool RESULT lands in the conversation transcript, which
+// syncs as well. So the store is the place for a secret and a tool result is
+// not: list_secrets masks every value, and get_secret returns a real value
+// only on an explicit reveal: true.
 
 let workspaceRoot = ''
 
@@ -21,14 +27,13 @@ const toolDefinitions = [
       properties: {
         name: {
           type: 'string',
-          description:
-            'Variable name the value is referenced by, e.g. "OPENAI_API_KEY", "BASE_URL".'
+          description: 'Variable name the value is referenced by, e.g. "NOTION_TOKEN", "BASE_URL".'
         },
         value: { type: 'string', description: 'The secret/value to store.' },
         sensitive: {
           type: 'boolean',
           description:
-            'Only affects how the Settings UI displays it (masked vs plain) — you always get the real value either way. Defaults to true; pass false for non-secret config like a base URL.'
+            'Whether the value is a secret (masked in the Settings UI and in list_secrets). Defaults to true; pass false for non-secret config like a base URL.'
         }
       },
       required: ['name', 'value']
@@ -37,8 +42,24 @@ const toolDefinitions = [
   {
     name: 'list_secrets',
     description:
-      'List the saved secrets/variables (Settings > Variables) with their actual values, so you can use a stored value directly instead of asking the user for it. Each entry is tagged sensitive or not. Call this before asking the user for any key/token/value — it may already be saved.',
+      'List the saved secrets/variables (Settings > Variables) by name, each with a masked value (first and last two characters) and a sensitive flag — enough to know what exists without putting a value into the transcript. Call this before asking the user for any key/token/value. Need the real value for a tool call? Your <variables> context block already carries it; otherwise get_secret with reveal: true.',
     parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'get_secret',
+    description:
+      'Return ONE saved secret/variable by name. Without reveal: true you get the masked value only. With reveal: true the real value is returned — and it then sits in this tool result, which is part of the conversation transcript (synced to the organization), so reveal only when you must pass the value into another tool call and it is not already in your <variables> block. Never paste a revealed value into your reply.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Exact variable name, e.g. "NOTION_TOKEN".' },
+        reveal: {
+          type: 'boolean',
+          description: 'Pass true to receive the real value instead of the masked one. Defaults to false.'
+        }
+      },
+      required: ['name']
+    }
   }
 ]
 
@@ -74,6 +95,24 @@ async function writeConfigAtomic(config) {
     if (handle) await handle.close()
   }
   await fs.rename(tmp, target)
+}
+
+async function readVariables(tool) {
+  let config
+  try {
+    config = await readConfig()
+  } catch (err) {
+    return { error: `${tool}: could not read config.json: ${errText(err)}` }
+  }
+  return { variables: Array.isArray(config?.variables) ? config.variables : [] }
+}
+
+// "sk••••4f2a" when the value is long enough that its ends give nothing
+// away, "••••" otherwise.
+function maskValue(value) {
+  const s = String(value ?? '')
+  if (s.length < 12) return '••••'
+  return `${s.slice(0, 2)}••••${s.slice(-2)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -118,36 +157,65 @@ async function addSecret(args) {
   const note = existed ? ' (previous value replaced)' : ''
   return {
     success: true,
-    output: `${verb} ${tag} secret \`${name}\`${note}. It's now in Settings > Variables and available to you (via list_secrets and your <variables> block).`
+    output: `${verb} ${tag} secret \`${name}\`${note}. It's now in Settings > Variables and available to you through your <variables> block (or get_secret).`
   }
 }
 
 // ---------------------------------------------------------------------------
-// list_secrets
+// list_secrets — names, masked values, sensitive flags. Never a real value:
+// this output is transcript material.
 // ---------------------------------------------------------------------------
 
 async function listSecrets() {
-  let config
-  try {
-    config = await readConfig()
-  } catch (err) {
-    return { success: false, error: `list_secrets: could not read config.json: ${errText(err)}` }
-  }
-  const variables = Array.isArray(config?.variables) ? config.variables : []
+  const { variables, error } = await readVariables('list_secrets')
+  if (error) return { success: false, error }
   if (variables.length === 0) {
     return { success: true, output: 'No secrets or variables saved yet.' }
   }
 
-  // Return the real values — this output is for YOU (the agent), so you can use
-  // a stored value directly instead of asking the user for it. The `sensitive`
-  // tag only tells you which ones not to print back into the user-facing chat.
   const lines = [`## Secrets & variables (${variables.length})`, '']
   for (const v of variables) {
     if (!v || typeof v.name !== 'string') continue
-    const tag = v.sensitive ? ' (sensitive)' : ''
-    lines.push(`- \`${v.name}\` = ${String(v.value ?? '')}${tag}`)
+    const tag = v.sensitive ? 'sensitive' : 'plain'
+    lines.push(`- \`${v.name}\` = ${maskValue(v.value)} (${tag})`)
   }
+  lines.push(
+    '',
+    'Values are masked here. The real values are in your <variables> block; get_secret with reveal: true returns one on demand.'
+  )
   return { success: true, output: lines.join('\n') }
+}
+
+// ---------------------------------------------------------------------------
+// get_secret — one value by name; real only on reveal: true.
+// ---------------------------------------------------------------------------
+
+async function getSecret(args) {
+  const name = typeof args?.name === 'string' ? args.name.trim() : ''
+  if (!name) return { success: false, error: 'get_secret: name is required.' }
+  const reveal = args?.reveal === true || args?.reveal === 'true'
+
+  const { variables, error } = await readVariables('get_secret')
+  if (error) return { success: false, error }
+  const entry = variables.find((v) => v && v.name === name)
+  if (!entry) {
+    return {
+      success: false,
+      error: `get_secret: no secret or variable named \`${name}\`. list_secrets shows what exists.`
+    }
+  }
+
+  const tag = entry.sensitive ? 'sensitive' : 'plain'
+  if (!reveal) {
+    return {
+      success: true,
+      output: `\`${name}\` = ${maskValue(entry.value)} (${tag}, masked). Pass reveal: true to receive the real value — it will then be part of the transcript.`
+    }
+  }
+  return {
+    success: true,
+    output: `\`${name}\` = ${String(entry.value ?? '')} (${tag}, revealed — use it in your tool call, never in your reply)`
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +243,8 @@ const plugin = {
         return addSecret(args ?? {})
       case 'list_secrets':
         return listSecrets()
+      case 'get_secret':
+        return getSecret(args ?? {})
       default:
         return { success: false, error: `secrets: unknown tool ${toolName}` }
     }

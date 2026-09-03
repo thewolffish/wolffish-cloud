@@ -1,31 +1,22 @@
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
 import { BrowserLogo } from '@/components/core/browserLogos'
-import { Button } from '@/components/core/Button'
 import { Input } from '@/components/core/Input'
 import type { SelectOption } from '@/components/core/Select'
 import { SERVICE_LOGOS } from '@/components/core/providerLogos'
-import { ConfigSelectRow, ConfigSwitchRow, ConfigTextRow } from '@/components/settings/ConfigRows'
+import { ConfigSelectRow, ConfigTextRow } from '@/components/settings/ConfigRows'
 import { PanelScreen, Section, StatusDot } from '@/components/settings/SettingsUI'
-import { useToast } from '@/providers/toast/useToast'
 import { cn } from '@/lib/utils/cn'
-import {
-  saveDesktopSetting,
-  useConfigValue,
-  useDemoConfig,
-  useSettingsReadOnly,
-  type DemoConfigValues,
-  type ExtensionBrowser
-} from '@/state/demoConfig'
-import { useMemo, useState } from 'react'
+import { useConfigValue, useDemoConfig, type ExtensionBrowser } from '@/state/demoConfig'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Text, View } from 'react-native'
 
 /**
- * Services — every desktop service panel, with the full config.json surface
- * each one owns: Brave, Memes, STT, TTS, Computer Use and the Browser
- * Extension are edited here; Google / GitHub / Notion stay read-only because
- * the action behind them is an OAuth flow or a token the desktop keychain
- * holds. Every editable row binds to a single flat config key.
+ * Services — the desktop's service panels, with the config.json surface each
+ * one owns: STT, TTS, Computer Use and the Browser Extension are edited here;
+ * web search is read-only because it is the organization's lane — one key at
+ * the API edge, none on any device. Every editable row binds to a single flat
+ * config key.
  */
 
 /** Kokoro's English voice catalog, verbatim from the desktop TTS panel. */
@@ -212,75 +203,6 @@ function ServiceHeader({
   )
 }
 
-/** The credential keys the phone edits — each row binds to exactly one. */
-type SecretField = Extract<
-  keyof DemoConfigValues,
-  'braveApiKey' | 'videoApiKey' | 'imgflipUsername' | 'imgflipPassword' | 'giphyApiKey'
->
-
-/**
- * A credential field, bound and editable: the value is the desktop's own
- * (synced in the snapshot), and Save writes it back through Rpc.configSet —
- * the same setter the desktop's panel calls — with the same saved/failed
- * confirmation that panel shows. The draft lives locally until saved, so a
- * snapshot refresh mid-typing cannot yank the text out from under the user.
- */
-function SecretRow({
-  field,
-  label,
-  secure = true
-}: {
-  field: SecretField
-  label: string
-  secure?: boolean
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const toast = useToast()
-  const readOnly = useSettingsReadOnly()
-  const stored = useConfigValue(field)
-  const [draft, setDraft] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const dirty = draft !== null && draft !== stored
-
-  const save = async (): Promise<void> => {
-    if (!dirty || draft === null || busy) return
-    setBusy(true)
-    const saved = await saveDesktopSetting(field, draft)
-    setBusy(false)
-    toast.show({
-      tone: saved ? 'success' : 'error',
-      message: saved ? t('settings.services.keySaved') : t('settings.services.keySaveFailed')
-    })
-    if (saved) setDraft(null)
-  }
-
-  return (
-    <View className="flex-col gap-1.5">
-      <Input
-        label={label}
-        value={draft ?? stored}
-        onChangeText={setDraft}
-        placeholder={t('settings.services.secretPlaceholder')}
-        editable={!readOnly && !busy}
-        secureTextEntry={secure}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-      {dirty ? (
-        <Button
-          size="sm"
-          onPress={() => void save()}
-          disabled={busy}
-          className="self-start"
-          accessibilityLabel={t('settings.services.saveKey')}
-        >
-          {t('settings.services.saveKey')}
-        </Button>
-      ) : null}
-    </View>
-  )
-}
-
 /**
  * One connected browser, exactly as the desktop's extension panel draws it:
  * the browser's mark, its name with the major version, and the identity line
@@ -321,15 +243,6 @@ function BrowserCard({ browser }: { browser: ExtensionBrowser }): React.JSX.Elem
   )
 }
 
-function DesktopNote(): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <Text className="text-muted text-left font-sans text-xs leading-5">
-      {t('settings.services.desktopOnly')}
-    </Text>
-  )
-}
-
 export default function ServicesScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.
   useFreshConfig()
@@ -337,6 +250,7 @@ export default function ServicesScreen(): React.JSX.Element {
   const services = useDemoConfig((state) => state.services)
   const extensionBrowsers = useDemoConfig((state) => state.extensionBrowsers)
   const port = useConfigValue('browserExtensionPort')
+  const braveEnabled = useConfigValue('braveEnabled')
   const byKey = new Map(services.map((service) => [service.key, service]))
 
   const voiceOptions = useMemo<readonly SelectOption<string>[]>(
@@ -377,68 +291,13 @@ export default function ServicesScreen(): React.JSX.Element {
 
   return (
     <PanelScreen title={t('settings.tabs.services')} subtitle={t('settings.services.subtitle')}>
-      {/* Account links — the connect/OAuth/token half stays desktop-bound. */}
-      {['google', 'github', 'notion'].map((key) => (
-        <Section key={key}>
-          <ServiceHeader serviceKey={key} connected={byKey.get(key)?.connected ?? false} />
-          {connectionRows(key)}
-          <DesktopNote />
-        </Section>
-      ))}
-
+      {/* Web search is the organization's lane: the desktop reports whether
+          it is ready and refuses a phone write to it, so the row is status,
+          not a switch — and there is no key on this or any device to edit. */}
       <Section>
-        <ServiceHeader serviceKey="brave" />
-        <ConfigSwitchRow
-          field="braveEnabled"
-          label={t('settings.channels.enabled')}
-          description={t('settings.services.brave.description')}
-        />
-        <SecretRow field="braveApiKey" label={t('settings.services.brave.apiKey')} />
+        <ServiceHeader serviceKey="brave" connected={braveEnabled} />
         <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.secretNote')}
-        </Text>
-      </Section>
-
-      {/* Video generation (MiniMax H3). Its own key on purpose — the desktop
-          keeps it independent of the MiniMax chat provider so switching
-          brains never silently kills video generation. */}
-      <Section>
-        <ServiceHeader serviceKey="video" />
-        <ConfigSwitchRow
-          field="videoEnabled"
-          label={t('settings.channels.enabled')}
-          description={t('settings.services.video.description')}
-        />
-        <ConfigSwitchRow
-          field="videoDirector"
-          label={t('settings.services.video.director')}
-          description={t('settings.services.video.directorDescription')}
-        />
-        <SecretRow field="videoApiKey" label={t('settings.services.video.apiKey')} />
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.video.separateKeyNote')}
-        </Text>
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.secretNote')}
-        </Text>
-      </Section>
-
-      <Section>
-        <ServiceHeader serviceKey="memes" />
-        <ConfigSwitchRow
-          field="memesEnabled"
-          label={t('settings.channels.enabled')}
-          description={t('settings.services.memes.description')}
-        />
-        <SecretRow
-          field="imgflipUsername"
-          label={t('settings.services.memes.imgflipUsername')}
-          secure={false}
-        />
-        <SecretRow field="imgflipPassword" label={t('settings.services.memes.imgflipPassword')} />
-        <SecretRow field="giphyApiKey" label={t('settings.services.memes.giphyKey')} />
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.secretNote')}
+          {t('settings.services.brave.orgProvided')}
         </Text>
       </Section>
 

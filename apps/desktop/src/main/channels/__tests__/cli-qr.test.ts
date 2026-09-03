@@ -47,7 +47,7 @@ fs.writeFileSync(
   path.join(ws, 'config.json'),
   JSON.stringify({
     version: 1,
-    llm: { mode: 'single', local: {}, providers: [], brain: {} },
+    llm: { mode: 'single', model: null },
     safety: {}
   })
 )
@@ -58,9 +58,9 @@ fs.writeFileSync(
 const cliCopy = path.join(home, 'cli-copy')
 fs.cpSync(path.join(APP, 'src/cli'), cliCopy, { recursive: true })
 
-// A WhatsApp-shaped payload: ref plus base64 keys, byte-mode dense.
+// A pairing-URL-shaped payload: a scheme plus base64 keys, byte-mode dense.
 const PAYLOAD =
-  '2@' +
+  'wolffish://pair?k=' +
   Array.from({ length: 178 }, (_, i) => {
     const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     return cs[(i * 7 + 3) % 64]
@@ -98,10 +98,12 @@ function fakeTerminal(): void {
 type Handler = (...args: any[]) => any
 
 /**
- * A client the way pair.mjs sees one: invoke + onEvent. `whatsapp:requestQr`
- * schedules the QR event, and the terminal event decides how the flow ends —
- * 'connected' for the drawn paths, 'disconnected' for the fallback path,
- * which must finish WITHOUT a prompt (stdin is forced non-interactive above).
+ * A client the way pair.mjs sees one: invoke + onEvent. `mobile:offerQr`
+ * hands back the pairing payload (and `mobile:offerCode` the typed code the
+ * flow switches to when no QR can be drawn); `endWith` decides how the flow
+ * ends — 'paired' emits the handshake status the flow waits for, 'expired'
+ * lets the offer lapse, which must finish WITHOUT a prompt (stdin is forced
+ * non-interactive above).
  */
 type FakeClient = {
   onEvent: (listener: (channel: string, payload: unknown) => void) => () => void
@@ -110,7 +112,7 @@ type FakeClient = {
 
 function makeClient(
   handlers: Map<string, Handler>,
-  { qrChannel, endWith }: { qrChannel: 'real' | 'missing'; endWith: 'connected' | 'disconnected' }
+  { qrChannel, endWith }: { qrChannel: 'real' | 'missing'; endWith: 'paired' | 'expired' }
 ): FakeClient {
   const listeners = new Set<(channel: string, payload: unknown) => void>()
   const emit = (channel: string, payload: unknown): void => {
@@ -122,22 +124,19 @@ function makeClient(
       return () => listeners.delete(listener)
     },
     async invoke(channel: string, ...args: unknown[]) {
-      if (channel === 'whatsapp:status') return { status: 'disconnected' }
-      if (channel === 'whatsapp:getConfig') return { enabled: false }
-      if (channel === 'whatsapp:setConfig') return { ok: true }
-      if (channel === 'whatsapp:requestQr') {
-        setTimeout(() => emit('whatsapp:statusChange', { status: 'pending', qr: PAYLOAD }), 20)
-        setTimeout(
-          () =>
-            emit(
-              'whatsapp:statusChange',
-              endWith === 'connected'
-                ? { status: 'connected' }
-                : { status: 'disconnected', error: 'test: code expired' }
-            ),
-          400
-        )
-        return undefined
+      if (channel === 'mobile:status') return { paired: false }
+      if (channel === 'mobile:offerQr' || channel === 'mobile:offerCode') {
+        const expiresAt = Date.now() + (endWith === 'paired' ? 5000 : 300)
+        if (endWith === 'paired') {
+          setTimeout(
+            () =>
+              emit('mobile:statusChange', { paired: true, phones: [{ id: 'dev_1' }], offer: null }),
+            400
+          )
+        }
+        return channel === 'mobile:offerCode'
+          ? { offer: { code: 'ABCD-EFGH', expiresAt } }
+          : { offer: { payload: PAYLOAD, expiresAt } }
       }
       if (channel === 'cli:qrMatrix') {
         if (qrChannel === 'missing') throw new Error(`unknown channel: ${channel}`)
@@ -211,29 +210,43 @@ async function main(): Promise<void> {
   const packaged = await import(path.join(cliCopy, 'commands', 'pair.mjs'))
 
   const drawn = await captured(() =>
-    packaged.pair(makeClient(handlers, { qrChannel: 'real', endWith: 'connected' }), ['whatsapp'])
+    packaged.pair(makeClient(handlers, { qrChannel: 'real', endWith: 'paired' }), ['phone'])
   )
-  check('packaged: exits linked', drawn.code === 0, `code ${String(drawn.code)}`)
+  check('packaged: exits paired', drawn.code === 0, `code ${String(drawn.code)}`)
   check('packaged: drew the QR', /[█▀▄]/.test(drawn.text), drawn.text.slice(0, 400))
-  check('packaged: shows the scan caption', /Linked devices/.test(drawn.text), drawn.text)
+  check(
+    'packaged: shows the scan caption',
+    /Scan this with the Wolffish app/.test(drawn.text),
+    drawn.text
+  )
   check('packaged: no renderer complaint', !/no QR renderer/.test(drawn.text), drawn.text)
 
-  // ── An old daemon degrades to the text fallback ──────────────────────────
+  // ── An old daemon degrades to the text fallback, then the typed code ─────
   const fallback = await captured(() =>
-    packaged.pair(makeClient(handlers, { qrChannel: 'missing', endWith: 'disconnected' }), [
-      'whatsapp'
-    ])
+    packaged.pair(makeClient(handlers, { qrChannel: 'missing', endWith: 'paired' }), ['phone'])
   )
-  check('old daemon: exits without linking', fallback.code === 1, `code ${String(fallback.code)}`)
   check('old daemon: falls back to text', /no QR renderer/.test(fallback.text), fallback.text)
   check('old daemon: payload still shown', fallback.text.includes(PAYLOAD), fallback.text)
+  check(
+    'old daemon: switches to the typed code',
+    /switching to the typed code/.test(fallback.text) && fallback.text.includes('ABCD-EFGH'),
+    fallback.text
+  )
+  check('old daemon: still exits paired', fallback.code === 0, `code ${String(fallback.code)}`)
+
+  // ── An expired offer ends without a prompt ───────────────────────────────
+  const expired = await captured(() =>
+    packaged.pair(makeClient(handlers, { qrChannel: 'real', endWith: 'expired' }), ['phone'])
+  )
+  check('expired: exits without pairing', expired.code === 1, `code ${String(expired.code)}`)
+  check('expired: says so', /expired/.test(expired.text), expired.text)
 
   // ── Dev still draws with no daemon at all ────────────────────────────────
   const dev = await import(path.join(APP, 'src/cli/commands/pair.mjs'))
   const local = await captured(() =>
-    dev.pair(makeClient(handlers, { qrChannel: 'missing', endWith: 'connected' }), ['whatsapp'])
+    dev.pair(makeClient(handlers, { qrChannel: 'missing', endWith: 'paired' }), ['phone'])
   )
-  check('dev: exits linked', local.code === 0, `code ${String(local.code)}`)
+  check('dev: exits paired', local.code === 0, `code ${String(local.code)}`)
   check('dev: drew the QR locally', /[█▀▄]/.test(local.text), local.text.slice(0, 400))
   check('dev: no renderer complaint', !/no QR renderer/.test(local.text), local.text)
 

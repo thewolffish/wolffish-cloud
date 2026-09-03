@@ -4,15 +4,14 @@ import { workspaceRoot } from '@main/workspace/root'
 /**
  * Build the LLM-facing user-message content with an `<attachments>`
  * metadata block appended. Mirrors the renderer's
- * `composeHistoryContent` so non-renderer channels (Telegram) deliver
+ * `composeHistoryContent` so non-renderer channels deliver
  * the same shape to the agent: the model gets filename, mime, size,
  * and absolute path for every attached file regardless of which
  * channel sent the turn.
  *
  * The absolute path matters — tools (stt_transcribe, ffprobe shell
- * calls, etc.) need a real path on disk, not a workspace-relative
- * one. Channels that don't run preprocessing of their own (Telegram)
- * call this; the renderer composes inline because it can stay closer
+ * calls, etc.) need a real path on disk, not a workspace-relative one. Channels that don't
+ * run preprocessing of their own call this; the renderer composes inline because it can stay closer
  * to its own `working_folder` UI state.
  */
 export function composeAttachmentContext(

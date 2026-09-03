@@ -240,70 +240,20 @@ describe('ask showcase', () => {
   })
 })
 
-describe('voice showcase', () => {
-  const conversation = showcase('voice-showcase')
-
-  it('is the dataset row that carries the phone badge', () => {
-    expect(conversation.channel).toBe('mobile')
-  })
-
-  it('marks every user turn as a voice prompt with audio behind it', () => {
-    const prompts = conversation.messages.filter((message) => message.role === 'user')
-    expect(prompts.length).toBeGreaterThanOrEqual(4)
-    for (const prompt of prompts) {
-      // `voicePrompt` is what stops the bubble printing the transcript back
-      // under the player; the transcript still has to BE there, because it is
-      // what the model received and what titling reads.
-      expect(prompt.voicePrompt).toBe(true)
-      expect(prompt.content.trim()).toBeTruthy()
-      expect(prompt.attachments?.[0]?.type).toBe('audio')
-    }
-    // Transcript language and app language are independent — both are shown.
-    const langs = new Set(prompts.map((prompt) => prompt.voiceLang))
-    expect(langs.has('en')).toBe(true)
-    expect(langs.has('ar')).toBe(true)
-  })
-
-  it('renders spoken replies as audio cards', () => {
-    const audio = conversation.messages
-      .filter((message) => message.role === 'assistant')
-      .flatMap((message) => buildRenderBlocks(message))
-      .filter((block) => block.type === 'file' && block.kind === 'audio')
-    expect(audio.length).toBeGreaterThan(0)
-  })
-
-  it('references only file types the CDN publishes a sample for', () => {
-    const paths = conversation.messages.flatMap((message) => [
-      ...(message.attachments ?? []).map((attachment) => attachment.filePath),
-      ...buildRenderBlocks(message).flatMap((block) =>
-        block.type === 'file' || block.type === 'media' ? [block.relPath] : []
-      )
-    ])
-    expect(paths.length).toBeGreaterThan(0)
-    for (const relPath of paths) expect(sampleExtFor(relPath)).not.toBeNull()
-  })
-})
-
 describe('the dataset as a whole', () => {
   const dataset = everyConversation()
   const projectIds = new Set((snapshot.projects ?? []).map((project) => project.id))
 
   it('is the size the bundle expects', () => {
-    expect(dataset.length).toBeGreaterThan(150)
+    expect(dataset.length).toBeGreaterThan(50)
   })
 
   it('names only channels the badge can draw', () => {
     // Kept in step with ChannelBadge's switch by hand; a glyph added there and
-    // not here is a badge the dataset never proves it can draw.
-    const known = new Set([
-      'electron',
-      'telegram',
-      'whatsapp',
-      'mobile',
-      'cli',
-      'heartbeat',
-      'procedure'
-    ])
+    // not here is a badge the dataset never proves it can draw. `electron` is
+    // not in that switch — it is the in-app default the badge draws nothing
+    // for — but rows legitimately carry it, so it is named here.
+    const known = new Set(['electron', 'mobile', 'cli', 'heartbeat', 'procedure'])
     const seen = new Set<string>()
     for (const { conversation } of dataset) {
       if (!conversation.channel) continue
@@ -314,13 +264,13 @@ describe('the dataset as a whole', () => {
      * Every glyph ChannelBadge can draw has at least one row wearing it, so the
      * demo actually exercises the badge rather than merely permitting it.
      *
-     * `cli` is the one exception, and deliberately: the demo dataset is
-     * hand-authored content and has no terminal-origin conversation in it yet.
-     * Naming the exception here keeps the guard on every other glyph instead of
-     * deleting the assertion — and the day someone writes that conversation,
-     * removing this line is the whole change.
+     * `procedure` is the one exception, and deliberately: the only
+     * procedure-origin row the dataset had was built on retired services and
+     * went out with them. Naming the exception here keeps the guard on every
+     * other glyph instead of deleting the assertion — and the day someone
+     * writes that conversation, removing this line is the whole change.
      */
-    const notInTheDemoYet = new Set(['cli'])
+    const notInTheDemoYet = new Set(['procedure'])
     for (const channel of known) {
       if (notInTheDemoYet.has(channel)) continue
       expect(seen.has(channel)).toBe(true)

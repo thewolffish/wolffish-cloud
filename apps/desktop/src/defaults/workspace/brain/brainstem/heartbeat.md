@@ -49,7 +49,7 @@ on startup then never again until the next restart.
 
 ## Startup
 
-Check all connected integrations (Telegram, WhatsApp, email) and
+Check all connected channels (the phone, the terminal) and MCP servers, and
 report any that failed to initialize. Summarize status in a short
 memo to memory.
 

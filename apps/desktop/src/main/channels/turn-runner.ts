@@ -46,7 +46,7 @@ export type TurnSendOptions = {
   /**
    * Delivery channel for this turn's prose. Threaded into the system
    * prompt so the model writes in the channel's native text formatting
-   * (WhatsApp renders no Markdown). Omitted → no formatting overlay.
+   * (a renderer without Markdown). Omitted → no formatting overlay.
    */
   channel?: ConversationChannel
   /**
@@ -71,18 +71,6 @@ export type TurnSendOptions = {
    * stamp. Omitted (every normal channel turn) ⇒ the global mode.
    */
   modeOverride?: 'single' | 'workflow'
-  /**
-   * Channel-format feedback pull (observe-and-notify — see the channel
-   * overlays' verbatim-prose contract). A prose-mirroring channel
-   * (Telegram/WhatsApp) validates each prose block it delivers; when a
-   * block leaked raw markup it parks a notice, and the agent drains this
-   * every iteration to ride the notices on the volatile runtime tail —
-   * the model then fixes the delivered message (telegram_edit_message)
-   * and writes clean blocks for the rest of the turn. Nothing rewrites
-   * or withholds the model's prose; the framework only tells it what the
-   * user actually received. Omitted for channels that render Markdown.
-   */
-  formatNotices?: () => string[]
   /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending
@@ -111,7 +99,7 @@ export type TurnHandle = {
 /**
  * A turn in flight (or queued) for a conversation, as seen from outside.
  * The renderer asks for these on window open: chat:turnState is a
- * BROADCAST, so a window created after a Telegram/WhatsApp run started —
+ * BROADCAST, so a window created after a phone or terminal run started —
  * the normal case for a tray app whose channels run headless — never saw
  * the 'started' event and would otherwise render the conversation idle.
  */
@@ -130,7 +118,7 @@ type LiveRun = {
 /**
  * Lifecycle notifications for every foreground turn, regardless of channel.
  * Broadcast to the renderer (chat:turnState) so the Conversations sidebar
- * can show live status chips for in-app, WhatsApp and Telegram runs alike.
+ * can show live status chips for in-app, phone and terminal runs alike.
  */
 export type TurnLifecycleEvent = {
   phase: 'started' | 'done' | 'canceled' | 'error'
@@ -278,7 +266,7 @@ export class TurnRunner {
 
   /**
    * Abort every live turn of a conversation, whatever channel owns it. This
-   * is what makes the in-app Stop button real for a Telegram/WhatsApp run
+   * is what makes the in-app Stop button real for a phone or terminal run
    * the user is watching from the app: the originating channel keeps its own
    * controllers, but they all resolve through here.
    *
@@ -419,7 +407,7 @@ export class TurnRunner {
       // first event. 'Untitled' is a placeholder, not a title, and it is
       // TRUTHY — passing it through would satisfy the `if (!title)` below and
       // skip titling for good. Channels persist exactly that placeholder to
-      // disk before the turn (telegram/channel.ts loadOrCreateConversation),
+      // disk before the turn (a channel's loadOrCreateConversation),
       // so a caller wiring `conversationTitle: conv.title` is a live hazard.
       const provided =
         opts.conversationTitle && opts.conversationTitle !== 'Untitled'
@@ -516,8 +504,7 @@ export class TurnRunner {
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,
-            modeOverride: opts.modeOverride,
-            formatNotices: opts.formatNotices
+            modeOverride: opts.modeOverride
           })
         )
         sink.onDone()

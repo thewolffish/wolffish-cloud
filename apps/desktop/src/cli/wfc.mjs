@@ -46,14 +46,7 @@ import {
 } from './lib/ui.mjs'
 import { runTurn } from './lib/turn.mjs'
 import { repl } from './commands/repl.mjs'
-import {
-  brain,
-  capabilities,
-  getSetting,
-  manageKeys,
-  setSetting,
-  variables
-} from './commands/settings.mjs'
+import { capabilities, getSetting, setSetting, variables } from './commands/settings.mjs'
 import { listAllSettings, listPages, settingsBrowser } from './commands/settings-browser.mjs'
 import {
   automations,
@@ -76,7 +69,7 @@ import { pair } from './commands/pair.mjs'
  *
  * Chat, the five screens (conversations, projects, procedures, automations,
  * settings), the workspace, and the three machine verbs a headless box needs.
- * Everything that used to sit up here — config, keys, brain, capabilities,
+ * Everything that used to sit up here — config, capabilities,
  * vars, usage, soul/user/agents — was a second taxonomy to learn on top of the
  * one the window already teaches, so each is now reached where its screen is.
  * The old words still dispatch (see ALIASES); they are simply not the ones
@@ -110,8 +103,8 @@ ${c.gray('FILES AND FOLDERS — projects, procedures and automations alike')}
   wfc <thing> dirs <id> rm <path…>    stop working in it
 
 ${c.gray('SETTINGS, DIRECTLY')}
-  wfc settings <page> [card]   e.g. settings channels telegram
-  wfc settings <name>          e.g. settings notion
+  wfc settings <page> [card]   e.g. settings channels mobile
+  wfc settings <name>          e.g. settings brave
   wfc settings list [filter]   read them all, tokens redacted
   wfc settings set <id> <val>  change one, for scripts
 
@@ -121,12 +114,12 @@ ${c.gray('WORKSPACE')}
   wfc edit <path>              change one
 
 ${c.gray('MACHINE')}
-  wfc status                   daemon, brain, autostart, channels
+  wfc status                   daemon, model, autostart, channels
   wfc cancel [id|--all]        stop a running turn, on any channel
   wfc service <install|status|uninstall|stop|logs>
   wfc path <status|install>    make "wfc" resolvable
-  wfc pair <phone|whatsapp|telegram>
-    ${c.gray('on a box with no screen: pair phone --code, pair whatsapp --number')}
+  wfc pair phone [--code]
+    ${c.gray('on a box with no screen: pair phone --code')}
 
 ${c.gray('FLAGS')}
   --tools / --clean  show or hide tool calls, overriding the saved setting
@@ -323,9 +316,7 @@ async function main() {
  * They keep working — muscle memory, scripts and every README that quoted them
  * are all real — but they are not advertised, because the point of the shorter
  * top level is that there is ONE name for each thing, and it is the one the
- * window uses. Only pure renames belong here: a legacy verb with a grammar of
- * its own (`keys set …`, `brain <provider> <model>`) keeps its own case below,
- * since prefixing its arguments would change what it means.
+ * window uses. Only pure renames belong here.
  */
 const ALIASES = new Map([
   ['ls', ['conversations']],
@@ -392,8 +383,7 @@ async function dispatch(client, command, args, flags) {
         return getSetting(client, args[1], { json: flags.json })
       }
       if (args[0] === 'set') {
-        if (!args[1] || args[2] === undefined)
-          return usageError('wfc settings set <id> <value>')
+        if (!args[1] || args[2] === undefined) return usageError('wfc settings set <id> <value>')
         return setSetting(client, args[1], args.slice(2).join(' '))
       }
       if (args[0] === 'list' || args[0] === 'all') {
@@ -528,12 +518,6 @@ async function dispatch(client, command, args, flags) {
         flags
       )
 
-    case 'keys':
-      return manageKeys(client, args)
-
-    case 'brain':
-      return brain(client, args)
-
     case 'capabilities':
     case 'caps':
       return capabilities(client, args)
@@ -594,8 +578,6 @@ const COMMANDS = [
   'path',
   'pair',
   'config',
-  'keys',
-  'brain',
   'capabilities',
   'vars',
   'usage',

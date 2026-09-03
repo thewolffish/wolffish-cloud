@@ -9,6 +9,7 @@
  */
 import { Hono } from 'hono'
 import { deleteCapability, putCapability } from '@/lib/capabilities'
+import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import {
   ClearPinSchema,
@@ -240,10 +241,14 @@ admin.post('/users/:id/clear-pin', async (c) => {
  */
 admin.get('/users/:id/reset-code', async (c) => {
   const auth = c.get('auth')
+  if (c.env.ADMIN_RESET_CODE_READ !== '1') return c.json({ error: 'not_found' }, 404)
   if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
-  const raw = await c.env.AUTH_KV.get(`reset:${c.req.param('id')}`)
-  if (!raw) return c.json({ error: 'not_found' }, 404)
-  const entry = JSON.parse(raw) as { code: string; attempts: number }
+  const entry = await c.env.DB.prepare(
+    'SELECT code, attempts FROM password_resets WHERE user_id = ?1 AND expires_at > ?2'
+  )
+    .bind(c.req.param('id'), nowIso())
+    .first<{ code: string; attempts: number }>()
+  if (!entry) return c.json({ error: 'not_found' }, 404)
   return c.json({ code: entry.code, attempts: entry.attempts })
 })
 
@@ -317,10 +322,9 @@ admin.get('/users/:id/config', async (c) => {
     .first<{ config: string; updated_at: string }>()
   await audit(c.env, auth.sub, 'config.view', id)
   // null (never synced) is a different answer than {} (synced empty / reset).
-  return c.json({
-    config: row ? JSON.parse(row.config) : null,
-    updated_at: row?.updated_at ?? null
-  })
+  const config = row ? await openConfig(c.env, row.config) : null
+  if (row && config === null) return c.json({ error: 'config_unreadable' }, 500)
+  return c.json({ config, updated_at: row?.updated_at ?? null })
 })
 
 /**
@@ -347,7 +351,7 @@ admin.put('/users/:id/config', async (c) => {
     `INSERT INTO settings (user_id, config, updated_at) VALUES (?1, ?2, ?3)
      ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at`
   )
-    .bind(id, serialized, now)
+    .bind(id, await sealConfig(c.env, body.config), now)
     .run()
   await audit(c.env, auth.sub, 'config.set', id, {
     bytes: serialized.length,

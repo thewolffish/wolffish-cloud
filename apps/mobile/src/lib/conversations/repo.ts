@@ -1,4 +1,4 @@
-import { getDb } from '@/lib/db/database'
+import { getDb, withExclusiveTransaction } from '@/lib/db/database'
 import type {
   ConversationChannel,
   ConversationFile,
@@ -136,7 +136,7 @@ export async function getConversation(id: string): Promise<ConversationFile | nu
 /** Insert or fully replace a conversation (demo import + sync ingestion). */
 export async function upsertConversation(file: ConversationFile): Promise<void> {
   const db = await getDb()
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withExclusiveTransaction(db, async (tx) => {
     await tx.runAsync(
       `INSERT OR REPLACE INTO conversations
         (id, title, model, channel, icon, project_id, sealed, created_at, updated_at,
@@ -180,22 +180,27 @@ export async function appendMessage(
   message: ConversationMessage
 ): Promise<void> {
   const db = await getDb()
-  await db.withExclusiveTransactionAsync(async (tx) => {
-    const row = await tx.getFirstAsync<{ next: number }>(
-      'SELECT COALESCE(MAX(seq) + 1, 0) AS next FROM messages WHERE conversation_id = ?',
-      conversationId
-    )
-    const seq = row?.next ?? 0
+  await withExclusiveTransaction(db, async (tx) => {
+    // One write statement, not a SELECT for the next seq followed by an
+    // INSERT: the write lock is taken as the statement starts, so a writer
+    // on the other connection cannot commit between the read and the write
+    // and leave this transaction on a stale snapshot (which no busy timeout
+    // retries). An aggregate over no rows still yields one row, so the very
+    // first message of a conversation lands at seq 0.
     await tx.runAsync(
       `INSERT INTO messages (conversation_id, seq, id, role, content, timestamp, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, COALESCE(MAX(seq) + 1, 0),
+              COALESCE(?, 'm_' || ? || '_' || COALESCE(MAX(seq) + 1, 0)),
+              ?, ?, ?, ?
+       FROM messages WHERE conversation_id = ?`,
       conversationId,
-      seq,
-      message.id ?? `m_${message.timestamp}_${seq}`,
+      message.id ?? null,
+      String(message.timestamp),
       message.role,
       message.content,
       message.timestamp,
-      messagePayload(message)
+      messagePayload(message),
+      conversationId
     )
     await tx.runAsync(
       'UPDATE conversations SET updated_at = ?, message_count = message_count + 1 WHERE id = ?',
@@ -323,7 +328,7 @@ export async function countConversationsSince(cutoffMs: number): Promise<number>
 
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb()
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withExclusiveTransaction(db, async (tx) => {
     await tx.runAsync('DELETE FROM messages WHERE conversation_id = ?', id)
     await tx.runAsync('DELETE FROM conversations WHERE id = ?', id)
   })

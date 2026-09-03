@@ -155,7 +155,7 @@ File shapes — STRUCTURE IS MANDATORY: every entity/topic is a "## Section" hea
 # People
 <!-- People mentioned in conversations, relationships, roles -->
 ## Sana (wife)
-- WhatsApp \`+9665…\`. Enjoys a daily funny-romantic meme; formats tracked to avoid repeats.
+- Birthday March 3. Enjoys a weekly plan for Friday outings; formats tracked to avoid repeats.
 ## Mom
 - SMS bank alerts forwarded via …
 
@@ -501,16 +501,9 @@ export class Brainstem {
     // diskWriter can't see plugin/shell writes, so the watcher is the one
     // ingest trigger that catches everything.
     const workspaceRoot = this.workspaceRoot
-    const roots = [
-      'brain',
-      'usage',
-      'logs',
-      'files',
-      'uploads',
-      'screenshots',
-      'speech',
-      'whatsapp'
-    ].map((dir) => path.join(workspaceRoot, dir))
+    const roots = ['brain', 'usage', 'logs', 'files', 'uploads', 'screenshots', 'speech'].map(
+      (dir) => path.join(workspaceRoot, dir)
+    )
     let watcher: FSWatcher
     try {
       watcher = chokidar.watch(roots, {
@@ -2003,8 +1996,6 @@ function shouldIgnoreWatch(filepath: string): boolean {
   if (normalized.endsWith('cortex.db')) return true
   if (normalized.endsWith('cortex.db-wal') || normalized.endsWith('cortex.db-shm')) return true
   if (normalized.includes('/.debug/') || normalized.includes('/.debug-archive/')) return true
-  // Baileys credential churn — high write frequency, never indexable.
-  if (normalized.includes('/whatsapp/auth')) return true
   if (normalized.includes('/node_modules/') || normalized.endsWith('/node_modules')) return true
   const base = path.basename(normalized)
   if (base.startsWith('.')) return true

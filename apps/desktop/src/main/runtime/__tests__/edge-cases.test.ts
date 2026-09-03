@@ -87,7 +87,6 @@ async function run(): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'edge-corrupt-'))
   write(root, 'brain/conversations/conv-broken.json', '{ this is not json !!!')
   write(root, 'brain/conversations/conv-nomsg.json', JSON.stringify({ id: 'nomsg', title: 'x' }))
-  write(root, 'whatsapp/read-history.json', '["array", "not", "object"]')
   write(root, 'usage/daily/2026-07-04.md', '# garbage\n- not | a | valid | line\n- | | |\n')
   write(root, 'brain/hippocampus/episodes/2026-07-04.md', '')
   write(root, 'brain/hippocampus/knowledge/technical.md', 'no headers at all, just prose text')
@@ -104,39 +103,11 @@ async function run(): Promise<void> {
     cortex2.getRecordsByRef('conversation:broken').length === 0
   )
   ok('conv without messages: listed harmlessly', cortex2.listConversations({}).length <= 2)
-  ok(
-    'array read-history: no crash',
-    cortex2.getRecordsByRef('file:whatsapp/read-history.json').length === 0
-  )
   ok('garbage usage lines: zero ledger rows', cortex2.usageSummary({}).requests === 0)
   ok('headerless md: single record', cortex2.searchRecords('prose text', {}).length >= 1)
   const arabic = cortex2.searchRecords('الرحمن', {})
   ok('arabic FTS search works', arabic.length >= 1)
   cortex2.close()
-
-  // ── 3. WhatsApp ingest edge shapes ───────────────────────────────────
-  ok(
-    'wa: seconds and ms timestamps both resolve',
-    (() => {
-      const recs = ingest.ingestWhatsAppHistory(
-        'whatsapp/read-history.json',
-        JSON.stringify({
-          'x@s.whatsapp.net': [
-            { fromMe: false, sender: 'A', text: 'seconds ts', timestamp: 1751364000 },
-            { fromMe: true, sender: 'me', text: 'ms ts', timestamp: 1751364000000 }
-          ]
-        })
-      )
-      return recs.length === 1 && /^\d{4}-\d{2}-\d{2}$/.test(recs[0].date ?? '')
-    })()
-  )
-  ok(
-    'wa: empty texts and empty chats skipped',
-    ingest.ingestWhatsAppHistory(
-      'whatsapp/read-history.json',
-      JSON.stringify({ 'a@x': [{ text: '' }, { text: '   ' }], 'b@x': [] })
-    ).length === 0
-  )
 
   // ── 4. capContent boundaries ─────────────────────────────────────────
   const exact = 'x'.repeat(4000 + 500 + 40)

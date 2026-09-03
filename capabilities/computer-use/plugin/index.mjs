@@ -1651,6 +1651,7 @@ const plugin = {
     // On macOS, prompt for Accessibility permission
     if (process.platform === 'darwin') {
       try {
+        // 'electron' is deliberately undeclared in package.json: plugins run inside the Electron main process, where the module is built in.
         const { systemPreferences } = await import('electron')
         systemPreferences.isTrustedAccessibilityClient(true)
       } catch {
@@ -1660,6 +1661,7 @@ const plugin = {
 
     // Load Electron screen capture APIs (screenshots use desktopCapturer, not nut-js)
     try {
+      // 'electron' is deliberately undeclared in package.json: plugins run inside the Electron main process, where the module is built in.
       const electron = await import('electron')
       electronScreen = electron.screen
       electronDesktopCapturer = electron.desktopCapturer

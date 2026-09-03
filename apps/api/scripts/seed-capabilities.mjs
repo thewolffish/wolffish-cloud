@@ -68,7 +68,18 @@ async function firstExisting(candidates) {
 
 // ── Packaging one capability folder ──────────────────────────────────────
 
-const JUNK = new Set(['node_modules', '.git', '.ds_store', '__macosx', '.wfc-installed', '.wfc-tested'])
+// Mirror of the desktop's capabilityPack JUNK list — the two must agree or
+// the same folder hashes differently on each side and re-uploads forever.
+const JUNK = new Set([
+  'node_modules',
+  '.git',
+  '.ds_store',
+  '__macosx',
+  '.wfc-installed',
+  '.wfc-tested',
+  'package-lock.json',
+  'npm-shrinkwrap.json'
+])
 
 async function collectFiles(root, rel = '', out = []) {
   const entries = await fs.readdir(path.join(root, rel), { withFileTypes: true })

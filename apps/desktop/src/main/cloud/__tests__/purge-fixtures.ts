@@ -34,7 +34,7 @@ export const CONFIG_A = {
   locale: 'en',
   llm: { model: 'm-test' },
   variables: [{ name: 'SECRET', value: 'sk-live-999', sensitive: true }],
-  telegram: { enabled: false, botToken: 'tg-token-abc', allowedUserIds: [] }
+  mobile: { notifications: true, verbose: true, runCards: false }
 }
 
 export const ATTACHMENT_BYTES = Buffer.from('attachment-payload-' + 'x'.repeat(64))
@@ -70,8 +70,8 @@ export function eagerSeedFiles(): Array<[string, Buffer | string]> {
     ['brain/identity/soul.md', '# Soul — customized\n\nDry humor, terse, cites sources.\n'],
     ['brain/brainstem/heartbeat.md', '# Heartbeat\n\n## Daily digest\n- schedule: 0 7 * * *\n'],
     ['brain/hippocampus/knowledge/preferences.md', '# Preferences\n\n- Dark mode.\n'],
-    ['whatsapp/chats.json', '{"123@s.whatsapp.net":"c2"}'],
-    ['whatsapp/auth/creds.json', '{"secret":"device-signal-keys"}'],
+    ['brain/channels/chats.json', '{"123":"c2"}'],
+    ['brain/cerebellum/.local/creds.json', '{"secret":"device-local-keys"}'],
     ['logs/extension/c-trail.jsonl', '{"t":1,"kind":"navigate","url":"https://example.com"}\n']
   ]
 }
@@ -155,7 +155,7 @@ export function expectedLedgerText(): string {
 }
 
 /** Files that must NEVER sync: device-local by design (rotating app logs,
- *  device keys are covered separately via whatsapp/auth). */
+ *  device keys are covered separately via brain/cerebellum/.local). */
 export function deviceOnlySeedFiles(): Array<[string, string]> {
   // A dated name the RUNNING engine will never write itself (wlog writes
   // logs/<today>.log) — existence after restore is then a valid probe.
@@ -183,10 +183,10 @@ export function seedFiles(): Array<[string, Buffer | string]> {
 }
 
 /** Everything that must be back after restore + hydration: every seeded
- *  file except the deleted one and the excluded auth dir. */
+ *  file except the deleted one and the excluded cerebellum dir. */
 export function restoredFiles(): Array<[string, Buffer | string]> {
   return seedFiles().filter(
-    ([name]) => name !== 'files/temp-note.txt' && !name.startsWith('whatsapp/auth/')
+    ([name]) => name !== 'files/temp-note.txt' && !name.startsWith('brain/cerebellum/')
   )
 }
 
@@ -261,7 +261,7 @@ export type Check = (label: string, cond: boolean, detail?: string) => void
  * conversation and byte by byte: config values, every surviving file,
  * every transcript (title, model, message ids, contents, order), the
  * attachment bytes — and that the DELETED conversation and file stayed
- * deleted, and the excluded whatsapp/auth keys never came back.
+ * deleted, and the excluded cerebellum-local keys never came back.
  * `convCount` is the seeded total; conversation `convCount` is the deleted
  * one.
  */
@@ -290,7 +290,10 @@ export async function assertRestoredWorkspace(
     ok(`file restored: ${rel}`, got !== null && got.equals(want))
   }
   ok('deleted file stayed deleted', !existsSync(path.join(workspace, 'files/temp-note.txt')))
-  ok('whatsapp auth NOT restored', !existsSync(path.join(workspace, 'whatsapp/auth/creds.json')))
+  ok(
+    'cerebellum-local keys NOT restored',
+    !existsSync(path.join(workspace, 'brain/cerebellum/.local/creds.json'))
+  )
   // The LLM ledger is the org's record: rebuilt from the usage table, not
   // restored from (or clobbered by) any device's blob.
   const ledger = await read('usage/providers/cloud.md').catch(() => null)

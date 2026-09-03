@@ -74,13 +74,13 @@ async function isPending(promise: Promise<unknown>): Promise<boolean> {
 
 async function run(): Promise<void> {
   const { MobileChannel } = await import('@main/channels/mobile/channel')
-  const { Rpc, Event } = await import('@main/tunnel/protocol')
+  const { Rpc, Event } = await import('@main/cloud/bridge-protocol')
   const { loadConversation } = await import('@main/conversations')
 
   const pushes: Push[] = []
   const handlers = new Map<string, RpcHandler>()
   const fakeTunnel = {
-    connected: true,
+    phonePresent: true,
     onRpc: (method: string, handler: RpcHandler) => handlers.set(method, handler),
     emit: (topic: string, payload: Record<string, unknown>) => pushes.push({ topic, payload })
   }
@@ -105,7 +105,7 @@ async function run(): Promise<void> {
     serializeCapabilities: async () => []
   } as never)
   ;(channel as unknown as { registerHandlers: (t: unknown) => void }).registerHandlers(fakeTunnel)
-  ;(channel as unknown as { tunnel: unknown }).tunnel = fakeTunnel
+  ;(channel as unknown as { bridge: unknown }).bridge = fakeTunnel
 
   const call = (method: string, params: Record<string, unknown>): Promise<unknown> => {
     const handler = handlers.get(method)
@@ -275,7 +275,7 @@ async function run(): Promise<void> {
   ok('... and cancels the question', (await strandedAsk)?.kind === 'canceled')
 
   // ------------------------------------------------- nothing on the other end
-  ;(channel as unknown as { tunnel: unknown }).tunnel = { ...fakeTunnel, connected: false }
+  ;(channel as unknown as { bridge: unknown }).bridge = { ...fakeTunnel, phonePresent: false }
   const offline = await startTurn('risky with no phone')
   const deniedOffline = await offline.sink.onApprovalRequest(approvalRequest('appr_5', 'call_5'))
   ok('with no phone connected an approval fails closed', deniedOffline === 'denied')

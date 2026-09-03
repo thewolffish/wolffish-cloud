@@ -256,8 +256,8 @@ not how to do it step by step.
   *my* overnight emails and save to today's daily log" beats "summarize them".
 - **Say where output goes.** To a file? To memory (an episode / daily log)? To
   the user on a channel? If it should reach the user, say so — and remember that
-  reaching them out-of-band means a channel send tool (`telegram_send` /
-  `whatsapp_send`), which only works if that channel is connected.
+  reaching them out-of-band means `notify_phone`, which only works while a
+  phone is paired.
 - **Keep it safe to run unattended.** Favor read/summarize/notify over
   irreversible actions. Anything destructive should have been agreed with the
   user first.

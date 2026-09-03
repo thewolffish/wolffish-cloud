@@ -186,12 +186,6 @@
         "links": [{ "label": "Get an xAI API key", "url": "https://console.x.ai" }],
         "note": "Grok 4.6 handles text and images. It costs more than text-only models, but for personal use it's still just a few dollars a month — Settings → Usage keeps count."
       },
-      "brave": {
-        "title": "Add sharper web search — free",
-        "body": "Wolffish can already search the web, but a free Brave key makes results faster and cleaner. Create one at brave.com/search/api, then in Wolffish open Settings → Services → Brave Search, switch it on, paste the key, and click Save.",
-        "links": [{ "label": "Get a Brave Search key", "url": "https://brave.com/search/api/" }],
-        "note": "Optional — skip it and Wolffish quietly uses DuckDuckGo instead. Brave's free tier is plenty for personal use."
-      },
       "workspace": {
         "title": "Connect your Google account",
         "body": "This gives Wolffish real access to your Gmail and Calendar — through Google's own sign-in, with everything stored only on your computer. In Wolffish, open Settings → Services → Google Workspace and follow the panel top to bottom: click Install (a small Google helper tool), then follow the built-in “Create an OAuth Client” guide — it walks you through Google's console click by click and ends with downloading a small file. Drop that file into the panel, click Authorize, and approve in your browser.",

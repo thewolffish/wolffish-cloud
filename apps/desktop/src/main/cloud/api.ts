@@ -285,3 +285,54 @@ export async function deleteAvatar(accessToken: string): Promise<void> {
 export async function reportPin(accessToken: string, pinSet: boolean): Promise<void> {
   await post<{ ok: true }>('/v1/device/pin', { pin_set: pinSet }, accessToken)
 }
+
+// ── Pairing + devices (the phone's way in) ──────────────────────────────
+
+export type PairOfferWire = { id: string; code: string; qr: string; expires_at: string }
+
+/** Open a pairing offer: the code to type and the QR payload to scan. */
+export async function offerPairing(accessToken: string): Promise<PairOfferWire> {
+  return post<PairOfferWire>('/v1/pair/offer', {}, accessToken)
+}
+
+export async function pairingStatus(
+  accessToken: string,
+  id: string
+): Promise<{ status: 'pending' | 'claimed' | 'expired'; device: Record<string, unknown> | null }> {
+  return request('GET', `/v1/pair/offer/${encodeURIComponent(id)}`, undefined, accessToken)
+}
+
+export async function withdrawPairing(accessToken: string, id: string): Promise<void> {
+  await request<{ ok: true }>(
+    'DELETE',
+    `/v1/pair/offer/${encodeURIComponent(id)}`,
+    undefined,
+    accessToken
+  )
+}
+
+export type DeviceWire = {
+  id: string
+  platform: string
+  name: string
+  app_version: string
+  created_at: string
+  last_seen_at: string | null
+  paired: boolean
+  current: boolean
+}
+
+export async function listDevices(accessToken: string): Promise<DeviceWire[]> {
+  const res = await request<{ devices: DeviceWire[] }>('GET', '/v1/devices', undefined, accessToken)
+  return res.devices ?? []
+}
+
+/** Revoke another of this user's devices — unpairing a phone. */
+export async function revokeDevice(accessToken: string, id: string): Promise<void> {
+  await request<{ ok: true }>(
+    'DELETE',
+    `/v1/devices/${encodeURIComponent(id)}`,
+    undefined,
+    accessToken
+  )
+}

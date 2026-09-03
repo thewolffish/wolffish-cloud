@@ -5,7 +5,7 @@
 //
 // Tools:
 //   - send_file: deliver a file to the user as a native attachment on
-//     whatever channel they're on (in-app, WhatsApp, Telegram).
+//     whatever channel they're on (in-app, the terminal, the phone).
 //   - show_path: push an openable location card for a folder/file on disk
 //     into the in-app chat (folder → Open, file → Reveal in folder).
 
@@ -18,10 +18,9 @@ import path from 'node:path'
 // marker and the surface the user is actually on decides what to do with it —
 // so a bot API's 50 MB upload limit does not belong at this layer: it made the
 // in-app chat and the CLI, which upload nothing and read the file straight off
-// local disk, refuse files they could have delivered instantly. Telegram and
-// WhatsApp enforce their own limits at the point of upload (they stat before
-// reading, and Telegram re-encodes oversized video), which is the only place
-// the limit is real.
+// local disk, refuse files they could have delivered instantly. A remote
+// surface enforces its own limits at the point of upload, which is the only
+// place the limit is real.
 
 // Type buckets mirror the channel + renderer extractors so the
 // `[wolffish-output: <path> (<type>)]` marker we emit is recognized and
@@ -35,8 +34,12 @@ const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.w
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
 const DOCUMENT_EXTS = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.csv'])
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
 function workspaceRoot() {
-  return path.join(homedir(), '.wfc', 'workspace')
+  return contextWorkspaceRoot || path.join(homedir(), '.wfc', 'workspace')
 }
 
 function classify(ext) {
@@ -133,7 +136,7 @@ async function showPath(args) {
   // output so nothing leaks as stray text. The type is captured at call time
   // so a card in a resumed conversation still knows what it pointed at after
   // the path is deleted (it renders disabled with an "unavailable" note).
-  // Channels don't recognize it — nothing to open on WhatsApp/Telegram.
+  // Remote surfaces don't recognize it — there is no desktop to open there.
   return {
     success: true,
     output: `[wolffish-path: ${input} (${st.isDirectory() ? 'folder' : 'file'})]`
@@ -168,7 +171,7 @@ const toolDefinitions = [
   {
     name: 'send_file',
     description:
-      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, CLI, WhatsApp, or Telegram). Works for any file type. THE ONLY WAY a file reaches the user — no tool auto-delivers its output. In-app and CLI have no size limit; WhatsApp and Telegram enforce their own upload ceilings and say so if a file is too big to send there.',
+      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, CLI, or the paired phone). Works for any file type. THE ONLY WAY a file reaches the user — no tool auto-delivers its output. In-app and CLI have no size limit; remote surfaces enforce their own upload ceilings and say so if a file is too big to send there.',
     parameters: {
       type: 'object',
       properties: {
@@ -184,7 +187,7 @@ const toolDefinitions = [
   {
     name: 'show_path',
     description:
-      'Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens in the OS file manager), a file gets a Reveal button (opens its folder with the file selected). The path must exist. In-app desktop chat only — on WhatsApp/Telegram nothing renders, so name the path in prose there instead.',
+      'Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens in the OS file manager), a file gets a Reveal button (opens its folder with the file selected). The path must exist. In-app desktop chat only — on the phone nothing renders, so name the path in prose there instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -202,6 +205,9 @@ const plugin = {
   name: 'utilities',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args) {
     switch (toolName) {
       case 'send_file':

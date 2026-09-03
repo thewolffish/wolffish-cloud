@@ -288,7 +288,7 @@
       "stopReason": "end_turn"
     }
   ],
-  "channel": "telegram",
+  "channel": "electron",
   "stats": {
     "allTime": {
       "processingMs": 79960,

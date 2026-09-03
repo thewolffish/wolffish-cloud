@@ -19,7 +19,6 @@
  *   path card (show_path)  ▸ path  (folder|file)
  *   approval card          ▲ blocking prompt: approve / deny / always
  *   ask-user card          ? numbered questions, one prompt each
- *   task card              a live status line, replaced in place by taskId
  *   workflow card          agent roster + phase, replaced in place
  *   compaction card        one line: N results, tokens saved, duration
  *   reasoning card         dim, collapsed to a count unless verbose
@@ -132,7 +131,7 @@ export class TurnRenderer {
     // Task and workflow segments are SNAPSHOTS keyed by id — the app replaces
     // the card in place. A terminal can't repaint scrollback, so the id is
     // tracked and only meaningful transitions print, instead of one line per
-    // tick (a video task alone emits dozens).
+    // tick.
     this.taskState = new Map()
     this.workflowState = new Map()
     this.deliveredThisTurn = new Set()
@@ -199,9 +198,6 @@ export class TurnRenderer {
         return
       case 'tool_result':
         this.#toolResult(segment)
-        return
-      case 'task':
-        this.#task(segment.snapshot)
         return
       case 'workflow':
         this.#workflow(segment.snapshot)
@@ -276,21 +272,6 @@ export class TurnRenderer {
     this.#line(
       `  ${icon.ok()} ${c.gray(`${preview}${suffix}`)}${took ? c.gray(`  ${took}`) : ''}`.trimEnd()
     )
-  }
-
-  #task(snapshot) {
-    if (!snapshot || typeof snapshot !== 'object') return
-    const id = snapshot.taskId ?? snapshot.id ?? 'task'
-    const status = snapshot.status ?? 'running'
-    if (this.taskState.get(id) === status) return
-    this.taskState.set(id, status)
-    const label = snapshot.title ?? snapshot.kind ?? 'task'
-    const mark =
-      status === 'succeeded' ? icon.ok() : status === 'failed' ? icon.fail() : icon.tool()
-    // Task cards are one of the two things a clean feed keeps beyond prose and
-    // files: they represent minutes of background work, and silence for that
-    // long reads as a hang.
-    this.#line(`${mark} ${c.bold(label)} ${c.gray(status)}`)
   }
 
   #workflow(snapshot) {

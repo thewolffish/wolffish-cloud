@@ -14,6 +14,15 @@ export async function parseJson<S extends z.ZodType>(
   schema: S
 ): Promise<z.infer<S> | Response> {
   const raw = await c.req.json().catch(() => undefined)
+  return parseValue(c, schema, raw)
+}
+
+/** The same uniform 400 for a body the route already read (e.g. to cap its size). */
+export function parseValue<S extends z.ZodType>(
+  c: Context,
+  schema: S,
+  raw: unknown
+): z.infer<S> | Response {
   const result = schema.safeParse(raw)
   if (!result.success) {
     return c.json(

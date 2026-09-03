@@ -12,7 +12,7 @@ if (scriptURL) {
 }
 
 const reactotron = Reactotron.configure({
-  name: 'wolffish-mobile',
+  name: 'wfc-mobile',
   host
 })
   .setAsyncStorageHandler(AsyncStorage)

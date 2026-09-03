@@ -8,8 +8,8 @@ import { PanelScreen, Section } from '@/components/settings/SettingsUI'
 import { useTranslation } from 'react-i18next'
 
 /**
- * Preferences — the desktop WolffishPanel, mirrored. The RAM guard, the
- * credentials guard and the week-start choice are editable here:
+ * Preferences — the desktop WolffishPanel, mirrored. The credentials guard
+ * and the week-start choice are editable here:
  * setConfigValue routes them through the outbox to the desktop, which
  * persists them exactly as its own panel would and announces the change
  * back. Launch at startup stays display-only — it registers a login item
@@ -32,11 +32,6 @@ export default function PreferencesScreen(): React.JSX.Element {
           field="launchAtStartup"
           label={t('settings.preferences.launchAtStartup')}
           description={t('settings.preferences.launchAtStartupDescription')}
-        />
-        <ConfigSwitchRow
-          field="restrictPowerfulModels"
-          label={t('settings.preferences.restrictPowerfulModels')}
-          description={t('settings.preferences.restrictPowerfulModelsDescription')}
         />
         <ConfigSwitchRow
           field="ttsVoiceReplies"

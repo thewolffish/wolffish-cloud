@@ -14,7 +14,7 @@ import { goBack } from '@/lib/utils/back'
 import { cn } from '@/lib/utils/cn'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useRunStatus } from '@/state/runStatus'
-import { useDesktopReachable } from '@/lib/tunnel/useTunnelStatus'
+import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
 import { formatRelativeTime } from '@/lib/utils/relativeTime'
 import { router } from 'expo-router'
 import { memo, useMemo, useState } from 'react'
@@ -72,7 +72,7 @@ const Row = memo(function Row({
       accessibilityRole="button"
       accessibilityLabel={row.title}
       onPress={() => router.push({ pathname: '/chat', params: { id: row.id } })}
-      className="bg-surface border-border flex-row items-center gap-3 rounded-xl border px-4 py-3 active:bg-border/30"
+      className="bg-surface border-border flex-row items-center gap-3 rounded-xl border px-4 py-3 active:bg-border-soft"
     >
       <Pulse active={processing}>
         <View
@@ -176,7 +176,7 @@ export default function HistoryScreen(): React.JSX.Element {
           accessibilityLabel={t('common.back')}
           hitSlop={8}
           onPress={goBack}
-          className="h-9 w-9 items-center justify-center rounded-lg active:bg-border/40"
+          className="h-9 w-9 items-center justify-center rounded-lg active:bg-border-soft"
         >
           <BackIcon size={20} className="text-fg" />
         </Pressable>

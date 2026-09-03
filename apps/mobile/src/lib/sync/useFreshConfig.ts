@@ -1,5 +1,5 @@
 import { refreshConfig } from '@/lib/sync/sync'
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 import { useAppStore } from '@/state/appStore'
 import { useFocusEffect } from 'expo-router'
 import { useCallback } from 'react'
@@ -22,7 +22,7 @@ export function useFreshConfig(): void {
 
   useFocusEffect(
     useCallback(() => {
-      if (!paired || !tunnelClient.connected) return
+      if (!paired || !bridgeClient.connected) return
       void refreshConfig().catch(() => undefined)
     }, [paired])
   )

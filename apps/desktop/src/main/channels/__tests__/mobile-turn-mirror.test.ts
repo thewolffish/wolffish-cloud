@@ -69,7 +69,7 @@ function afterThrottle(): Promise<void> {
 
 async function run(): Promise<void> {
   const { MobileChannel } = await import('@main/channels/mobile/channel')
-  const { Rpc, Event } = await import('@main/tunnel/protocol')
+  const { Rpc, Event } = await import('@main/cloud/bridge-protocol')
   const { loadConversation } = await import('@main/conversations')
 
   const pushes: Push[] = []
@@ -101,7 +101,7 @@ async function run(): Promise<void> {
   } as never)
   ;(channel as unknown as { registerHandlers: (t: unknown) => void }).registerHandlers(fakeTunnel)
   // The tunnel is normally set when one connects; the push helpers read it.
-  ;(channel as unknown as { tunnel: unknown }).tunnel = fakeTunnel
+  ;(channel as unknown as { bridge: unknown }).bridge = fakeTunnel
 
   const call = (method: string, params: Record<string, unknown>): Promise<unknown> => {
     const handler = handlers.get(method)
@@ -483,8 +483,8 @@ async function run(): Promise<void> {
 
   // A congested local socket defers even a first, window-open mirror; the
   // flush retries until the buffer drains.
-  const realTunnel = (channel as unknown as { tunnel: unknown }).tunnel
-  ;(channel as unknown as { tunnel: unknown }).tunnel = {
+  const realBridge = (channel as unknown as { bridge: unknown }).bridge
+  ;(channel as unknown as { bridge: unknown }).bridge = {
     ...fakeTunnel,
     outboundBufferedBytes: 600 * 1024
   }
@@ -495,7 +495,7 @@ async function run(): Promise<void> {
     '... which still refreshes the rejoin cache',
     channel.turnMirrorFor('conv-gate')?.content?.startsWith('gated') === true
   )
-  ;(channel as unknown as { tunnel: unknown }).tunnel = realTunnel
+  ;(channel as unknown as { bridge: unknown }).bridge = realBridge
   await new Promise((resolve) => setTimeout(resolve, 600))
   ok(
     '... and the flush delivers it once the buffer drains',
@@ -536,7 +536,7 @@ async function run(): Promise<void> {
   // away. Rpc.turnMirror is the recovery: the newest snapshot, the prompt it
   // answers, and the cards the turn is parked on, from the cache every mirror
   // tick maintains.
-  ;(channel as unknown as { tunnel: unknown }).tunnel = { ...fakeTunnel, connected: true }
+  ;(channel as unknown as { bridge: unknown }).bridge = { ...fakeTunnel, phonePresent: true }
   const rendererTicks: Array<{ conversationId: string; message: { content?: string } }> = []
   channel.setMessageMirror((conversationId, message) => {
     if (message) rendererTicks.push({ conversationId, message })
@@ -620,99 +620,6 @@ async function run(): Promise<void> {
   ok(
     '... and the renderer-side accessor agrees',
     channel.turnMirrorFor(sent2.conversationId) === null
-  )
-
-  // ---------------------------------------------------- oversize body serving
-  // A finished tool-heavy turn can outgrow the relay's one-frame record cap,
-  // and an inline answer past it does not arrive late — it closes the tunnel,
-  // after which every open of the conversation kills the link again. Chunked
-  // pickup serves the COMPLETE body in fileRead-shaped windows; a phone too
-  // old to ask for chunks gets it trimmed to one frame instead.
-  const WIRE_CEILING = 768 * 1024
-  const inline = (await call(Rpc.conversationBody, {
-    id: sent2.conversationId,
-    chunked: true
-  })) as { chunked?: boolean; messages?: unknown[] }
-  ok(
-    'a small body is served inline even when the phone offers to chunk',
-    inline.chunked === undefined && Array.isArray(inline.messages),
-    JSON.stringify(Object.keys(inline))
-  )
-
-  const { updateConversation } = await import('@main/conversations')
-  const BIG = 'y'.repeat(900 * 1024)
-  await updateConversation(sent2.conversationId, (disk) => {
-    if (!disk) return null
-    disk.messages.push({
-      id: 'm_9999999_bigone',
-      role: 'assistant',
-      content: BIG,
-      timestamp: Date.now()
-    })
-    return disk
-  })
-  const spooled = (await call(Rpc.conversationBody, {
-    id: sent2.conversationId,
-    chunked: true
-  })) as { chunked?: boolean; bodyId?: string; sizeBytes?: number; updatedAt?: number }
-  ok(
-    'an oversize body answers a spool handle instead of one giant frame',
-    spooled.chunked === true &&
-      typeof spooled.bodyId === 'string' &&
-      (spooled.sizeBytes ?? 0) > WIRE_CEILING,
-    JSON.stringify(spooled)
-  )
-  let assembled = Buffer.alloc(0)
-  let windowsUnderCap = true
-  while (assembled.length < (spooled.sizeBytes ?? 0)) {
-    const chunk = (await call(Rpc.conversationBodyChunk, {
-      bodyId: spooled.bodyId,
-      offset: assembled.length,
-      length: 256 * 1024
-    })) as { data: string; sizeBytes: number }
-    const bytes = Buffer.from(chunk.data, 'base64url')
-    if (bytes.length === 0) break
-    if (bytes.length > 256 * 1024) windowsUnderCap = false
-    assembled = Buffer.concat([assembled, bytes])
-  }
-  ok('every window stays under the chunk cap', windowsUnderCap)
-  ok(
-    'the windows reassemble to exactly the promised size',
-    assembled.length === spooled.sizeBytes,
-    `${assembled.length} vs ${spooled.sizeBytes}`
-  )
-  const pulledBody = JSON.parse(assembled.toString('utf8')) as {
-    messages?: Array<{ id?: string; content?: string }>
-  }
-  ok(
-    'the reassembled body is the COMPLETE conversation, nothing trimmed',
-    pulledBody.messages?.at(-1)?.content === BIG,
-    String(pulledBody.messages?.at(-1)?.content?.length)
-  )
-
-  const legacyBody = (await call(Rpc.conversationBody, { id: sent2.conversationId })) as {
-    chunked?: boolean
-    messages?: Array<{ content?: string }>
-  }
-  ok(
-    'a phone that cannot chunk gets the body trimmed to one frame, never a dead tunnel',
-    legacyBody.chunked === undefined &&
-      Array.isArray(legacyBody.messages) &&
-      Buffer.byteLength(JSON.stringify(legacyBody)) <= WIRE_CEILING,
-    String(Buffer.byteLength(JSON.stringify(legacyBody)))
-  )
-
-  const missing = await call(Rpc.conversationBodyChunk, {
-    bodyId: 'no-such-spool',
-    offset: 0
-  }).then(
-    () => null,
-    (error: Error) => error.message
-  )
-  ok(
-    'an expired or unknown spool is an error, not silence',
-    typeof missing === 'string' && missing.includes('no-such-spool'),
-    String(missing)
   )
 
   // ------------------------------------------- what the in-app channel mirrors

@@ -11,7 +11,7 @@ import {
   onDiagnosticProgress,
   type DiagnosticPhase
 } from '@/lib/sync/diagnostics'
-import { DIAGNOSTIC_STEPS, type DiagnosticResult } from '@/lib/tunnel/protocol'
+import { DIAGNOSTIC_STEPS, type DiagnosticResult } from '@/lib/bridge/protocol'
 import { cn } from '@/lib/utils/cn'
 import * as Sharing from 'expo-sharing'
 import { useCallback, useEffect, useRef, useState } from 'react'

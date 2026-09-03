@@ -3,7 +3,7 @@
  * cancelConversation).
  *
  * Why these exist: chat:turnState is a BROADCAST of TRANSITIONS, and this
- * app keeps running with no window at all — Telegram/WhatsApp turns fire
+ * app keeps running with no window at all — terminal and phone turns fire
  * headless. A renderer window opened (or reopened from the tray) mid-run
  * therefore never saw 'started', and the in-app chat rendered the
  * conversation as a fresh, ready-to-send one: composer live, model
@@ -100,12 +100,12 @@ async function run(): Promise<void> {
   const lifecycle: Lifecycle[] = []
   runner.setLifecycleListener((ev) => lifecycle.push(ev))
 
-  // A Telegram sink — the point of the feature is that this run is visible
+  // A terminal sink — the point of the feature is that this run is visible
   // (and cancelable) from a surface that does NOT own it.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const makeSink = (ctx: { turnId: string; conversationId: string | null }): any => ({
     ...ctx,
-    channelId: 'telegram',
+    channelId: 'cli',
     onSegment: () => {},
     onTurnEvent: () => {},
     onApprovalRequest: async () => 'denied' as const,
@@ -114,7 +114,7 @@ async function run(): Promise<void> {
     onCredentialBlocked: () => {}
   })
 
-  const sendTelegram = (conversationId: string, content: string): { done: Promise<void> } =>
+  const sendTerminal = (conversationId: string, content: string): { done: Promise<void> } =>
     runner.send({
       history: [{ role: 'user', content }],
       conversationId,
@@ -123,14 +123,14 @@ async function run(): Promise<void> {
       makeSink
     })
 
-  const handle = sendTelegram('conv_tg', 'hello from telegram')
+  const handle = sendTerminal('conv_tg', 'hello from the terminal')
   await started.promise
 
   // ── 1. A live channel run is visible to a window that never saw 'started' ──
   {
     const runs = runner.activeRuns()
     ok('activeRuns: lists the running conversation', runs.length === 1, JSON.stringify(runs))
-    ok('activeRuns: carries the owning channel', runs[0]?.channel === 'telegram', runs[0]?.channel)
+    ok('activeRuns: carries the owning channel', runs[0]?.channel === 'cli', runs[0]?.channel)
     ok('activeRuns: carries the title', runs[0]?.title === 'Live Run', String(runs[0]?.title))
     ok(
       'activeRuns: names the conversation',
@@ -143,7 +143,7 @@ async function run(): Promise<void> {
   // The renderer must lock the composer for a queued turn as well — it is
   // work the conversation owes, and Stop has to be able to reach it.
   {
-    const queued = sendTelegram('conv_tg', 'second message')
+    const queued = sendTerminal('conv_tg', 'second message')
     await tick()
     const runs = runner.activeRuns()
     ok(

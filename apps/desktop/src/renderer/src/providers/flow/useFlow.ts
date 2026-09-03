@@ -149,9 +149,9 @@ export type FlowContextValue = {
   status: WorkspaceStatus | null
   /**
    * Navigate to a screen. Optional `returnTo` records where a follow-up
-   * "Continue" should land — e.g. opening ollama-setup from Settings sets
-   * returnTo='settings' so completing setup returns to Settings, not the
-   * onboarding model picker. Pass `null` to clear.
+   * "Continue" should land — e.g. a settings-launched flow sets
+   * returnTo='settings' so completing it returns to Settings, not the
+   * onboarding screen. Pass `null` to clear.
    */
   goTo: (screen: Screen, returnTo?: Screen | null) => void
   /** Where the user should land after the current screen's primary action. */

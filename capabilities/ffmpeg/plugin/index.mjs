@@ -374,7 +374,7 @@ const FFMPEG_STATIC_BASE =
 function ffmpegStaticAsset() {
   const plat = process.platform === 'win32' ? 'win32' : process.platform // darwin | linux | win32
   // No win-arm64 static build exists; Windows ARM runs the x64 build under
-  // emulation (mirrors the cloudflared windows-amd64 guard).
+  // emulation, so win32 always resolves to x64 here.
   const arch = plat === 'win32' ? 'x64' : process.arch === 'arm64' ? 'arm64' : 'x64'
   return `ffmpeg-${plat}-${arch}.gz`
 }

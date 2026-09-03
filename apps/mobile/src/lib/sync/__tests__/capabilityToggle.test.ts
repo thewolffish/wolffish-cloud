@@ -20,8 +20,8 @@ const mockRpc = jest.fn()
 const mockReportRpcFailure = jest.fn()
 let mockConnected = true
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: mockRpc, connected: true } : null
     },

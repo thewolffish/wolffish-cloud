@@ -209,7 +209,7 @@ export function landingPage(version: string): string {
   <section class="how">
     <h2>What the master holds</h2>
     <ul class="facts">
-      <li><b>The record</b><span>Configs, conversations, memory episodes, files — the org's own data, synced after execution, restored on any sign-in.</span></li>
+      <li><b>The record</b><span>Configs, conversations and their turn records, files — the org's own data, synced after execution, restored on any sign-in.</span></li>
       <li><b>The rules</b><span>Model allowlists, token budgets, roles — enforced at this door on every single request.</span></li>
       <li><b>The meter</b><span>Per-request usage with real provider cost, per employee, per model.</span></li>
       <li><b>Prompt content</b><span class="no">never</span></li>

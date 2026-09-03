@@ -80,19 +80,21 @@ tools:
     parameters:
       path:
         type: string
-        description: Absolute path or path starting with ~
+        description: Absolute, ~/-relative, or workspace-relative path
       startLine:
         type: number
+        required: false
         description: 1-based first line to include (optional)
       endLine:
         type: number
+        required: false
         description: 1-based last line to include (optional)
   - name: file_write
     description: Create or overwrite a text file. Use mode=append to append instead.
     parameters:
       path:
         type: string
-        description: Absolute path or path starting with ~
+        description: Absolute, ~/-relative, or workspace-relative path
       content:
         type: string
         description: Text to write
@@ -107,7 +109,7 @@ tools:
     parameters:
       path:
         type: string
-        description: Absolute path or path starting with ~ to the image file
+        description: Absolute, ~/-relative, or workspace-relative path to the image file
       max_dimension:
         type: integer
         required: false
@@ -145,7 +147,7 @@ tools:
     parameters:
       path:
         type: string
-        description: Absolute path or path starting with ~
+        description: Absolute, ~/-relative, or workspace-relative path
       find:
         type: string
         description: Literal text to search for
@@ -172,7 +174,7 @@ confirm_patterns:
 ## Interface
 
 - Tools: `file_read`, `file_write`, `file_patch`, `image_view`
-- Paths may use `~` for the user's home directory.
+- Paths may be absolute, `~/`-relative, or workspace-relative (`files/notes.md` resolves inside `~/.wfc/workspace`, never against the process cwd).
 - Writes always create parent directories as needed.
 
 ## Rules

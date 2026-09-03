@@ -40,11 +40,14 @@ jest.mock('@/lib/sync/prompt', () => ({
 // it can prove are mocks may cross that boundary.
 const mockResume = jest.fn(async () => true)
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     resume: () => mockResume(),
     subscribe: () => () => undefined,
     get connected() {
+      return mockConnected
+    },
+    get online() {
       return mockConnected
     }
   }

@@ -307,10 +307,10 @@ for (const scenario of scenarios) {
 
 // ── field rules: channel guard, title, summary re-anchoring ───────────────
 {
-  const disk = conv([...prefix.map(clone)], { channel: 'telegram', title: 'Real title' })
+  const disk = conv([...prefix.map(clone)], { channel: 'mobile', title: 'Real title' })
   const incoming = conv([...prefix.map(clone)], { title: 'Untitled' })
   const merged = mergeConversationOnto(disk, incoming)
-  ok('channel: disk provenance survives a channel-less caller', merged.channel === 'telegram')
+  ok('channel: disk provenance survives a channel-less caller', merged.channel === 'mobile')
   ok('title: real disk title beats incoming Untitled', merged.title === 'Real title')
 }
 {

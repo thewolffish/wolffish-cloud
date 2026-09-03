@@ -1,4 +1,4 @@
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 import {
   Rpc,
   type AutomationQueuedRun,
@@ -6,7 +6,7 @@ import {
   type AutomationRuns,
   type OverlaySeed,
   type ReindexStatus
-} from '@/lib/tunnel/protocol'
+} from '@/lib/bridge/protocol'
 import { useMemo } from 'react'
 import { create } from 'zustand'
 
@@ -211,8 +211,8 @@ export function clearOverlays(): void {
  * the next push, which is exactly the behaviour before these cards existed.
  */
 export async function seedOverlays(): Promise<void> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return
   const issued = revision
   try {
     const seed = (await tunnel.rpc(Rpc.overlaysRead)) as OverlaySeed | null

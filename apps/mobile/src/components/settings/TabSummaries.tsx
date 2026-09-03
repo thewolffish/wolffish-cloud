@@ -1,10 +1,4 @@
-import {
-  ComputerIcon,
-  ComputerTerminal01Icon,
-  SmartPhone01Icon,
-  TelegramLogo,
-  WhatsAppLogo
-} from '@/components/core/icons'
+import { ComputerIcon, ComputerTerminal01Icon, SmartPhone01Icon } from '@/components/core/icons'
 import { CodeChip } from '@/components/settings/SettingsUI'
 import { useConversationList } from '@/lib/conversations/hooks'
 import { formatBytes } from '@/lib/files/fileKinds'
@@ -90,13 +84,13 @@ export function ModelSummary(): React.JSX.Element {
 }
 
 /**
- * Channels — this phone and the two bridges, as their own marks. A channel the
+ * Channels — this phone and the terminal, as their own marks. A channel the
  * agent can actually reach you on is green; one it cannot stays muted rather
- * than disappearing, so the row says "WhatsApp is off" instead of leaving you
- * to wonder whether it exists.
+ * than disappearing, so the row says "the terminal is off" instead of leaving
+ * you to wonder whether it exists.
  *
  * The phone leads, in the desktop's own channel order, and reads its
- * notifications switch: reachable is the question all four answer, and for
+ * notifications switch: reachable is the question both answer, and for
  * this device the answer is whether notify_phone is allowed to ring it. Being
  * paired is not the signal — you are looking at the app, so you know.
  *
@@ -110,36 +104,29 @@ export function ChannelsSummary(): React.JSX.Element {
   const { t } = useTranslation()
   const phone = useConfigValue('mobileNotifications')
   const cli = useDemoConfig((state) => state.cli.pathInstalled === true)
-  const telegram = useConfigValue('telegramEnabled')
-  const whatsapp = useConfigValue('whatsappEnabled')
   const state = (on: boolean): string => (on ? t('settings.toggle.on') : t('settings.toggle.off'))
   return (
     <View
       className="shrink-0 flex-row items-center gap-2"
       accessibilityLabel={`${t('settings.channels.notifications')} ${state(phone)}, ${t(
         'settings.channels.cli.title'
-      )} ${state(cli)}, Telegram ${state(telegram)}, WhatsApp ${state(whatsapp)}`}
+      )} ${state(cli)}`}
     >
       <SmartPhone01Icon size={15} className={phone ? TONES.ok : TONES.muted} />
       <ComputerTerminal01Icon size={15} className={cli ? TONES.ok : TONES.muted} />
-      <TelegramLogo size={15} className={telegram ? TONES.ok : TONES.muted} />
-      <WhatsAppLogo size={15} className={whatsapp ? TONES.ok : TONES.muted} />
     </View>
   )
 }
 
 /**
  * Services — how many are actually live, out of the ones that can be. The
- * account links carry a connection the desktop reports; Brave, video and memes
- * carry a switch. Speech-to-text and text-to-speech are neither: they are
- * always-on settings, so counting them would only ever add a constant.
+ * browser extension carries a connection the desktop reports; the org's
+ * search lane carries a switch.
  */
 export function ServicesSummary(): React.JSX.Element {
   const services = useDemoConfig((state) => state.services)
   const brave = useConfigValue('braveEnabled')
-  const video = useConfigValue('videoEnabled')
-  const memes = useConfigValue('memesEnabled')
-  const switches = [brave, video, memes]
+  const switches = [brave]
   const on =
     services.filter((service) => service.connected).length + switches.filter(Boolean).length
   return <CodeChip mono className="shrink-0" value={`${on}/${services.length + switches.length}`} />

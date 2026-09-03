@@ -384,7 +384,7 @@ async function installViaWinget(id) {
     // *persistent* PATH (registry: HKLM\...\Environment and HKCU\Environment),
     // but the currently-running Electron process keeps its launch-time PATH.
     // Without a refresh, the very next call to the freshly installed binary
-    // (e.g. cloudflared after `winget install Cloudflare.cloudflared`) fails
+    // (e.g. `gh` after `winget install GitHub.cli`) fails
     // with "not recognized" — invisible to us until the user restarts the app.
     // Refreshing here makes the install effectively atomic from the model's
     // perspective. Best-effort: a refresh failure never blocks the success.

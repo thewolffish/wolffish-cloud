@@ -31,7 +31,7 @@ import {
 } from '@/components/settings/TabSummaries'
 import { NavRow, PanelScreen, type StatusTone } from '@/components/settings/SettingsUI'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
-import { describeTunnelStatus, useTunnelStatus } from '@/lib/tunnel/useTunnelStatus'
+import { describeBridgeStatus, useBridgeStatus } from '@/lib/cloud/useBridgeStatus'
 import { useAppStore } from '@/state/appStore'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -52,15 +52,15 @@ export default function SettingsScreen(): React.JSX.Element {
   // same on-focus refresh every screen rendering them takes.
   useFreshConfig()
   const paired = useAppStore((state) => state.paired)
-  // Demo mode has no tunnel, but it does have a Relay screen now — the tour's
-  // made-up link (lib/demo/relay) — so the row shows there too, wearing the
+  // Demo mode has no session, but it does have a Connection screen — the
+  // tour's made-up link (lib/demo/connection) — so the row shows there too, wearing the
   // connected face that screen always describes.
   const demoMode = useAppStore((state) => state.demoMode)
   // The link's state is the one thing on this list worth knowing before you
   // tap anything: a stale phone explains every other screen, and the
   // connecting overlay is dismissible, so "not connected" has to be legible
-  // from here rather than only from inside Relay.
-  const relayStatus = useTunnelStatus()
+  // from here rather than only from inside Connection.
+  const connectionStatus = useBridgeStatus()
 
   const rows: Array<{
     key: string
@@ -72,14 +72,14 @@ export default function SettingsScreen(): React.JSX.Element {
     ...(paired || demoMode
       ? [
           {
-            key: 'relay',
-            href: '/settings/relay',
-            // The globe the pairing sheet uses for the relay row — and no
+            key: 'connection',
+            href: '/settings/connection',
+            // The globe the pairing sheet uses for the organization row — and no
             // longer the brain, which belongs to Model two rows down.
             icon: <Globe02Icon size={18} className="text-muted" />,
             status: demoMode
-              ? describeTunnelStatus('connected', t)
-              : { tone: relayStatus.tone, label: relayStatus.label }
+              ? describeBridgeStatus('connected', t)
+              : { tone: connectionStatus.tone, label: connectionStatus.label }
           }
         ]
       : []),

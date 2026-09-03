@@ -32,8 +32,8 @@ jest.mock('@/lib/files/fileCache', () => ({
 
 const mockListeners = new Set<(state: { status: string }) => void>()
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return mockConnected
     },

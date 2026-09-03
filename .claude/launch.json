@@ -83,6 +83,15 @@
         "cd apps/api && PORT=9094 MOCK_TTFB_MS=200000 node scripts/mock-deepinfra.mjs"
       ],
       "port": 9094
+    },
+    {
+      "name": "mobile-metro",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/mobile && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 npx expo start --dev-client --port 8081"
+      ],
+      "port": 8081
     }
   ]
 }

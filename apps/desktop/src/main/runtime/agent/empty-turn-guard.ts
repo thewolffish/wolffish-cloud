@@ -44,7 +44,7 @@ const EMPTY_TURN_NUDGE_TEXT =
  * no tool calls AND no visible text. It happens when a reasoning model emits a
  * reasoning block but an empty content channel — the run then ends mid-plan with
  * no closing message to the user and the task left unfinished. (Observed in the
- * wild: a Notion doc-build whose final reasoning literally said "let me continue…
+ * wild: a document build whose final reasoning literally said "let me continue…
  * add the remaining sections", then stopped on empty.)
  *
  * When that happens, returns the messages to inject before looping again so the

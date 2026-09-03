@@ -1,8 +1,8 @@
 {
-  "name": "wolffish-mobile",
+  "name": "wfc-mobile",
   "version": "1.0.48",
   "license": "MIT",
-  "description": "The official mobile app for Wolffish, the personal AI agent that runs on your machine.",
+  "description": "Wolffish Cloud mobile — the phone half of the employee agent: a signed-in device of the organization that reads the record from the org API and reaches the desktop over its bridge.",
   "main": "expo-router/entry",
   "author": "Younes Alturkey <younes@wolffi.sh>",
   "homepage": "https://wolffi.sh",
@@ -32,9 +32,6 @@
   },
   "dependencies": {
     "@expo/ui": "~57.0.7",
-    "@noble/ciphers": "^2.2.0",
-    "@noble/curves": "^2.2.0",
-    "@noble/hashes": "^2.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@tanstack/query-async-storage-persister": "^5.101.2",
     "@tanstack/react-query": "^5.101.2",
@@ -78,7 +75,6 @@
     "react-i18next": "^17.0.10",
     "react-native": "0.86.0",
     "react-native-gesture-handler": "~2.32.0",
-    "react-native-get-random-values": "~1.11.0",
     "react-native-markdown-display": "^7.0.2",
     "react-native-reanimated": "4.5.0",
     "react-native-safe-area-context": "~5.7.0",

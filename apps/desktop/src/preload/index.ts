@@ -1,13 +1,7 @@
-import type {
-  Segment,
-  SegmentTurnEndReason,
-  TaskSnapshot,
-  TaskStatus,
-  ToolResultStatus
-} from '@main/runtime/broca'
+import type { Segment, SegmentTurnEndReason, ToolResultStatus } from '@main/runtime/broca'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
-export type { Segment, SegmentTurnEndReason, TaskSnapshot, TaskStatus, ToolResultStatus }
+export type { Segment, SegmentTurnEndReason, ToolResultStatus }
 
 export type ThemeSource = 'system' | 'light' | 'dark'
 export type Locale = 'en' | 'ar'
@@ -32,42 +26,9 @@ export type SafetyConfig = {
   blockCredentials: boolean
 }
 
-export type TelegramConfig = {
-  enabled: boolean
-  botToken: string
-  allowedUserIds: number[]
-  autoRefresh?: boolean
-  staleHours?: number
-  /**
-   * When true, every tool call/result/activity is relayed to the chat
-   * (full transparency). When false (default), only agent messages,
-   * file-bearing tool results, and errors are sent — a clean feed.
-   * Affects sending only; history persistence is unchanged.
-   */
-  verbose?: boolean
-  /** Keep automation runs out of the /resume picker (on by default). */
-  hideAutomationsFromResume?: boolean
-}
-
-export type WhatsAppConfig = {
-  enabled: boolean
-  allowedPhoneNumbers: string[]
-  autoRefresh?: boolean
-  staleHours?: number
-  /**
-   * When true, every tool call/result/activity is relayed to the chat
-   * (full transparency). When false (default), only agent messages,
-   * file-bearing tool results, and errors are sent — a clean feed.
-   * Affects sending only; history persistence is unchanged.
-   */
-  verbose?: boolean
-  /** Keep automation runs out of the /resume picker (on by default). */
-  hideAutomationsFromResume?: boolean
-}
-
 /**
- * In-app (desktop) chat display preferences. Mirrors the Telegram /
- * WhatsApp verbose toggle, but for the primary renderer feed: when false
+ * In-app (desktop) chat display preferences — the verbose toggle for the
+ * primary renderer feed: when false
  * (default) the in-app chat shows a clean feed — agent replies,
  * file-bearing tool results, errors, and the model chip — and hides
  * tool-activity and compaction cards. Display-only; history is unaffected.
@@ -79,37 +40,6 @@ export type WhatsAppConfig = {
 export type InAppConfig = {
   verbose?: boolean
   runCards?: boolean
-}
-
-export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
-
-export type WhatsAppChannelStatus = {
-  status: WhatsAppConnectionStatus
-  error: string | null
-  qr: string | null
-  /** The eight-character code, when linking was started by phone number. */
-  pairingCode: string | null
-  connectedPhone: string | null
-  connectedName: string | null
-  /**
-   * Whether an established (linked) session exists. True means a
-   * `connecting` status is a reconnect of an already-paired account, not
-   * first-time pairing — the UI shows just a pulsing dot instead of the
-   * QR box in that case.
-   */
-  hasSession: boolean
-}
-
-export type WhatsAppApi = {
-  getConfig: () => Promise<WhatsAppConfig>
-  setConfig: (
-    patch: Partial<WhatsAppConfig>
-  ) => Promise<{ ok: true; status: WhatsAppChannelStatus; config: WhatsAppConfig }>
-  status: () => Promise<WhatsAppChannelStatus>
-  logout: () => Promise<void>
-  requestQr: () => Promise<void>
-  onQr: (callback: (qr: string) => void) => () => void
-  onStatusChange: (callback: (status: WhatsAppChannelStatus) => void) => () => void
 }
 
 export type InAppApi = {
@@ -277,8 +207,6 @@ export type WorkspaceConfig = {
   safety?: SafetyConfig
   weekStartsOn?: WeekStartsOn
   variables?: Variable[]
-  telegram?: TelegramConfig
-  whatsapp?: WhatsAppConfig
   inapp?: InAppConfig
   stt?: SttConfig
   tts?: TtsConfig
@@ -374,14 +302,7 @@ export type ConversationMessage = {
   voiceLang?: string
 }
 
-export type ConversationChannel =
-  | 'electron'
-  | 'telegram'
-  | 'whatsapp'
-  | 'mobile'
-  | 'cli'
-  | 'heartbeat'
-  | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -515,7 +436,7 @@ export type ChatErrorEvent = { turnId: string; conversationId: string | null; er
 
 /**
  * Turn lifecycle broadcast (chat:turnState) — fired for EVERY channel's
- * turns (in-app, WhatsApp, Telegram) so the Conversations sidebar can show
+ * turns (in-app, terminal, phone) so the Conversations sidebar can show
  * live status chips without owning the turn.
  */
 export type ChatTurnStateEvent = {
@@ -531,7 +452,7 @@ export type ChatTurnStateEvent = {
  * One conversation with a turn in flight right now, on any channel
  * (chat:activeRuns). The lifecycle broadcast above only carries
  * TRANSITIONS, so a window that opened mid-run — the normal case for a tray
- * app whose Telegram/WhatsApp channels keep running with no window — needs
+ * app whose terminal and phone channels keep running with no window — needs
  * this snapshot to render those conversations as running.
  */
 export type ChatActiveRun = {
@@ -750,41 +671,7 @@ export type DataApi = {
 
 /** Which service's config changed — the panels re-seed from this. */
 export type ServicesChangedPayload = {
-  service: 'brave' | 'memes' | 'stt' | 'tts' | 'computerUse' | 'browserExtension' | 'video'
-}
-
-/** Video generation (MiniMax H3) service config — its own key, see VideoApi. */
-export type VideoConfig = {
-  apiKey: string
-  /**
-   * Director mode: ON, the chat model expands video requests into cinematic
-   * prompts (and shows the user what it sent); OFF, it forwards the user's
-   * prompt verbatim. A model directive only — nothing is enforced.
-   */
-  director: boolean
-}
-
-export type VideoServiceStatus = {
-  /** A key is saved. */
-  configured: boolean
-  /** The saved key was accepted by MiniMax (probe costs nothing). */
-  reachable: boolean
-  /** Human-readable detail: ready, the remedy, or the failure. */
-  detail: string
-}
-
-export type VideoApi = {
-  getConfig: () => Promise<VideoConfig>
-  /**
-   * Save the key. Deliberately independent of the MiniMax entry under
-   * Settings → Providers: MiniMax issues one credential that unlocks both
-   * APIs, but video generation is a service that must keep working when
-   * the chat brain changes provider, so the value is entered in both
-   * places rather than shared.
-   */
-  setConfig: (patch: Partial<VideoConfig>) => Promise<{ ok: true; config: VideoConfig }>
-  /** Validate the saved key against MiniMax without spending a generation. */
-  test: () => Promise<VideoServiceStatus>
+  service: 'brave' | 'stt' | 'tts' | 'computerUse' | 'browserExtension'
 }
 
 export type ServicesApi = {
@@ -803,7 +690,6 @@ export type PreferencesPatch = {
   launchAtStartup?: boolean
   bypassPermissions?: boolean
   blockCredentials?: boolean
-  restrictPowerfulModels?: boolean
   weekStartsOn?: WeekStartsOn
 }
 
@@ -812,8 +698,6 @@ export type RuntimeApi = {
   getLaunchAtStartupStatus: () => Promise<LaunchAtStartupStatus>
   setBypassPermissions: (value: boolean) => Promise<{ value: boolean }>
   setBlockCredentials: (value: boolean) => Promise<{ value: boolean }>
-  setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
-  setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
   setThinkingMode: (model: string, mode: ThinkingMode) => Promise<void>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
   setLastSettingsState: (patch: Record<string, string>) => Promise<void>
@@ -889,7 +773,15 @@ export type ModelCapabilities = {
 
 export type ModelApi = {
   capabilities: () => Promise<ModelCapabilities>
+  /**
+   * The org catalog from main's cache — answered at once, never behind the
+   * network once a copy exists. Calling it on a stale copy triggers a
+   * background refresh whose result, if different, arrives through
+   * onCatalogChanged.
+   */
   catalog: () => Promise<{ models: CatalogModelEntry[] }>
+  /** A refreshed catalog that differs from the one cached before it. */
+  onCatalogChanged: (listener: (event: { models: CatalogModelEntry[] }) => void) => () => void
 }
 
 /** One row of the org's model catalog (GET /v1/models, cached in main). */
@@ -949,7 +841,7 @@ export type ChatApi = {
   /**
    * Cancel one conversation's in-flight turn; omitted id cancels all. Works
    * whatever channel started the turn — an in-app Stop on a mirrored
-   * Telegram/WhatsApp run aborts it through the shared TurnRunner.
+   * terminal or phone run aborts it through the shared TurnRunner.
    */
   cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
   /** Conversations running RIGHT NOW, any channel (window cold-start seed). */
@@ -990,19 +882,6 @@ export type ConversationSummaryUpdate = {
   summarizedThroughMessageId: string | null
 }
 
-export type TaskApi = {
-  /** Cancel a queued/running async generation task (the task card's stop). */
-  cancel: (taskId: string) => Promise<{ ok: boolean; error?: string }>
-  /**
-   * Fired on every async-task snapshot change (task:changed) — status
-   * transitions, artifact download — including after the owning turn ended.
-   * The renderer upserts the snapshot into the matching `task` segment and
-   * folds it into its in-memory conversation so the next whole-file save
-   * carries it.
-   */
-  onChanged: (listener: (snapshot: TaskSnapshot) => void) => () => void
-}
-
 export type ConversationApi = {
   list: () => Promise<ConversationMeta[]>
   load: (id: string) => Promise<ConversationFile | null>
@@ -1031,7 +910,7 @@ export type ConversationApi = {
    */
   onChanged: (listener: () => void) => () => void
   /**
-   * Fired repeatedly while a Telegram/WhatsApp turn is IN FLIGHT — a live
+   * Fired repeatedly while a channel turn is IN FLIGHT — a live
    * snapshot of its in-progress assistant message so an in-app viewer of the
    * same conversation mirrors the run as it streams, not only at end-of-turn.
    * The message id is stable for the turn and matches the record the save
@@ -1584,58 +1463,23 @@ export type VariablesApi = {
 }
 
 /**
- * Kinds of telegram errors that the renderer can translate into a
- * locale-appropriate message. `unknown` falls back to the raw error
- * string from grammY/Telegram so we never silently swallow a useful
- * server message.
- */
-export type TelegramErrorKind =
-  | 'missing_token'
-  | 'token_format'
-  | 'invalid_token'
-  | 'invalid_user_id'
-  | 'rate_limit'
-  | 'network'
-  | 'unknown'
-
-export type TelegramChannelStatus = {
-  status: 'stopped' | 'starting' | 'running' | 'error'
-  errorKind: TelegramErrorKind | null
-  /** Raw error string from grammY/Telegram, useful when kind is `unknown`. */
-  error: string | null
-  /** Connected bot's @username, available once running. Null otherwise. */
-  botUsername: string | null
-  /** Connected bot's display name (first_name), available once running. */
-  botName: string | null
-}
-
-export type TelegramTestResult =
-  | { ok: true }
-  | { ok: false; kind: TelegramErrorKind; message?: string }
-
-/**
  * Mobile channel — the tunnel to the Wolffish phone app.
  *
- * Unlike Telegram/WhatsApp there is no token to type: the desktop offers a
+ * There is no token to type: the desktop offers a
  * pairing (a QR to scan, or a code to read out) and the phone claims it. The
  * panel then renders live connection state, including the short key
  * fingerprints both devices display so they can be compared at a glance.
  */
-export type MobileTunnelState = {
-  status:
-    | 'idle'
-    | 'connecting'
-    | 'waiting-for-peer'
-    | 'handshaking'
-    | 'connected'
-    | 'reconnecting'
-    | 'error'
-  peerPresent: boolean
-  relayUrl: string
-  rendezvous: string | null
-  ownKey: string | null
-  peerKey: string | null
-  session: string | null
+export type MobileBridgeState = {
+  status: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+  /** Phones on the bridge right now. */
+  phones: Array<{
+    deviceId: string
+    name: string
+    platform: string
+    appVersion: string
+    connectedAt: number
+  }>
   connectedAt: number | null
   lastError: string | null
   reconnects: number
@@ -1645,36 +1489,37 @@ export type MobileTunnelState = {
   bytesReceived: number
 }
 
+export type MobilePairedPhone = {
+  id: string
+  name: string
+  platform: 'ios' | 'android' | null
+  model: string | null
+  osVersion: string | null
+  appVersion: string | null
+  pairedAt: number
+  lastSeenAt: number | null
+  connected: boolean
+}
+
 export type MobileStatus = {
+  /** At least one phone holds a live session with the org. */
   paired: boolean
-  pairing: {
-    method: 'qr' | 'code'
-    pairedAt: number
-    lastSeenAt: number | null
-    deviceName: string | null
-    /** How the phone describes itself. Null on a phone running an older build. */
-    platform: 'ios' | 'android' | null
-    model: string | null
-    osVersion: string | null
-    appVersion: string | null
-  } | null
-  tunnel: MobileTunnelState | null
+  phones: MobilePairedPhone[]
+  /** The desktop's own bridge socket; null before it is started. */
+  bridge: MobileBridgeState | null
   offer: {
     mode: 'qr' | 'code'
     payload: string | null
     code: string | null
     expiresAt: number
   } | null
-  storage: { available: boolean; backend: string }
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
   /** Whether a running automation draws its live card on the PHONE. */
   runCards: boolean
-  /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
-  relayUrl: string
-  /** What "reset to default" returns to, so the panel needn't hardcode it. */
-  defaultRelayUrl: string
+  /** The org API both devices talk to. */
+  apiBase: string
 }
 
 export type MobileApi = {
@@ -1684,9 +1529,9 @@ export type MobileApi = {
   /** Open a typed-code pairing, for a desktop the phone cannot see. */
   offerCode: () => Promise<MobileStatus>
   /** Drop the live link but keep the pairing — the phone reconnects itself. */
-  disconnect: () => Promise<MobileStatus>
+  cancelOffer: () => Promise<MobileStatus>
   /** Forget the phone and drop the keys. */
-  unpair: () => Promise<MobileStatus>
+  unpair: (deviceId?: string) => Promise<MobileStatus>
   setVerbose: (verbose: boolean) => Promise<MobileStatus>
   /** Allow or forbid the model's notify_phone push notifications. */
   setNotifications: (enabled: boolean) => Promise<MobileStatus>
@@ -1697,28 +1542,9 @@ export type MobileApi = {
    * Rejects on a malformed URL. Changing relay drops any offer or pairing —
    * both name the old relay — so the panel confirms first.
    */
-  setRelayUrl: (url: string | null) => Promise<MobileStatus>
   onStatusChange: (callback: (status: MobileStatus) => void) => () => void
 }
 
-export type TelegramApi = {
-  getConfig: () => Promise<TelegramConfig>
-  setConfig: (patch: Partial<TelegramConfig>) => Promise<{
-    ok: true
-    status: TelegramChannelStatus
-    config: TelegramConfig
-  }>
-  status: () => Promise<TelegramChannelStatus>
-  sendTestMessage: (payload: { token: string; userId: number }) => Promise<TelegramTestResult>
-  onStatusChange: (callback: (status: TelegramChannelStatus) => void) => () => void
-}
-
-/**
- * Brave Search API. Stateless — the renderer just toggles a flag and sets
- * a key. The web-search cerebellum plugin reads the persisted config and
- * uses Brave as the primary provider when enabled, falling back to
- * DuckDuckGo on failure.
- */
 /**
  * Brave Search is provided by the organization — one key behind the API's
  * /v1/search lane, never on this device — so the service has no config,
@@ -1749,209 +1575,6 @@ export type BraveStatus = {
 export type BraveApi = {
   /** The org lane's status; `refresh` bypasses main's short cache. */
   status: (opts?: { refresh?: boolean }) => Promise<BraveStatus>
-}
-
-export type GoogleConfig = {
-  status: 'inactive' | 'active'
-  account: string
-  clientId: string
-  projectId: string
-  credentialsStored: boolean
-}
-
-export type GoogleErrorKind =
-  | 'platform_unsupported'
-  | 'install_failed'
-  | 'credentials_invalid'
-  | 'auth_failed'
-  | 'auth_timeout'
-  | 'network'
-  | 'unknown'
-
-export type GoogleStatus = {
-  status: 'inactive' | 'active' | 'error' | 'needsReconnect'
-  errorKind: GoogleErrorKind | null
-  error: string | null
-  /** The synced config says this user set Google up (on some device). */
-  cloudConfigured: boolean
-  /** Accounts gogcli holds on THIS device. */
-  accountsOnDevice: number
-}
-
-export type GoogleBinaryStatus = {
-  gogInstalled: boolean
-  gogVersion: string | null
-}
-
-export type GoogleSetupResult =
-  | { ok: true; binary: GoogleBinaryStatus }
-  | { ok: false; kind: GoogleErrorKind; message?: string }
-
-export type GoogleUpdateResult =
-  | {
-      ok: true
-      updated: boolean
-      version: string | null
-      previousVersion?: string | null
-    }
-  | { ok: false; kind: GoogleErrorKind; message?: string }
-
-export type GoogleSetupStateEvent = { stage: 'idle' | 'setup' | 'updating'; percent: number }
-export type GoogleAuthUrlEvent = { url: string }
-
-export type GoogleCredentialsResult =
-  | { ok: true; clientId: string; projectId: string }
-  | { ok: false; kind: GoogleErrorKind; message?: string }
-
-export type GoogleAuthResult =
-  | { ok: true; account: string }
-  | { ok: false; kind: GoogleErrorKind; message?: string }
-
-export type GoogleApi = {
-  getConfig: () => Promise<GoogleConfig>
-  setConfig: (patch: Partial<GoogleConfig>) => Promise<{
-    ok: true
-    status: GoogleStatus
-    config: GoogleConfig
-  }>
-  status: () => Promise<GoogleStatus>
-  checkBinary: () => Promise<GoogleBinaryStatus>
-  setup: () => Promise<GoogleSetupResult>
-  update: () => Promise<GoogleUpdateResult>
-  getSetupState: () => Promise<GoogleSetupStateEvent>
-  onSetupState: (listener: (event: GoogleSetupStateEvent) => void) => () => void
-  onAuthUrl: (listener: (event: GoogleAuthUrlEvent) => void) => () => void
-  uploadCredentials: (jsonContent: string) => Promise<GoogleCredentialsResult>
-  deleteCredentials: () => Promise<{ ok: true } | { ok: false; message: string }>
-  // `reauth` re-runs the same OAuth flow for an account that already exists,
-  // forcing Google's consent screen so a fresh refresh token comes back.
-  authAdd: (email: string, opts?: { reauth?: boolean }) => Promise<GoogleAuthResult>
-  cancelAuth: () => Promise<boolean>
-  listAccounts: () => Promise<string[]>
-  // Best-effort per-account token health: email → true (refresh token still
-  // valid) / false (expired or revoked). Accounts we couldn't evaluate are
-  // omitted, not marked unhealthy.
-  checkAccounts: () => Promise<Record<string, boolean>>
-  removeAccount: (
-    email: string
-  ) => Promise<{ ok: true; accounts: string[] } | { ok: false; message: string }>
-}
-
-export type NotionErrorKind =
-  | 'missing_token'
-  | 'invalid_token'
-  | 'rate_limit'
-  | 'network'
-  | 'unknown'
-
-export type NotionStatus = {
-  status: 'disabled' | 'configured' | 'error'
-  errorKind: NotionErrorKind | null
-  error: string | null
-}
-
-export type NotionConnection = {
-  id: string
-  label: string
-  token: string
-  name: string
-  email: string
-}
-
-export type NotionConfig = {
-  connections: NotionConnection[]
-}
-
-export type NotionTestResult =
-  | { ok: true; name: string; email: string | null }
-  | { ok: false; kind: NotionErrorKind; message?: string }
-
-export type NotionApi = {
-  getConfig: () => Promise<NotionConfig>
-  setConfig: (connections: NotionConnection[]) => Promise<{
-    ok: true
-    status: NotionStatus
-    config: NotionConfig
-  }>
-  status: () => Promise<NotionStatus>
-  test: (token: string) => Promise<NotionTestResult>
-}
-
-export type GitHubErrorKind =
-  | 'missing_token'
-  | 'invalid_token'
-  | 'rate_limit'
-  | 'insufficient_scope'
-  | 'network'
-  | 'unknown'
-
-export type GitHubStatus = {
-  status: 'disabled' | 'configured' | 'error'
-  errorKind: GitHubErrorKind | null
-  error: string | null
-}
-
-export type GitHubConnection = {
-  id: string
-  label: string
-  token: string
-  login: string
-  name: string
-}
-
-export type GitHubConfig = {
-  connections: GitHubConnection[]
-}
-
-export type GitHubTestResult =
-  | { ok: true; login: string; name: string | null; scopes: string }
-  | { ok: false; kind: GitHubErrorKind; message?: string }
-
-export type GitHubApi = {
-  getConfig: () => Promise<GitHubConfig>
-  setConfig: (connections: GitHubConnection[]) => Promise<{
-    ok: true
-    status: GitHubStatus
-    config: GitHubConfig
-  }>
-  status: () => Promise<GitHubStatus>
-  test: (token: string) => Promise<GitHubTestResult>
-}
-
-export type MemesConfig = {
-  imgflip: {
-    username: string
-    password: string
-  }
-  giphy: {
-    apiKey: string
-  }
-}
-
-export type MemesErrorKind = 'missing_key' | 'invalid_key' | 'rate_limit' | 'network' | 'unknown'
-
-export type MemesStatus = {
-  memegen: 'available'
-  giphy: 'disabled' | 'configured' | 'error'
-  imgflip: 'disabled' | 'configured' | 'error'
-  giphyErrorKind: MemesErrorKind | null
-  giphyError: string | null
-  imgflipErrorKind: MemesErrorKind | null
-  imgflipError: string | null
-}
-
-export type MemesTestResult = { ok: true } | { ok: false; kind: MemesErrorKind; message?: string }
-
-export type MemesApi = {
-  getConfig: () => Promise<MemesConfig>
-  setConfig: (patch: Partial<MemesConfig>) => Promise<{
-    ok: true
-    status: MemesStatus
-    config: MemesConfig
-  }>
-  status: () => Promise<MemesStatus>
-  testGiphy: (apiKey: string) => Promise<MemesTestResult>
-  testImgflip: (payload: { username: string; password: string }) => Promise<MemesTestResult>
 }
 
 export type UpdatesConfig = {
@@ -2171,7 +1794,6 @@ export type WolffishApi = {
   provider: ProviderApi
   chat: ChatApi
   conversation: ConversationApi
-  task: TaskApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
   automationFiles: AutomationFilesApi
@@ -2183,7 +1805,6 @@ export type WolffishApi = {
   app: AppApi
   data: DataApi
   services: ServicesApi
-  video: VideoApi
   runtime: RuntimeApi
   usage: UsageApi
   cerebellum: CerebellumApi
@@ -2191,16 +1812,10 @@ export type WolffishApi = {
   voice: VoiceApi
   upload: UploadApi
   mobile: MobileApi
-  telegram: TelegramApi
-  whatsapp: WhatsAppApi
   inapp: InAppApi
   cli: CliApi
   mcp: McpApi
   brave: BraveApi
-  notion: NotionApi
-  github: GitHubApi
-  google: GoogleApi
-  memes: MemesApi
   mic: MicApi
   stt: SttApi
   tts: TtsApi
@@ -2258,7 +1873,8 @@ const api: WolffishApi = {
   },
   model: {
     capabilities: () => ipcRenderer.invoke('model:capabilities'),
-    catalog: () => ipcRenderer.invoke('model:catalog')
+    catalog: () => ipcRenderer.invoke('model:catalog'),
+    onCatalogChanged: (listener) => subscribe('model:catalogChanged', listener)
   },
   modelSelect: {
     select: (model) => ipcRenderer.invoke('model:select', model)
@@ -2296,10 +1912,6 @@ const api: WolffishApi = {
     onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener),
     hydrate: (id) => ipcRenderer.invoke('conversation:hydrate', id),
     onHydrationProgress: (listener) => subscribe('conversation:hydrationProgress', listener)
-  },
-  task: {
-    cancel: (taskId) => ipcRenderer.invoke('task:cancel', { taskId }),
-    onChanged: (listener) => subscribe('task:changed', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
@@ -2375,19 +1987,11 @@ const api: WolffishApi = {
   services: {
     onChanged: (listener) => subscribe('services:changed', listener)
   },
-  video: {
-    getConfig: () => ipcRenderer.invoke('video:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('video:setConfig', patch),
-    test: () => ipcRenderer.invoke('video:test')
-  },
   runtime: {
     setLaunchAtStartup: (value) => ipcRenderer.invoke('runtime:setLaunchAtStartup', value),
     getLaunchAtStartupStatus: () => ipcRenderer.invoke('runtime:getLaunchAtStartupStatus'),
     setBypassPermissions: (value) => ipcRenderer.invoke('runtime:setBypassPermissions', value),
     setBlockCredentials: (value) => ipcRenderer.invoke('runtime:setBlockCredentials', value),
-    setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),
-    setRestrictPowerfulModels: (value) =>
-      ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),
     setThinkingMode: (model, mode) => ipcRenderer.invoke('runtime:setThinkingMode', model, mode),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
     setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),
@@ -2455,29 +2059,12 @@ const api: WolffishApi = {
     status: () => ipcRenderer.invoke('mobile:status'),
     offerQr: () => ipcRenderer.invoke('mobile:offerQr'),
     offerCode: () => ipcRenderer.invoke('mobile:offerCode'),
-    disconnect: () => ipcRenderer.invoke('mobile:disconnect'),
-    unpair: () => ipcRenderer.invoke('mobile:unpair'),
+    cancelOffer: () => ipcRenderer.invoke('mobile:cancelOffer'),
+    unpair: (deviceId) => ipcRenderer.invoke('mobile:unpair', deviceId),
     setVerbose: (verbose) => ipcRenderer.invoke('mobile:setVerbose', verbose),
     setNotifications: (enabled) => ipcRenderer.invoke('mobile:setNotifications', enabled),
     setRunCards: (enabled) => ipcRenderer.invoke('mobile:setRunCards', enabled),
-    setRelayUrl: (url) => ipcRenderer.invoke('mobile:setRelayUrl', url),
     onStatusChange: (callback) => subscribe('mobile:statusChange', callback)
-  },
-  telegram: {
-    getConfig: () => ipcRenderer.invoke('telegram:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('telegram:setConfig', patch),
-    status: () => ipcRenderer.invoke('telegram:status'),
-    sendTestMessage: (payload) => ipcRenderer.invoke('telegram:sendTestMessage', payload),
-    onStatusChange: (callback) => subscribe('telegram:statusChange', callback)
-  },
-  whatsapp: {
-    getConfig: () => ipcRenderer.invoke('whatsapp:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('whatsapp:setConfig', patch),
-    status: () => ipcRenderer.invoke('whatsapp:status'),
-    logout: () => ipcRenderer.invoke('whatsapp:logout'),
-    requestQr: () => ipcRenderer.invoke('whatsapp:requestQr'),
-    onQr: (callback) => subscribe('whatsapp:qr', callback),
-    onStatusChange: (callback) => subscribe('whatsapp:statusChange', callback)
   },
   inapp: {
     getConfig: () => ipcRenderer.invoke('inapp:getConfig'),
@@ -2511,43 +2098,6 @@ const api: WolffishApi = {
   },
   brave: {
     status: (opts) => ipcRenderer.invoke('brave:status', opts)
-  },
-  notion: {
-    getConfig: () => ipcRenderer.invoke('notion:getConfig'),
-    setConfig: (connections) => ipcRenderer.invoke('notion:setConfig', connections),
-    status: () => ipcRenderer.invoke('notion:status'),
-    test: (token) => ipcRenderer.invoke('notion:test', token)
-  },
-  github: {
-    getConfig: () => ipcRenderer.invoke('github:getConfig'),
-    setConfig: (connections) => ipcRenderer.invoke('github:setConfig', connections),
-    status: () => ipcRenderer.invoke('github:status'),
-    test: (token) => ipcRenderer.invoke('github:test', token)
-  },
-  memes: {
-    getConfig: () => ipcRenderer.invoke('memes:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('memes:setConfig', patch),
-    status: () => ipcRenderer.invoke('memes:status'),
-    testGiphy: (apiKey) => ipcRenderer.invoke('memes:testGiphy', apiKey),
-    testImgflip: (payload) => ipcRenderer.invoke('memes:testImgflip', payload)
-  },
-  google: {
-    getConfig: () => ipcRenderer.invoke('google:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('google:setConfig', patch),
-    status: () => ipcRenderer.invoke('google:status'),
-    checkBinary: () => ipcRenderer.invoke('google:checkBinary'),
-    setup: () => ipcRenderer.invoke('google:setup'),
-    update: () => ipcRenderer.invoke('google:update'),
-    getSetupState: () => ipcRenderer.invoke('google:getSetupState'),
-    onSetupState: (listener) => subscribe('google:setupState', listener),
-    onAuthUrl: (listener) => subscribe('google:authUrl', listener),
-    uploadCredentials: (jsonContent) => ipcRenderer.invoke('google:uploadCredentials', jsonContent),
-    deleteCredentials: () => ipcRenderer.invoke('google:deleteCredentials'),
-    authAdd: (email, opts) => ipcRenderer.invoke('google:authAdd', email, opts),
-    cancelAuth: () => ipcRenderer.invoke('google:cancelAuth'),
-    listAccounts: () => ipcRenderer.invoke('google:listAccounts'),
-    checkAccounts: () => ipcRenderer.invoke('google:checkAccounts'),
-    removeAccount: (email) => ipcRenderer.invoke('google:removeAccount', email)
   },
   mic: {
     checkAccess: () => ipcRenderer.invoke('mic:checkAccess'),

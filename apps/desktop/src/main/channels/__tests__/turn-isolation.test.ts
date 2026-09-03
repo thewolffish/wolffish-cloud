@@ -3,7 +3,7 @@
  *
  * Turns now run CONCURRENTLY: the TurnRunner serializes turns per
  * conversation (one ordered transcript each) and runs different
- * conversations in parallel — 3 in-app + WhatsApp + Telegram at once is the
+ * conversations in parallel — 3 in-app + phone + terminal at once is the
  * design target. Everything that used to rely on "one turn at a time" is
  * keyed by turn identity instead:
  *
@@ -423,17 +423,17 @@ async function run(): Promise<void> {
     ok('title-timeout: no turns left active', runner.activeTurnCount() === 0)
   }
 
-  // ── 4. The target scenario: 3 in-app + 1 WhatsApp + 1 Telegram at once ──
+  // ── 4. The target scenario: 3 in-app + 1 phone + 1 terminal at once ──
   // Five concurrent turns through ONE runner: three via the real
   // ElectronChannel (distinct conversations) and two via runner.send with
-  // channel-shaped sinks (per-chat sink objects, the way WhatsApp/Telegram
+  // channel-shaped sinks (per-chat sink objects, the way the channels
   // dispatch). All five must overlap, stream isolated ordered segments, and
   // complete gracefully.
   {
     const corpus = new Corpus({ devLog: false })
     const gates = new Map<string, ReturnType<typeof deferred<void>>>()
     const started = new Map<string, ReturnType<typeof deferred<void>>>()
-    const TAGS = ['app1', 'app2', 'app3', 'wa', 'tg'] as const
+    const TAGS = ['app1', 'app2', 'app3', 'mb', 'tm'] as const
     for (const tag of TAGS) {
       gates.set(tag, deferred<void>())
       started.set(tag, deferred<void>())
@@ -505,12 +505,12 @@ async function run(): Promise<void> {
       )
       /* eslint-enable @typescript-eslint/no-explicit-any */
     }
-    // One WhatsApp-shaped and one Telegram-shaped turn: per-chat sinks that
+    // Two channel-shaped turns (a phone and a terminal): per-chat sinks that
     // accumulate segments, exactly how the channels persist them.
     const channelFeeds = new Map<string, string[]>()
     for (const [tag, channelId] of [
-      ['wa', 'whatsapp'],
-      ['tg', 'telegram']
+      ['mb', 'mobile'],
+      ['tm', 'cli']
     ] as const) {
       channelFeeds.set(tag, [])
       runner.send({
@@ -536,13 +536,13 @@ async function run(): Promise<void> {
     // ALL FIVE turns must be in flight simultaneously before any completes.
     await Promise.all(TAGS.map((tag) => started.get(tag)!.promise))
     ok(
-      'five-turn: all 5 turns (3 app + wa + tg) in flight simultaneously',
+      'five-turn: all 5 turns (3 app + mb + tm) in flight simultaneously',
       runner.activeTurnCount() === 5,
       String(runner.activeTurnCount())
     )
 
     // Release in scrambled order; every turn must complete gracefully.
-    for (const tag of ['wa', 'app2', 'tg', 'app1', 'app3']) {
+    for (const tag of ['mb', 'app2', 'tm', 'app1', 'app3']) {
       gates.get(tag)?.resolve()
     }
     await waitFor(() => runner.activeTurnCount() === 0)
@@ -567,7 +567,7 @@ async function run(): Promise<void> {
       ok(`five-turn: ${tag} completed gracefully`, done)
     }
     // Channels: same isolation through their own sinks.
-    for (const tag of ['wa', 'tg']) {
+    for (const tag of ['mb', 'tm']) {
       const feed = channelFeeds.get(tag)!.join('')
       ok(
         `five-turn: ${tag} feed is whole and uncontaminated`,

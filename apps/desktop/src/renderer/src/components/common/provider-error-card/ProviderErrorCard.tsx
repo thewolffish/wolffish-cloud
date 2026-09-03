@@ -1,51 +1,7 @@
-import {
-  AnthropicLogo,
-  DeepSeekLogo,
-  KimiLogo,
-  MiniMaxLogo,
-  MimoLogo,
-  OllamaLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  XAILogo,
-  QwenLogo,
-  StepfunLogo,
-  ZaiLogo
-} from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon, Copy01Icon, RefreshIcon, Tick02Icon } from 'hugeicons-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { IconType } from 'react-icons'
-
-type Logo =
-  | 'anthropic'
-  | 'openai'
-  | 'openrouter'
-  | 'deepseek'
-  | 'mimo'
-  | 'kimi'
-  | 'minimax'
-  | 'xai'
-  | 'qwen'
-  | 'stepfun'
-  | 'zai'
-  | 'ollama'
-
-const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo,
-  ollama: OllamaLogo
-}
 
 export type NoProviderAvailablePayload = {
   provider: string
@@ -194,7 +150,8 @@ function SingleErrorCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [showDetail, setShowDetail] = useState(false)
-  const Logo = LOGO[payload.providerLogo as Logo] ?? CloudIcon
+  // One lane: every model error wears the org's cloud mark.
+  const Logo = CloudIcon
   const title = t(titleKeyFor(payload.errorReason, payload.statusCode))
   const description = t(descriptionKeyFor(payload.errorReason, payload.statusCode))
 

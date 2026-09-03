@@ -501,8 +501,8 @@ async function run(): Promise<void> {
   {
     const cb = await freshCerebellum()
     const del = await deleteCapabilityFolder({
-      name: 'telegram',
-      dir: path.join(cb, 'telegram'),
+      name: 'phone',
+      dir: path.join(cb, 'phone'),
       cerebellumDir: cb,
       isOfficial: false,
       isInProcess: true

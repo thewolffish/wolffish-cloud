@@ -1,6 +1,6 @@
-import { fetchDesktopFileInto } from '@/lib/sync/files'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Event, Rpc, type DiagnosticProgress, type DiagnosticResult } from '@/lib/tunnel/protocol'
+import { fetchCloudFileInto } from '@/lib/sync/files'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Event, Rpc, type DiagnosticProgress, type DiagnosticResult } from '@/lib/bridge/protocol'
 import { Directory, File, Paths } from 'expo-file-system'
 
 /**
@@ -53,7 +53,7 @@ export function onDiagnosticProgress(
   conversationId: string,
   handler: (progress: DiagnosticProgress) => void
 ): () => void {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return () => undefined
   tunnel.onEvent(Event.diagnosticsProgress, (payload) => {
     const progress = payload as DiagnosticProgress | null
@@ -89,15 +89,15 @@ function failure(conversationId: string, error: string): DiagnosticResult {
  * leave it spinning over nothing.
  *
  * A failed DOWNLOAD is deliberately not a failed export. The archive exists —
- * on the desktop, where the developer's copy can still be fetched from — so the
+ * on the desktop and at the org, where it can still be fetched from — so the
  * result stands and only the share step is missing; the overlay says which.
  */
 export async function exportDiagnostics(
   conversationId: string,
   onPhase: (phase: DiagnosticPhase) => void
 ): Promise<DiagnosticExport> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) {
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) {
     return { result: failure(conversationId, 'not connected to your desktop'), uri: null }
   }
 
@@ -106,7 +106,7 @@ export async function exportDiagnostics(
   try {
     result = (await tunnel.rpc(Rpc.diagnosticsExport, { conversationId })) as DiagnosticResult
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     return {
       result: failure(conversationId, error instanceof Error ? error.message : String(error)),
       uri: null
@@ -128,8 +128,13 @@ export async function exportDiagnostics(
   const target = new File(dir, result.fileName)
 
   onPhase({ kind: 'downloading', receivedBytes: 0, totalBytes: result.sizeBytes })
-  const landed = await fetchDesktopFileInto(result.relativePath, target, (received, total) =>
-    onPhase({ kind: 'downloading', receivedBytes: received, totalBytes: total })
+  // The desktop uploaded the archive to the org and named its hash; the
+  // bytes come from there, not across the bridge.
+  const landed = await fetchCloudFileInto(
+    { relPath: result.relativePath, sha256: result.sha256 ?? null },
+    target,
+    (received, total) =>
+      onPhase({ kind: 'downloading', receivedBytes: received, totalBytes: total })
   )
   // 'done' alone means the archive is on the device — 'absent' and 'failed'
   // are strings and truthy, so a bare truthiness check here would hand the

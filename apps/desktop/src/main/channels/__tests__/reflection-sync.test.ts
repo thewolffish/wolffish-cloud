@@ -65,7 +65,7 @@ type RpcHandler = (params: Record<string, unknown>) => Promise<unknown> | unknow
 
 async function run(): Promise<void> {
   const { MobileChannel, sanitizeReflectionPatch } = await import('@main/channels/mobile/channel')
-  const { Rpc } = await import('@main/tunnel/protocol')
+  const { Rpc } = await import('@main/cloud/bridge-protocol')
 
   // ------------------------------------------------------------- sanitizer
   ok(

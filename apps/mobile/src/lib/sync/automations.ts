@@ -1,8 +1,7 @@
 import { queryClient } from '@/lib/query/queryClient'
-import { toBase64Url } from '@/lib/tunnel/pairing'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { CHUNK_SIZE, Rpc, type AutomationJob, type AutomationRuns } from '@/lib/tunnel/protocol'
-import { File, FileMode } from 'expo-file-system'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc, type AutomationJob, type AutomationRuns } from '@/lib/bridge/protocol'
+import { adoptUploadedFile, chooseUploadPath, uploadFileToCloud } from '@/lib/sync/files'
 import { useDemoConfig } from '@/state/demoConfig'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 
@@ -58,12 +57,12 @@ export function applyRunsPush(runs: AutomationRuns): void {
 }
 
 async function call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) throw new Error('not connected')
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) throw new Error('not connected')
   try {
     return (await tunnel.rpc(method, params)) as T
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     throw error
   }
 }
@@ -85,7 +84,7 @@ function snapshotAutomations(): AutomationsSnapshot {
 }
 
 async function readSnapshot(): Promise<AutomationsSnapshot> {
-  if (!tunnelClient.connected) {
+  if (!bridgeClient.connected) {
     // A cached file wins, so a paired phone that lost its link keeps the
     // heartbeat it was reading. An EMPTY one falls through to the snapshot:
     // this query can run before applyConfigSnapshot lands on demo entry, and a
@@ -140,7 +139,7 @@ export function editAutomations(
   const run = writeChain.then(async () => {
     // A stale cache would splice into text the desktop has moved on from. This
     // is one small RPC per edit, and edits are user gestures, not a stream.
-    const fresh = tunnelClient.connected ? (await readSnapshot()).markdown : cachedMarkdown()
+    const fresh = bridgeClient.connected ? (await readSnapshot()).markdown : cachedMarkdown()
     const next = edit(fresh)
     if (next === null) return null
     await call<{ ok: boolean }>(Rpc.automationsWrite, { markdown: next })
@@ -177,50 +176,26 @@ export async function runAutomation(label: string): Promise<RunResult> {
 }
 
 /**
- * Upload one file into an automation, chunk by chunk — the phone's Add-files.
- *
- * An automation has no id (heartbeat.md is the store), so `existing` — the
- * `file:` paths it already holds — is what tells the desktop which folder it
- * owns. The answer is the ABSOLUTE path the desktop chose, because that is what
- * a `file:` marker holds; writing that marker is the caller's job, through
- * editAutomations like every other block edit.
+ * Add one file to an automation — the phone's Add-files. The org holds the
+ * bytes under `uploads/automation/`; the desktop adopts them beside the
+ * automation's existing `file:` paths and answers the ABSOLUTE path it
+ * chose, which is what the phone writes into heartbeat.md as a marker.
  */
 export async function uploadAutomationFile(
-  existing: readonly string[],
+  existingFiles: string[],
   localUri: string,
   name: string,
   mimeType: string | null,
   onProgress?: (sentBytes: number, totalBytes: number) => void
 ): Promise<{ path: string; name: string }> {
-  const source = new File(localUri)
-  if (!source.exists) throw new Error(`no file at ${localUri}`)
-  const sizeBytes = source.size ?? 0
-  if (sizeBytes <= 0) throw new Error(`empty file at ${localUri}`)
-
-  const begin = await call<{ uploadId: string }>(Rpc.uploadBegin, {
-    name,
-    mimeType,
-    sizeBytes,
-    automationFiles: existing
-  })
-  // Published before the first chunk so the bar is sized from its first frame.
-  onProgress?.(0, sizeBytes)
-
-  const handle = source.open(FileMode.ReadOnly)
-  try {
-    let offset = 0
-    while (offset < sizeBytes) {
-      const bytes = handle.readBytes(Math.min(CHUNK_SIZE, sizeBytes - offset))
-      if (bytes.length === 0) throw new Error('local file truncated mid-upload')
-      await call(Rpc.uploadChunk, { uploadId: begin.uploadId, offset, data: toBase64Url(bytes) })
-      offset += bytes.length
-      onProgress?.(offset, sizeBytes)
-    }
-  } finally {
-    handle.close()
-  }
-
-  return call<{ path: string; name: string }>(Rpc.uploadCommit, { uploadId: begin.uploadId })
+  if (!bridgeClient.connected) throw new Error('not connected')
+  const filePath = await chooseUploadPath(`uploads/automation-${Date.now().toString(36)}`, name)
+  const uploaded = await uploadFileToCloud(localUri, filePath, mimeType, onProgress)
+  return adoptUploadedFile<{ path: string; name: string }>(
+    { kind: 'automation', existing: existingFiles },
+    uploaded,
+    name
+  )
 }
 
 /**

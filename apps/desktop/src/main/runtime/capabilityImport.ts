@@ -10,7 +10,7 @@ import type { SkillFrontmatter } from './cerebellum'
  * Import a user-supplied capability into brain/cerebellum/.
  *
  * The Cerebellum settings panel lets the user drop a capability onto the
- * app, the same way the Google Workspace panel takes a creds.json. Three
+ * app, the same way a settings panel takes a config file. Three
  * shapes are accepted:
  *
  *  1. A single SKILL.md          — a pure skill (procedure, no plugin).

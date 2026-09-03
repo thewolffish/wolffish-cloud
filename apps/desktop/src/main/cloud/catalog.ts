@@ -63,3 +63,25 @@ export function catalogPricing(id: string): { input: number; output: number } | 
     output: m.outPerMtokMicroUsd / 1e6 / 1e6
   }
 }
+
+/**
+ * Field-for-field equality, order-sensitive: the wire order is the picker
+ * order, so a reordered catalog is a changed catalog.
+ */
+export function sameCatalog(a: CatalogModel[], b: CatalogModel[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((m, i) => {
+    const n = b[i]
+    return (
+      n !== undefined &&
+      m.id === n.id &&
+      m.name === n.name &&
+      m.reasoning === n.reasoning &&
+      m.vision === n.vision &&
+      m.contextWindow === n.contextWindow &&
+      m.inPerMtokMicroUsd === n.inPerMtokMicroUsd &&
+      m.outPerMtokMicroUsd === n.outPerMtokMicroUsd &&
+      m.default === n.default
+    )
+  })
+}

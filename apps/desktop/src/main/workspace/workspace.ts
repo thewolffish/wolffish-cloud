@@ -21,51 +21,8 @@ export type SafetyConfig = {
   blockCredentials: boolean
 }
 
-export type TelegramConfig = {
-  enabled: boolean
-  botToken: string
-  /** Numeric Telegram user IDs allowed to talk to the bot. Empty = nobody. */
-  allowedUserIds: number[]
-  autoRefresh?: boolean
-  staleHours?: number
-  /**
-   * When true, every tool call/result/activity is relayed to the chat.
-   * When false (default), only agent messages, file-bearing tool results,
-   * and errors are sent. Gates sending only; history is unaffected.
-   */
-  verbose?: boolean
-  /**
-   * Keep scheduled automation runs out of the /resume picker. On by default:
-   * automations vastly outnumber real chats, and /resume exists to pick a
-   * conversation back up, not to reopen an automation log. They stay listed
-   * in /delete (so they can still be cleaned up from a phone) and in the app.
-   */
-  hideAutomationsFromResume?: boolean
-}
-
-export type WhatsAppConfig = {
-  enabled: boolean
-  allowedPhoneNumbers: string[]
-  autoRefresh?: boolean
-  staleHours?: number
-  /**
-   * When true, every tool call/result/activity is relayed to the chat.
-   * When false (default), only agent messages, file-bearing tool results,
-   * and errors are sent. Gates sending only; history is unaffected.
-   */
-  verbose?: boolean
-  /**
-   * Keep scheduled automation runs out of the /resume picker. On by default:
-   * automations vastly outnumber real chats, and /resume exists to pick a
-   * conversation back up, not to reopen an automation log. They stay listed
-   * in /delete (so they can still be cleaned up from a phone) and in the app.
-   */
-  hideAutomationsFromResume?: boolean
-}
-
 /**
- * In-app (desktop) chat display preferences. Unlike Telegram / WhatsApp
- * this is not a remote relay channel — it's the primary renderer feed.
+ * In-app (desktop) chat display preferences — the primary renderer feed.
  * `verbose` gates what the in-app chat DISPLAYS: false (default) = a clean
  * feed (agent replies, file-bearing tool results, errors); true = the
  * model/provider chip plus every tool call/result/activity card. Display-only
@@ -105,8 +62,8 @@ export type CliConfig = {
  * Default ON — the phone still shows nothing unless the model deliberately
  * calls the tool, and the phone's own OS permission is the second gate.
  *
- * `verbose` is the same feed preference Telegram, WhatsApp and the in-app
- * chat each carry: false (default) mirrors a clean feed to the phone (agent
+ * `verbose` is the same feed preference the in-app
+ * chat carries: false (default) mirrors a clean feed to the phone (agent
  * replies, file-bearing results, errors), true relays every tool call and
  * activity card. Display-only — it never affects what is stored, and never
  * affects connection logging, which is unconditional.
@@ -139,72 +96,6 @@ export type MobileChannelConfig = {
 export type BraveConfig = {
   enabled: boolean
   apiKey: string
-}
-
-/**
- * A single labeled Notion integration. The user assigns a `label`
- * (e.g. "Personal", "Wolffish") so both they and the model can tell
- * multiple linked workspaces apart. `token` is the integration secret.
- * `name`/`email` are the account snapshot resolved by a successful
- * "Test" in settings, kept so the UI can show the connected account on
- * next launch without re-testing.
- */
-export type NotionConnection = {
-  id: string
-  label: string
-  token: string
-  name: string
-  email: string
-}
-
-/**
- * Notion integration config. Holds any number of labeled connections —
- * the user can link several Notion workspaces and the model picks one
- * per tool call by its label. Stateless — no daemon, no long-poll. The
- * cerebellum plugin reads config.json directly on every tool call.
- */
-export type NotionConfig = {
-  connections: NotionConnection[]
-}
-
-/**
- * A single labeled GitHub account (Personal Access Token). The user
- * assigns a `label` (e.g. "Personal", "Work") to disambiguate multiple
- * linked accounts. `token` is the PAT the cerebellum plugin reads on
- * every call. `login`/`name` are the account snapshot populated by a
- * successful Test Connection — kept so the UI can show the connected
- * account on next launch without re-testing.
- */
-export type GitHubConnection = {
-  id: string
-  label: string
-  token: string
-  login: string
-  name: string
-}
-
-/**
- * GitHub integration config. Holds any number of labeled connections —
- * the user can link several accounts and the model picks one per tool
- * call by its label. Stateless — no daemon: the cerebellum plugin reads
- * config.json directly on every tool call.
- */
-export type GitHubConfig = {
-  connections: GitHubConnection[]
-}
-
-/**
- * Google Workspace integration via gogcli. `status` is 'active' when at
- * least one account is authorized through gogcli. The cerebellum plugin
- * requires an explicit `account` parameter on every call — there is no
- * configured default. Credential storage is delegated to gogcli's own
- * keychain; we only store safe public metadata here.
- */
-export type GoogleConfig = {
-  status: 'inactive' | 'active'
-  clientId: string
-  projectId: string
-  credentialsStored: boolean
 }
 
 /**
@@ -241,51 +132,6 @@ export type TtsConfig = {
   defaultVoice: string
   defaultSpeed: string
   voiceReplies: boolean
-}
-
-/**
- * Memes capability provider credentials. `imgflip` needs a free account,
- * `giphy` needs an API key. memegen.link works without any config.
- */
-export type MemesConfig = {
-  imgflip: {
-    username: string
-    password: string
-  }
-  giphy: {
-    apiKey: string
-  }
-}
-
-/**
- * Video generation (MiniMax H3) credentials — deliberately its OWN key,
- * independent of any chat-model configuration (models are API-served).
- *
- * MiniMax issues one credential that happens to unlock both the chat
- * completions API and the video API, so the same string works in both
- * fields. Sharing one stored value anyway would fuse two independent
- * decisions: swapping the chat brain to another provider (and clearing
- * that key) would silently kill video generation, and a key scoped or
- * rotated for video would drag the chat models with it. Video generation
- * is a service — like Brave or Giphy — not a property of whichever brain
- * is selected, so it owns its credential and the user enters it here even
- * when the value is identical.
- */
-export type VideoConfig = {
-  apiKey: string
-  /**
-   * Director mode (default ON): the chat model expands a video request into
-   * a full cinematic prompt before calling video_generate and shows the
-   * user what it sent; OFF forwards the user's prompt verbatim. Purely an
-   * instruction to the model (a system-prompt directive) — the harness
-   * never rewrites or refuses a prompt either way.
-   */
-  director: boolean
-}
-
-export type UpdatesConfig = {
-  enabled: boolean
-  lastVersion?: string
 }
 
 export type ComputerUseConfig = {
@@ -391,14 +237,6 @@ export type WorkspaceConfig = {
   // boundaries. Optional so legacy configs migrate cleanly.
   weekStartsOn?: WeekStartsOn
   variables?: Variable[]
-  // Telegram is a second-class chat surface: same agent pipeline, same
-  // history, same memory. Optional so legacy configs migrate cleanly —
-  // when absent the bot is treated as disabled and the runtime never
-  // touches grammY.
-  telegram?: TelegramConfig
-  // WhatsApp Web via Baileys. Optional so legacy configs migrate cleanly
-  // — when absent the channel never starts.
-  whatsapp?: WhatsAppConfig
   // In-app (desktop) chat display preferences. Optional so legacy configs
   // migrate cleanly — when absent the feed defaults to clean (verbose off).
   inapp?: InAppConfig
@@ -411,32 +249,14 @@ export type WorkspaceConfig = {
   // Legacy Brave Search block (key + toggle) from before web search became
   // an org-provided lane. Ignored; kept so older configs still parse.
   brave?: BraveConfig
-  // Notion integration token. Optional so legacy configs migrate
-  // cleanly — when absent the cerebellum plugin simply has no token
-  // and the tools return an "unconfigured" error.
-  notion?: NotionConfig
-  // GitHub PAT. Optional so legacy configs migrate cleanly — when absent
-  // the cerebellum plugin returns an "unconfigured" error.
-  github?: GitHubConfig
-  // Google Workspace (gogcli) metadata. Only safe public fields — the
-  // actual OAuth credentials live in gogcli's credential store.
-  google?: GoogleConfig
   // STT/TTS defaults exposed to the cerebellum plugins via config.json.
   // Optional for backwards compatibility — plugin falls back to its
   // own hard-coded defaults when missing or partially set.
   stt?: SttConfig
   tts?: TtsConfig
-  // Memes capability provider credentials. Optional — memegen.link
-  // works without any config, Imgflip and Giphy need credentials.
-  memes?: MemesConfig
-  // Video generation (MiniMax H3) credentials — its own key, never mirrored
-  // from llm.providers. See VideoConfig for why the duplication is
-  // deliberate. Absent until the user configures the service.
-  video?: VideoConfig
   computerUse?: ComputerUseConfig
   browserExtension?: BrowserExtensionConfig
   compaction?: CompactionConfig
-  updates?: UpdatesConfig
   // MCP server connections. Types live in @main/runtime/mcp/types (pure,
   // test-importable) and are re-exported below. Optional so legacy
   // configs migrate cleanly — when absent no connections exist.
@@ -582,7 +402,7 @@ async function readConfigStrict(): Promise<{ exists: boolean; config: WorkspaceC
 // Serializes every config write and read-modify-write through one in-process
 // promise chain. The atomic write below guarantees no reader sees a torn
 // file; this guarantees no two writers interleave and lose each other's
-// update (e.g. a Telegram /local command racing a UI setting change, or the
+// update (e.g. a phone edit racing a UI setting change, or the
 // renderer's thinking-mode effect racing a provider save). Single-threaded JS
 // reassigns `configMutex` synchronously per call, so callers queue FIFO.
 let configMutex: Promise<unknown> = Promise.resolve()
@@ -683,7 +503,6 @@ function defaultConfig(): WorkspaceConfig {
       model: null
     },
     safety: { bypassPermissions: true, blockCredentials: false },
-    updates: { enabled: true },
     weekStartsOn: 1,
     locale: 'en',
     theme: 'system',
@@ -831,6 +650,51 @@ async function cleanupWorkspace(): Promise<void> {
   // the Desktop) are imported into uploads/project-<id>/ here. Idempotent —
   // inside-workspace refs are untouched, missing sources left as-is.
   await importOutsideProjectFiles().catch(() => undefined)
+  // The personal edition's model settings — local models, provider keys,
+  // the updater — have no reader in Wolffish Cloud. They were seeded into
+  // every profile by the old bundled defaults and travel with the synced
+  // config row, so they are swept out of existing files here (the bundle
+  // no longer carries them).
+  await pruneRetiredConfigKeys().catch(() => undefined)
+}
+
+const RETIRED_LLM_KEYS = ['local', 'providers', 'restrictPowerfulModels', 'brain', 'localOnly']
+const RETIRED_TOP_KEYS = [
+  'updates',
+  'ollamaModelsFolder',
+  'video',
+  // The retired service integrations (removed 2026-09-03): their config
+  // blocks — bot tokens, PATs, integration secrets, engine defaults — are
+  // swept out of every synced config so nothing lingers at the org either.
+  'telegram',
+  'whatsapp',
+  'notion',
+  'github',
+  'google',
+  'memes'
+]
+
+async function pruneRetiredConfigKeys(): Promise<void> {
+  const config = await readConfig()
+  if (!config) return
+  const raw = config as unknown as Record<string, unknown>
+  let changed = false
+  const llm = isPlainObject(raw.llm) ? raw.llm : null
+  if (llm) {
+    for (const key of RETIRED_LLM_KEYS) {
+      if (key in llm) {
+        delete llm[key]
+        changed = true
+      }
+    }
+  }
+  for (const key of RETIRED_TOP_KEYS) {
+    if (key in raw) {
+      delete raw[key]
+      changed = true
+    }
+  }
+  if (changed) await writeConfig(config)
 }
 
 async function migrateAgentsCore(): Promise<void> {
@@ -1070,66 +934,6 @@ export async function setVariables(variables: Variable[]): Promise<WorkspaceConf
   return patchConfig((c) => ({ ...c, variables }))
 }
 
-const EMPTY_TELEGRAM_CONFIG: TelegramConfig = {
-  enabled: false,
-  botToken: '',
-  allowedUserIds: [],
-  autoRefresh: true,
-  staleHours: 3,
-  verbose: false
-}
-
-export async function getTelegramConfig(): Promise<TelegramConfig> {
-  const config = await readConfig()
-  return config?.telegram ?? EMPTY_TELEGRAM_CONFIG
-}
-
-export async function setTelegramConfig(patch: Partial<TelegramConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.telegram ?? EMPTY_TELEGRAM_CONFIG
-    const next: TelegramConfig = {
-      enabled: patch.enabled ?? current.enabled,
-      botToken: patch.botToken ?? current.botToken,
-      allowedUserIds: patch.allowedUserIds ?? current.allowedUserIds,
-      autoRefresh: patch.autoRefresh ?? current.autoRefresh,
-      staleHours: patch.staleHours ?? current.staleHours,
-      verbose: patch.verbose ?? current.verbose,
-      hideAutomationsFromResume:
-        patch.hideAutomationsFromResume ?? current.hideAutomationsFromResume
-    }
-    return { ...c, telegram: next }
-  })
-}
-
-const EMPTY_WHATSAPP_CONFIG: WhatsAppConfig = {
-  enabled: false,
-  allowedPhoneNumbers: [],
-  autoRefresh: true,
-  staleHours: 3,
-  verbose: false
-}
-
-export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
-  const config = await readConfig()
-  return config?.whatsapp ?? EMPTY_WHATSAPP_CONFIG
-}
-
-export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.whatsapp ?? EMPTY_WHATSAPP_CONFIG
-    const next: WhatsAppConfig = {
-      enabled: patch.enabled ?? current.enabled,
-      allowedPhoneNumbers: patch.allowedPhoneNumbers ?? current.allowedPhoneNumbers,
-      autoRefresh: patch.autoRefresh ?? current.autoRefresh,
-      staleHours: patch.staleHours ?? current.staleHours,
-      verbose: patch.verbose ?? current.verbose,
-      hideAutomationsFromResume:
-        patch.hideAutomationsFromResume ?? current.hideAutomationsFromResume
-    }
-    return { ...c, whatsapp: next }
-  })
-}
-
 const EMPTY_INAPP_CONFIG: InAppConfig = {
   verbose: false,
   runCards: false
@@ -1237,201 +1041,6 @@ export async function setTtsConfig(patch: Partial<TtsConfig>): Promise<Workspace
       voiceReplies: patch.voiceReplies ?? c.tts?.voiceReplies !== false
     }
     return { ...c, tts: next }
-  })
-}
-
-// Deterministic short key derived from a token, used only to synthesize a
-// stable connection `id` for legacy or hand-edited configs that lack one
-// (the UI always assigns a real uuid). djb2 — no crypto import needed.
-function connectionKeyFromToken(token: string): string {
-  let hash = 5381
-  for (let i = 0; i < token.length; i++) {
-    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0
-  }
-  return (hash >>> 0).toString(36)
-}
-
-/**
- * Coerce whatever is stored under `notion` into the connections shape.
- * Handles the legacy single-token shape (`{ token, name, email }`) by
- * folding it into a single "Default"-labeled connection so a hand-edited
- * config in the old shape still reads cleanly.
- */
-function normalizeNotionConfig(stored: unknown): NotionConfig {
-  if (!isPlainObject(stored)) return { connections: [] }
-  if (Array.isArray(stored.connections)) {
-    const connections = stored.connections.filter(isPlainObject).map((c, i) => ({
-      // Fall back to an index-qualified id so hand-edited entries that omit
-      // both id and token don't collide on the same djb2('') hash.
-      id:
-        String(c.id ?? '').trim() || `notion-${i}-${connectionKeyFromToken(String(c.token ?? ''))}`,
-      // Mirror the legacy branch: a blank label would be unreachable by the
-      // model once several connections exist, so default it to "Default".
-      label: String(c.label ?? '').trim() || 'Default',
-      token: String(c.token ?? '').trim(),
-      name: String(c.name ?? ''),
-      email: String(c.email ?? '')
-    }))
-    return { connections }
-  }
-  const token = String(stored.token ?? '').trim()
-  if (token) {
-    return {
-      connections: [
-        {
-          id: `notion-${connectionKeyFromToken(token)}`,
-          label: String(stored.label ?? '').trim() || 'Default',
-          token,
-          name: String(stored.name ?? ''),
-          email: String(stored.email ?? '')
-        }
-      ]
-    }
-  }
-  return { connections: [] }
-}
-
-export async function getNotionConfig(): Promise<NotionConfig> {
-  const config = await readConfig()
-  return normalizeNotionConfig(config?.notion)
-}
-
-export async function setNotionConfig(connections: NotionConnection[]): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, notion: { connections } }))
-}
-
-/**
- * Coerce whatever is stored under `github` into the connections shape,
- * folding the legacy single-token shape (`{ token, login, name }`) into
- * one "Default"-labeled connection.
- */
-function normalizeGitHubConfig(stored: unknown): GitHubConfig {
-  if (!isPlainObject(stored)) return { connections: [] }
-  if (Array.isArray(stored.connections)) {
-    const connections = stored.connections.filter(isPlainObject).map((c, i) => ({
-      // Fall back to an index-qualified id so hand-edited entries that omit
-      // both id and token don't collide on the same djb2('') hash.
-      id:
-        String(c.id ?? '').trim() || `github-${i}-${connectionKeyFromToken(String(c.token ?? ''))}`,
-      // Mirror the legacy branch: a blank label would be unreachable by the
-      // model once several connections exist, so default it to "Default".
-      label: String(c.label ?? '').trim() || 'Default',
-      token: String(c.token ?? '').trim(),
-      login: String(c.login ?? ''),
-      name: String(c.name ?? '')
-    }))
-    return { connections }
-  }
-  const token = String(stored.token ?? '').trim()
-  if (token) {
-    return {
-      connections: [
-        {
-          id: `github-${connectionKeyFromToken(token)}`,
-          label: String(stored.label ?? '').trim() || 'Default',
-          token,
-          login: String(stored.login ?? ''),
-          name: String(stored.name ?? '')
-        }
-      ]
-    }
-  }
-  return { connections: [] }
-}
-
-export async function getGitHubConfig(): Promise<GitHubConfig> {
-  const config = await readConfig()
-  return normalizeGitHubConfig(config?.github)
-}
-
-export async function setGitHubConfig(connections: GitHubConnection[]): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, github: { connections } }))
-}
-
-const EMPTY_GOOGLE_CONFIG: GoogleConfig = {
-  status: 'inactive',
-  clientId: '',
-  projectId: '',
-  credentialsStored: false
-}
-
-export async function getGoogleConfig(): Promise<GoogleConfig> {
-  const config = await readConfig()
-  return config?.google ?? EMPTY_GOOGLE_CONFIG
-}
-
-export async function setGoogleConfig(patch: Partial<GoogleConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.google ?? EMPTY_GOOGLE_CONFIG
-    const next: GoogleConfig = {
-      status: patch.status ?? current.status,
-      clientId: patch.clientId ?? current.clientId,
-      projectId: patch.projectId ?? current.projectId,
-      credentialsStored: patch.credentialsStored ?? current.credentialsStored
-    }
-    return { ...c, google: next }
-  })
-}
-
-const EMPTY_MEMES_CONFIG: MemesConfig = {
-  imgflip: { username: '', password: '' },
-  giphy: { apiKey: '' }
-}
-
-export async function getMemesConfig(): Promise<MemesConfig> {
-  const config = await readConfig()
-  const stored = config?.memes
-  if (!stored) return EMPTY_MEMES_CONFIG
-  return {
-    imgflip: {
-      username: stored.imgflip?.username ?? '',
-      password: stored.imgflip?.password ?? ''
-    },
-    giphy: {
-      apiKey: stored.giphy?.apiKey ?? ''
-    }
-  }
-}
-
-export async function getVideoConfig(): Promise<VideoConfig> {
-  const config = await readConfig()
-  return {
-    apiKey: config?.video?.apiKey ?? '',
-    // Absent (configs from before the toggle shipped) means ON — the
-    // behavior every run had until now.
-    director: config?.video?.director !== false
-  }
-}
-
-export async function setVideoConfig(patch: Partial<VideoConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current: VideoConfig = {
-      apiKey: c.video?.apiKey ?? '',
-      director: c.video?.director !== false
-    }
-    return {
-      ...c,
-      video: {
-        apiKey: patch.apiKey ?? current.apiKey,
-        director: patch.director ?? current.director
-      }
-    }
-  })
-}
-
-export async function setMemesConfig(patch: Partial<MemesConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.memes ?? EMPTY_MEMES_CONFIG
-    const next: MemesConfig = {
-      imgflip: {
-        username: patch.imgflip?.username ?? current.imgflip.username,
-        password: patch.imgflip?.password ?? current.imgflip.password
-      },
-      giphy: {
-        apiKey: patch.giphy?.apiKey ?? current.giphy.apiKey
-      }
-    }
-    return { ...c, memes: next }
   })
 }
 

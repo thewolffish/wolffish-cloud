@@ -39,7 +39,7 @@ function statusTone(status: ToolResultInfo['status'] | 'running'): {
     case 'denied':
       return { container: 'bg-amber-500/15', text: 'text-amber-600 dark:text-amber-400' }
     default:
-      return { container: 'bg-primary/15', text: 'text-primary' }
+      return { container: 'bg-primary-soft', text: 'text-primary' }
   }
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 
 /**
  * Retry pacing for a TRANSIENT file resolution failure — the half of the
@@ -66,9 +66,9 @@ export function useFileRetry(key: string | null): {
     // possibly before it has returned anything to unsubscribe with (the same
     // trap whenConnected in conversations/hooks.ts documents) — so seed `was`
     // from the live flag and keep a local handle for the replay window.
-    let was = tunnelClient.connected
+    let was = bridgeClient.connected
     let fired = false
-    const off = tunnelClient.subscribe((state) => {
+    const off = bridgeClient.subscribe((state) => {
       const is = state.status === 'connected'
       if (is && !was) {
         fired = true

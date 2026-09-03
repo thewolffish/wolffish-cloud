@@ -41,8 +41,8 @@ jest.mock('@/lib/sync/cards', () => ({
 const mockRpc = jest.fn()
 const mockHandlers = new Map<string, (payload: unknown) => void>()
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return {
         rpc: mockRpc,
@@ -58,7 +58,7 @@ jest.mock('@/lib/tunnel/client', () => ({
 }))
 
 import { attachTurnStream } from '@/lib/sync/prompt'
-import { Event } from '@/lib/tunnel/protocol'
+import { Event } from '@/lib/bridge/protocol'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useRunStatus } from '@/state/runStatus'
 

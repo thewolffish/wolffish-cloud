@@ -1529,7 +1529,7 @@ async function runOpinion(
  * The obvious construction — concatenate everything, cut to fit — is wrong,
  * and wrong in the way that looks fine: on a real conversation (30 messages,
  * 150 tool calls, 7 failures) a plain tail-slice kept a mid-run stretch of
- * successful `telegram_send` calls and dropped every single failure. The model
+ * successful `notify_phone` calls and dropped every single failure. The model
  * would then have been asked what went wrong while holding no evidence that
  * anything had — an invitation to invent one.
  *

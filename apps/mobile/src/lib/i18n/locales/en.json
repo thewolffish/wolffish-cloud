@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Wolffish",
-    "tagline": "The Personal AI Agent For Everyone"
+    "tagline": "The AI Agent For Every Employee"
   },
   "common": {
     "back": "Back",
@@ -49,7 +49,7 @@
       "mcp": "MCP",
       "capabilities": "Capabilities",
       "customization": "Customization",
-      "relay": "Relay",
+      "connection": "Connection",
       "projects": "Projects",
       "procedures": "Procedures",
       "automations": "Automations",
@@ -78,30 +78,11 @@
     "model": {
       "subtitle": "Which model answers, and how it thinks.",
       "modelTitle": "Model",
-      "brainLabel": "Model",
-      "localOnly": "Local only",
-      "localOnlyDescription": "Answer with the local model.",
       "behaviorTitle": "Behavior",
       "modeLabel": "Chat mode",
       "thinkingLabel": "Thinking",
-      "localTitle": "Local",
-      "cloudTitle": "Cloud",
       "noModel": "No model",
-      "providersTitle": "Providers",
-      "apiKey": "API key",
-      "keySet": "Key set",
-      "noKey": "No key",
-      "testConnection": "Test connection",
-      "testSuccess": "Connection verified",
-      "desktopNote": "Keys save to the desktop. Connection tests run there.",
-      "modelsCount": "{{count}} models",
-      "ollamaRunning": "Running",
-      "ollamaNotRunning": "Not running",
-      "ollamaModelsFolder": "Models folder",
-      "localNote": "Ollama runs on the desktop.",
-      "installedModel": "Installed model",
-      "installedModelPlaceholder": "Select a model",
-      "noModelsInstalled": "No models installed on the desktop."
+      "orgNote": "Served through your organization's API. The desktop chooses the model; this device shows it."
     },
     "channels": {
       "subtitle": "Where Wolffish talks to you.",
@@ -115,17 +96,6 @@
       "runCardsDesktopDescription": "Show a live card over the desktop app while one of your automations or procedures runs. Off (the default) keeps that screen quiet — the run still happens and still reports on its own page.",
       "runCardsPhoneDescription": "Show a live card on this phone while one of your automations or procedures runs on the desktop. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
       "enabled": "Enabled",
-      "telegramDescription": "Bridge runs on your desktop.",
-      "whatsappDescription": "Bridge runs on your desktop.",
-      "allowedUserIds": "Allowed user IDs",
-      "allowedUserIdsPlaceholder": "123456789, 987654321",
-      "allowedNumbers": "Allowed phone numbers",
-      "allowedNumbersPlaceholder": "+966xxxxxxxxx, +1xxxxxxxxxx",
-      "autoRefresh": "Auto refresh",
-      "autoRefreshDescription": "Auto-resume stale chats.",
-      "staleHours": "Stale after (hours)",
-      "hideAutomations": "Hide automations",
-      "hideAutomationsDescription": "Skip scheduled runs on resume.",
       "cli": {
         "title": "CLI",
         "description": "Wolffish in a terminal on your desktop — the same agent, the same settings, the same conversations, no window needed.",
@@ -153,55 +123,19 @@
       "subtitle": "Connections the agent uses.",
       "connected": "Connected",
       "notConnected": "Not connected",
-      "desktopOnly": "Managed in the desktop app.",
       "desktopOnlyShort": "Desktop-managed",
       "items": {
-        "google": "Google Workspace",
-        "github": "GitHub",
-        "notion": "Notion",
         "brave": "Brave Search",
-        "memes": "Memes",
-        "video": "Video generation",
+        "browserExtension": "Browser Extension",
+        "mcp": "MCP Servers",
         "stt": "Speech to Text",
         "tts": "Text to Speech",
-        "browserExtension": "Browser Extension",
-        "computerUse": "Computer Use",
-        "mcp": "MCP Servers"
+        "computerUse": "Computer Use"
       },
-      "sttModel": "Whisper model",
-      "sttLanguage": "Language",
-      "sttLanguageAuto": "Auto-detect",
-      "ttsVoice": "Voice",
-      "ttsSpeed": "Speed",
       "screenshotMaxWidth": "Screenshot width",
       "screenshotFormat": "Screenshot format",
-      "speed": {
-        "slow": "Slow",
-        "normal": "Normal",
-        "fast": "Fast",
-        "veryFast": "Very fast"
-      },
-      "secretPlaceholder": "Not set",
-      "secretNote": "Credentials save to your desktop over the encrypted link and apply there instantly.",
-      "voiceLang": {
-        "us": "English (US)",
-        "uk": "English (UK)"
-      },
       "brave": {
-        "description": "Search with Brave first, DuckDuckGo as fallback.",
-        "apiKey": "Brave API key"
-      },
-      "memes": {
-        "description": "memegen.link needs nothing; Imgflip and Giphy need credentials.",
-        "imgflipUsername": "Imgflip username",
-        "imgflipPassword": "Imgflip password",
-        "giphyKey": "Giphy API key"
-      },
-      "stt": {
-        "hint": "Bigger models transcribe better and run slower. Every transcription is pinned to the chosen language — Auto-detect can misread short recordings."
-      },
-      "tts": {
-        "hint": "Kokoro runs locally — voices are English only."
+        "orgProvided": "Web search is provided by your organization."
       },
       "browserExtension": {
         "port": "Pairing port",
@@ -210,16 +144,28 @@
         "portManagedOnDesktop": "The port is managed in the desktop app.",
         "connectedAtTime": "Connected {{time}}"
       },
-      "keySaved": "Saved to your desktop",
-      "keySaveFailed": "Couldn’t save — check the connection",
-      "saveKey": "Save",
-      "video": {
-        "description": "Generate video with MiniMax H3 — your chat model directs it; results show as task cards in the chat.",
-        "apiKey": "MiniMax API key (video)",
-        "separateKeyNote": "This is its own key on purpose — the same MiniMax value works, but it is never copied from the chat provider, so switching brains cannot break video generation.",
-        "director": "Director mode",
-        "directorDescription": "On, your chat model rewrites video requests into cinematic prompts and shows you what it sent. Off, your words go to the video model verbatim."
-      }
+      "sttModel": "Whisper model",
+      "sttLanguage": "Language",
+      "sttLanguageAuto": "Auto-detect",
+      "ttsVoice": "Voice",
+      "ttsSpeed": "Speed",
+      "speed": {
+        "slow": "Slow",
+        "normal": "Normal",
+        "fast": "Fast",
+        "veryFast": "Very fast"
+      },
+      "voiceLang": {
+        "us": "English (US)",
+        "uk": "English (UK)"
+      },
+      "stt": {
+        "hint": "Bigger models transcribe better and run slower. Every transcription is pinned to the chosen language — Auto-detect can misread short recordings."
+      },
+      "tts": {
+        "hint": "Kokoro runs locally — voices are English only."
+      },
+      "desktopOnly": "Managed in the desktop app."
     },
     "variables": {
       "subtitle": "Named values for prompts.",
@@ -396,8 +342,6 @@
       "desktopDescription": "The Wolffish desktop this device is paired with.",
       "platform": "Platform",
       "syncedAt": "Last synced",
-      "desktopAutoLabel": "Automatic updates",
-      "desktopAutoDescription": "Whether the desktop app updates itself. Changing this here changes it there.",
       "desktopCheckDescription": "Ask the desktop to look for a new version now.",
       "downloadingTitle": "Downloading update",
       "downloadingSubtitle": "Your update is downloading",
@@ -446,15 +390,13 @@
       "generalTitle": "General",
       "launchAtStartup": "Launch at startup",
       "launchAtStartupDescription": "Open Wolffish when you log in.",
-      "restrictPowerfulModels": "Restrict powerful local models",
-      "restrictPowerfulModelsDescription": "Block local models bigger than your RAM.",
-      "voiceReplies": "Voice replies",
-      "voiceRepliesDescription": "When you send a voice prompt, Wolffish ends its reply with a spoken voice memo. This switch alone controls that behavior.",
       "weekStartsOn": "Week starts on",
       "weekStartsOnDescription": "The first day of the week for the activity map and ranges like \"this week\". Monday is the ISO standard.",
       "safetyTitle": "Safety",
       "blockCredentials": "Block credentials",
-      "blockCredentialsDescription": "Never type passwords or keys."
+      "blockCredentialsDescription": "Never type passwords or keys.",
+      "voiceReplies": "Voice replies",
+      "voiceRepliesDescription": "When you send a voice prompt, Wolffish ends its reply with a spoken voice memo. This switch alone controls that behavior."
     },
     "capabilities": {
       "subtitle": "The agent's {{count}} capabilities.",
@@ -483,7 +425,7 @@
       "docs": {
         "soul": {
           "title": "Soul",
-          "description": "Personality, tone, humor and the hard rules. This is who Wolffish is on every surface — chat, Telegram, WhatsApp."
+          "description": "Personality, tone, humor and the hard rules. This is who Wolffish is on every surface — this app, the desktop, the terminal."
         },
         "user": {
           "title": "User",
@@ -553,7 +495,7 @@
     },
     "alerts": {
       "title": "Alert",
-      "info": "Wolffish keeps everything on your machine.",
+      "info": "Wolffish runs on your machine; your organization keeps the record.",
       "infoTitle": "Fully local",
       "success": "Your workspace is synced and up to date.",
       "successTitle": "All good",
@@ -584,7 +526,7 @@
     "demoHint": "Every feature, every file type — with three months of real conversations.",
     "continue": "Continue",
     "connectOther": "Connect to another desktop",
-    "desktopNote": "Wolffish runs on your computer — this app connects to it. Pairing needs the desktop app installed and running.",
+    "desktopNote": "Wolffish runs on your computer — this app is its companion. Pairing signs the phone in to your organization; the desktop app runs your turns.",
     "downloadDesktop": "Download the desktop app from wolffi.sh"
   },
   "demo": {
@@ -697,20 +639,6 @@
       "deleted": "Image file was deleted or unavailable",
       "zoomHint": "Pinch or double-tap to zoom"
     },
-    "voice": {
-      "record": "Record voice message",
-      "noMic": "No microphone available",
-      "permissionDenied": "Mic access denied — allow in system settings.",
-      "recording": "Recording",
-      "send": "Send recording",
-      "delete": "Delete recording",
-      "transcribing": "Transcribing…",
-      "error": "Recording failed",
-      "queue": "Queue voice message",
-      "queued": "Voice message",
-      "play": "Play",
-      "pause": "Pause"
-    },
     "attach": {
       "title": "Attach",
       "media": "Photos & videos",
@@ -810,19 +738,6 @@
       "cachedShare": "{{percent}}% of ingested context came from cache"
     },
     "offlineReply": "I can't answer while your desktop is out of reach — it runs the model and holds your workspace. Your message is saved here; send it again once the link is back.",
-    "task": {
-      "kind": {
-        "video": "Video"
-      },
-      "status": {
-        "submitted": "Submitted",
-        "queued": "Queued",
-        "running": "Running",
-        "succeeded": "Done",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      }
-    },
     "approval": {
       "level": {
         "safe": "Safe",
@@ -840,6 +755,20 @@
       "deny": "Deny",
       "approved": "Approved",
       "denied": "Denied"
+    },
+    "voice": {
+      "record": "Record voice message",
+      "noMic": "No microphone available",
+      "permissionDenied": "Mic access denied — allow in system settings.",
+      "recording": "Recording",
+      "send": "Send recording",
+      "delete": "Delete recording",
+      "transcribing": "Transcribing…",
+      "error": "Recording failed",
+      "queue": "Queue voice message",
+      "queued": "Voice message",
+      "play": "Play",
+      "pause": "Pause"
     }
   },
   "history": {
@@ -913,110 +842,37 @@
     "codeDesc": "Enter the code your desktop shows.",
     "qrTitle": "Scan the QR",
     "qrDesc": "Point the camera at your desktop's QR.",
-    "relayLabel": "Relay URL",
-    "relayInvalid": "That doesn't look like a relay URL.",
     "how": {
       "title": "How it works",
       "pairTitle": "Pair once",
-      "pairBody": "The QR or code carries a one-time secret. Each device keeps its own key and pins the other's — no account, no password.",
-      "e2eTitle": "Encrypted end to end",
-      "e2eBody": "Everything is sealed on your devices before it is sent. Only this phone and your desktop hold the keys.",
-      "relayTitle": "Forwarded by a blind relay",
-      "relayBody": "The relay only lets the two devices find each other and passes sealed bytes along — it can't read them and stores nothing."
+      "pairBody": "The QR or code is a one-time offer your organization minted for your desktop. Claiming it signs this phone in as you — no password to type.",
+      "orgTitle": "Signed in as you",
+      "orgBody": "From then on the phone talks to your organization directly: conversations, settings, files and usage sync there and stay readable even when your desktop is asleep.",
+      "liveTitle": "Live through your desktop",
+      "liveBody": "Turns run on your desktop. A message you send reaches it through your organization and streams back the same way."
     },
-    "relayCard": {
-      "title": "Relay",
-      "body": "Where the two devices meet. The QR sets this for you.",
-      "apply": "Use this relay",
-      "reset": "Reset to default",
-      "repo": "wolffish-relay on GitHub",
-      "confirmTitle": "Change the relay?",
-      "confirmBody": "Pairing will connect through:",
-      "confirmCompat": "It must be compatible with Wolffish — any deployment of the open-source relay works.",
-      "confirmApply": "Change relay"
-    },
+    "operated": "The API is operated by your organization.",
     "cameraDenied": "Camera access is off for Wolffish. Turn it on in Settings, or type the code above instead.",
     "allowCamera": "Allow camera",
     "failed": "Could not pair. Check that the code is still showing on your desktop and try again.",
+    "rateLimited": "Too many attempts. Wait a few minutes and try again.",
+    "accountDisabled": "This account is disabled. Ask your organization's admin.",
+    "offline": "Could not reach your organization. Check your connection and try again.",
     "hint": "Pair once — your conversations, settings and usage follow you.",
     "synced": "Connected — {{count}} conversations",
-    "syncFailed": "Connected, but the first sync failed. Open Settings → Relay to retry.",
+    "syncFailed": "Connected, but the first sync failed. Open Settings → Connection to retry.",
     "syncing": {
-      "connect": "Connecting to your desktop…",
+      "connect": "Connecting to your organization…",
       "config": "Syncing settings…",
       "conversations": "Syncing conversations…",
       "usage": "Syncing usage…"
     },
     "qrFound": "Code found — connecting"
   },
-  "relay": {
-    "subtitle": "The encrypted link to your desktop",
-    "connection": "Connection",
-    "endpoint": "Relay",
-    "rendezvous": "Rendezvous",
-    "since": "Connected for",
-    "lastError": "Last error",
-    "status": {
-      "label": "Status",
-      "connected": "Connected",
-      "connecting": "Connecting",
-      "waiting": "Waiting for desktop",
-      "reconnecting": "Reconnecting",
-      "error": "Not connected",
-      "idle": "Idle"
-    },
-    "encryption": "Encryption",
-    "encryptionHint": "These four-character forms also appear on your desktop. Matching values mean both devices agree on the keys in use.",
-    "keyThis": "This device",
-    "keyDesktop": "Desktop",
-    "session": "Session",
-    "cipher": "Cipher",
-    "traffic": "Traffic",
-    "framesSent": "Frames sent",
-    "framesReceived": "Frames received",
-    "reconnects": "Reconnects",
-    "privacy": "Privacy",
-    "privacyBody": "Everything between this phone and your desktop is encrypted on the devices themselves. The relay only forwards sealed bytes — it cannot read, alter or replay them, and it stores nothing: no database, no logs, no accounts, no message history. When both devices disconnect, nothing about the session remains anywhere.",
-    "resync": "Sync now",
-    "resynced": "Up to date — {{count}} updated",
-    "resyncFailed": "Could not reach your desktop.",
-    "sync": "Sync",
-    "manage": "Connection",
-    "resyncHint": "Pull anything this phone missed.",
-    "resyncNow": "Sync",
-    "syncLive": "synced {{ago}} ago",
-    "syncLivePending": "nothing pulled yet this session",
-    "reconnect": "Reconnect",
-    "reconnectHint": "Rebuild the link if it has gone quiet.",
-    "reconnectAction": "Reconnect",
-    "reconnectFailed": "Could not reconnect.",
-    "unpair": "Unpair",
-    "unpairHint": "Drops the keys and wipes this phone.",
-    "unpairAction": "Unpair",
-    "unpairFailed": "Could not finish unpairing.",
-    "unpairConfirmTitle": "Unpair from this desktop?",
-    "unpairConfirmBody": "This phone drops its keys and erases the conversations, settings and usage it synced — everything the app holds, back to a fresh install. Your desktop keeps the originals, so pairing again restores them.",
-    "demoUnpairHint": "Ends the tour and clears the sample data.",
-    "demoUnpairConfirmTitle": "Leave the demo?",
-    "demoUnpairConfirmBody": "This clears the demo's sample workspace and returns to the start screen. Demo mode stays one tap away, and entering it again reloads everything.",
-    "source": "wolffish-relay on GitHub",
-    "how": {
-      "pushTitle": "As it happens",
-      "pushBody": "Your desktop sends changes the moment they occur — a run from anywhere, a renamed conversation, a setting you edited.",
-      "wakeTitle": "On opening the app",
-      "wakeBody": "Every time this app comes back it asks what it missed while it was closed, including anything deleted.",
-      "lastTitle": "Last catch-up"
-    },
-    "repair": "Pairing screen",
-    "repairHint": "Connect this phone to a different desktop.",
-    "repairAction": "Open",
-    "resyncStale": "Lost the link — reconnecting, then try again."
-  },
   "connecting": {
     "title": "Reconnecting",
-    "body": "Waiting for your desktop.",
-    "dialing": "Reaching the relay",
-    "waitingPeer": "Relay reached",
+    "body": "Reaching your organization.",
+    "dialing": "Connecting",
     "retrying": "Trying again",
     "attempts": "{{count}} attempts",
     "continueOffline": "Continue offline",
@@ -1024,7 +880,7 @@
   },
   "syncing": {
     "title": "Syncing",
-    "body": "Getting what changed on your desktop.",
+    "body": "Getting what changed at your organization.",
     "step": {
       "settings": "Settings and usage",
       "conversations": "Conversations",
@@ -1307,5 +1163,66 @@
       "tryAgain": "Try again",
       "tryAgainMessage": "The previous response was cut off by a provider failure ({{reason}}). Pick up where you left off — check what already completed (files written, tool results, plans made) and continue without redoing finished work."
     }
+  },
+  "connection": {
+    "subtitle": "Your organization, and your desktop through it",
+    "org": "Organization",
+    "desktop": "Desktop",
+    "account": "Signed in as",
+    "organization": "Organization",
+    "demoAccount": "demo@wolffish-inc",
+    "endpoint": "API",
+    "since": "Connected for",
+    "lastError": "Last error",
+    "status": {
+      "label": "Status",
+      "connected": "Connected",
+      "connecting": "Connecting",
+      "waitingDesktop": "Desktop not running",
+      "reconnecting": "Reconnecting",
+      "error": "Not connected",
+      "idle": "Idle"
+    },
+    "desktopUnknown": "Your desktop",
+    "desktopOnline": "Running and reachable — turns you send run there.",
+    "desktopOffline": "Not running right now. Everything already synced stays readable; sending a message needs the desktop app open on your computer.",
+    "traffic": "Traffic",
+    "framesSent": "Frames sent",
+    "framesReceived": "Frames received",
+    "reconnects": "Reconnects",
+    "privacy": "Privacy",
+    "privacyBody": "This phone is a signed-in device of your organization's account. Conversations, settings, files and usage are the organization's record; live turns pass through the organization to your desktop. Signing out revokes this phone's session and wipes the copy it holds.",
+    "resync": "Sync now",
+    "resynced": "Up to date — {{count}} updated",
+    "resyncFailed": "Could not reach your organization.",
+    "sync": "Sync",
+    "manage": "Connection",
+    "resyncHint": "Pull anything this phone missed.",
+    "resyncNow": "Sync",
+    "syncLive": "synced {{ago}} ago",
+    "syncLivePending": "nothing pulled yet this session",
+    "reconnect": "Reconnect",
+    "reconnectHint": "Rebuild the link if it has gone quiet.",
+    "reconnectAction": "Reconnect",
+    "signOut": "Sign out",
+    "signOutHint": "Revokes this phone's session and wipes what it synced.",
+    "signOutAction": "Sign out",
+    "signOutFailed": "Could not finish signing out.",
+    "signOutConfirmTitle": "Sign this phone out?",
+    "signOutConfirmBody": "This phone's session is revoked and it erases the conversations, settings and usage it synced — everything the app holds, back to a fresh install. Your organization keeps the record, so pairing again restores it.",
+    "demoSignOutHint": "Ends the tour and clears the sample data.",
+    "demoSignOutConfirmTitle": "Leave the demo?",
+    "demoSignOutConfirmBody": "This clears the demo's sample workspace and returns to the start screen. Demo mode stays one tap away, and entering it again reloads everything.",
+    "revoked": "This phone was signed out by your organization.",
+    "how": {
+      "pushTitle": "As it happens",
+      "pushBody": "Your desktop sends changes the moment they occur — a run from anywhere, a renamed conversation, a setting you edited.",
+      "wakeTitle": "On opening the app",
+      "wakeBody": "Every time this app comes back it asks the organization what it missed while it was closed, including anything deleted.",
+      "lastTitle": "Last catch-up"
+    },
+    "repair": "Pairing screen",
+    "repairHint": "Connect this phone to a different desktop.",
+    "repairAction": "Open"
   }
 }

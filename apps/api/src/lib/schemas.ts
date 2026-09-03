@@ -67,6 +67,24 @@ export const RefreshSchema = z.object({
   refresh_token: z.string().min(10).max(256)
 })
 
+// ── pairing (the phone's claim) ──────────────────────────────────────────
+
+export const PairClaimSchema = z
+  .object({
+    /** The typed code, any spelling the phone accepts. */
+    code: z.string().min(8).max(16).optional(),
+    /** The QR's token, base64url. */
+    token: z.string().min(32).max(64).optional(),
+    device: z
+      .object({
+        id: idStr.optional(),
+        name: z.string().max(200).optional(),
+        app_version: z.string().max(64).optional()
+      })
+      .optional()
+  })
+  .refine((b) => Boolean(b.code || b.token), { message: 'code or token required' })
+
 // ── session surface ──────────────────────────────────────────────────────
 
 export const DevicePinSchema = z.object({ pin_set: z.boolean() })
@@ -183,12 +201,6 @@ export const BatchItemSchema = z.discriminatedUnion('type', [
     // message it chose to send whole is never rejected for size.
     content: boundedJson(409_600),
     created_at: isoDate
-  }),
-  z.object({
-    type: z.literal('episode'),
-    id: idStr,
-    content: boundedJson(409_600),
-    occurred_at: isoDate
   })
 ])
 

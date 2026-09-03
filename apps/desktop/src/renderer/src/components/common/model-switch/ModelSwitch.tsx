@@ -1,7 +1,7 @@
 import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import type { ReasoningMode } from '@main/runtime/reasoning'
-import type { CatalogModelEntry } from '@preload/index'
+import { useModelCatalog } from '@providers/model-catalog/useModelCatalog'
 import {
   AiBrain01Icon,
   BrainIcon,
@@ -57,10 +57,11 @@ function shortModelName(model: string): string {
  * per-turn knobs — reasoning effort, chat mode, and the permissions
  * (ask/bypass) switch — as chip rows above the model section.
  *
- * The model section renders the org catalog (GET /v1/models via the main
- * cache): every allowed model is a row, the selection persists through
+ * The model section renders the org catalog (GET /v1/models, held app-wide
+ * by ModelCatalogProvider so the rows are on screen the instant the card
+ * opens): every allowed model is a row, the selection persists through
  * modelSelect.select and the runtime follows live. Admin edits the policy
- * → the list changes on the next open.
+ * → main pushes the new list and the rows follow.
  */
 export function ModelSwitch({
   model,
@@ -92,7 +93,6 @@ export function ModelSwitch({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const [catalog, setCatalog] = useState<CatalogModelEntry[]>([])
   const [pinned, setPinned] = useState(false)
   const [optimisticChatMode, setOptimisticChatMode] = useState<ChatMode | null>(null)
   const [optimisticBypass, setOptimisticBypass] = useState<boolean | null>(null)
@@ -140,18 +140,14 @@ export function ModelSwitch({
   }
   const cardVisible = (open || pinned) && !disabled
 
-  // The catalog is a cheap cached IPC — refetch on every open so an admin
-  // policy edit shows up without a relaunch.
+  // Held app-wide from launch, so the rows paint with the card's first
+  // frame. Opening still nudges main to revalidate a stale copy — an admin
+  // policy edit shows up without a relaunch through the provider's push,
+  // never as a loading state here.
+  const { models: catalog, revalidate } = useModelCatalog()
   useEffect(() => {
-    if (!cardVisible) return
-    let cancelled = false
-    void window.api.model.catalog().then((r) => {
-      if (!cancelled) setCatalog(r.models)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [cardVisible])
+    if (cardVisible) revalidate()
+  }, [cardVisible, revalidate])
 
   const pickModel = (id: string): void => {
     if (id === model) return

@@ -14,8 +14,8 @@
 
 const mockRpc = jest.fn()
 const link = { connected: true }
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return link.connected
     },
@@ -35,7 +35,7 @@ import {
   seedDesktopUpdater,
   useDesktopUpdater
 } from '@/lib/sync/updater'
-import type { UpdaterWireState } from '@/lib/tunnel/protocol'
+import type { UpdaterWireState } from '@/lib/bridge/protocol'
 
 function wire(over: Partial<UpdaterWireState> = {}): { state: UpdaterWireState } {
   return {

@@ -265,7 +265,7 @@ export default function AutomationsScreen(): React.JSX.Element {
             }
             hitSlop={6}
             onPress={() => setView((v) => (v === 'cards' ? 'markdown' : 'cards'))}
-            className="h-8 w-8 items-center justify-center rounded-lg active:bg-border/40"
+            className="h-8 w-8 items-center justify-center rounded-lg active:bg-border-soft"
           >
             {view === 'cards' ? (
               <SourceCodeIcon size={16} className="text-muted" />
@@ -359,7 +359,7 @@ export default function AutomationsScreen(): React.JSX.Element {
                         onPress={() => handleRun(block)}
                         className={cn(
                           'h-8 w-8 items-center justify-center rounded-lg',
-                          busy || !writable ? 'opacity-40' : 'active:bg-border/40'
+                          busy || !writable ? 'opacity-40' : 'active:bg-border-soft'
                         )}
                       >
                         <PlayIcon size={17} className="text-muted" />
@@ -370,7 +370,7 @@ export default function AutomationsScreen(): React.JSX.Element {
                       accessibilityLabel={t('heartbeat.edit')}
                       hitSlop={6}
                       onPress={() => setEditorFor(block)}
-                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border/40"
+                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border-soft"
                     >
                       <Edit02Icon size={15} className="text-muted" />
                     </Pressable>
@@ -382,7 +382,7 @@ export default function AutomationsScreen(): React.JSX.Element {
                       onPress={() => setDeleteTarget(block)}
                       className={cn(
                         'h-8 w-8 items-center justify-center rounded-lg',
-                        writable ? 'active:bg-border/40' : 'opacity-40'
+                        writable ? 'active:bg-border-soft' : 'opacity-40'
                       )}
                     >
                       <Delete02Icon size={15} className="text-muted" />
@@ -897,7 +897,7 @@ function AutomationEditor({
           accessibilityLabel={t('heartbeat.editor.guideButton')}
           hitSlop={6}
           onPress={() => setGuideOpen(true)}
-          className="h-7 w-7 items-center justify-center rounded-md active:bg-border/40"
+          className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
         >
           <HelpCircleIcon size={15} className="text-muted" />
         </Pressable>
@@ -911,7 +911,7 @@ function AutomationEditor({
             key={kind}
             accessibilityRole="button"
             onPress={() => setSchedule(chipSchedule(kind))}
-            className="border-border bg-bg rounded-full border px-2.5 py-1 active:bg-border/40"
+            className="border-border bg-bg rounded-full border px-2.5 py-1 active:bg-border-soft"
           >
             <Text className="text-muted font-sans text-xs">
               {t(`heartbeat.editor.chips.${kind}`)}
@@ -930,7 +930,7 @@ function AutomationEditor({
           }
           disabled={boundProject !== undefined}
           onPress={() => setEmojiOpen(true)}
-          className="bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border/40"
+          className="bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border-soft"
         >
           <Text className="text-lg">
             {boundProject
@@ -1080,7 +1080,7 @@ function AutomationEditor({
                 onPress={() => removeFile(file)}
                 className={cn(
                   'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                  attachLocked ? 'opacity-40' : 'active:bg-border/40'
+                  attachLocked ? 'opacity-40' : 'active:bg-border-soft'
                 )}
               >
                 <Delete02Icon size={13} className="text-muted" />
@@ -1146,7 +1146,7 @@ function AutomationEditor({
                 onPress={() => removeFolder(dir)}
                 className={cn(
                   'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                  readOnly ? 'opacity-40' : 'active:bg-border/40'
+                  readOnly ? 'opacity-40' : 'active:bg-border-soft'
                 )}
               >
                 <Delete02Icon size={13} className="text-muted" />

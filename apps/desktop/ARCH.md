@@ -499,14 +499,13 @@ process. If you can describe a procedure, you can teach it. This is
 what makes Wolffish _yours_ — your skills, your conventions, your way
 of working.
 
-Running locally with Ollama means your brain never leaves your
-machine. Your memories, your skills, your feedback history — all in a
-folder on your disk. No cloud dependency for the core experience.
-Cloud models work too, when you want them, but they're an upgrade, not
-a requirement. If Anthropic disappears tomorrow, your agent still
-runs. If the internet goes out, your agent still runs. If you fly
-across an ocean with no signal, your agent still runs. That's the kind
-of agent I want to live with.
+In Wolffish Cloud the brain still runs on your machine — memories,
+skills, feedback history, all in a folder on your disk — while the
+organization provides the models through one governed lane and keeps the
+master record. The folder is a cache you can throw away; the agent's
+mind comes back from the org on the next sign-in. What stays local is the
+execution: every tool runs here, on the user's own computer, under the
+user's own eyes.
 
 The 15-module architecture is complete in the sense that it covers
 every core function of the human brain that maps meaningfully to an AI

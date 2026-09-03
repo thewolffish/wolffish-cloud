@@ -30,40 +30,36 @@ function check(name: string, fn: () => void): void {
   }
 }
 
-const telegram = { status: 'running', botUsername: 'yat_bot' }
-const whatsapp = { status: 'connected', connectedName: 'Younes' }
-
-const pairing = {
-  method: 'code' as const,
-  pairedAt: 1,
-  lastSeenAt: 2,
-  deviceName: 'iPhone',
-  platform: 'ios' as const,
-  model: 'iPhone 14 Pro',
+const phone = (connected: boolean, extra: Record<string, unknown> = {}): unknown => ({
+  id: 'dev_phone',
+  name: 'iPhone',
+  platform: 'ios',
+  model: 'iPhone 16 Pro',
   osVersion: '26.6',
-  appVersion: '1.0.20'
-}
+  appVersion: '1.0.48',
+  pairedAt: Date.now(),
+  lastSeenAt: null,
+  connected,
+  ...extra
+})
 
-const tunnel = (status: string, extra: Record<string, unknown> = {}): unknown => ({
+const bridge = (status: string, extra: Record<string, unknown> = {}): unknown => ({
   status,
-  peerPresent: status === 'connected',
-  relayUrl: 'wss://relay.wolffi.sh',
-  rendezvous: null,
-  ownKey: null,
-  peerKey: null,
-  session: null,
-  connectedAt: null,
+  phones: [],
+  connectedAt: status === 'connected' ? Date.now() : null,
   lastError: null,
   reconnects: 0,
   framesSent: 0,
   framesReceived: 0,
+  bytesSent: 0,
+  bytesReceived: 0,
   ...extra
 })
 
+const unpaired = { paired: false, phones: [], bridge: null }
+
 const snapshot = (mobile: unknown): ReturnType<typeof collectChannelStatus> =>
   collectChannelStatus({
-    telegram: () => telegram,
-    whatsapp: () => whatsapp,
     mobile: () => mobile
   } as never)
 
@@ -74,16 +70,14 @@ const mobileRow = (mobile: unknown): ReturnType<typeof collectChannelStatus>[num
 }
 
 check('every channel is listed, mobile and the terminal among them', () => {
-  const ids = snapshot({ paired: false, pairing: null, tunnel: null }).map((entry) => entry.id)
-  assert.deepEqual(ids, ['telegram', 'whatsapp', 'mobile', 'cli', 'electron'])
+  const ids = snapshot(unpaired).map((entry) => entry.id)
+  assert.deepEqual(ids, ['mobile', 'cli', 'electron'])
 })
 
 check('the terminal reads connected only while a terminal is attached', () => {
   const rows = (cli: { clients: number; listening: boolean } | undefined): unknown =>
     collectChannelStatus({
-      telegram: () => telegram,
-      whatsapp: () => whatsapp,
-      mobile: () => ({ paired: false, pairing: null, tunnel: null }),
+      mobile: () => unpaired,
       cli: cli ? () => cli : undefined
     } as never).find((entry) => entry.id === 'cli')
 
@@ -98,9 +92,7 @@ check('the terminal reads connected only while a terminal is attached', () => {
 check('in-app chat is not claimed as available on a headless box', () => {
   const row = (headless: boolean): { connected: boolean; detail: string } =>
     collectChannelStatus({
-      telegram: () => telegram,
-      whatsapp: () => whatsapp,
-      mobile: () => ({ paired: false, pairing: null, tunnel: null }),
+      mobile: () => unpaired,
       headless: () => headless
     } as never).find((entry) => entry.id === 'electron') as never
 
@@ -110,7 +102,7 @@ check('in-app chat is not claimed as available on a headless box', () => {
 })
 
 check('a paired phone with a live tunnel reads connected, by name', () => {
-  const row = mobileRow({ paired: true, pairing, tunnel: tunnel('connected') })
+  const row = mobileRow({ paired: true, phones: [phone(true)], bridge: bridge('connected') })
   assert.equal(row.connected, true)
   assert.equal(row.state, 'connected')
   assert.match(row.detail, /iPhone/)
@@ -123,7 +115,7 @@ check('a paired phone with a live tunnel reads connected, by name', () => {
  * pairing alone would tell the agent it can reach a phone in someone's pocket.
  */
 check('paired but the app is closed is NOT connected — and says it is still paired', () => {
-  const row = mobileRow({ paired: true, pairing, tunnel: tunnel('waiting-for-peer') })
+  const row = mobileRow({ paired: true, phones: [phone(false)], bridge: bridge('connected') })
   assert.equal(row.connected, false)
   assert.match(row.detail, /paired/, 'down must not read as gone')
   assert.match(row.detail, /not open/)
@@ -132,11 +124,11 @@ check('paired but the app is closed is NOT connected — and says it is still pa
 
 check('reconnecting and connecting are named, not lumped into "closed"', () => {
   assert.match(
-    mobileRow({ paired: true, pairing, tunnel: tunnel('reconnecting') }).detail,
+    mobileRow({ paired: true, phones: [phone(false)], bridge: bridge('reconnecting') }).detail,
     /reconnecting/
   )
   assert.match(
-    mobileRow({ paired: true, pairing, tunnel: tunnel('connecting') }).detail,
+    mobileRow({ paired: true, phones: [phone(false)], bridge: bridge('connecting') }).detail,
     /connecting/
   )
 })
@@ -144,15 +136,15 @@ check('reconnecting and connecting are named, not lumped into "closed"', () => {
 check('a tunnel error surfaces the error itself', () => {
   const row = mobileRow({
     paired: true,
-    pairing,
-    tunnel: tunnel('error', { lastError: 'relay refused' })
+    phones: [phone(false)],
+    bridge: bridge('error', { lastError: 'bridge refused' })
   })
   assert.equal(row.connected, false)
-  assert.match(row.detail, /relay refused/)
+  assert.match(row.detail, /bridge refused/)
 })
 
 check('no phone paired says so, and points at pairing rather than at waking one', () => {
-  const row = mobileRow({ paired: false, pairing: null, tunnel: null })
+  const row = mobileRow(unpaired)
   assert.equal(row.connected, false)
   assert.equal(row.state, 'unpaired')
   assert.match(row.detail, /no phone paired/)
@@ -162,8 +154,8 @@ check('no phone paired says so, and points at pairing rather than at waking one'
 check('a phone that never named itself still gets a row', () => {
   const row = mobileRow({
     paired: true,
-    pairing: { ...pairing, deviceName: null, model: null },
-    tunnel: tunnel('connected')
+    phones: [phone(true, { name: '', model: null })],
+    bridge: bridge('connected')
   })
   assert.equal(row.connected, true)
   assert.match(row.detail, /phone/)

@@ -92,7 +92,7 @@ export function ProjectChipRow({
               onPress={() => onChange(chip.value)}
               className={cn(
                 'h-9 shrink-0 flex-row items-center gap-2 rounded-lg border px-3',
-                active ? 'bg-primary border-primary' : 'bg-bg border-border active:bg-border/40',
+                active ? 'bg-primary border-primary' : 'bg-bg border-border active:bg-border-soft',
                 disabled && 'opacity-60'
               )}
             >

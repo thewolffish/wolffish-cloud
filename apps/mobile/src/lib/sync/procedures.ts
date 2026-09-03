@@ -1,11 +1,10 @@
 import { importLocalFile } from '@/lib/files/fileCache'
 import { queryClient } from '@/lib/query/queryClient'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { toBase64Url } from '@/lib/tunnel/pairing'
-import { CHUNK_SIZE, Rpc, type SyncProcedure, type SyncProjectFile } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc, type SyncProcedure, type SyncProjectFile } from '@/lib/bridge/protocol'
+import { adoptUploadedFile, chooseUploadPath, uploadFileToCloud } from '@/lib/sync/files'
 import { useDemoConfig } from '@/state/demoConfig'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { File, FileMode } from 'expo-file-system'
 
 /**
  * Procedures — the desktop's `brain/procedures.json`, read and written from
@@ -26,12 +25,12 @@ export function invalidateProcedures(): void {
 }
 
 async function call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) throw new Error('not connected')
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) throw new Error('not connected')
   try {
     return (await tunnel.rpc(method, params)) as T
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     throw error
   }
 }
@@ -52,7 +51,7 @@ async function fetchProcedures(): Promise<SyncProcedure[]> {
   // races: this query can run before applyConfigSnapshot has landed, caching
   // the empty list — and since the screen's own refetch would then read that
   // same empty cache back, the bundle's rows would never appear at all.
-  if (!tunnelClient.connected) {
+  if (!bridgeClient.connected) {
     const cached = queryClient.getQueryData<SyncProcedure[]>(procedureKeys.list)
     return cached?.length ? cached : snapshotProcedures()
   }
@@ -125,13 +124,10 @@ export async function deleteProcedure(id: string): Promise<void> {
 }
 
 /**
- * Upload one file into a procedure, chunk by chunk — the phone's Add-files.
- *
- * A byte-for-byte peer of uploadProjectFile (lib/sync/projects.ts): the desktop
- * owns the workspace so it owns the name, the bytes land in
- * `uploads/procedure-<id>/`, and the stored procedure it answers with is what
- * lands in the cache. `onProgress` reports bytes sent, which is what lets the
- * dialog draw the same real bar the desktop's copy-progress card draws.
+ * Add one file to a procedure — the phone's Add-files. A byte-for-byte peer
+ * of uploadProjectFile (lib/sync/projects.ts): the org holds the bytes under
+ * `uploads/procedure-<id>/`, the desktop adopts them, and the stored
+ * procedure it answers with is what lands in the cache.
  */
 export async function uploadProcedureFile(
   procedureId: string,
@@ -140,45 +136,14 @@ export async function uploadProcedureFile(
   mimeType: string | null,
   onProgress?: (sentBytes: number, totalBytes: number) => void
 ): Promise<SyncProcedure> {
-  const source = new File(localUri)
-  if (!source.exists) throw new Error(`no file at ${localUri}`)
-  const sizeBytes = source.size ?? 0
-  if (sizeBytes <= 0) throw new Error(`empty file at ${localUri}`)
-
-  const begin = await call<{ uploadId: string }>(Rpc.uploadBegin, {
-    name,
-    mimeType,
-    sizeBytes,
-    procedureId
-  })
-  // Published before the first chunk so the bar is sized from its first frame.
-  onProgress?.(0, sizeBytes)
-
-  const handle = source.open(FileMode.ReadOnly)
-  try {
-    let offset = 0
-    while (offset < sizeBytes) {
-      const bytes = handle.readBytes(Math.min(CHUNK_SIZE, sizeBytes - offset))
-      if (bytes.length === 0) throw new Error('local file truncated mid-upload')
-      await call(Rpc.uploadChunk, {
-        uploadId: begin.uploadId,
-        offset,
-        data: toBase64Url(bytes)
-      })
-      offset += bytes.length
-      onProgress?.(offset, sizeBytes)
-    }
-  } finally {
-    handle.close()
-  }
-
-  const answer = await call<{ procedure: SyncProcedure; filePath?: string }>(Rpc.uploadCommit, {
-    uploadId: begin.uploadId
-  })
-  if (answer.filePath) {
-    // A cache hit rather than an immediate re-download of what was just sent.
-    // Best-effort: a failure here costs one download later, never the upload.
-    await importLocalFile(localUri, answer.filePath).catch(() => null)
-  }
+  if (!bridgeClient.connected) throw new Error('not connected')
+  const filePath = await chooseUploadPath(`uploads/procedure-${procedureId}`, name)
+  const uploaded = await uploadFileToCloud(localUri, filePath, mimeType, onProgress)
+  const answer = await adoptUploadedFile<{ procedure: SyncProcedure; filePath?: string }>(
+    { kind: 'procedure', id: procedureId },
+    uploaded,
+    name
+  )
+  await importLocalFile(localUri, answer.filePath ?? filePath).catch(() => null)
   return absorb(answer.procedure)
 }

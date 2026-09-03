@@ -172,8 +172,8 @@ way you'd brief yourself cold:
 
 - **Be concrete and self-contained.** "Summarize *my* unread GitHub notifications
   and post the digest to the daily log" beats "summarize them".
-- **Say where output goes** — a file, memory, or the user on a channel
-  (`telegram_send` / `whatsapp_send`, only if that channel is connected).
+- **Say where output goes** — a file, memory, or the user's phone
+  (`notify_phone`, only if a phone is paired).
 - **Keep it safe to run unattended.** Favor read/summarize/notify over
   irreversible actions; a run auto-approves its tool calls.
 

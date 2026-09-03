@@ -39,8 +39,12 @@ const JUNK_SEGMENTS = new Set(['__MACOSX', '.DS_Store', 'Thumbs.db'])
 /** Thrown for every expected failure — caught once and returned as `error`. */
 class ArchiveError extends Error {}
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
 function workspaceRoot() {
-  return path.join(os.homedir(), '.wfc', 'workspace')
+  return contextWorkspaceRoot || path.join(os.homedir(), '.wfc', 'workspace')
 }
 
 // Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
@@ -848,6 +852,9 @@ const plugin = {
   name: 'archive',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args) {
     try {
       switch (toolName) {

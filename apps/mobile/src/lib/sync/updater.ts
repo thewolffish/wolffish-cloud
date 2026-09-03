@@ -1,11 +1,11 @@
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 import {
   Rpc,
   UPDATER_PHASES,
   type UpdaterWireError,
   type UpdaterWirePhase,
   type UpdaterWireState
-} from '@/lib/tunnel/protocol'
+} from '@/lib/bridge/protocol'
 import { create } from 'zustand'
 
 /**
@@ -109,8 +109,8 @@ export function clearDesktopUpdater(): void {
  * disabled, exactly as if the tunnel were down.
  */
 export async function seedDesktopUpdater(): Promise<void> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return
   const issued = revision
   try {
     const answer = await tunnel.rpc(Rpc.updaterState)
@@ -138,8 +138,8 @@ export type DesktopUpdateCheck =
  * desktop auto-downloads and the phase pushes narrate the rest.
  */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateCheck> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return { outcome: 'offline' }
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return { outcome: 'offline' }
   try {
     const result = (await tunnel.rpc(Rpc.updaterCheck)) as {
       ok?: unknown
@@ -167,8 +167,8 @@ export type DesktopInstallResult = 'armed' | 'refused' | 'unknown' | 'offline'
  * desktop reconnects shortly" rather than claiming a failure it cannot know.
  */
 export async function installDesktopUpdate(): Promise<DesktopInstallResult> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return 'offline'
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return 'offline'
   try {
     const result = (await tunnel.rpc(Rpc.updaterInstall)) as { ok?: unknown } | null
     if (result?.ok !== true) return 'refused'

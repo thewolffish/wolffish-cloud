@@ -1,14 +1,14 @@
 import { BlockingProgress } from '@/components/common/BlockingProgress'
 import { Activity04Icon, RefreshIcon } from '@/components/core/icons'
 import { getSyncActivity, onSyncActivity, type SyncActivity } from '@/lib/sync/activity'
-import { tunnelClient } from '@/lib/tunnel/client'
-import type { TunnelState } from '@/lib/tunnel/tunnel'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import type { BridgeState } from '@/lib/cloud/bridge'
 import { useAppStore } from '@/state/appStore'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * The one card for everything the desktop link goes through: reconnecting,
+ * The one card for everything the org link goes through: reconnecting,
  * then the catch-up that every reconnect runs, then gone.
  *
  * These used to be two overlays — one watching the tunnel, one watching the
@@ -69,10 +69,9 @@ const HANDOFF_GRACE_MS = 300
 const PHASE_RATIO: Record<string, number> = {
   idle: 0.08,
   reconnecting: 0.2,
-  connecting: 0.4,
-  'waiting-for-peer': 0.6,
-  handshaking: 0.85,
+  connecting: 0.5,
   error: 0.2,
+  'waiting-for-desktop': 1,
   connected: 1
 }
 
@@ -86,7 +85,7 @@ const RECONNECT_SHARE = 0.5
 export function ConnectionOverlay(): React.JSX.Element | null {
   const { t } = useTranslation()
   const paired = useAppStore((state) => state.paired)
-  const [state, setState] = useState<TunnelState | null>(tunnelClient.state)
+  const [state, setState] = useState<BridgeState>(bridgeClient.current)
   const [activity, setActivity] = useState<SyncActivity>(getSyncActivity)
   const [visible, setVisible] = useState(false)
   const [escapable, setEscapable] = useState(false)
@@ -121,10 +120,12 @@ export function ConnectionOverlay(): React.JSX.Element | null {
    *  connection drops mid-catch-up. */
   const reconnectingSince = useRef<number | null>(null)
 
-  useEffect(() => tunnelClient.subscribe(setState), [])
+  useEffect(() => bridgeClient.subscribe(setState), [])
   useEffect(() => onSyncActivity(setActivity), [])
 
-  const reconnecting = paired && state?.status !== 'connected'
+  // The socket to the org, not the desktop: a desktop that is asleep is a
+  // fact this screen states elsewhere, never a wait the user is put through.
+  const reconnecting = paired && !state.online
   // The startedAt is stable for the life of one catch-up, so effects keyed on
   // it do not churn on every progress tick the activity object carries.
   const syncStartedAt = paired && activity ? activity.startedAt : null
@@ -229,15 +230,9 @@ export function ConnectionOverlay(): React.JSX.Element | null {
   if (!visible || !paired || dismissed) return null
 
   if (phase === 'reconnecting') {
-    const status = state?.status ?? 'idle'
-    // The relay tells us which side is missing, and that changes what the
-    // user should do: their desktop being asleep is not the app being broken.
+    const status = state.status
     const detail =
-      status === 'waiting-for-peer'
-        ? t('connecting.waitingPeer')
-        : status === 'error' || state?.lastError
-          ? t('connecting.retrying')
-          : t('connecting.dialing')
+      status === 'error' || state.lastError ? t('connecting.retrying') : t('connecting.dialing')
     return (
       <BlockingProgress
         icon={<Activity04Icon size={22} className="text-primary" />}
@@ -246,7 +241,7 @@ export function ConnectionOverlay(): React.JSX.Element | null {
         ratio={(PHASE_RATIO[status] ?? 0.2) * RECONNECT_SHARE}
         detail={detail}
         since={since}
-        note={state?.reconnects ? t('connecting.attempts', { count: state.reconnects }) : undefined}
+        note={state.reconnects ? t('connecting.attempts', { count: state.reconnects }) : undefined}
         escape={
           escapable
             ? {

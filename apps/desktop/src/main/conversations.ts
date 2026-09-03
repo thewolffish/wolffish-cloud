@@ -27,7 +27,7 @@ export type ConversationMessage = {
    * `m_<ts>_<rand>` — the renderer's cryptoId and mintMessageId below both
    * produce it). THE reconciliation key: mergeConversationOnto unions two
    * copies of a transcript by id, which is what lets two writers append
-   * different messages at the same index (a Telegram message landing while
+   * different messages at the same index (a phone message landing while
    * an in-app turn runs) without one clobbering the other — counts and
    * content can't tell divergence from agreement, ids can. Optional only
    * for files written before the field shipped — a straggler (e.g. a
@@ -44,10 +44,11 @@ export type ConversationMessage = {
   attachments?: MessageAttachment[]
   /**
    * True when this user message originated from a transcribed voice
-   * note (Telegram's press-and-hold mic). The transcript IS the
+   * note (the phone's press-and-hold mic, or the app's own recorder).
+   * The transcript IS the
    * prompt — the audio attachment is preserved on disk for chat
    * replay only and must NOT be re-exposed to the LLM as additional
-   * context. The Telegram history builder reads this flag to decide
+   * context. The channel history builders read this flag to decide
    * whether to emit the attachments + `<attachments>` metadata block
    * to the agent. Absent / false on every other message kind,
    * including non-voice audio uploads (those go through the normal
@@ -67,7 +68,7 @@ export type ConversationMessage = {
    * Full segment stream for assistant messages — text deltas, tool
    * calls, tool results, active_model chips, turn_end. Saved by the
    * Electron channel (via the renderer's persistConversation) and
-   * the Telegram channel both, so the in-app history view replays
+   * the other channels alike, so the in-app history view replays
    * the exact sequence the user saw, with tool cards, approvals,
    * and timing intact.
    */
@@ -79,19 +80,12 @@ export type ConversationMessage = {
 }
 
 /**
- * Where the conversation originated. `electron` is the in-app chat;
- * `telegram` is the Telegram bot. Optional for backward compatibility
+ * Where the conversation originated. `electron` is the in-app chat.
+ * Optional for backward compatibility
  * with conversation files written before the field shipped — those
  * are treated as `electron` by default.
  */
-export type ConversationChannel =
-  | 'electron'
-  | 'telegram'
-  | 'whatsapp'
-  | 'mobile'
-  | 'cli'
-  | 'heartbeat'
-  | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -210,7 +204,7 @@ export type ConversationMeta = {
   icon?: string
   /**
    * Number of saved messages on the conversation. Surfaced so list
-   * views (Telegram /resume, /delete picker) can show it without
+   * views can show it without
    * having to load each file separately.
    */
   messageCount: number
@@ -518,7 +512,7 @@ export async function updateConversation(
 
 /**
  * Merge two copies of one transcript by MESSAGE ID — the union that lets two
- * writers append different messages at the same index (a Telegram message
+ * writers append different messages at the same index (a phone message
  * landing while an in-app turn runs) without either clobbering the other.
  * Counts can't tell that divergence from agreement; ids can.
  *
@@ -681,8 +675,8 @@ export function mergeConversationOnto(
   // `channel` belongs to whichever writer created the conversation; a caller
   // that simply doesn't carry it must not erase it. The renderer's load-failure
   // fallback (ensureConversationId) builds a copy with no channel at all, and
-  // letting that through would silently reclassify a Telegram conversation as
-  // in-app: gone from /resume, wrong icon in the rail, mapping left dangling.
+  // letting that through would silently reclassify a phone conversation as
+  // in-app: wrong icon in the rail, provenance lost.
   if (disk.channel && !incoming.channel) merged.channel = disk.channel
   // Same provenance rule for the project binding: a writer that doesn't carry
   // it (titler shell, channel end-of-turn copies) must not strip it.
@@ -716,13 +710,7 @@ export async function deleteConversation(id: string): Promise<void> {
   // unreadable is silently skipped.
   const dir = conversationDirName(id)
   const root = workspaceRoot()
-  for (const subroot of [
-    'uploads',
-    'voice',
-    'speech',
-    'screenshots',
-    path.join('generations', 'video')
-  ]) {
+  for (const subroot of ['uploads', 'voice', 'speech', 'screenshots', 'downloads']) {
     await fs.rm(path.join(root, subroot, dir), { recursive: true, force: true }).catch(() => {
       // best-effort
     })

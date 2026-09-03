@@ -6,7 +6,7 @@ import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
  * (`turnStatsRef` + `finalizeTurn` in Chat.tsx). The in-app chat builds the
  * context-meter `stats` in the renderer and persists it itself; every other
  * channel runs its turn in the main process, so nothing ever wrote `stats` for
- * WhatsApp / Telegram / heartbeat / procedure conversations — their meter card
+ * phone / terminal / heartbeat / procedure conversations — their meter card
  * came up blank on reopen. This collector closes that gap by folding the same
  * corpus events the renderer routes on (`context.built`, `llm.response`,
  * `turn.usage`, `tool.called`) into the persisted `ConversationStats` shape.

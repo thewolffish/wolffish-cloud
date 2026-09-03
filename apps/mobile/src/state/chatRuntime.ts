@@ -7,7 +7,7 @@ import type {
   DangerLevel,
   ConversationChannel
 } from '@/lib/conversations/types'
-import type { SyncProject } from '@/lib/tunnel/protocol'
+import type { SyncProject } from '@/lib/bridge/protocol'
 import { create } from 'zustand'
 
 /**
@@ -54,7 +54,7 @@ export type LiveStream = {
   /** Paired mode only — text deltas received after `base`. */
   tail?: string
   /**
-   * Where the turn was started — 'cli', 'telegram', 'heartbeat', … Carried so
+   * Where the turn was started — 'cli', 'mobile', 'heartbeat', … Carried so
    * a conversation known ONLY from a running turn can still wear its origin
    * badge. Without it a chat started in a terminal appeared in the list with
    * no glyph at all until the desktop pushed its metadata, which on a slow

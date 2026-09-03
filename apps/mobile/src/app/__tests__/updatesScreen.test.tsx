@@ -24,8 +24,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 const mockRpc = jest.fn()
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return { rpc: mockRpc, connected: true }
     },
@@ -70,9 +70,9 @@ jest.mock('expo-router', () => ({ router: { back: jest.fn(), push: jest.fn() } }
 import UpdatesScreen from '@/app/settings/updates'
 import { LocaleContext } from '@/providers/locale/useLocale'
 import { ThemeContext } from '@/providers/theme/useTheme'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 import { applyUpdaterPush, clearDesktopUpdater, readUpdaterState } from '@/lib/sync/updater'
-import type { UpdaterWireState } from '@/lib/tunnel/protocol'
+import type { UpdaterWireState } from '@/lib/bridge/protocol'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import '@/lib/i18n'
 

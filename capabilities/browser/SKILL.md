@@ -183,7 +183,7 @@ tools:
       output_path:
         type: string
         required: false
-        description: Where to save the image. Default auto-generated in plugin screenshots dir.
+        description: 'Where to save the image. Absolute, ~/-relative, or workspace-relative. Default: screenshots/conv-<conversation id>/<timestamp>.<format> in the workspace (screenshots/misc/ outside a conversation), which syncs with the conversation.'
       full_page:
         type: boolean
         required: false
@@ -501,7 +501,7 @@ tools:
         required: false
         description: Target tab.
   - name: browser_download
-    description: Trigger and capture a file download from the page.
+    description: Trigger and capture a file download from the page. Without output_path the file keeps the name the site suggests and lands in downloads/conv-<conversation id>/ in the workspace.
     parameters:
       session_id:
         type: string
@@ -512,7 +512,8 @@ tools:
         description: Element to click to start the download. Omit if download is already triggered.
       output_path:
         type: string
-        description: Where to save the downloaded file. Must be an absolute path or ~ path.
+        required: false
+        description: 'Where to save the downloaded file. Absolute, ~/-relative, or workspace-relative. Default: downloads/conv-<conversation id>/<filename the site suggests> in the workspace, which syncs with the conversation.'
       timeout_ms:
         type: number
         required: false
@@ -690,7 +691,7 @@ Never repeat passwords to the user in conversation text. Confirm storage with "C
 - For multi-step workflows, describe each step to the user before executing it.
 - Always close the browser and clean up when the task is done, even if it fails mid-way.
 - When extracting data from pages, return structured JSON, not raw HTML.
-- For file downloads, save to the user's workspace or a user-specified path, never to system directories.
+- Screenshots and downloads default to the workspace — `screenshots/conv-<conversation id>/` and `downloads/conv-<conversation id>/` — where they sync with the conversation; pass `output_path` only when the user named a destination (absolute, `~/`-relative, or workspace-relative). Never write to system directories.
 
 ## Saving a page as a PDF (`browser_pdf`)
 

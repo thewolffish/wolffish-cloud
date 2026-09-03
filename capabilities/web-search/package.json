@@ -1,9 +1,9 @@
 {
   "name": "@wolffish-cap/web-search",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Wolffish web-search capability — searches through the organization's /v1/search lane (Brave, one org key at the edge); runtime npm dependencies installed lazily on first use.",
+  "description": "Wolffish web-search capability — every search goes through the organization's /v1/search lane (Brave, one org key at the edge) and nothing else; cheerio (web_fetch's HTML reader) is installed lazily on first use.",
   "dependencies": {
     "cheerio": "^1.0.0"
   }

@@ -12,10 +12,6 @@ if (__DEV__) {
   ])
 }
 
-// Must load before anything touches @noble: Hermes has no crypto.getRandomValues,
-// and X25519 key generation calls it the moment a pairing starts.
-import 'react-native-get-random-values'
-
 import '../global.css'
 import '@/lib/i18n'
 
@@ -40,23 +36,23 @@ import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect } from 'react'
-import { dialStoredPairing, useConnection } from '@/lib/sync/useConnection'
+import { dialStoredSession, useConnection } from '@/lib/sync/useConnection'
 import { initNotifications } from '@/lib/notifications/push'
 
 SplashScreen.preventAutoHideAsync()
 
 // Before the first render, not after it. A paired phone's slowest moment used
 // to be its own startup: the dial waited for two providers to restore from
-// disk and for React to mount, so the relay round trip began after everything
-// else had finished. Started here it runs alongside them, and the connection
-// is usually up by the time there is a screen to show it on.
-dialStoredPairing()
+// disk and for React to mount, so the org round trip began after everything
+// else had finished. Started here it runs alongside them, and the link is
+// usually up by the time there is a screen to show it on.
+dialStoredSession()
 
 function AppShell(): React.JSX.Element {
   const { isDark } = useTheme()
   const tokens = useTokens()
   useOtaUpdates()
-  // Restores a stored pairing at launch and on every foreground.
+  // Restores the stored org session at launch and on every foreground.
   useConnection()
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { resetDemoRelay } from '@/lib/demo/relay'
+import { resetDemoConnection } from '@/lib/demo/connection'
 import { getDb } from '@/lib/db/database'
 import { QUERY_CACHE_KEY, queryClient } from '@/lib/query/queryClient'
 import { useAppStore } from '@/state/appStore'
@@ -74,9 +74,9 @@ export async function purgeDemoState(): Promise<void> {
     useChatRuntime.getState().reset()
     // The chip tints point at conversations that are about to stop existing.
     useRunStatus.getState().reset()
-    // The made-up relay link goes with the dataset it described; the next
+    // The made-up org link goes with the dataset it described; the next
     // demo entry starts a fresh one.
-    resetDemoRelay()
+    resetDemoConnection()
   } catch {
     // In-memory only — a failure here costs nothing durable.
   }

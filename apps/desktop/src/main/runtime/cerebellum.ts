@@ -17,8 +17,7 @@ import type {
   McpTestResult
 } from '@main/runtime/mcp/types'
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
-import type { TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
-import type { VideoSubmitInput, VideoSubmitResult } from '@main/runtime/video-tasks'
+import type { WorkflowAgentView } from '@main/runtime/broca'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -147,7 +146,7 @@ export type Capability = {
   /**
    * True when this capability was registered via
    * registerInProcessCapability rather than discovered on disk under
-   * brain/cerebellum/. Built-in channels (Telegram) use this so the
+   * brain/cerebellum/. Built-in channels (the phone) use this so the
    * LLM still sees their tools but the Cerebellum settings panel can
    * hide them — they're core features, not external plugins.
    */
@@ -578,38 +577,6 @@ export type McpHost = {
 }
 
 /**
- * Async generation-task surface injected into the `video` capability's
- * plugin via its init context (PluginContext.videoTasks). Implemented in
- * the main process (index.ts) over the VideoTaskManager singleton, which
- * owns the MiniMax H3 task lifecycle: media preparation, task creation,
- * the 10s poll loop, artifact download, and the task-card snapshot flow.
- * The host implementation stamps the active conversation/turn onto every
- * submit, so the plugin never handles ids. Optional on PluginContext —
- * every plugin other than `video` ignores it.
- */
-export type VideoTasksHost = {
-  /**
-   * Is the service usable right now — key present and accepted? Called by
-   * `video_check` so the agent can confirm configuration before spending a
-   * generation, and report the exact remedy when it can't.
-   */
-  check: () => Promise<{ configured: boolean; reachable: boolean; detail: string }>
-  /** Validate + prepare media, create the task, start polling. */
-  submit: (input: VideoSubmitInput) => Promise<VideoSubmitResult>
-  /**
-   * Park until the task reaches a terminal state (artifact downloaded for
-   * successes). Null when the signal aborts first or the id is unknown.
-   */
-  awaitTask: (taskId: string, signal?: AbortSignal) => Promise<TaskSnapshot | null>
-  /** Cancel a queued/running task server-side. */
-  cancel: (taskId: string) => Promise<{ ok: boolean; error?: string }>
-  /** Snapshot of one task. */
-  get: (taskId: string) => TaskSnapshot | null
-  /** Every task belonging to the active conversation, oldest first. */
-  list: () => TaskSnapshot[]
-}
-
-/**
  * Retrieval surface injected into the `introspect` capability's plugin via
  * its init context (PluginContext.cortex). Implemented in the main process
  * (index.ts) over the live Cortex index + Hippocampus write path, so the
@@ -803,13 +770,6 @@ export type PluginContext = {
    */
   knowledge?: KnowledgeHost
   /**
-   * Async video-generation surface. Present only when the host wired one in
-   * via setVideoTasksHost — used by the `video` capability to submit, await,
-   * inspect, and cancel MiniMax H3 generation tasks. Undefined for every
-   * other plugin.
-   */
-  videoTasks?: VideoTasksHost
-  /**
    * The org API seam (base URL + session token). Present only when the host
    * wired one in via setCloudHost — used by the `web-search` capability's
    * plugin to call the org's search lane. Undefined for every other plugin.
@@ -825,8 +785,8 @@ export type PluginContext = {
    */
   askUser: (request: AskUserRequestInput) => Promise<AskUserResponse>
   /**
-   * Live connection status for every messaging channel (Telegram, WhatsApp,
-   * in-app chat). Used by the `introspect` capability to report whether a
+   * Live connection status for every messaging channel (the phone, the
+   * terminal, in-app chat). Used by the `introspect` capability to report whether a
    * channel is reachable and, when it isn't, how the user can reconnect it.
    * Returns an empty array until the host wires a provider via
    * setChannelStatusProvider; every plugin other than `introspect` ignores it.
@@ -878,7 +838,7 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  * memory; (2) universal primitives used across most task types (filesystem,
  * shell, web-search, secrets, system, ask, send_file); (3) the channel send
  * tools, which register only while connected and can't wait a hop to reply.
- * Everything else — github, google, browser(s), media, documents, MCP
+ * Everything else — browser(s), media, documents, MCP
  * servers — is one tool_search away. Tunable via config.pinnedCapabilities.
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
@@ -895,8 +855,6 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'web-search',
   'secrets',
   'system',
-  'telegram',
-  'whatsapp',
   // The phone-notification tool (notify_phone), registered in-process by the
   // mobile channel. Core for the same reason the other channel sends are:
   // "notify me when this finishes" must not require a discovery hop, and the
@@ -917,12 +875,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // these exist to fix.
   'pdf-design',
   'web-design',
-  'dataviz',
-  // Async video generation (MiniMax H3). Core so the schemas always ship:
-  // a video request must reach video_generate without a discovery hop, and
-  // the task-card protocol in the tool descriptions is what keeps the flow
-  // model-led. Missing API key degrades to a clear error naming Settings.
-  'video'
+  'dataviz'
 ])
 
 /**
@@ -1010,7 +963,6 @@ export class Cerebellum {
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
   private knowledgeHost?: KnowledgeHost
-  private videoTasksHost?: VideoTasksHost
   private cloudHost?: CloudHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
@@ -1179,15 +1131,6 @@ export class Cerebellum {
     this.cloudHost = host
   }
 
-  /**
-   * Wire the video-task host (implemented in the main process over the
-   * VideoTaskManager singleton) that the `video` capability's plugin
-   * receives in its init context. Set once at startup; survives reload().
-   */
-  setVideoTasksHost(host: VideoTasksHost): void {
-    this.videoTasksHost = host
-  }
-
   isDisabled(name: string): boolean {
     return this.disabled.has(name)
   }
@@ -1234,10 +1177,10 @@ export class Cerebellum {
 
   /**
    * Register an in-process capability that doesn't live on disk. Used
-   * by core channels (currently Telegram) to expose channel-specific
+   * by core channels (the phone) and MCP servers to expose their
    * tools to the LLM as if they were a regular cerebellum capability.
    * Replaces any prior registration of the same name so callers can
-   * re-register on lifecycle changes (bot restart with a new config)
+   * re-register on lifecycle changes (a re-pair with a new config)
    * without leaking stale handlers.
    *
    * Caller is responsible for calling unregisterInProcessCapability
@@ -1976,7 +1919,7 @@ export class Cerebellum {
    * Ensure a single system-tool capability (e.g. `ffmpeg`) is installed,
    * for the code paths that invoke a plugin tool DIRECTLY via executeTool
    * and therefore bypass the agent loop's ensureDependencies() resolution —
-   * the in-app STT IPC handler and the Telegram/WhatsApp voice handlers.
+   * the in-app STT IPC handler and the phone channel's voice handler.
    * Without this, transcription on a fresh machine dead-ends with
    * "ffmpeg is required for transcription" instead of self-healing.
    *
@@ -1990,8 +1933,8 @@ export class Cerebellum {
    */
   async ensureSystemTool(capName: string): Promise<{ ok: boolean; error?: string }> {
     if (this.dependencyCache.get(capName)) return { ok: true }
-    // Single-flight: two channels' voice notes arriving together (WhatsApp +
-    // Telegram both ensuring ffmpeg) must not race duplicate silent installs.
+    // Single-flight: two voice notes arriving together (the app's recorder and
+    // the phone's) must not race duplicate silent installs.
     const inflight = this.systemToolInflight.get(capName)
     if (inflight) return inflight
     const flight = this.ensureSystemToolInner(capName).finally(() => {
@@ -2181,7 +2124,6 @@ export class Cerebellum {
         mcp: this.mcpHost,
         cortex: this.cortexHost,
         knowledge: this.knowledgeHost,
-        videoTasks: this.videoTasksHost,
         cloud: this.cloudHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []

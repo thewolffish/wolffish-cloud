@@ -4,8 +4,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 let mockConnected = false
 const mockListeners: ((state: { status: string }) => void)[] = []
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return mockConnected
     },

@@ -16,6 +16,7 @@ import { MAX_FILES_PER_MESSAGE, uploadErrorMessage, validateUpload } from '@/lib
 import { useTokens } from '@/providers/theme/useTheme'
 import { useToast } from '@/providers/toast/useToast'
 import { cn } from '@/lib/utils/cn'
+import { shortModelName } from '@/lib/utils/modelName'
 import {
   AudioModule,
   RecordingPresets,
@@ -28,7 +29,7 @@ import { useTranslation } from 'react-i18next'
 import { Keyboard, Pressable, Text, TextInput, View } from 'react-native'
 import { AttachSheet, AttachmentTray } from '@/components/chat/AttachmentPicker'
 import { ChatControlsPanel, ChatMenuSheet } from '@/components/chat/ChatMenuSheet'
-import { OllamaLogo, ProviderMark } from '@/components/core/providerLogos'
+import { ProviderMark } from '@/components/core/providerLogos'
 import { useConfigValue } from '@/state/demoConfig'
 import { PromptEditorModal } from '@/components/chat/PromptEditorModal'
 import { QueuedPromptTray, type QueuedPrompt } from '@/components/chat/QueuedPrompts'
@@ -39,12 +40,10 @@ import { useChatRuntime } from '@/state/chatRuntime'
 
 /**
  * The chat composer — the desktop's composer card mapped to touch: ONE
- * bordered card whose top row is the field (or the recording bar swapped into
- * its place) and whose bottom row carries every control — the menu/project
- * button and the active-model chip at the start, expand / attach / the
- * mic-or-send swap and the red stop at the end — under the rainbow strip
- * while a turn runs. Voice flow: idle → recording (pulsing red dot +
- * counter) → send/delete straight from the recording bar.
+ * bordered card whose top row is the field and whose bottom row carries every
+ * control — the menu/project button and the active-model chip at the start,
+ * expand / attach / send and the red stop at the end — under the rainbow
+ * strip while a turn runs.
  *
  * The field does NOT grow with the draft, which is where this parts from the
  * desktop textarea: on a phone a composer that climbs the screen takes the
@@ -58,7 +57,7 @@ import { useChatRuntime } from '@/state/chatRuntime'
  * list of local files; who moves the bytes, and when, is the screen's business
  * (see chat.tsx and lib/sync/attachments.ts).
  *
- * MID-TURN nothing here is refused: a prompt, a file or a voice take submitted
+ * MID-TURN nothing here is refused: a prompt or a file submitted
  * while the agent is working is handed over exactly as it is when idle, and the
  * screen queues it (see chat.tsx). All that changes is what the composer SAYS —
  * the placeholder and the button labels name the queue — plus the red stop
@@ -117,15 +116,15 @@ export function Composer({
   const [recording, setRecording] = useState(false)
 
   // The active model, for the bottom row's chip — read from the same config
-  // mirror the controls sheet's ModelSwitch reads, and resolved by its
-  // active-tab rule: local wins only while local is enabled.
-  const localOnly = useConfigValue('localOnly')
-  const localEnabled = useConfigValue('localEnabled')
-  const localModel = useConfigValue('localModel')
+  // mirror the controls sheet's ModelSwitch reads: the org lane's current
+  // model, the only one there is.
   const brainProvider = useConfigValue('brainProvider')
   const brainModel = useConfigValue('brainModel')
-  const localActive = localOnly && localEnabled
-  const activeModelName = (localActive ? localModel : brainModel) || t('settings.model.noModel')
+  const activeModelName = brainModel || t('settings.model.noModel')
+  // The chip shows the model's own name, not the provider slug in front of it
+  // — the provider is already there as a mark, and the desktop's chip makes
+  // the same trade. The untouched id stays on the accessibility label below.
+  const chipModelName = brainModel ? shortModelName(brainModel) : activeModelName
 
   // A file on its own is a message, exactly as it is on the desktop — the
   // prompt is optional once something is attached.
@@ -258,11 +257,7 @@ export function Composer({
       setRecording(false)
       const uri = recorder.uri
       if (send && uri) {
-        onSubmit({
-          kind: 'voice',
-          uri,
-          durationSeconds: recorderState.durationMillis / 1000
-        })
+        onSubmit({ kind: 'voice', uri, durationSeconds: recorderState.durationMillis / 1000 })
       }
     } catch {
       setRecording(false)
@@ -270,13 +265,13 @@ export function Composer({
     }
   }
 
-  const remove = (id: string): void => {
-    setFiles((current) => current.filter((file) => file.id !== id))
-  }
-
   const mmss = (millis: number): string => {
     const s = Math.max(0, Math.floor(millis / 1000))
     return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+  }
+
+  const remove = (id: string): void => {
+    setFiles((current) => current.filter((file) => file.id !== id))
   }
 
   return (
@@ -363,10 +358,9 @@ export function Composer({
             controls; the desktop makes the same swap) and the active-model
             chip, which opens the very same surface. End: expand, attach, the
             mic↔send swap, and the red stop. While the recorder owns the top
-            row every control here hides exactly as it used to — except stop,
-            which survives: a turn you cannot stop because you happen to be
-            holding a recording would be a trap. The row itself only renders
-            when it has something to show. */}
+            row every control here hides — except stop, which survives: a turn
+            you cannot stop because you happen to be holding a recording would
+            be a trap. */}
           {(!recording || streaming) && (
             <View className="flex-row items-center gap-1 px-1.5 pb-1.5">
               {!recording && (
@@ -380,7 +374,7 @@ export function Composer({
                     }
                     hitSlop={6}
                     onPress={() => (activeProject ? setProjectOpen(true) : setMenuOpen(true))}
-                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border/40"
+                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
                   >
                     {activeProject ? (
                       <Text className="text-base leading-5">
@@ -392,25 +386,26 @@ export function Composer({
                   </Pressable>
                   {/* The active model, worn as the desktop model chip — a second
                     handle on the controls the button beside it opens, so the
-                    model about to answer is always one glance away. */}
+                    model about to answer is always one glance away.
+                    Precomputed tones, not `bg-primary/10 ring-primary/30`: an
+                    alpha modifier on a var() colour compiles to nothing at all
+                    (see global.css), so the desktop's tint has to be worn as
+                    the primary-soft/primary-line pair or the chip renders as
+                    bare coloured text. */}
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={activeModelName}
                     hitSlop={6}
                     onPress={() => (activeProject ? setProjectOpen(true) : setMenuOpen(true))}
-                    className="bg-primary/10 h-7 shrink flex-row items-center gap-1.5 rounded-lg px-2 active:bg-primary/20"
+                    className="bg-primary-soft border-primary-line active:bg-primary-line h-7 shrink flex-row items-center gap-1.5 rounded-lg border px-2"
                   >
-                    {localActive ? (
-                      <OllamaLogo size={13} className="text-primary" />
-                    ) : (
-                      <ProviderMark provider={brainProvider} size={13} className="text-primary" />
-                    )}
+                    <ProviderMark provider={brainProvider} size={13} className="text-primary" />
                     <Text
                       numberOfLines={1}
-                      className="text-primary font-sans-medium max-w-[130px] text-[11px]"
+                      className="text-primary font-sans-medium max-w-[162px] shrink text-[11px]"
                       style={{ writingDirection: 'ltr' }}
                     >
-                      {activeModelName}
+                      {chipModelName}
                     </Text>
                   </Pressable>
                 </>
@@ -425,14 +420,13 @@ export function Composer({
                     accessibilityLabel={t('chat.editor.title')}
                     hitSlop={6}
                     onPress={() => setEditorOpen(true)}
-                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border/40"
+                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
                   >
                     <ArrowExpandIcon size={13} className="text-muted" />
                   </Pressable>
-                  {/* Attach sits with the other message actions, next to the
-                    mic, not with the session controls. It stays put when the
-                    mic becomes send, so a file can be added to a prompt that
-                    has already been typed.
+                  {/* Attach sits with the other message actions, next to
+                    send, not with the session controls, so a file can be
+                    added to a prompt that has already been typed.
                     The media glyph, not a plus: the desktop's attach button
                     carries this exact icon, and a plus is already spoken for
                     on this screen — the header's new-chat control. Two
@@ -443,14 +437,13 @@ export function Composer({
                     accessibilityLabel={t('chat.attach.title')}
                     hitSlop={6}
                     onPress={() => setAttachOpen(true)}
-                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border/40"
+                    className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
                   >
                     <Image02Icon size={16} className="text-muted" />
                   </Pressable>
                   {/* Distinct keys so React unmounts one and mounts the other on
                     the mic↔send swap, instead of reusing one instance and
-                    mutating its variable-bearing className (which trips
-                    css-interop's remount warning in dev).
+                    mutating its variable-bearing className.
 
                     The mic stays live mid-turn, as it does on the desktop: a
                     take recorded while the agent is working joins the queue
@@ -464,7 +457,7 @@ export function Composer({
                       }
                       hitSlop={6}
                       onPress={() => void startRecording()}
-                      className="h-7 w-7 items-center justify-center rounded-md active:bg-border/40"
+                      className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
                     >
                       <Mic01Icon size={16} className="text-muted" />
                     </Pressable>

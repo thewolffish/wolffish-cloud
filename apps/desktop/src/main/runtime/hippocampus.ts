@@ -36,7 +36,7 @@ export type TurnSummary = {
   assistantResponse: string
   /**
    * Where the turn originated ('heartbeat', 'procedure', 'worker',
-   * 'telegram', …). Rendered into the episode header so machine-generated
+   * 'mobile', …). Rendered into the episode header so machine-generated
    * entries are distinguishable from real user activity — both for recall
    * filtering and for the nightly consolidation.
    */

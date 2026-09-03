@@ -5,7 +5,7 @@ import type { ConversationRunPhase, ConversationRunStatus } from '@providers/ses
  * ONE definition of "which conversations to list, and what state each is in",
  * shared by every surface that lists them — the right-hand rail, the History
  * page, a project's conversations dialog. Written once so a conversation reads
- * IDENTICALLY wherever it was started from: in-app, WhatsApp, Telegram, a
+ * IDENTICALLY wherever it was started from: in-app, the phone, the terminal, a
  * heartbeat automation, a played procedure. The numbered chip's phase colors
  * (primary pulse while processing, then the terminal success/danger/warning
  * tint while the row is FRESH) come from the cross-channel chat:turnState

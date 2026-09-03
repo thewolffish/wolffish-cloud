@@ -402,7 +402,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (29 capabilities)
+### The full catalog (28 capabilities)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -415,7 +415,6 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | **Web** | `.web-search` | `web_search` (Brave), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** Chrome/Brave via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_query_selector`, `ext_get_url`, `ext_screenshot`, `ext_wait`, …) |
-| | `.cloudflared` | Expose a local service — `cloudflared_tunnel` |
 | **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
 | | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |

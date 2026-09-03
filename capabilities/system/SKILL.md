@@ -139,10 +139,9 @@ they work without the browser or computer-use automation.
 - **Use the real app name.** On macOS that's the display name ("Visual Studio
   Code", not "code"). If a quit fails, the name may be wrong — `app_list` shows
   what's actually open.
-- **Connected channels are not apps.** Telegram and WhatsApp are messaging
-  channels Wolffish connects to, not local apps — never `app_open`, `app_quit`,
-  or `app_list` them (or osascript a "Telegram"/"WhatsApp" window) to send or
-  read messages. Use the channel tools (`telegram_send`, `whatsapp_send`, …)
-  instead. `app_open` is only for launching unrelated local apps the user
-  explicitly named.
+- **Connected channels are not apps.** The paired phone is a channel Wolffish
+  connects to, not a local app — never `app_open`, `app_quit`, or `app_list` a
+  messaging app (or osascript one) to reach the user. Use the channel tool
+  (`notify_phone`) instead. `app_open` is only for launching unrelated local
+  apps the user explicitly named.
 - These commands target the **local machine** the user is sitting at.

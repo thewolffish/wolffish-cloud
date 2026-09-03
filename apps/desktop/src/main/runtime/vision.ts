@@ -8,105 +8,32 @@ import { catalogVision } from '@main/cloud/catalog'
  * Maps to: the visual cortex — signals that the eyes can't process
  * never reach it.
  *
- * Text-only provider APIs hard-reject multimodal content parts. DeepSeek,
- * for example, answers HTTP 400 `This model does not support image` the
- * moment an image part appears in `messages`, which kills the entire
- * turn. There is no reliable cross-provider capability endpoint, and model
- * catalogs change faster than any exhaustive table could track — so this
- * module only recognizes the *well-known* vision families and treats
- * everything else as text-only. The asymmetry justifies the conservative
- * default: a wrongly-stripped image degrades one answer and says so in the
- * prompt; a wrongly-sent image fails the whole request.
- *
- * When a new vision model shows up as text-only here, add its family
- * pattern below — the stripped-content note in the transcript makes the
- * misclassification visible.
+ * Text-only model APIs hard-reject multimodal content parts. DeepSeek, for
+ * example, answers HTTP 400 `This model does not support image` the moment
+ * an image part appears in `messages`, which kills the entire turn. The org
+ * catalog (GET /v1/models) is the authority for the one lane: it carries a
+ * vision flag per model. When the catalog cannot answer (cold cache), the
+ * vendor-agnostic name markers below decide, and everything else is treated
+ * as text-only. The asymmetry justifies the conservative default: a
+ * wrongly-stripped image degrades one answer and says so in the prompt; a
+ * wrongly-sent image fails the whole request.
  */
 
 // Vendor-agnostic name markers. Vendors consistently tag their multimodal
-// models: Qwen-VL / Kimi-VL / MiniMax-VL / MiMo-VL ("vl" as a hyphenated
-// token), *-vision-*, *-omni, QVQ, and the open-weight llava/pixtral
-// families served through OpenRouter.
+// models: *-VL ("vl" as a hyphenated token), *-vision-*, *-omni, QVQ, and
+// the open-weight llava/pixtral families.
 const VISION_NAME_MARKERS = /vision|omni|llava|pixtral|qvq|(^|[-/_.:])vl([-/_.:]|$)/
 
 export function cloudModelSupportsVision(provider: string, model: string): boolean {
-  // The org catalog is authoritative for the one real lane; everything
-  // below is the legacy name-marker fallback for a cold cache.
+  // The org catalog is authoritative for the one lane; the name markers are
+  // the cold-cache fallback.
   if (provider === 'cloud') {
     const fromCatalog = catalogVision(model)
     if (fromCatalog !== null) return fromCatalog
   }
-  const m = model.toLowerCase()
-  if (VISION_NAME_MARKERS.test(m)) return true
-  switch (provider) {
-    case 'anthropic':
-      // Every Claude chat model since Claude 3 accepts image blocks.
-      return true
-    case 'openai':
-      return openaiSupportsVision(m)
-    case 'deepseek':
-      // DeepSeek's chat models are text-only — image parts are rejected
-      // with HTTP 400 "This model does not support image" (re-verified
-      // live 2026-08-22). The one exception, deepseek-v4-flash-vision-exp
-      // (image parts verified live same day), carries the `vision` name
-      // marker and is accepted above before this case is reached.
-      return false
-    case 'xai':
-      // grok-2-vision and friends are caught by the markers above;
-      // grok-4 onward is multimodal without a name marker.
-      return /grok-[4-9]/.test(m)
-    case 'stepfun':
-      // step-1v / step-1.5v / step-1o are StepFun's vision lines.
-      return /step-[\d.]+[vo]($|[^a-z0-9])/.test(m)
-    case 'zai':
-      // GLM-*V (e.g. glm-4.5v, glm-4.6v, glm-5v-turbo) are the vision
-      // variants; the bare glm-* chat models are text-only — confirmed
-      // live, glm-5.2 rejects image parts as "no multi-modal input".
-      return /glm-[\d.]+v($|[^a-z0-9])/.test(m)
-    case 'kimi':
-      // kimi-k2.5 onward and kimi-k3 are natively multimodal without a
-      // name marker — image_url content parts verified live (k3, k2.6,
-      // k2.5 — 2026-07-17), and /models reports supports_image_in for the
-      // whole k2.5+/k3 line. Bare moonshot-v1 models are text-only (their
-      // -vision-preview variants carry the name marker above).
-      return /^kimi-k(2\.[5-9]|[3-9])/.test(m)
-    case 'qwen':
-      // qwen3.8-max is natively multimodal without a name marker — image
-      // parts verified live 2026-08-03 (16x16 probe answered; note DashScope
-      // 400s on images under 10px, which can masquerade as a modality
-      // reject). Older bare qwen3.x chat models are text-only; the vl/qvq/
-      // omni variants carry name markers.
-      return /^qwen3\.8/.test(m)
-    case 'openrouter':
-      return openrouterSupportsVision(m)
-    default:
-      // minimax, mimo, and any provider added later: their multimodal
-      // models carry a name marker; bare chat models are text-only.
-      return false
-  }
-}
-
-function openaiSupportsVision(m: string): boolean {
-  // Text-only members of otherwise vision-capable families.
-  if (/gpt-3\.5|o1-mini|o1-preview|o3-mini|gpt-4-32k/.test(m)) return false
-  // Bare gpt-4 and its dated snapshots predate vision.
-  if (/^gpt-4($|-\d)/.test(m)) return false
-  return /gpt-4o|gpt-4\.\d|gpt-4-turbo|gpt-5|chatgpt|^o\d/.test(m)
-}
-
-// OpenRouter ids are namespaced ("anthropic/claude-sonnet-4"); route to
-// the family rules the suffix belongs to.
-function openrouterSupportsVision(m: string): boolean {
-  if (m.includes('claude')) return true
-  // Gemini 1.5 onward is multimodal across the lineup.
-  if (m.includes('gemini')) return true
-  if (m.includes('grok')) return /grok-[4-9]/.test(m)
-  // Same rule as the direct kimi provider: k2.5+/k3 are multimodal.
-  if (m.includes('kimi')) return /kimi-k(2\.[5-9]|[3-9])/.test(m)
-  if (m.includes('gpt') || /(^|\/)o\d/.test(m)) {
-    return openaiSupportsVision(m.split('/').pop() ?? m)
-  }
-  return false
+  // No catalog answer (cold cache, or a model the org has not described):
+  // the vendor-agnostic name markers decide, and everything else is text-only.
+  return VISION_NAME_MARKERS.test(model.toLowerCase())
 }
 
 /**

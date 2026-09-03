@@ -21,8 +21,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const mockRpc = jest.fn()
 let mockConnected = true
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: mockRpc, connected: true } : null
     },
@@ -65,7 +65,7 @@ import AutomationsScreen from '@/app/settings/automations'
 import ProceduresScreen from '@/app/settings/procedures'
 import ProjectsScreen from '@/app/settings/projects'
 import { queryClient } from '@/lib/query/queryClient'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import '@/lib/i18n'

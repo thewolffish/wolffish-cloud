@@ -14,7 +14,6 @@ triggers:
   - fill template
   - convert document
   - markdown to word
-  - word to pdf
   - table of contents
   - merge documents
   - compare documents
@@ -79,7 +78,6 @@ triggers:
   - portrait
   - a4
   - letter size
-  - docx to pdf
   - sop
   - handbook
   - policy
@@ -143,7 +141,7 @@ tools:
         description: 'Optional JSON object: {list_separator?: string}'
         required: false
   - name: document_convert
-    description: 'Convert between document formats. Supported: docx->html, docx->markdown, docx->text, html->docx, markdown->docx, html->markdown, markdown->html, docx->pdf (requires pdf capability).'
+    description: 'Convert between document formats. Supported: docx->html, docx->markdown, docx->text, html->docx, markdown->docx, html->markdown, markdown->html. Not docx->pdf — for a PDF take the pdf-design route (document_read, then pdf_design → HTML → browser_pdf).'
     parameters:
       path:
         type: string
@@ -227,7 +225,6 @@ tools:
         type: string
         description: Absolute path to the directory where images will be saved
 requires:
-  - pdf
   - node
 danger_patterns:
   - pattern: '/(System|Windows|Program Files)/'
@@ -248,14 +245,14 @@ confirm_patterns:
 - Tools: `document_read`, `document_create`, `document_modify`, `document_template`, `document_convert`, `document_merge`, `document_toc`, `document_metadata`, `document_compare`, `document_extract_images`
 - Supported input formats: .docx, .html, .md, .txt, .rtf
 - Primary output format: .docx (create/modify/merge/template)
-- All paths must be absolute. Complex parameters are JSON strings.
+- Paths may be absolute, `~/`-relative, or workspace-relative (`files/report.docx` resolves inside `~/.wfc/workspace`, never against the process cwd). Complex parameters are JSON strings.
 
 ## Rules
 
 - Use `mammoth` for reading .docx files (extracts to HTML/text).
 - Use `docx` npm package for creating new .docx files programmatically.
 - For template filling (`document_template`), unzip the .docx, string-replace `{{placeholders}}` in the XML, and rezip. This preserves original formatting.
-- For `document_convert` with docx->pdf output, this capability uses the pdf capability (declared in `requires`).
+- `document_convert` does not produce PDF. For docx→pdf: `document_read` for the content, then the pdf-design route (`pdf_design` → HTML → `browser_pdf`, then `send_file`).
 - Support BiDi/RTL text via the docx package's bidirectional paragraph options.
 - Use `os.EOL` for line endings in plain text output.
 - Handle EBUSY/EPERM errors gracefully (file open in another app).

@@ -282,7 +282,7 @@ async function main(): Promise<void> {
 
   // ── the CLI shim, all three platforms ─────────────────────────────────────
   // One directory on every platform: ~/.wfc/bin, the same managed bin the
-  // app already uses for gog, ffmpeg and the voice engines. Asserted per
+  // app already uses for ffmpeg and the voice engines. Asserted per
   // platform rather than assumed, because the split it replaces (POSIX in
   // ~/.local/bin, Windows in ~/.wfc/bin) is exactly the kind of drift
   // that reads as intentional until someone checks.

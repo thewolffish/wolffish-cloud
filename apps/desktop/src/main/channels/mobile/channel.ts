@@ -1,33 +1,30 @@
 /**
- * The Mobile channel — the desktop end of the tunnel to wolffish-mobile.
+ * The Mobile channel — the desktop end of the org bridge to wolffish-mobile.
  *
- * Structurally a sibling of the Telegram and WhatsApp channels: it owns a
- * transport, exposes status to the settings panel, and serves the agent's
- * world to a remote surface. What differs is the shape of that surface. A
- * Telegram chat is a message stream; the phone is a second view of the whole
- * app, so this channel answers for configuration, the conversation index,
- * conversation bodies on demand, and usage — and pushes changes as they
- * happen so the phone stays live rather than polling.
+ * Structurally a sibling of the terminal channel: it owns a transport,
+ * exposes status to the settings panel, and serves the agent's world to a
+ * remote surface. What differs is the shape of that surface: a terminal is
+ * a message stream; the phone is a second view of the whole app.
  *
- * The desktop is the `host`: it parks on the relay and waits. The phone dials
- * in when it is in the foreground and disappears when iOS suspends it, which
- * is why every reconnect re-handshakes and nothing here assumes continuity.
+ * What this channel serves has SHRUNK on purpose. The phone is a signed-in
+ * device of the same org user now, so everything durable — the conversation
+ * index and bodies, workspace files, usage, the config snapshot the desktop
+ * writes to `brain/mobile/snapshot.json` — it reads straight from the API.
+ * What remains here is what only a running desktop can do: run a turn and
+ * stream it, park a question or an approval, apply a settings write through
+ * this app's own code paths, and say what it is busy with. All of it rides
+ * the bridge (cloud/bridge.ts): one WebSocket to the org's UserBridge, held
+ * for as long as the session is signed in, over which the phone's RPCs
+ * arrive and this desktop's pushes leave.
+ *
+ * The desktop PARKS on the bridge: it must be there whenever a phone decides
+ * to open, which is most often when nothing here is watching. The phone
+ * dials in when it is in the foreground and disappears when iOS suspends it,
+ * which is why nothing here assumes continuity.
  */
-import {
-  loadIdentity,
-  loadPairing,
-  loadRelayUrl,
-  peerKeyBytes,
-  ridForPairing,
-  savePairing,
-  saveRelayUrl,
-  secretBytes,
-  updatePairing,
-  clearPairing,
-  storageBackend,
-  type MobilePairing
-} from '@main/channels/mobile/keys'
 import { buildConfigSnapshot, type SnapshotSources } from '@main/channels/mobile/snapshot'
+import { API_BASE } from '@main/cloud/api'
+import type { BridgeClient, BridgeState } from '@main/cloud/bridge'
 import {
   assistantSegmentsToHistory,
   buildAssistantMessage,
@@ -36,11 +33,10 @@ import {
   type AssistantAccumulator,
   type MirrorMessageListener
 } from '@main/channels/channel'
-import { fitMirrorMessage, fitWireMessages } from '@main/channels/mirror-budget'
 import { extractTranscript, extractVoiceLanguage } from '@main/channels/stt-result'
+import { fitMirrorMessage } from '@main/channels/mirror-budget'
 import {
   createConversation,
-  listConversations,
   loadConversation,
   mintMessageId,
   saveConversation,
@@ -71,20 +67,13 @@ import {
 import { nextCronMs } from '@main/runtime/cronNext'
 import type { QueuedJobInfo, RunningJobInfo } from '@main/runtime/brainstem'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
-import {
-  classifyFile,
-  resolveUploadPath,
-  saveUploadFromFile,
-  statUpload,
-  uploadExists
-} from '@main/uploads/uploads'
+import { classifyFile, resolveUploadPath, statUpload, uploadExists } from '@main/uploads/uploads'
 import { adoptUploadedAutomationFile } from '@main/automations/files'
 import { resolveWorkingDirectory } from '@main/uploads/owned-copies'
 import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { workspaceRoot } from '@main/workspace/root'
 import {
-  CHUNK_SIZE,
-  DEFAULT_RELAY_URL,
+  CODE_TTL_MS,
   Event,
   PUSH_WIRE_VERSION,
   Rpc,
@@ -100,7 +89,7 @@ import {
   type SyncProcedure,
   type SyncProject,
   type UpdaterWireState
-} from '@main/tunnel/protocol'
+} from '@main/cloud/bridge-protocol'
 import {
   MOBILE_CAPABILITY_NAME,
   TTL_BY_PHASE,
@@ -108,48 +97,36 @@ import {
   mintNotificationId,
   type NotifyPhoneRequest
 } from '@main/channels/mobile/tools'
-import {
-  generateCode,
-  encodePairingPayload,
-  rendezvousId,
-  secretFromCode,
-  toBase64Url,
-  toHex,
-  CODE_TTL_MS
-} from '@main/tunnel/pairing'
-import { Tunnel, type TunnelState } from '@main/tunnel/tunnel'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import type { TurnSink } from '@main/channels/channel'
-import {
-  appendTextSegment,
-  upsertTaskSegment,
-  upsertWorkflowSegment,
-  type Segment
-} from '@main/runtime/broca'
+import { appendTextSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
-import { randomBytes } from 'node:crypto'
-import fs from 'node:fs/promises'
 import path from 'node:path'
 
 /**
  * Min gap between live mirror snapshots of an in-flight turn — the same budget
- * the Electron/Telegram/WhatsApp mirrors use, for the same reason: a fast text
+ * the Electron and terminal mirrors use, for the same reason: a fast text
  * stream must not emit (and make the phone re-render) per token.
  */
 const MIRROR_THROTTLE_MS = 500
 
 /**
- * How long a notify waits for the relay's notify_result before reporting the
- * notification as dropped. The relay answers before it talks to Expo, so a
- * healthy round trip is tens of milliseconds — this only fires against an
- * unreachable relay or one that predates the push control plane.
+ * How long a notify waits for the bridge's notify_result before reporting the
+ * notification as dropped. The bridge tries the live phone first (a two-
+ * second ack window) and only then the push service, so a healthy answer
+ * takes at most a few seconds — this only fires against a bridge that has
+ * gone away mid-call.
  */
-const NOTIFY_RESULT_TIMEOUT_MS = 10_000
+const NOTIFY_RESULT_TIMEOUT_MS = 15_000
+
+/** How often an open offer is re-read from the org while the bridge cannot
+ *  announce the claim itself (the socket down, or mid-reconnect). */
+const OFFER_POLL_MS = 3_000
 
 /**
- * Ceiling on one mirrored message, well under the relay's 1 MiB record cap.
+ * Ceiling on one mirrored message, well under the bridge's 1 MiB frame cap.
  * Events are single frames — nothing chunks them — so an oversized push is not
  * a slow push, it is a closed connection (CloseCode.MessageTooLarge). A turn
  * that accumulates more (a few large tool outputs) is TRIMMED to fit — tool
@@ -201,24 +178,6 @@ const MIRROR_BACKLOG_MAX_BYTES = 512 * 1024
 const MIRROR_RETRY_MS = 250
 
 /**
- * Ceiling on one served conversation body, under the same 1 MiB record cap
- * with room for the RPC envelope, encryption overhead and the metadata
- * columns riding beside the messages. A body that outgrew it used to go out
- * anyway — and the relay answered by CLOSING the tunnel, after which every
- * open of that conversation killed the link again. Over this, messages are
- * served trimmed (fitWireMessages) rather than the connection lost.
- */
-const WIRE_BODY_MAX_BYTES = 768 * 1024
-
-/** How long a spooled oversize body waits for its chunked pickup. Refreshed
- *  on every read, so only an abandoned pull ever expires mid-transfer. */
-const BODY_SPOOL_TTL_MS = 2 * 60_000
-
-/** Concurrent spools kept at most — one per open conversation, and a phone
- *  opens one at a time; the cap is a leak guard, not a feature. */
-const BODY_SPOOL_MAX = 4
-
-/**
  * What a non-verbose phone is shown WHILE a turn runs: assistant prose,
  * file-bearing results and errors, task cards — the clean feed the Mobile
  * panel's "Task results / off" setting describes. Tool mechanics are held
@@ -235,28 +194,33 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // the turn persists.
     segment.kind === 'reasoning' ||
     segment.kind === 'tool_result' ||
-    segment.kind === 'task' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
   )
 }
 
+/** One phone paired with this user, as the org lists it plus what the
+ *  phone said about itself the last time it connected. */
+export type PairedPhone = {
+  /** The org's device id — the one identity notifications are keyed by. */
+  id: string
+  name: string
+  platform: 'ios' | 'android' | null
+  model: string | null
+  osVersion: string | null
+  appVersion: string | null
+  pairedAt: number
+  lastSeenAt: number | null
+  /** On the bridge right now. */
+  connected: boolean
+}
+
 export type MobileStatus = {
-  /** Nothing paired, or a phone is known. */
+  /** At least one phone holds a live session with the org. */
   paired: boolean
-  pairing: {
-    method: 'qr' | 'code'
-    pairedAt: number
-    lastSeenAt: number | null
-    deviceName: string | null
-    /** How the phone describes itself. Null on a phone running an older build. */
-    platform: 'ios' | 'android' | null
-    model: string | null
-    osVersion: string | null
-    appVersion: string | null
-  } | null
-  /** Live tunnel state; null before a tunnel is started. */
-  tunnel: TunnelState | null
+  phones: PairedPhone[]
+  /** The desktop's own bridge socket; null before it is started. */
+  bridge: BridgeState | null
   /** Present only while a pairing offer is open. */
   offer: {
     mode: 'qr' | 'code'
@@ -266,17 +230,28 @@ export type MobileStatus = {
     code: string | null
     expiresAt: number
   } | null
-  /** Which platform store protects the keys, for the privacy card. */
-  storage: { available: boolean; backend: string }
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
   /** Whether a running automation draws its floating card on the phone. */
   runCards: boolean
-  /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
-  relayUrl: string
-  /** What "reset to default" returns to, so the panel needn't hardcode it. */
-  defaultRelayUrl: string
+  /** The org API both devices talk to. */
+  apiBase: string
+}
+
+/** A pairing offer as the org minted it (POST /v1/pair/offer). */
+export type PairOffer = { id: string; code: string; qr: string; expiresAt: number }
+
+/** A device row as the org lists it (GET /v1/devices). */
+export type WireDevice = {
+  id: string
+  platform: string
+  name: string
+  app_version: string
+  created_at: string
+  last_seen_at: string | null
+  paired: boolean
+  current: boolean
 }
 
 /** The reflection fields the phone may patch — mirrors workspace's ReflectionConfig. */
@@ -375,18 +350,36 @@ export type MobileChannelDeps = SnapshotSources & {
   log?: (line: string) => void
   /** Detail for diagnosis — frame-level activity, resolved values. */
   debug?: (line: string) => void
-  relayUrl?: string
+  /**
+   * The desktop's socket to the org bridge. Owned by main (it is started
+   * and stopped with the cloud session); this channel registers its
+   * handlers on it and reads its presence. Absent = no transport (tests).
+   */
+  bridge?: BridgeClient
+  /** The org's pairing endpoints. Absent = pairing refused (tests). */
+  pairing?: {
+    offer: () => Promise<PairOffer>
+    status: (id: string) => Promise<{ status: 'pending' | 'claimed' | 'expired' }>
+    withdraw: (id: string) => Promise<void>
+  }
+  /** The org's device list, and the revoke that unpairs a phone. */
+  devices?: {
+    list: () => Promise<WireDevice[]>
+    revoke: (id: string) => Promise<void>
+  }
+  /**
+   * Materialize one org blob at a workspace path — the phone uploads its
+   * attachments straight to the org, so a message may name files this
+   * machine has never seen. Resolves false when the blob cannot be fetched.
+   */
+  hydrateBlob?: (relPath: string, sha256: string) => Promise<boolean>
+  /**
+   * Upload one workspace file to the org (content-addressed), answering its
+   * sha — how a diagnostic archive reaches the phone. Absent = the phone is
+   * told there is nothing to download.
+   */
+  uploadWorkspaceFile?: (relPath: string, mime: string) => Promise<string | null>
 }
-
-/** Chunked uploads park here until committed — under the workspace uploads
- *  root so the final adopt is a same-volume atomic rename. Dot-prefixed so it
- *  can never collide with a conversation's `conv-…` upload folder. */
-const UPLOAD_STAGING_DIR = '.pending'
-/** An upload nobody has touched for this long is abandoned and swept. */
-const UPLOAD_IDLE_MS = 10 * 60_000
-/** Ceiling for one uploaded file. Far above anything the phone produces today
- *  (a voice note is ~1 MB/min); exists so a runaway client stays bounded. */
-const MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 /** The scheduler's source file, workspace-relative — the desktop's own path. */
 const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
@@ -411,43 +404,28 @@ const HEARTBEAT_MAX = 1_000_000
  */
 const REINDEX_PUSH_THROTTLE_MS = 1_000
 
-type PendingUpload = {
-  /**
-   * Where the committed bytes land. Decided once, at begin, and never read
-   * before then: the transfer itself (ordering, idle sweep, size ceiling) is
-   * identical for both destinations, so only the commit branches.
-   */
-  target:
-    | { kind: 'conversation'; conversationId: string }
-    | { kind: 'project'; projectId: string }
-    | { kind: 'procedure'; procedureId: string }
-    /**
-     * An automation has no id — heartbeat.md is its store — so the phone sends
-     * the `file:` paths it already holds and the desktop derives the dir from
-     * them. The MARKER is the phone's to write; the commit only answers with
-     * the absolute path it chose.
-     */
-    | { kind: 'automation'; existing: string[] }
-  name: string
-  mimeType: string | null
-  /** Size the phone declared at begin — commit refuses any other total. */
-  expected: number
-  received: number
-  stagedPath: string
-  handle: fs.FileHandle
-  idleTimer: ReturnType<typeof setTimeout>
-}
-
 export class MobileChannel {
-  private tunnel: Tunnel | null = null
+  private bridge: BridgeClient | null = null
+  private bridgeState: BridgeState | null = null
   private offer: MobileStatus['offer'] = null
+  private offerId: string | null = null
   private offerTimer: ReturnType<typeof setTimeout> | null = null
-  private pairing: MobilePairing | null = null
-  private tunnelState: TunnelState | null = null
+  private offerPoll: ReturnType<typeof setInterval> | null = null
+  /** The org's list of this user's phones, refreshed on session start, on
+   *  every claim and unpair, and whenever a phone connects. */
+  private phones: WireDevice[] = []
+  /** What each phone said about itself at hello, by device id. */
+  private readonly phoneInfo = new Map<
+    string,
+    {
+      platform: 'ios' | 'android' | null
+      model: string | null
+      osVersion: string | null
+      appVersion: string | null
+    }
+  >()
   private verbose = false
   private runCards = false
-  /** Mutable: the panel can point the tunnel at a self-hosted relay. */
-  private relayUrl: string
   /** Live turns the phone started, so it can abort them. */
   private readonly turns = new Map<string, { turnId: string; controller: AbortController }>()
   /**
@@ -529,7 +507,7 @@ export class MobileChannel {
    * used to reach the desktop's own window only at the end-of-turn save, so
    * an open conversation there sat on a thinking shimmer for the whole run
    * while the phone showed prose and cards. index.ts wires this to the same
-   * `conversation:messageMirror` broadcast the Telegram/WhatsApp mirrors use;
+   * `conversation:messageMirror` broadcast the terminal mirror uses;
    * the renderer upserts by the stable message id, so the saved copy replaces
    * the snapshot rather than joining it.
    */
@@ -545,7 +523,7 @@ export class MobileChannel {
    * (or reloaded) mid-run has the same problem a rejoining phone does: the
    * assistant message is not on disk until the fold, and the next mirror
    * tick can be a long tool call away. The cache is fed by every channel's
-   * mirror (this channel's own sinks, and the telegram/whatsapp/cli/
+   * mirror (this channel's own sinks, and the cli/
    * autonomous/in-app mirrors routed through pushMessageAppended), so it
    * answers for a run started anywhere.
    */
@@ -553,44 +531,6 @@ export class MobileChannel {
     return this.lastMirrors.get(conversationId)?.message ?? null
   }
 
-  /** Park one serialized body for chunked pickup; returns its handle. */
-  private spoolBody(buffer: Buffer): string {
-    const now = Date.now()
-    for (const [key, entry] of this.bodySpools) {
-      if (entry.expiresAt <= now) this.bodySpools.delete(key)
-    }
-    // Insertion order is age order — evict the oldest past the cap.
-    while (this.bodySpools.size >= BODY_SPOOL_MAX) {
-      const oldest = this.bodySpools.keys().next().value
-      if (oldest === undefined) break
-      this.bodySpools.delete(oldest)
-    }
-    const bodyId = randomBytes(8).toString('hex')
-    this.bodySpools.set(bodyId, { buffer, expiresAt: now + BODY_SPOOL_TTL_MS })
-    return bodyId
-  }
-
-  /** A live spool by id, its TTL refreshed — or null when expired/unknown. */
-  private bodySpool(bodyId: string): { buffer: Buffer } | null {
-    const entry = this.bodySpools.get(bodyId)
-    if (!entry) return null
-    if (entry.expiresAt <= Date.now()) {
-      this.bodySpools.delete(bodyId)
-      return null
-    }
-    entry.expiresAt = Date.now() + BODY_SPOOL_TTL_MS
-    return entry
-  }
-  /** Chunked uploads in flight, keyed by upload id. */
-  private readonly uploads = new Map<string, PendingUpload>()
-  /**
-   * Serialized oversize conversation bodies awaiting chunked pickup
-   * (Rpc.conversationBodyChunk), keyed by a per-serve id. TTL-reaped rather
-   * than freed on the last read, so a phone that retries a pull mid-way
-   * never finds the spool half-gone; the cap bounds memory to a handful of
-   * bodies for the length of one TTL.
-   */
-  private readonly bodySpools = new Map<string, { buffer: Buffer; expiresAt: number }>()
   /**
    * When the last reindex tick went out, so the throttle has something to
    * measure against. Zero means "no rebuild is being reported" — which is both
@@ -598,7 +538,7 @@ export class MobileChannel {
    * start edge.
    */
   private lastReindexPush = 0
-  /** notify frames awaiting the relay's notify_result, by notificationId. */
+  /** notify frames awaiting the bridge's notify_result, by notificationId. */
   private readonly pendingNotifies = new Map<
     string,
     { resolve: (result: NotifyResultFrame) => void; timer: ReturnType<typeof setTimeout> }
@@ -626,7 +566,7 @@ export class MobileChannel {
     | null = null
 
   constructor(private readonly deps: MobileChannelDeps) {
-    this.relayUrl = deps.relayUrl ?? DEFAULT_RELAY_URL
+    this.bridge = deps.bridge ?? null
   }
 
   /** Wire the collector main owns — see `diagnosticExporter`. */
@@ -641,32 +581,35 @@ export class MobileChannel {
 
   // -------------------------------------------------------------- lifecycle
 
-  /** Restore a stored pairing and start listening. Safe to call on every boot. */
+  /**
+   * Wire the bridge and restore the persisted switches. Safe to call on
+   * every boot; the socket itself is started and stopped by main with the
+   * cloud session (see `sessionReady` / `sessionGone`).
+   */
   async start(): Promise<void> {
     this.channelStopped = false
-    // The stored override must win before any tunnel dials out; deps.relayUrl
-    // stays the programmatic default (tests), DEFAULT_RELAY_URL the shipped one.
-    this.relayUrl = (await loadRelayUrl()) ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
     this.verbose = (await this.deps.loadVerbose?.()) ?? false
     this.runCards = (await this.deps.loadRunCards?.()) ?? false
+    if (this.bridge) this.attachBridge(this.bridge)
+    this.emitStatus()
+  }
 
-    this.pairing = await loadPairing()
-    // The notify_phone tool's presence IS the availability signal — see
-    // syncPhoneCapability. A stored pairing that already carries a phoneId
-    // registers it right here, before any tunnel forms: push works against
-    // an away phone, so the tool must not wait for a live connection.
-    this.syncPhoneCapability()
-    if (!this.pairing) {
-      this.log('no pairing stored — waiting for one to be offered')
-      this.emitStatus()
-      return
-    }
-    this.log(
-      `restoring pairing from ${new Date(this.pairing.pairedAt).toISOString()} ` +
-        `(${this.pairing.method}, device ${this.pairing.deviceName ?? 'unknown'})`
-    )
-    await this.openTunnel('qr')
+  /**
+   * The session is usable: learn which phones the org lists for this user,
+   * so the panel and the notify tool are right before any phone connects.
+   */
+  async sessionReady(): Promise<void> {
+    await this.refreshPhones()
+  }
+
+  /** Signed out: nothing is paired from this machine's point of view. */
+  sessionGone(): void {
+    this.phones = []
+    this.phoneInfo.clear()
+    this.clearOffer()
+    this.drainTurnRequests(null, 'signed out')
+    this.emitStatus()
   }
 
   async stop(): Promise<void> {
@@ -687,10 +630,71 @@ export class MobileChannel {
     this.drainTurnRequests(null, 'channel stopped')
     this.clearOffer()
     this.clearMirrorPacing()
-    await this.abortAllUploads()
-    this.tunnel?.stop()
-    this.tunnel = null
-    this.tunnelState = null
+    this.bridgeState = null
+    this.emitStatus()
+  }
+
+  private attachBridge(bridge: BridgeClient): void {
+    this.bridge = bridge
+    this.registerHandlers(bridge)
+    bridge.onNotifyResult((frame) =>
+      this.onNotifyResult(frame as unknown as Record<string, unknown>)
+    )
+    // The org tells this desktop the moment a phone claims its offer, so the
+    // offer card becomes a paired-phone card without polling.
+    bridge.onServerEvent('pair.claimed', (payload) => {
+      const device = (payload as { device?: { id?: string; name?: string } } | null)?.device
+      this.log(`pairing claimed by ${device?.name || device?.id || 'a phone'}`)
+      this.clearOffer()
+      void this.refreshPhones()
+    })
+    // …and the moment a phone signs itself out (or an admin revokes it), so
+    // the paired-phone card goes away without waiting for the next re-list.
+    bridge.onServerEvent('device.revoked', (payload) => {
+      const deviceId = (payload as { deviceId?: string } | null)?.deviceId
+      const known = this.phones.find((p) => p.id === deviceId)
+      this.log(`${known?.name || deviceId || 'a phone'} signed out`)
+      void this.refreshPhones()
+    })
+    bridge.onState((state) => {
+      const previous = this.bridgeState
+      this.bridgeState = state
+      const hadPhone = (previous?.phones.length ?? 0) > 0
+      const hasPhone = state.phones.length > 0
+      if (state.status !== previous?.status) {
+        this.log(
+          state.lastError && state.status === 'error'
+            ? `${state.status} — ${state.lastError}`
+            : state.status
+        )
+      }
+      if (hasPhone && !hadPhone) {
+        // A phone the org list does not know yet is a fresh claim this
+        // desktop missed (the claim event raced a reconnect) — re-list.
+        if (state.phones.some((p) => !this.phones.some((d) => d.id === p.deviceId))) {
+          void this.refreshPhones()
+        }
+      }
+      // The phone is where every parked card lives. Lose the last one and
+      // nobody can answer — so anything still waiting fails closed here
+      // rather than holding its turn open until the app is opened again,
+      // which on a phone can be hours.
+      if (!hasPhone && hadPhone) this.drainTurnRequests(null, 'phone disconnected')
+      if (!hasPhone) this.clearMirrorPacing()
+      this.emitStatus()
+    })
+  }
+
+  /** Re-read the org's device list; the mobile ones are the paired phones. */
+  async refreshPhones(): Promise<void> {
+    if (!this.deps.devices) return
+    try {
+      const all = await this.deps.devices.list()
+      this.phones = all.filter((d) => d.platform === 'mobile' && d.paired)
+    } catch (err) {
+      this.debug(`device list unavailable — ${(err as Error).message}`)
+      return
+    }
     this.emitStatus()
   }
 
@@ -698,19 +702,17 @@ export class MobileChannel {
 
   /**
    * Keep the notify_phone tool's EXISTENCE in step with deliverability: the
-   * capability is registered exactly while a phone is paired, has identified
-   * itself (phoneId), and the user allows notifications. Presence in the
-   * model's capability index is therefore the cheap availability check — the
-   * model never has to probe, and a send can never be attempted into a void.
-   * A parked (backgrounded) phone stays deliverable on purpose: reaching an
-   * away phone via push is the feature. Runs off every emitStatus, so any
-   * state change — pairing formed or dropped, phoneId learned at hello, the
-   * settings toggle — converges the registration without dedicated wiring.
+   * capability is registered exactly while at least one phone is paired and
+   * the user allows notifications. Presence in the model's capability index
+   * is therefore the cheap availability check — the model never has to
+   * probe, and a send can never be attempted into a void. A parked
+   * (backgrounded) phone stays deliverable on purpose: reaching an away
+   * phone via push is the feature. Runs off every emitStatus, so any state
+   * change — a claim, an unpair, the settings toggle — converges the
+   * registration without dedicated wiring.
    */
   private syncPhoneCapability(): void {
-    const deliverable =
-      !this.channelStopped &&
-      Boolean(this.pairing?.peerPublicKey && this.pairing.phoneId && this.notificationsEnabled)
+    const deliverable = !this.channelStopped && this.phones.length > 0 && this.notificationsEnabled
     if (deliverable === this.phoneCapabilityRegistered) return
     if (deliverable) {
       this.phoneCapability ??= buildMobileCapability({
@@ -720,10 +722,10 @@ export class MobileChannel {
         this.phoneCapability.capability,
         this.phoneCapability.plugin
       )
-      this.log('notify_phone exposed — phone identified and notifications allowed')
+      this.log('notify_phone exposed — a phone is paired and notifications allowed')
     } else {
       this.deps.agent.cerebellum.unregisterInProcessCapability(MOBILE_CAPABILITY_NAME)
-      this.log('notify_phone withdrawn — unpaired, unidentified phone, or notifications off')
+      this.log('notify_phone withdrawn — no phone paired, or notifications off')
     }
     this.phoneCapabilityRegistered = deliverable
   }
@@ -731,12 +733,11 @@ export class MobileChannel {
   /**
    * The whole notify path, model side down: the tool handler (tools.ts) has
    * already validated the model's words — validated, not rationed; nothing
-   * caps how many a run may send. This stamps the routing identity the model
-   * must never control — the phoneId from the
-   * pairing record and a freshly minted ULID — derives the ttl from the
-   * phase, emits the frame over the EXISTING relay connection, and resolves
-   * with the relay's routing decision. Every refusal is a thrown Error with
-   * a message the model can read and act on.
+   * caps how many a run may send. This stamps a freshly minted ULID, derives
+   * the ttl from the phase, hands the frame to the bridge (which addresses
+   * every phone of this user: in-band first, push otherwise) and resolves
+   * with the bridge's routing decision. Every refusal is a thrown Error
+   * with a message the model can read and act on.
    */
   async notifyPhone(request: NotifyPhoneRequest): Promise<NotifyResultFrame> {
     if (!this.notificationsEnabled) {
@@ -744,22 +745,14 @@ export class MobileChannel {
         "phone notifications are disabled in this desktop's Settings → Mobile — do not retry"
       )
     }
-    const pairing = this.pairing
-    if (!pairing?.peerPublicKey) throw new Error('no phone paired')
-    if (!pairing.phoneId) {
-      throw new Error(
-        'the paired phone has not identified itself for notifications yet — it must connect ' +
-          'once on a build with notification support (update the mobile app), do not retry'
-      )
-    }
-    const tunnel = this.tunnel
-    if (!tunnel) throw new Error('the relay connection is not running')
+    if (this.phones.length === 0) throw new Error('no phone paired')
+    const bridge = this.bridge
+    if (!bridge?.connected) throw new Error('the org bridge is not connected right now')
 
     const frame: NotifyFrame = {
       v: PUSH_WIRE_VERSION,
       type: 'notify',
       notificationId: mintNotificationId(),
-      phoneId: pairing.phoneId,
       runId: request.runId,
       phase: request.phase,
       title: request.title,
@@ -778,30 +771,29 @@ export class MobileChannel {
           type: 'notify_result',
           notificationId: frame.notificationId,
           route: 'dropped',
-          // Deliberately worded as ignorance, not failure. The relay forwards
+          // Deliberately worded as ignorance, not failure. The bridge forwards
           // to the phone BEFORE it answers, so a missing answer says nothing
           // about whether the notification arrived — and it usually did. Read
           // as "not delivered" this was retried, and the user got the same
           // notification three times.
           reason:
-            'the relay did not answer within ' +
+            'the bridge did not answer within ' +
             `${NOTIFY_RESULT_TIMEOUT_MS / 1000}s, so delivery is unknown — the notification may ` +
-            'have reached the phone anyway. The relay may also be unreachable or predate ' +
-            'notification support'
+            'have reached the phone anyway'
         })
       }, NOTIFY_RESULT_TIMEOUT_MS)
       this.pendingNotifies.set(frame.notificationId, { resolve, timer })
     })
 
     try {
-      tunnel.sendControl(frame)
+      bridge.notify(frame)
     } catch {
       const pending = this.pendingNotifies.get(frame.notificationId)
       if (pending) {
         clearTimeout(pending.timer)
         this.pendingNotifies.delete(frame.notificationId)
       }
-      throw new Error('the relay link is down right now — the notification was not sent')
+      throw new Error('the bridge link is down right now — the notification was not sent')
     }
     this.debug(`notify ${frame.notificationId} sent (${frame.phase}, run ${frame.runId})`)
 
@@ -813,7 +805,7 @@ export class MobileChannel {
     return answer
   }
 
-  /** The relay's answer to a notify — resolves the matching waiter. */
+  /** The bridge's answer to a notify — resolves the matching waiter. */
   private onNotifyResult(raw: Record<string, unknown>): void {
     const id = typeof raw.notificationId === 'string' ? raw.notificationId : null
     if (!id) return
@@ -842,7 +834,7 @@ export class MobileChannel {
 
   /**
    * Whether the phone's feed shows tool calls and task results, mirroring the
-   * same switch on Telegram, WhatsApp and the in-app feed. Off (default) sends
+   * same switch on the terminal and the in-app feed. Off (default) sends
    * a clean feed: assistant messages, file-bearing results and errors only.
    * Display-only — it never affects what is stored, and never affects logging.
    *
@@ -876,30 +868,7 @@ export class MobileChannel {
   }
 
   /**
-   * Point the tunnel at a different relay — any deployment of the open-source
-   * wolffish-relay, or a service speaking the same forwarding contract. Null
-   * clears the override and returns to the default.
-   *
-   * The relay is part of the pairing contract: the QR/code payload names it,
-   * and the phone keeps dialing whatever it learned at pairing time. So a
-   * change drops any open offer and any paired phone rather than leave a link
-   * that can never form again — the panel warns before calling this.
-   */
-  async setRelayUrl(url: string | null): Promise<MobileStatus> {
-    const override = normalizeRelayUrl(url) // throws on a malformed URL
-    await saveRelayUrl(override)
-    const next = override ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
-    if (next !== this.relayUrl) {
-      if (this.pairing) await this.unpair()
-      this.relayUrl = next
-      this.log(`relay set to ${next}`)
-    }
-    this.emitStatus()
-    return this.getStatus()
-  }
-
-  /**
-   * Connection logging is unconditional. A tunnel that will not connect is
+   * Connection logging is unconditional. A link that will not connect is
    * exactly when the record matters, and nobody can be asked to reproduce a
    * failure with logging switched on afterwards. `verbose` is a *feed*
    * preference and has nothing to do with this.
@@ -916,236 +885,149 @@ export class MobileChannel {
   // ---------------------------------------------------------------- pairing
 
   /**
-   * Begin a QR pairing. The payload carries the relay, this desktop's public
-   * key and a fresh secret, so the phone can run IKpsk2 in one round trip.
+   * Open a pairing offer with the org and show it as a QR. The payload
+   * carries the org API's address and a one-time token; the phone claims it
+   * and receives a session of its own. Nothing about this desktop travels
+   * — the org already knows both devices.
    */
   async offerQr(): Promise<MobileStatus> {
-    const identity = await loadIdentity()
-    const secret = new Uint8Array(randomBytes(32))
-    const payload = encodePairingPayload({
-      v: 1,
-      relay: this.relayUrl,
-      pk: toHex(identity.publicKey),
-      ps: toBase64Url(secret)
-    })
-    await this.beginPairing(secret, 'qr', { payload, code: null })
+    await this.beginPairing('qr')
     return this.getStatus()
   }
 
   /**
-   * Begin a typed-code pairing, for a desktop with no screen the phone can see
-   * — a headless box, or a session over SSH. The code carries only the secret,
-   * so the handshake is XXpsk3 and both keys are exchanged inside it.
+   * The same offer as a short typed code, for a desktop with no screen the
+   * phone can see — a headless box, or a session over SSH.
    */
   async offerCode(): Promise<MobileStatus> {
-    const code = generateCode((length) => new Uint8Array(randomBytes(length)))
-    const secret = secretFromCode(code)
-    await this.beginPairing(secret, 'code', { payload: null, code })
+    await this.beginPairing('code')
     return this.getStatus()
   }
 
-  private async beginPairing(
-    secret: Uint8Array,
-    mode: 'qr' | 'code',
-    display: { payload: string | null; code: string | null }
-  ): Promise<void> {
+  private async beginPairing(mode: 'qr' | 'code'): Promise<void> {
+    if (!this.deps.pairing) throw new Error('pairing is not available on this desktop')
     this.clearOffer()
-    this.clearMirrorPacing()
-    this.tunnel?.stop()
-    this.tunnel = null
-
-    // The offer *is* the pairing until a phone completes a handshake: the
-    // rendezvous is derived from this secret, so the desktop must already be
-    // waiting there when the phone arrives.
-    this.pairing = {
-      secret: toBase64Url(secret),
-      peerPublicKey: null,
-      method: mode,
-      pairedAt: Date.now(),
-      lastSeenAt: null,
-      deviceName: null
+    const minted = await this.deps.pairing.offer()
+    const expiresAt = Math.min(
+      minted.expiresAt || Date.now() + CODE_TTL_MS,
+      Date.now() + CODE_TTL_MS
+    )
+    this.offerId = minted.id
+    this.offer = {
+      mode,
+      payload: mode === 'qr' ? minted.qr : null,
+      code: mode === 'code' ? minted.code : null,
+      expiresAt
     }
-    await savePairing(this.pairing)
+    this.offerTimer = setTimeout(
+      () => {
+        // An unclaimed offer must not linger: a code read aloud or a QR left
+        // on screen should stop working on its own. The org expires it too;
+        // this just takes it off the screen at the same moment.
+        if (this.offer) this.log('pairing offer expired unclaimed')
+        this.clearOffer()
+        this.emitStatus()
+      },
+      Math.max(1_000, expiresAt - Date.now())
+    )
+    // Belt and braces for the claim announcement: while the bridge socket is
+    // down the org cannot tell this desktop a phone claimed, so the offer is
+    // re-read on a slow clock until it settles.
+    this.offerPoll = setInterval(() => void this.pollOffer(), OFFER_POLL_MS)
+    this.offerPoll.unref?.()
+    this.log(`pairing offer opened (${mode}, ${minted.id})`)
+    this.emitStatus()
+  }
 
-    const expiresAt = Date.now() + CODE_TTL_MS
-    this.offer = { mode, payload: display.payload, code: display.code, expiresAt }
-    this.offerTimer = setTimeout(() => {
-      // An unclaimed offer must not linger: a code read aloud or a QR left on
-      // screen should stop working on its own.
-      if (this.pairing && !this.pairing.peerPublicKey) void this.unpair()
-      else this.clearOffer()
-    }, CODE_TTL_MS)
-
-    this.log(`pairing offer opened (${mode}), rendezvous ${rendezvousId(secret).slice(0, 16)}…`)
-    await this.openTunnel(mode)
+  private async pollOffer(): Promise<void> {
+    const id = this.offerId
+    if (!id || !this.deps.pairing) return
+    try {
+      const state = await this.deps.pairing.status(id)
+      if (this.offerId !== id) return
+      if (state.status === 'claimed') {
+        this.log('pairing claimed (seen on poll)')
+        this.clearOffer()
+        await this.refreshPhones()
+        this.emitStatus()
+      } else if (state.status === 'expired') {
+        this.clearOffer()
+        this.emitStatus()
+      }
+    } catch {
+      // the bridge event, the timer, or the next poll settles it
+    }
   }
 
   private clearOffer(): void {
     if (this.offerTimer) clearTimeout(this.offerTimer)
+    if (this.offerPoll) clearInterval(this.offerPoll)
     this.offerTimer = null
+    this.offerPoll = null
+    const withdrawn = this.offer && this.offerId ? this.offerId : null
     this.offer = null
+    this.offerId = null
+    // Withdrawn at the org too, so a code shown on screen and then dismissed
+    // cannot be typed later. Best-effort: expiry retires it regardless.
+    if (withdrawn) void this.deps.pairing?.withdraw(withdrawn).catch(() => undefined)
   }
 
-  /**
-   * Drop the live link but keep the pairing. The phone reconnects on its own
-   * the next time it is opened — this is for cutting a session loose, not for
-   * ending the relationship, which is what unpair() is for.
-   */
-  async disconnect(): Promise<MobileStatus> {
+  /** Withdraw an open offer without touching any paired phone. */
+  async cancelOffer(): Promise<MobileStatus> {
     this.clearOffer()
-    this.clearMirrorPacing()
-    this.tunnel?.stop()
-    this.tunnel = null
-    this.tunnelState = null
-    this.log('disconnected by request — pairing kept')
     this.emitStatus()
     return this.getStatus()
   }
 
-  /** Forget the phone entirely. */
-  async unpair(): Promise<MobileStatus> {
+  /**
+   * Forget a phone: revoke its sessions at the org, which closes its bridge
+   * socket and drops its push registration on the spot. Without an id every
+   * paired phone goes.
+   */
+  async unpair(deviceId?: string): Promise<MobileStatus> {
     this.drainTurnRequests(null, 'phone unpaired')
     this.clearOffer()
     this.clearMirrorPacing()
     this.lastMirrors.clear()
     this.mirrorDeltaSeq.clear()
-    this.tunnel?.stop()
-    this.tunnel = null
-    this.tunnelState = null
-    this.pairing = null
-    await clearPairing()
-    this.log('unpaired — keys removed, tunnel closed')
+    const targets = deviceId ? this.phones.filter((p) => p.id === deviceId) : [...this.phones]
+    for (const phone of targets) {
+      try {
+        await this.deps.devices?.revoke(phone.id)
+        this.phoneInfo.delete(phone.id)
+        this.log(`unpaired ${phone.name || phone.id} — sessions revoked at the org`)
+      } catch (err) {
+        this.log(`unpair of ${phone.id} failed — ${(err as Error).message}`)
+        throw err
+      }
+    }
+    await this.refreshPhones()
     this.emitStatus()
     return this.getStatus()
   }
 
-  // ----------------------------------------------------------------- tunnel
-
-  private async openTunnel(mode: 'qr' | 'code'): Promise<void> {
-    if (!this.pairing) return
-    const identity = await loadIdentity()
-    const pairing = this.pairing
-
-    const tunnel = new Tunnel({
-      role: 'host',
-      relayUrl: this.relayUrl,
-      rid: ridForPairing(pairing),
-      staticKeypair: identity,
-      pairingSecret: secretBytes(pairing),
-      peerStaticPublicKey: peerKeyBytes(pairing),
-      identity: { device: 'wolffish-app', platform: process.platform },
-      autoReconnect: true,
-      // The desktop parks. It is the host: it must be sitting at the
-      // rendezvous whenever the phone decides to open, which is most often
-      // when nothing here is watching.
-      peerWaitMs: null,
-      // Always on: see log() above.
-      verbose: true,
-      log: (line) => this.deps.log?.(line)
-    })
-    this.tunnel = tunnel
-
-    tunnel.onState((state) => {
-      const previous = this.tunnelState
-      this.tunnelState = state
-      const transition =
-        state.status !== previous?.status || state.peerPresent !== previous?.peerPresent
-      // Every transition is recorded: this sequence is the whole story when a
-      // link will not form. Transitions ONLY — this listener also fires on
-      // counter movement, and logging per frame is a disk write per frame.
-      if (transition) {
-        this.log(
-          state.lastError
-            ? `${state.status} — ${state.lastError}`
-            : `${state.status}${state.peerPresent ? ' (phone present)' : ''}`
-        )
-        this.debug(
-          `state: ${state.status} peer=${state.peerPresent} frames=${state.framesSent}/${state.framesReceived} ` +
-            `bytes=${state.bytesSent}/${state.bytesReceived} reconnects=${state.reconnects}`
-        )
-      }
-      // A completed handshake is the moment a pairing offer becomes a pairing
-      // — the moment, not the duration. Running this on every event while
-      // connected rewrote the sealed pairing file (a safeStorage encrypt plus
-      // a whole-file write) once per tick, and that grind is what froze the
-      // desktop mid-sync.
-      if (state.status === 'connected' && previous?.status !== 'connected') {
-        void this.onConnected()
-      }
-      // The phone is where every parked card lives. Lose the link and nobody
-      // can answer one — so anything still waiting fails closed here rather
-      // than holding its turn open until the app is opened again, which on a
-      // phone can be hours.
-      if (state.status !== 'connected' && previous?.status === 'connected') {
-        this.drainTurnRequests(null, 'phone disconnected')
-      }
-      this.emitStatus()
-    })
-
-    this.registerHandlers(tunnel)
-    // The relay's answers to notify frames arrive as control records on the
-    // same socket the notify left on.
-    tunnel.onControl('notify_result', (frame) => this.onNotifyResult(frame))
-    // Failures are already folded into tunnel state and retried with backoff;
-    // surfacing them again here would double-report the same condition.
-    void tunnel.start(mode).catch(() => undefined)
-  }
-
-  private async onConnected(): Promise<void> {
-    const key = this.tunnel?.peerStaticPublicKey
-    if (!key || !this.pairing) return
-    const hex = toHex(key)
-    if (this.pairing.peerPublicKey !== hex) {
-      // First completed handshake — pin the phone and close the offer, so the
-      // QR on screen and the code stop being usable by anyone else.
-      this.pairing = (await updatePairing({ peerPublicKey: hex, lastSeenAt: Date.now() })) ?? null
-      this.clearOffer()
-      this.log(`paired — phone key pinned ${hex.slice(0, 8)}…, offer closed`)
-    } else {
-      this.pairing = (await updatePairing({ lastSeenAt: Date.now() })) ?? null
-      this.debug('reconnected to the pinned phone')
-    }
-    this.emitStatus()
-  }
-
   // --------------------------------------------------------------- handlers
 
-  private registerHandlers(tunnel: Tunnel): void {
-    tunnel.onRpc(Rpc.hello, async (params) => {
-      // The phone describes itself here. Everything is optional and only
-      // written when it changes, so an older phone that sends a name alone
-      // still works and a reconnect does not rewrite the file for nothing.
+  private registerHandlers(tunnel: BridgeClient): void {
+    tunnel.onRpc(Rpc.hello, async (params, from) => {
+      // The phone describes itself here — model, OS, app build — for the
+      // panel's device card. Keyed by the org device id the bridge stamps on
+      // the request, never by anything the phone claims about its identity.
       const text = (value: unknown): string | null =>
         typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : null
       const platform =
         params.platform === 'ios' || params.platform === 'android' ? params.platform : null
-      // The phone's stable device id — the ONLY identity notify frames are
-      // ever stamped with. Shape-validated (the wire is data, not policy)
-      // and stored in the pairing record; absent on older phone builds,
-      // which leaves notifications refused rather than misaddressed.
-      const phoneId =
-        typeof params.deviceId === 'string' && /^[A-Za-z0-9_.-]{8,128}$/.test(params.deviceId)
-          ? params.deviceId
-          : null
-      const described = {
-        deviceName: text(params.deviceName),
-        platform,
-        model: text(params.model),
-        osVersion: text(params.osVersion),
-        appVersion: text(params.appVersion),
-        phoneId
+      if (from?.deviceId) {
+        this.phoneInfo.set(from.deviceId, {
+          platform,
+          model: text(params.model),
+          osVersion: text(params.osVersion),
+          appVersion: text(params.appVersion)
+        })
+        if (!this.phones.some((p) => p.id === from.deviceId)) void this.refreshPhones()
+        else this.emitStatus()
       }
-      const patch = Object.fromEntries(
-        Object.entries(described).filter(
-          ([key, value]) =>
-            value !== null && value !== this.pairing?.[key as keyof typeof described]
-        )
-      )
-      if (Object.keys(patch).length > 0) {
-        this.pairing = (await updatePairing(patch)) ?? null
-        this.emitStatus()
-      }
-      return { ok: true, app: 'wolffish-app', platform: process.platform }
+      return { ok: true, app: 'wolffish-app', platform: process.platform, protocol: 2 }
     })
 
     /**
@@ -1286,42 +1168,6 @@ export class MobileChannel {
     })
 
     /**
-     * Metadata only — titles, icons, counts, timestamps. Never message bodies:
-     * a real workspace is ~900 MB of conversation JSON, and the phone opens
-     * one conversation at a time.
-     */
-    tunnel.onRpc(Rpc.conversationIndex, async (params) => {
-      const since = typeof params.since === 'number' ? params.since : 0
-      const all = await listConversations()
-      const rows = all
-        .filter((meta) => (meta.updatedAt ?? 0) > since)
-        .map(
-          (meta): ConversationMeta => ({
-            id: meta.id,
-            title: meta.title,
-            model: null,
-            channel: meta.channel ?? null,
-            icon: meta.icon ?? null,
-            projectId: meta.projectId ?? null,
-            sealed: false,
-            createdAt: meta.updatedAt,
-            updatedAt: meta.updatedAt,
-            messageCount: meta.messageCount,
-            stats: null,
-            summary: null
-          })
-        )
-      // The full id list, on request. `since` can only ever report what still
-      // exists, so a conversation deleted while the phone was away is
-      // invisible to an incremental pull — it would sit on the phone forever.
-      // Ids are small (a reconcile of 1000 conversations is tens of KB) and
-      // this runs on reconnect, not on a timer.
-      const ids = params.withIds === true ? all.map((meta) => meta.id) : undefined
-      this.debug(`served conversation index — ${rows.length} of ${all.length} rows since ${since}`)
-      return { rows, total: all.length, at: Date.now(), ...(ids ? { ids } : {}) }
-    })
-
-    /**
      * File a conversation under a project. The phone cannot do this locally:
      * every turn's project overlay is built from the `projectId` on THIS side's
      * conversation file, so a binding written only to the phone's database
@@ -1350,74 +1196,6 @@ export class MobileChannel {
       // the conversations rail both follow a re-file made on the phone.
       this.deps.onConversationChanged?.(conversationId)
       return { ok: true, projectId }
-    })
-
-    /**
-     * One conversation, fetched when the phone opens it.
-     *
-     * The answer is normally one frame, and a frame past the relay's record
-     * cap closes the tunnel — after which every open of this conversation
-     * kills the link again. A body over the ceiling is therefore never sent
-     * whole: a phone that asked with `chunked: true` gets a spool handle and
-     * pulls the COMPLETE body through conversationBodyChunk (the same
-     * base64url windows fileRead serves); an older phone gets it trimmed to
-     * one frame (fitWireMessages) — shorter old tool dumps, never a dead
-     * tunnel.
-     */
-    tunnel.onRpc(Rpc.conversationBody, async (params) => {
-      const id = String(params.id ?? '')
-      const file = await loadConversation(id)
-      if (!file) {
-        this.log(`conversation body requested for unknown id ${id}`)
-        throw new Error(`unknown conversation ${id}`)
-      }
-      const wire = toWireConversation(file)
-      let json: Buffer | null = null
-      try {
-        json = Buffer.from(JSON.stringify(wire))
-      } catch {
-        json = null
-      }
-      if (json && json.byteLength <= WIRE_BODY_MAX_BYTES) {
-        this.debug(`served conversation ${id} (${file.messages?.length ?? 0} messages)`)
-        return wire
-      }
-      if (json && params.chunked === true) {
-        const bodyId = this.spoolBody(json)
-        this.debug(
-          `serving conversation ${id} chunked — ${json.byteLength} bytes as body ${bodyId}`
-        )
-        return { chunked: true, bodyId, sizeBytes: json.byteLength, updatedAt: file.updatedAt }
-      }
-      const fitted = fitWireMessages(file.messages ?? [], WIRE_BODY_MAX_BYTES)
-      this.log(`conversation ${id} served trimmed — body over the wire ceiling`)
-      this.debug(`served conversation ${id} (${file.messages?.length ?? 0} messages)`)
-      return toWireConversation({ ...file, messages: fitted })
-    })
-
-    /**
-     * One window of a spooled oversize body. Same contract as fileRead —
-     * base64url data, CHUNK_SIZE-capped windows, `sizeBytes` on every answer
-     * — so the phone reads both with one loop shape. The spool outlives the
-     * last read until its TTL, so a retried pull never finds it half-gone.
-     */
-    tunnel.onRpc(Rpc.conversationBodyChunk, async (params) => {
-      const bodyId = String(params.bodyId ?? '')
-      const spool = this.bodySpool(bodyId)
-      if (!spool) throw new Error(`unknown body ${bodyId} — request the conversation again`)
-      const offset = clampCount(params.offset, 0)
-      const length = Math.min(clampCount(params.length, CHUNK_SIZE), CHUNK_SIZE)
-      const window = Math.max(0, Math.min(length, spool.buffer.byteLength - offset))
-      return {
-        data: spool.buffer.subarray(offset, offset + window).toString('base64url'),
-        sizeBytes: spool.buffer.byteLength
-      }
-    })
-
-    tunnel.onRpc(Rpc.usage, async () => {
-      const days = (await this.deps.usageDays?.()) ?? []
-      this.debug(`served usage ledger (${days.length} days)`)
-      return { days }
     })
 
     /**
@@ -1473,10 +1251,8 @@ export class MobileChannel {
      * not a reply, so it looks the same as a turn started here.
      *
      * The answer carries only the conversation id, and the rest of the turn —
-     * persisting the user message, transcribing a voice note, dispatching the
-     * runner — continues after the reply is on the wire. It has to: a voice
-     * note's transcription can outlive the phone's RPC timeout (the STT model
-     * may still be downloading), and the phone needs the id immediately to
+     * persisting the user message, dispatching the runner — continues after
+     * the reply is on the wire, because the phone needs the id immediately to
      * navigate. Failures in the continuation surface as a `turn.status` error
      * push against that id, which the phone already renders.
      */
@@ -1502,13 +1278,29 @@ export class MobileChannel {
         ? String(params.messageId)
         : undefined
 
+      // A conversation the phone MINTED — so its attachments had a folder to
+      // upload into before this send — does not exist here yet. Created
+      // under the phone's id (shape-checked: ids are filenames), so the
+      // uploads it already made land in the right place.
+      if (conversationId && /^[A-Za-z0-9._-]{1,128}$/.test(conversationId)) {
+        if (!(await loadConversation(conversationId))) {
+          const created = createConversation(null)
+          created.id = conversationId
+          if (text) created.title = text.slice(0, 60)
+          created.messages = []
+          created.channel = 'mobile'
+          const projectId = wireText(params.projectId, ID_MAX) || null
+          if (projectId && (await getProject(projectId))) created.projectId = projectId
+          await saveConversation(created)
+        }
+      } else if (conversationId) {
+        throw new Error(`invalid conversation id ${conversationId}`)
+      }
       if (!conversationId) {
         const created = createConversation(null)
-        // A voice note has no text yet — leave 'Untitled' so the titler names
-        // it from the transcript once the turn runs.
         if (text) created.title = text.slice(0, 60)
         created.messages = []
-        // Where this conversation began, the same way a Telegram one is
+        // Where this conversation began, the same way a terminal one is
         // stamped. Both apps badge it from here, and it is the only record —
         // the desktop cannot tell later which surface asked.
         created.channel = 'mobile'
@@ -1801,49 +1593,15 @@ export class MobileChannel {
     })
 
     /**
-     * Workspace file bytes for the phone's cache. Any path a synced
-     * conversation references is servable — resolveUploadPath refuses
-     * anything that escapes the workspace root, and that refusal is the
-     * entire access story: the tunnel is end-to-end encrypted to one pinned
-     * device, so whoever can ask is whoever paired.
-     */
-    tunnel.onRpc(Rpc.fileStat, async (params) => {
-      const rel = String(params.path ?? '')
-      if (!resolveUploadPath(rel)) throw new Error(`invalid path: ${rel}`)
-      const stat = await statUpload(rel)
-      return { exists: stat !== null, sizeBytes: stat?.sizeBytes ?? 0 }
-    })
-
-    tunnel.onRpc(Rpc.fileRead, async (params) => {
-      const rel = String(params.path ?? '')
-      const abs = resolveUploadPath(rel)
-      if (!abs) throw new Error(`invalid path: ${rel}`)
-      const offset = clampCount(params.offset, 0)
-      // The cap is the contract: one answer must stay under the relay's
-      // record limit whatever the phone asks for.
-      const length = Math.min(clampCount(params.length, CHUNK_SIZE), CHUNK_SIZE)
-      const handle = await fs.open(abs, 'r')
-      try {
-        const stat = await handle.stat()
-        const window = Math.max(0, Math.min(length, stat.size - offset))
-        const buffer = Buffer.alloc(window)
-        if (window > 0) await handle.read(buffer, 0, window, offset)
-        return { data: buffer.toString('base64url'), sizeBytes: stat.size }
-      } finally {
-        await handle.close()
-      }
-    })
-
-    /**
      * The phone's Debug button — the same per-conversation bundle the desktop's
      * own History page collects, through the same runner and the same
      * single-flight guard (see setDiagnosticExporter).
      *
-     * Only the RESULT crosses the tunnel. The archive itself stays where it was
-     * written, under `diagnostics/` in the workspace, and the phone pulls it
-     * down the ordinary fileStat/fileRead path — a zip is exactly the kind of
-     * thing the chunked transfer exists for, and inlining megabytes into one
-     * RPC answer would blow the relay's record cap.
+     * Only the RESULT crosses the bridge. The archive itself is uploaded to
+     * the org like any workspace file and the answer carries its sha, which
+     * the phone downloads from the API — a zip is exactly the kind of thing
+     * the content-addressed lane exists for, and inlining megabytes into one
+     * RPC answer would blow the bridge's frame cap.
      *
      * Progress is pushed as it happens and is advisory: it makes the bar move,
      * and a phone that misses every tick still gets a complete result here.
@@ -1854,198 +1612,81 @@ export class MobileChannel {
       if (!this.diagnosticExporter) throw new Error('this desktop cannot export diagnostics')
       this.debug(`diagnostic export requested for ${conversationId}`)
       const result = await this.diagnosticExporter(conversationId, (progress) => {
-        this.tunnel?.emit(Event.diagnosticsProgress, progress)
+        this.bridge?.emit(Event.diagnosticsProgress, progress)
       })
+      let sha256: string | null = null
+      if (result.ok && result.relativePath) {
+        sha256 =
+          (await this.deps.uploadWorkspaceFile?.(result.relativePath, 'application/zip')) ?? null
+      }
       this.debug(
         result.ok
-          ? `diagnostic export ready: ${result.fileName} (${result.sizeBytes} bytes)`
+          ? `diagnostic export ready: ${result.fileName} (${result.sizeBytes} bytes, ${sha256 ? 'uploaded' : 'NOT uploaded'})`
           : `diagnostic export failed: ${result.error}`
       )
-      return result as unknown as Record<string, unknown>
+      return { ...result, sha256 } as unknown as Record<string, unknown>
     })
 
     /**
-     * Chunked upload from the phone: begin stakes out a staging file (and a
-     * conversation, when the message that will carry the file is the first),
-     * chunks append strictly in order, commit adopts the staged bytes as a
-     * normal conversation upload and answers with the metadata the message
-     * should carry — the desktop picks the final name, so a collision renames
-     * here exactly as it would for a file dropped on the composer.
-     *
-     * A `projectId` instead points the commit at that project's file list, for
-     * the phone's project Add-files. The transfer is byte-identical either way;
-     * see the PendingUpload target.
+     * Attach a blob the phone uploaded to the org to a project, a procedure or
+     * an automation. The phone's Add-files uploads bytes straight to the org
+     * under `uploads/<target>/<name>`; this makes them real HERE — download
+     * if this machine does not hold them, then adopt through the exact
+     * functions the desktop's own dialogs call, so the answer already
+     * describes the stored project/procedure the phone renders.
      */
-    tunnel.onRpc(Rpc.uploadBegin, async (params) => {
-      const name = String(params.name ?? '').trim()
-      if (!name) throw new Error('upload needs a file name')
-      const expected = clampCount(params.sizeBytes, 0)
-      if (expected <= 0 || expected > MAX_UPLOAD_BYTES) {
-        throw new Error(`upload size out of range: ${expected}`)
-      }
-      const projectId =
-        typeof params.projectId === 'string' && params.projectId ? params.projectId : null
-      const procedureId =
-        typeof params.procedureId === 'string' && params.procedureId ? params.procedureId : null
-      const automationFiles = Array.isArray(params.automationFiles)
-        ? (params.automationFiles as unknown[]).filter((v): v is string => typeof v === 'string')
-        : null
-      let target: PendingUpload['target']
-      if (automationFiles) {
-        target = { kind: 'automation', existing: automationFiles }
-      } else if (procedureId) {
-        // Same pre-flight as a project upload: verified before a byte moves,
-        // so a long transfer can't end with nowhere to put the file.
-        const procedure = (await listProcedures()).find((p) => p.id === procedureId)
-        if (!procedure) throw new Error(`procedure not found: ${procedureId}`)
-        target = { kind: 'procedure', procedureId }
-      } else if (projectId) {
-        // Verified BEFORE a byte moves: a whole video uploaded against a
-        // project deleted on the desktop meanwhile would fail at commit, after
-        // the minute of transfer, with nowhere for the bytes to go.
-        const project = await getProject(projectId)
-        if (!project) throw new Error(`project not found: ${projectId}`)
-        target = { kind: 'project', projectId }
-      } else {
-        let conversationId =
-          typeof params.conversationId === 'string' && params.conversationId
-            ? params.conversationId
-            : null
-        if (!conversationId) {
-          const created = createConversation(null)
-          created.messages = []
-          // Same stamp as the send path: a conversation a phone's first upload
-          // brings into being started on the phone just as surely.
-          created.channel = 'mobile'
-          await saveConversation(created)
-          conversationId = created.id
+    tunnel.onRpc(Rpc.filesAdopt, async (params) => {
+      const rel = String(params.path ?? '')
+      const sha256 = String(params.sha256 ?? '').toLowerCase()
+      const name = String(params.name ?? '').trim() || (rel.split('/').pop() ?? '')
+      const abs = rel ? resolveUploadPath(rel) : null
+      if (!rel || !abs) throw new Error(`invalid path: ${rel}`)
+      if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error('filesAdopt needs the blob sha256')
+      if (!name) throw new Error('filesAdopt needs a file name')
+      const target = (params.target ?? {}) as { kind?: unknown; id?: unknown; existing?: unknown }
+      if (!(await uploadExists(rel))) {
+        if (!this.deps.hydrateBlob) throw new Error('this desktop cannot fetch org files')
+        if (!(await this.deps.hydrateBlob(rel, sha256))) {
+          throw new Error(`could not fetch ${rel} from the org`)
         }
-        target = { kind: 'conversation', conversationId }
       }
-
-      const uploadId = toHex(new Uint8Array(randomBytes(16)))
-      const stagingDir = path.join(workspaceRoot(), 'uploads', UPLOAD_STAGING_DIR)
-      await fs.mkdir(stagingDir, { recursive: true })
-      const stagedPath = path.join(stagingDir, uploadId)
-      const handle = await fs.open(stagedPath, 'w')
-      const upload: PendingUpload = {
-        target,
-        name,
-        mimeType: typeof params.mimeType === 'string' ? params.mimeType : null,
-        expected,
-        received: 0,
-        stagedPath,
-        handle,
-        idleTimer: setTimeout(() => void this.abortUpload(uploadId, 'idle'), UPLOAD_IDLE_MS)
+      const stat = await statUpload(rel)
+      const metadata = {
+        ...classifyFile(name, typeof params.mimeType === 'string' ? params.mimeType : undefined),
+        originalName: name,
+        sizeBytes: stat?.sizeBytes ?? 0
       }
-      this.uploads.set(uploadId, upload)
-      this.debug(
-        `upload ${uploadId} begun — ${name}, ${expected} bytes, ` +
-          (target.kind === 'project'
-            ? `project ${target.projectId}`
-            : target.kind === 'procedure'
-              ? `procedure ${target.procedureId}`
-              : target.kind === 'automation'
-                ? 'an automation'
-                : `conv ${target.conversationId}`)
-      )
-      return {
-        uploadId,
-        ...(target.kind === 'project'
-          ? { projectId: target.projectId }
-          : target.kind === 'procedure'
-            ? { procedureId: target.procedureId }
-            : target.kind === 'automation'
-              ? {}
-              : { conversationId: target.conversationId })
-      }
-    })
-
-    tunnel.onRpc(Rpc.uploadChunk, async (params) => {
-      const uploadId = String(params.uploadId ?? '')
-      const upload = this.uploads.get(uploadId)
-      if (!upload) throw new Error('unknown upload')
-      const offset = clampCount(params.offset, -1)
-      const bytes = Buffer.from(String(params.data ?? ''), 'base64url')
-      // Strict sequencing: the phone sends one chunk at a time, so anything
-      // out of order means a lost or replayed frame — refuse rather than
-      // stitch a corrupt file.
-      if (offset !== upload.received || bytes.length === 0) {
-        await this.abortUpload(uploadId, 'out-of-order chunk')
-        throw new Error('upload chunk out of order')
-      }
-      if (upload.received + bytes.length > upload.expected) {
-        await this.abortUpload(uploadId, 'overran declared size')
-        throw new Error('upload larger than declared')
-      }
-      await upload.handle.write(bytes, 0, bytes.length, offset)
-      upload.received += bytes.length
-      upload.idleTimer.refresh()
-      return { received: upload.received }
-    })
-
-    tunnel.onRpc(Rpc.uploadCommit, async (params) => {
-      const uploadId = String(params.uploadId ?? '')
-      const upload = this.uploads.get(uploadId)
-      if (!upload) throw new Error('unknown upload')
-      this.uploads.delete(uploadId)
-      clearTimeout(upload.idleTimer)
-      await upload.handle.close()
-      if (upload.received !== upload.expected) {
-        await fs.rm(upload.stagedPath, { force: true }).catch(() => undefined)
-        throw new Error(`upload incomplete: ${upload.received} of ${upload.expected} bytes`)
-      }
-      if (upload.target.kind === 'automation') {
-        // Adopted into uploads/automation-<uuid>/; the ABSOLUTE path goes back
-        // because that is what a `file:` marker holds and the engine reads.
-        const file = await adoptUploadedAutomationFile(
-          upload.target.existing,
-          upload.stagedPath,
-          upload.name
-        )
+      if (target.kind === 'automation') {
+        const existing = Array.isArray(target.existing)
+          ? (target.existing as unknown[]).filter((v): v is string => typeof v === 'string')
+          : []
+        const file = await adoptUploadedAutomationFile(existing, abs, name)
         this.log(`automation file added from the phone — ${file.name}`)
-        return { ...this.ownedFileMetadata(file, upload), path: file.path, name: file.name }
+        return { ...metadata, filePath: toWirePath(file.path), path: file.path, name: file.name }
       }
-      if (upload.target.kind === 'procedure') {
-        // Adopted into uploads/procedure-<id>/ and attached in one serialized
-        // write, so the answer already describes the stored procedure — the
-        // phone renders that, never its own optimism.
-        const { procedure, file } = await adoptUploadedProcedureFile(
-          upload.target.procedureId,
-          upload.stagedPath,
-          upload.name
-        )
+      const id = typeof target.id === 'string' ? target.id : ''
+      if (!id) throw new Error('filesAdopt needs a target id')
+      if (target.kind === 'procedure') {
+        const { procedure, file } = await adoptUploadedProcedureFile(id, abs, name)
         this.log(`procedure file added from the phone — ${file.name}`)
         return {
-          ...this.ownedFileMetadata(file, upload),
-          procedureId: upload.target.procedureId,
+          ...metadata,
+          filePath: toWirePath(file.path),
+          procedureId: id,
           procedure: toWireProcedure(procedure)
         }
       }
-      if (upload.target.kind === 'project') {
-        // Adopted into uploads/project-<id>/ and attached in one serialized
-        // write, so the answer already describes the stored project — the
-        // phone renders that, never its own optimism.
-        const { project, file } = await adoptUploadedProjectFile(
-          upload.target.projectId,
-          upload.stagedPath,
-          upload.name
-        )
+      if (target.kind === 'project') {
+        const { project, file } = await adoptUploadedProjectFile(id, abs, name)
         this.log(`project file added from the phone — ${file.name}`)
         return {
-          ...this.ownedFileMetadata(file, upload),
-          projectId: upload.target.projectId,
+          ...metadata,
+          filePath: toWirePath(file.path),
+          projectId: id,
           project: toWireProject(project)
         }
       }
-      const metadata = await saveUploadFromFile(
-        upload.target.conversationId,
-        upload.stagedPath,
-        upload.name,
-        upload.mimeType ?? undefined
-      )
-      this.debug(`upload ${uploadId} committed — ${metadata.filePath}`)
-      return { ...metadata, conversationId: upload.target.conversationId }
+      throw new Error(`unknown adopt target ${String(target.kind)}`)
     })
   }
 
@@ -2133,28 +1774,8 @@ export class MobileChannel {
   }
 
   /**
-   * The attachment-shaped metadata a committed PROJECT upload answers with, so
-   * the phone can file the bytes it just sent under the desktop's chosen path
-   * (a cache hit instead of an immediate re-download) exactly as it does for a
-   * conversation upload.
-   */
-  private ownedFileMetadata(
-    file: { path: string; name: string },
-    upload: PendingUpload
-  ): { type: string; filePath: string; originalName: string; mimeType: string; sizeBytes: number } {
-    const { type, mimeType } = classifyFile(file.name, upload.mimeType ?? undefined)
-    return {
-      type,
-      filePath: path.relative(workspaceRoot(), file.path),
-      originalName: file.name,
-      mimeType,
-      sizeBytes: upload.expected
-    }
-  }
-
-  /**
-   * The rest of a send after the RPC reply: transcribe a voice note, persist
-   * the user message, build the LLM history, dispatch the runner. Failures
+   * The rest of a send after the RPC reply: persist the user message, build
+   * the LLM history, dispatch the runner. Failures
    * here reach the phone as a turn.status error push — the caller wired that.
    */
   private async continueSend(
@@ -2172,9 +1793,9 @@ export class MobileChannel {
       const audio = attachments.find((a) => a.type === 'audio')
       if (!audio) throw new Error('voice note without an audio attachment')
       try {
-        // Same pipeline as a Telegram voice note: conversation-scoped so the
-        // transcript files under speech/conv-…, ffmpeg ensured because a
-        // direct tool call bypasses the agent loop's dependency resolution.
+        // Conversation-scoped so the transcript files under speech/conv-…,
+        // ffmpeg ensured because a direct tool call bypasses the agent loop's
+        // dependency resolution.
         await this.deps.agent.cerebellum.ensureSystemTool('ffmpeg')
         const result = await this.deps.agent.cerebellum.runWithConversation(conversationId, () =>
           this.deps.agent.cerebellum.executeTool('stt_transcribe', { filePath: audio.filePath })
@@ -2234,7 +1855,7 @@ export class MobileChannel {
 
   /**
    * Append the phone's user message to the conversation file. An append-RMW
-   * against the freshest disk state, exactly like the Telegram channel: a
+   * against the freshest disk state, exactly like the terminal channel: a
    * concurrent writer (summarizer, another surface) must never be clobbered
    * by a stale copy. A null disk means the conversation was deleted out from
    * under us — the write is skipped rather than resurrecting the file.
@@ -2272,7 +1893,7 @@ export class MobileChannel {
   }
 
   /**
-   * The LLM-bound history, built the way the Telegram channel builds it so a
+   * The LLM-bound history, built the way the terminal channel builds it so a
    * turn from the phone sees exactly what a turn from anywhere else sees:
    * summarized prefix + replay window, assistant segments with their tool
    * calls and results, voice notes as `<voice_note>` transcripts (the audio
@@ -2313,7 +1934,9 @@ export class MobileChannel {
   /**
    * The attachments a phone message may carry, reduced to the ones that are
    * real: a workspace-relative path that resolves inside the root and whose
-   * bytes are already here (the phone uploads before it sends). Type and mime
+   * bytes are here — already, or fetched now from the org by the sha the
+   * phone uploaded them under (the phone uploads straight to the org before
+   * it sends, so this machine may never have seen the file). Type and mime
    * are re-derived rather than trusted — the wire shape is data, not policy.
    */
   private async sanitizeAttachments(raw: unknown): Promise<MessageAttachment[]> {
@@ -2325,8 +1948,16 @@ export class MobileChannel {
       const filePath = typeof candidate.filePath === 'string' ? candidate.filePath : ''
       if (!filePath || !resolveUploadPath(filePath)) continue
       if (!(await uploadExists(filePath))) {
-        this.log(`attachment dropped — no bytes on disk for ${filePath}`)
-        continue
+        const sha = typeof candidate.sha256 === 'string' ? candidate.sha256.toLowerCase() : ''
+        const fetched =
+          /^[0-9a-f]{64}$/.test(sha) && this.deps.hydrateBlob
+            ? await this.deps.hydrateBlob(filePath, sha)
+            : false
+        if (!fetched) {
+          this.log(`attachment dropped — no bytes on disk or in the org for ${filePath}`)
+          continue
+        }
+        this.debug(`attachment hydrated from the org — ${filePath}`)
       }
       const originalName =
         typeof candidate.originalName === 'string' && candidate.originalName
@@ -2351,21 +1982,6 @@ export class MobileChannel {
     return out
   }
 
-  /** Drop one pending upload and its staged bytes. */
-  private async abortUpload(uploadId: string, reason: string): Promise<void> {
-    const upload = this.uploads.get(uploadId)
-    if (!upload) return
-    this.uploads.delete(uploadId)
-    clearTimeout(upload.idleTimer)
-    await upload.handle.close().catch(() => undefined)
-    await fs.rm(upload.stagedPath, { force: true }).catch(() => undefined)
-    this.debug(`upload ${uploadId} aborted — ${reason}`)
-  }
-
-  private async abortAllUploads(): Promise<void> {
-    await Promise.all([...this.uploads.keys()].map((id) => this.abortUpload(id, 'channel stopped')))
-  }
-
   /**
    * Renders a turn onto the phone. Text deltas stream as they arrive so the
    * phone shows the assistant writing; anything else (tool calls, the finished
@@ -2373,7 +1989,7 @@ export class MobileChannel {
    * a stored conversation and that keeps one shape rather than two.
    *
    * The sink is also this channel's persister. The Electron channel leans on
-   * its renderer to save the turn and Telegram saves inside its own sink —
+   * its renderer to save the turn and the terminal saves inside its own sink —
    * nobody else writes a mobile turn to disk, so without the accumulator here
    * the phone's post-turn refetch would pull a transcript that stops before
    * the answer it just watched stream.
@@ -2409,7 +2025,7 @@ export class MobileChannel {
     /**
      * The live mirror of this turn, throttled — the same message this sink
      * will persist, as it stands right now, under the id it will be saved
-     * with. Identical in kind to what the Electron/Telegram/WhatsApp mirrors
+     * with. Identical in kind to what the Electron and terminal mirrors
      * send the phone, which is the point: a turn started ON the phone was the
      * one case that pushed something else, and that something else was a bare
      * `{turnId, kind}` nudge meaning "re-read the conversation". Mid-turn
@@ -2464,7 +2080,7 @@ export class MobileChannel {
       mirrorTimer.unref?.()
     }
     return {
-      channelId: 'mobile' as TurnSink['channelId'],
+      channelId: 'mobile',
       turnId,
       conversationId,
       onSegment: (segment: Segment) => {
@@ -2476,7 +2092,6 @@ export class MobileChannel {
         // decides to push right now. Workflow/task snapshots upsert by id — a
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
-        else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
@@ -2494,18 +2109,18 @@ export class MobileChannel {
         }
         // A card flipping to running/succeeded should not wait out the text
         // throttle, exactly as in the in-app mirror.
-        scheduleMirror(segment.kind === 'task')
+        scheduleMirror(false)
       },
       onTurnEvent: () => undefined,
       /**
        * A flagged tool call, put to the phone as the card the desktop shows
        * for the same request. The turn parks here until the phone answers,
-       * the turn ends, or the tunnel drops — `drainTurnRequests` owns the
+       * the turn ends, or the phone drops — `drainTurnRequests` owns the
        * last two, and every one of them resolves this promise.
        *
        * The record goes into the accumulator whether or not it is ever
        * answered, so the saved transcript carries the same approval card the
-       * in-app and Telegram histories do; the decision is back-filled where
+       * in-app and terminal histories do; the decision is back-filled where
        * it is made.
        */
       onApprovalRequest: (req: ApprovalRequest & { id: string }) => {
@@ -2521,7 +2136,7 @@ export class MobileChannel {
           })
           // Nothing on the other end can answer — fail closed exactly as this
           // sink did before it could ask at all.
-          if (!this.tunnel?.connected) {
+          if (!this.bridge?.phonePresent) {
             const stored = acc.approvals.get(req.id)
             if (stored) stored.decision = 'denied'
             this.log(`approval ${req.toolCall.name} denied — no phone connected`)
@@ -2544,7 +2159,7 @@ export class MobileChannel {
           // than let it sit out the throttle.
           scheduleMirror(true)
           this.log(`approval requested from the phone — ${req.toolCall.name} (${req.level})`)
-          this.tunnel?.emit(Event.approvalRequest, {
+          this.bridge?.emit(Event.approvalRequest, {
             conversationId,
             turnId,
             id: req.id,
@@ -2566,7 +2181,7 @@ export class MobileChannel {
        */
       onAskUserRequest: (req: AskUserRequest & { id: string }) => {
         return new Promise<AskUserResponse>((resolve) => {
-          if (!this.tunnel?.connected) {
+          if (!this.bridge?.phonePresent) {
             this.debug('ask_user degraded to text — no phone connected')
             resolve({ kind: 'unsupported' })
             return
@@ -2579,7 +2194,7 @@ export class MobileChannel {
           })
           scheduleMirror(true)
           this.log(`ask_user put to the phone — ${req.questions.length} question(s)`)
-          this.tunnel?.emit(Event.askRequest, {
+          this.bridge?.emit(Event.askRequest, {
             conversationId,
             turnId,
             id: req.id,
@@ -2620,7 +2235,7 @@ export class MobileChannel {
 
   /**
    * Resolve every request still parked on the phone — for one turn, or for
-   * all of them when `turnId` is null (the tunnel went away, the channel
+   * all of them when `turnId` is null (the phone went away, the channel
    * stopped). Fails closed, exactly like the Electron channel draining a
    * closed window: approvals deny, asks cancel, and a denied approval is
    * written into the turn's accumulator so the saved transcript records the
@@ -2648,7 +2263,17 @@ export class MobileChannel {
 
   /** Nudge the phone to re-read a conversation whose body just changed. */
   private async pushConversationRefresh(conversationId: string): Promise<void> {
-    this.tunnel?.emit(Event.messageAppended, { conversationId })
+    this.bridge?.emit(Event.messageAppended, { conversationId })
+  }
+
+  /**
+   * A conversation's records landed in the org — the one moment the phone
+   * may fetch its body from the API and expect the turn it just watched to
+   * be in it. Announced from the sync engine's push hook.
+   */
+  pushConversationSynced(conversationId: string, updatedAt: number): void {
+    this.debug(`push synced ${conversationId}`)
+    this.bridge?.emit(Event.conversationSynced, { id: conversationId, updatedAt })
   }
 
   // ------------------------------------------------------------------ push
@@ -2656,12 +2281,12 @@ export class MobileChannel {
   /** A conversation was created or changed — the phone's list updates live. */
   pushConversationUpserted(meta: ConversationMeta): void {
     this.debug(`push conversation ${meta.id} (${meta.messageCount} messages)`)
-    this.tunnel?.emit(Event.conversationUpserted, meta)
+    this.bridge?.emit(Event.conversationUpserted, meta)
   }
 
   pushConversationDeleted(id: string): void {
     this.debug(`push delete ${id}`)
-    this.tunnel?.emit(Event.conversationDeleted, { id })
+    this.bridge?.emit(Event.conversationDeleted, { id })
   }
 
   /** Streaming assistant output for whichever conversation the phone has open. */
@@ -2669,7 +2294,7 @@ export class MobileChannel {
     // Counted before the emit so a snapshot cached in the same tick reads the
     // count INCLUDING this delta exactly when it includes its text.
     this.mirrorDeltaSeq.set(conversationId, (this.mirrorDeltaSeq.get(conversationId) ?? 0) + 1)
-    this.tunnel?.emit(Event.messageDelta, { conversationId, text, seq })
+    this.bridge?.emit(Event.messageDelta, { conversationId, text, seq })
   }
 
   /**
@@ -2679,7 +2304,7 @@ export class MobileChannel {
    * repeat the whole answer on screen once per tick.
    */
   pushMessageSnapshot(conversationId: string, text: string): void {
-    this.tunnel?.emit(Event.messageDelta, { conversationId, text, replace: true })
+    this.bridge?.emit(Event.messageDelta, { conversationId, text, replace: true })
   }
 
   /**
@@ -2717,7 +2342,7 @@ export class MobileChannel {
     if (message !== undefined) {
       const fitted = this.fitMirror(conversationId, message)
       if (fitted === null) {
-        this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
+        this.bridge?.emit(Event.messageAppended, { conversationId, ...prompt })
         return
       }
       this.lastMirrors.set(conversationId, {
@@ -2736,14 +2361,14 @@ export class MobileChannel {
         timer: this.clearMirrorTimer(conversationId)
       })
       this.mirrorRail = { sentAt: Date.now(), sentBytes: fitted.bytes }
-      this.tunnel?.emit(Event.messageAppended, {
+      this.bridge?.emit(Event.messageAppended, {
         conversationId,
         message: fitted.message,
         ...prompt
       })
       return
     }
-    this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
+    this.bridge?.emit(Event.messageAppended, { conversationId, ...prompt })
   }
 
   /** Cancel a conversation's pending mirror flush, if any. Returns null for
@@ -2776,7 +2401,7 @@ export class MobileChannel {
    */
   private deferMirror(conversationId: string): boolean {
     const pace = this.mirrorPace.get(conversationId)
-    const congested = (this.tunnel?.outboundBufferedBytes ?? 0) > MIRROR_BACKLOG_MAX_BYTES
+    const congested = (this.bridge?.outboundBufferedBytes ?? 0) > MIRROR_BACKLOG_MAX_BYTES
     const paceWait = (sent: { sentAt: number; sentBytes: number } | undefined): number =>
       sent
         ? sent.sentAt + Math.ceil((sent.sentBytes * 1000) / MIRROR_BYTES_PER_SEC) - Date.now()
@@ -2857,7 +2482,7 @@ export class MobileChannel {
     this.mirrorPace.delete(conversationId)
     this.mirrorDeltaSeq.delete(conversationId)
     this.lastMirrors.delete(conversationId)
-    this.tunnel?.emit(Event.turnStatus, { conversationId, state, detail })
+    this.bridge?.emit(Event.turnStatus, { conversationId, state, detail })
   }
 
   /**
@@ -2873,13 +2498,22 @@ export class MobileChannel {
   /** True when a phone is actually on the other end — lets callers skip the
    *  work of building a push nobody will receive. */
   get hasPeer(): boolean {
-    return this.tunnel?.connected ?? false
+    return this.bridge?.phonePresent ?? false
   }
 
-  /** Any settings change — the phone refreshes the affected screen. */
-  pushConfigChanged(section?: string): void {
-    this.debug(`push config change (${section ?? 'all'})`)
-    this.tunnel?.emit(Event.configChanged, { section: section ?? null, at: Date.now() })
+  /**
+   * Any settings change — the phone refreshes the affected screen. The fresh
+   * snapshot rides along when the caller has one, so the phone applies it
+   * without a round trip; otherwise the phone re-reads (the RPC while this
+   * desktop is up, the synced file when it is not).
+   */
+  pushConfigChanged(section?: string, snapshot?: Record<string, unknown>): void {
+    this.debug(`push config change (${section ?? 'all'}${snapshot ? ', with snapshot' : ''})`)
+    this.bridge?.emit(Event.configChanged, {
+      section: section ?? null,
+      at: Date.now(),
+      ...(snapshot ? { snapshot } : {})
+    })
   }
 
   /**
@@ -2892,11 +2526,11 @@ export class MobileChannel {
   pushVariablesChanged(
     variables: Array<{ name: string; value: string; sensitive: boolean }>
   ): void {
-    this.tunnel?.emit(Event.variablesChanged, { variables, at: Date.now() })
+    this.bridge?.emit(Event.variablesChanged, { variables, at: Date.now() })
   }
 
   pushUsageChanged(): void {
-    this.tunnel?.emit(Event.usageChanged, { at: Date.now() })
+    this.bridge?.emit(Event.usageChanged, { at: Date.now() })
   }
 
   /**
@@ -2906,17 +2540,17 @@ export class MobileChannel {
    * phone echoes back here too — which is what confirms it landed.
    */
   pushProjectsChanged(): void {
-    this.tunnel?.emit(Event.projectsChanged, { at: Date.now() })
+    this.bridge?.emit(Event.projectsChanged, { at: Date.now() })
   }
 
   /** `brain/procedures.json` changed — same contract as projects. */
   pushProceduresChanged(): void {
-    this.tunnel?.emit(Event.proceduresChanged, { at: Date.now() })
+    this.bridge?.emit(Event.proceduresChanged, { at: Date.now() })
   }
 
   /** The scheduler reloaded: heartbeat.md changed, whatever wrote it. */
   pushAutomationsChanged(): void {
-    this.tunnel?.emit(Event.automationsChanged, { at: Date.now() })
+    this.bridge?.emit(Event.automationsChanged, { at: Date.now() })
   }
 
   /**
@@ -2925,7 +2559,7 @@ export class MobileChannel {
    * since they share the pool but never gate an automation card.
    */
   pushAutomationRuns(snapshot: { running: RunningJobInfo[]; queued: QueuedJobInfo[] }): void {
-    this.tunnel?.emit(Event.automationRunsChanged, toWireRuns(snapshot))
+    this.bridge?.emit(Event.automationRunsChanged, toWireRuns(snapshot))
   }
 
   /**
@@ -2943,7 +2577,7 @@ export class MobileChannel {
     const isEdge = status === null || this.lastReindexPush === 0
     if (!isEdge && now - this.lastReindexPush < REINDEX_PUSH_THROTTLE_MS) return
     this.lastReindexPush = status === null ? 0 : now
-    this.tunnel?.emit(Event.reindexChanged, { status })
+    this.bridge?.emit(Event.reindexChanged, { status })
   }
 
   /**
@@ -2956,81 +2590,50 @@ export class MobileChannel {
    * throttle swallows.
    */
   pushUpdaterState(state: UpdaterWireState): void {
-    this.tunnel?.emit(Event.updaterChanged, { state })
+    this.bridge?.emit(Event.updaterChanged, { state })
   }
 
   // ----------------------------------------------------------------- status
 
   getStatus(): MobileStatus {
+    const live = new Set((this.bridgeState?.phones ?? []).map((p) => p.deviceId))
     return {
-      paired: Boolean(this.pairing?.peerPublicKey),
-      pairing: this.pairing
-        ? {
-            method: this.pairing.method,
-            pairedAt: this.pairing.pairedAt,
-            lastSeenAt: this.pairing.lastSeenAt,
-            deviceName: this.pairing.deviceName,
-            platform: this.pairing.platform ?? null,
-            model: this.pairing.model ?? null,
-            osVersion: this.pairing.osVersion ?? null,
-            appVersion: this.pairing.appVersion ?? null
-          }
-        : null,
-      tunnel: this.tunnelState,
+      paired: this.phones.length > 0,
+      phones: this.phones.map((d) => {
+        const info = this.phoneInfo.get(d.id)
+        return {
+          id: d.id,
+          name: d.name,
+          platform: info?.platform ?? null,
+          model: info?.model ?? null,
+          osVersion: info?.osVersion ?? null,
+          appVersion: info?.appVersion ?? d.app_version ?? null,
+          pairedAt: Date.parse(d.created_at) || 0,
+          lastSeenAt: d.last_seen_at ? Date.parse(d.last_seen_at) || null : null,
+          connected: live.has(d.id)
+        }
+      }),
+      bridge: this.bridgeState,
       offer: this.offer,
-      storage: storageBackend(),
       verbose: this.verbose,
       notificationsEnabled: this.notificationsEnabled,
       runCards: this.runCards,
-      relayUrl: this.relayUrl,
-      defaultRelayUrl: this.deps.relayUrl ?? DEFAULT_RELAY_URL
+      apiBase: API_BASE
     }
   }
 
   private emitStatus(): void {
     // Every state change flows through here, which makes it the one place
-    // the notify_phone tool's registration is kept honest — pairing formed
-    // or dropped, phoneId learned at hello, the settings toggle.
+    // the notify_phone tool's registration is kept honest — a claim, an
+    // unpair, the settings toggle.
     this.syncPhoneCapability()
     this.deps.onStatus?.(this.getStatus())
   }
 
+  /** A phone is on the bridge right now. */
   get connected(): boolean {
-    return this.tunnel?.connected ?? false
+    return this.bridge?.phonePresent ?? false
   }
-}
-
-/**
- * Canonical form for a relay endpoint a user typed or pasted. Accepts the
- * https:// page URL of a relay (the same host serves both) and bare hosts;
- * returns `wss://host[/path]` with no trailing slash. Null or empty means
- * "no override — use the default". Throws when the input cannot name a relay.
- */
-export function normalizeRelayUrl(raw: string | null): string | null {
-  if (raw === null) return null
-  const trimmed = raw.trim()
-  if (!trimmed) return null
-  // Recognize an explicit scheme first, so `ftp://x` is rejected instead of
-  // being swallowed as a host named "ftp" by the bare-host fallback below.
-  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(trimmed)?.[1]?.toLowerCase() ?? null
-  if (scheme !== null && !['ws', 'wss', 'http', 'https'].includes(scheme))
-    throw new Error(`not a relay URL: ${raw}`)
-  let candidate: string
-  if (scheme === 'https') candidate = `wss://${trimmed.slice('https://'.length)}`
-  else if (scheme === 'http') candidate = `ws://${trimmed.slice('http://'.length)}`
-  else if (scheme === null) candidate = `wss://${trimmed}`
-  else candidate = trimmed
-  const parsed = new URL(candidate) // throws on garbage
-  if ((parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') || !parsed.hostname)
-    throw new Error(`not a relay URL: ${raw}`)
-  // A scheme-less input must look like a host (a dot or a port) — otherwise a
-  // pairing code pasted into the wrong field becomes wss://K7M9-2QXR.
-  if (scheme === null && !parsed.hostname.includes('.') && !parsed.port)
-    throw new Error(`not a relay URL: ${raw}`)
-  // The tunnel appends `/t/<rid>` — a trailing slash would double up, while a
-  // path prefix (a relay mounted under one) passes through untouched.
-  const prefix = parsed.pathname.replace(/\/+$/, '')
-  return `${parsed.protocol}//${parsed.host}${prefix}`
 }
 
 /**
@@ -3061,57 +2664,6 @@ export function sanitizeReflectionPatch(params: unknown): ReflectionWirePatch {
   }
   if (typeof raw.cards === 'boolean') patch.cards = raw.cards
   return patch
-}
-
-/** A wire number as a byte count: a non-negative safe integer, else the
- *  fallback. Offsets and lengths come from the peer and index into files —
- *  NaN, negatives and floats must never reach an fs call. */
-function clampCount(value: unknown, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return fallback
-  return value
-}
-
-/** Desktop conversation file → the phone's message shape. */
-function toWireConversation(file: ConversationFile): Record<string, unknown> {
-  return {
-    id: file.id,
-    title: file.title,
-    model: file.model ?? null,
-    channel: (file as { channel?: string }).channel ?? null,
-    icon: (file as { icon?: string }).icon ?? null,
-    createdAt: file.createdAt,
-    updatedAt: file.updatedAt,
-    stats: (file as { stats?: unknown }).stats ?? null,
-    messages: (file.messages ?? []).map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp,
-      // Attachments and tool payloads travel verbatim; the phone's renderers
-      // already understand the desktop's shapes. Approvals and tool timings
-      // ride along for the same reason: they are what the approval card and
-      // the tool card's elapsed time are drawn from, and a transcript without
-      // them renders a decided approval as a bare tool call. voicePrompt is
-      // here for the same reason: it is how the phone knows this message's
-      // content is a transcript of the audio right under it, and so must not
-      // be printed as a bubble. Without it the stored copy landing at the end
-      // of a turn would put the transcript back under the player that the
-      // live copy correctly kept out.
-      payload: stripUndefined({
-        attachments: (message as { attachments?: unknown }).attachments,
-        segments: (message as { segments?: unknown }).segments,
-        approvals: (message as { approvals?: unknown }).approvals,
-        toolTimings: (message as { toolTimings?: unknown }).toolTimings,
-        voicePrompt: (message as { voicePrompt?: unknown }).voicePrompt,
-        // How the turn ended. `error` is what the phone's provider error card
-        // synthesizes from when a failure carries no structured providerErrors
-        // on its turn_end — without these a failed turn reads as a normal
-        // reply once the stored body replaces the live mirror.
-        stopReason: (message as { stopReason?: unknown }).stopReason,
-        error: (message as { error?: unknown }).error
-      })
-    }))
-  }
 }
 
 /**
@@ -3267,9 +2819,4 @@ function sanitizeAskResponse(raw: unknown): AskUserResponse {
   }
   if (answers.length === 0) return { kind: 'canceled' }
   return { kind: 'answered', answers }
-}
-
-function stripUndefined(value: Record<string, unknown>): Record<string, unknown> | undefined {
-  const entries = Object.entries(value).filter(([, v]) => v !== undefined)
-  return entries.length ? Object.fromEntries(entries) : undefined
 }

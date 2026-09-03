@@ -2,12 +2,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 )
 
-import {
-  useDemoConfig,
-  type CompactionRunRecord,
-  type ConfigSnapshot,
-  type DemoProvider
-} from '@/state/demoConfig'
+import { useDemoConfig, type CompactionRunRecord, type ConfigSnapshot } from '@/state/demoConfig'
 
 /** The minimum a snapshot must carry — every compaction field is optional. */
 function snapshot(compaction?: ConfigSnapshot['compaction']): ConfigSnapshot {
@@ -16,50 +11,24 @@ function snapshot(compaction?: ConfigSnapshot['compaction']): ConfigSnapshot {
     mcpServers: [],
     variables: [],
     services: {
-      google: { status: 'inactive', projectId: '' },
-      github: [],
-      notion: [],
       braveEnabled: false,
-      memesEnabled: false,
       sttModel: 'base',
       ttsVoice: 'af_bella',
       ttsSpeed: '1.0',
       screenshotMaxWidth: '1280',
       screenshotFormat: 'jpeg'
     },
-    channels: {
-      telegram: {
-        enabled: false,
-        allowedUserIds: '',
-        autoRefresh: true,
-        staleHours: '3',
-        verbose: false,
-        hideAutomations: true
-      },
-      whatsapp: {
-        enabled: false,
-        allowedNumbers: '',
-        autoRefresh: true,
-        staleHours: '3',
-        verbose: false,
-        hideAutomations: true
-      }
-    },
+    channels: {},
     llm: {
       brainProvider: 'anthropic',
       brainModel: 'claude-opus-4-8',
-      chatMode: 'single',
-      localOnly: false,
-      restrictPowerfulModels: true,
-      local: { enabled: false, model: null },
-      providers: []
+      chatMode: 'single'
     },
     preferences: {
       launchAtStartup: false,
       bypassPermissions: false,
       blockCredentials: false,
-      weekStartsOn: 1,
-      updatesEnabled: true
+      weekStartsOn: 1
     },
     compaction
   }
@@ -148,96 +117,58 @@ describe('demoConfig compaction', () => {
   })
 })
 
-describe('demoConfig local engine', () => {
-  it('takes Ollama’s state and models folder from the snapshot', () => {
+/**
+ * The cloud desktop's snapshot no longer carries the personal edition's local
+ * engine, provider keys, Brave key or desktop-updates flag — and an older
+ * bundle still does. Both must land the same way: the fields are not read, so
+ * nothing about them reaches the store, the screen, or the wire.
+ */
+describe('demoConfig org lane', () => {
+  it('reads the current model and ignores the personal edition’s fields', () => {
     const base = snapshot()
-    useDemoConfig.getState().applySnapshot({
-      ...base,
-      llm: { ...base.llm, local: { enabled: true, model: 'gemma4:e2b', running: true } },
-      preferences: { ...base.preferences, ollamaModelsFolder: '/Users/demo/.ollama/models' }
-    })
-    const state = useDemoConfig.getState()
-    expect(state.ollamaRunning).toBe(true)
-    expect(state.localModel).toBe('gemma4:e2b')
-    expect(state.ollamaModelsFolder).toBe('/Users/demo/.ollama/models')
-  })
-
-  // A bundle published before the local card reported engine state carries no
-  // `running`: "not running" is the only honest reading of a probe nobody ran,
-  // and a stale true from a previous sync must not survive the new snapshot.
-  it('falls back to not running when the bundle predates the flag', () => {
-    useDemoConfig.setState({ ollamaRunning: true })
-    useDemoConfig.getState().applySnapshot(snapshot())
-    const state = useDemoConfig.getState()
-    expect(state.ollamaRunning).toBe(false)
-    expect(state.ollamaModelsFolder).toBe('')
-  })
-
-  it('offers every model the desktop has pulled', () => {
-    const base = snapshot()
-    useDemoConfig.getState().applySnapshot({
+    const legacy = {
       ...base,
       llm: {
         ...base.llm,
-        local: {
-          enabled: true,
-          model: 'gemma4:e2b',
-          running: true,
-          models: ['deepseek-r1:8b', 'gemma4:e2b', 'qwen3.5:9b']
-        }
-      }
-    })
-    expect(useDemoConfig.getState().localModels).toEqual([
-      'deepseek-r1:8b',
-      'gemma4:e2b',
-      'qwen3.5:9b'
-    ])
+        localOnly: true,
+        restrictPowerfulModels: true,
+        local: { enabled: true, model: 'gemma4:e2b', running: true, models: ['gemma4:e2b'] },
+        providers: [{ id: 'xai', model: 'grok-5', hasKey: true, apiKey: 'xai-secret', models: [] }]
+      },
+      preferences: { ...base.preferences, updatesEnabled: false, ollamaModelsFolder: '/models' },
+      services: { ...base.services, braveApiKey: 'BSA-secret', videoApiKey: 'sk-secret' }
+    } as unknown as ConfigSnapshot
+    useDemoConfig.getState().applySnapshot(legacy)
+    const state = useDemoConfig.getState() as unknown as Record<string, unknown>
+    expect(state.brainProvider).toBe('anthropic')
+    expect(state.brainModel).toBe('claude-opus-4-8')
+    for (const key of [
+      'localOnly',
+      'localEnabled',
+      'localModel',
+      'localModels',
+      'ollamaRunning',
+      'ollamaModelsFolder',
+      'providers',
+      'restrictPowerfulModels',
+      'updatesEnabled',
+      'braveApiKey',
+      'videoApiKey'
+    ]) {
+      expect(state[key]).toBeUndefined()
+    }
   })
 
-  // A bundle from before the tag list shipped still has to open on something:
-  // the chosen model alone, never an empty sheet.
-  it('falls back to the chosen model when the bundle carries no list', () => {
+  // Web search is the organization's lane: the snapshot says whether it is
+  // ready, and that is the whole of what the phone holds about it.
+  it('carries the web-search lane as status only', () => {
     const base = snapshot()
-    useDemoConfig.getState().applySnapshot({
-      ...base,
-      llm: { ...base.llm, local: { enabled: true, model: 'gemma4:e2b' } }
-    })
-    expect(useDemoConfig.getState().localModels).toEqual(['gemma4:e2b'])
-  })
-
-  // Engine down, nothing pulled, or a snapshot with neither: the picker has
-  // no options and the card says so instead of rendering an empty control.
-  it('offers nothing when there is no model and no list', () => {
-    useDemoConfig.setState({ localModels: ['stale:7b'] })
-    useDemoConfig.getState().applySnapshot(snapshot())
-    expect(useDemoConfig.getState().localModels).toEqual([])
-  })
-})
-
-/** A snapshot carrying one provider, with whatever key state the case needs. */
-function withProvider(provider: DemoProvider): ConfigSnapshot {
-  const base = snapshot()
-  return { ...base, llm: { ...base.llm, providers: [provider] } }
-}
-
-describe('demoConfig provider keys', () => {
-  it('carries the bundle key through to the Model panel', () => {
-    const apiKey = 'xai-zyThW2ITW8goiJ8sQhDuCfdA0jXk1pGKKEIvl9PnoS5Lsx'
     useDemoConfig
       .getState()
-      .applySnapshot(withProvider({ id: 'xai', model: 'grok-5', hasKey: true, apiKey, models: [] }))
-    expect(useDemoConfig.getState().providers[0]?.apiKey).toBe(apiKey)
-  })
-
-  // Bundles published before keys shipped carry hasKey but no apiKey — the
-  // field must render empty rather than the string "undefined".
-  it('leaves the key unset when the bundle predates it', () => {
-    useDemoConfig
-      .getState()
-      .applySnapshot(withProvider({ id: 'zai', model: 'glm-5', hasKey: true, models: [] }))
-    const [provider] = useDemoConfig.getState().providers
-    expect(provider?.hasKey).toBe(true)
-    expect(provider?.apiKey ?? '').toBe('')
+      .applySnapshot({ ...base, services: { ...base.services, braveEnabled: true } })
+    expect(useDemoConfig.getState().braveEnabled).toBe(true)
+    useDemoConfig.getState().applySnapshot(base)
+    expect(useDemoConfig.getState().braveEnabled).toBe(false)
   })
 })
 

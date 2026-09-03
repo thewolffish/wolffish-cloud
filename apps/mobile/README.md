@@ -2,34 +2,38 @@
   <img src="https://cdn.wolffi.sh/generic/banner.jpg" alt="wolffish" />
 </picture>
 
-# wolffish-mobile
+# wfc-mobile
 
 **Your agent's machine, in your pocket.**
 
-Wolffish Mobile is the official phone app for [Wolffish](https://github.com/thewolffish/wolffish-app), the personal AI agent that runs on your own computer. It is deliberately **not** a second agent and not a cloud account: the desktop holds the models, the capabilities, the memory and the files, and the phone is a remote for it — paired once by scanning a QR code, then connected over an end-to-end encrypted tunnel that no server can read.
+> **Status in wolffish-cloud**
+>
+> The phone is a signed-in device of the organization. Pairing (QR or a typed code, offered by the desktop) claims a session at the organization API (`api.wolffi.sh`) — no password on the phone — and from then on the app reads and writes everything durable there: conversations, settings, files, usage. Live turns run on the desktop and travel through the API's per-user **bridge** (a Durable Object), so the desktop app has to be running for the phone to run anything, and the phone says so plainly when it is not. There is no relay and no end-to-end cipher any more: the organization's API is the trusted party on both ends, and it already holds the record. Where this document names the desktop, it means [`apps/desktop`](../desktop) in this monorepo.
+
+Wolffish Cloud Mobile is the phone app for Wolffish Cloud, the employee agent that runs on the user's own computer. It is deliberately **not** a second agent: the desktop holds the models, the capabilities, the memory and the files, and the phone is a second view of the same account — paired once, then kept level by the organization.
 
 Built with React Native and Expo. One codebase, iOS and Android, English and Arabic with full RTL.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.48-green.svg)](https://wolffi.sh)
-[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](<>)
 
 ---
 
 ## Get the app
 
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://apps.apple.com/us/app/wolffish/id6792797989"><img src="https://cdn.wolffi.sh/generic/app-store.svg" width="168" height="56" alt="Download on the App Store" /></a>
-    </td>
-    <td align="center">
-      <a href="https://play.google.com/store/apps/details?id=sh.wolffi.mobile"><img src="https://cdn.wolffi.sh/generic/google-play.svg" width="189" height="56" alt="Get it on Google Play" /></a>
-    </td>
-  </tr>
-</table>
+**Not on a store yet.** This app is a distinct application from the personal edition's phone app, and it has no listing of its own — build it from this repository (see [Development](#development)). The App Store and Play listings under _Wolffish_ belong to the **personal** edition and install a different app, which pairs with the personal desktop and cannot pair with an organization.
 
-Requires the [Wolffish desktop app](https://github.com/thewolffish/wolffish-app) on your computer to pair with. Or open the app without pairing to explore the built-in demo.
+|                  | This app                                 | Personal edition     |
+| ---------------- | ---------------------------------------- | -------------------- |
+| Bundle / package | `sh.wolffi.cloud.mobile`                 | `sh.wolffi.mobile`   |
+| URL scheme       | `wolffishcloud://`                       | `wolffish://`        |
+| Expo project     | `wolffish-cloud-mobile`                  | `wolffish-mobile`    |
+| Pairs with       | The Wolffish Cloud desktop + the org API | The personal desktop |
+
+Both can be installed on the same device at once; nothing they own collides.
+
+Requires the Wolffish Cloud desktop app ([`apps/desktop`](../desktop) in this repository) on your computer to pair with. Or open the app without pairing to explore the built-in demo.
 
 ---
 
@@ -82,11 +86,11 @@ Requires the [Wolffish desktop app](https://github.com/thewolffish/wolffish-app)
 
 - **Chat with your desktop agent from anywhere** — the same turns, the same tool cards, the same streamed reply your desktop shows.
 - **Answer the agent while you're away** — multiple-choice questions and dangerous-tool approvals park the turn and arrive as cards on the phone.
-- **Run the desktop's settings** — every panel the desktop has, rendered from a live snapshot: model and providers, capabilities, channels, projects, procedures, automations, knowledge, variables, MCP servers, services.
+- **Run the desktop's settings** — every panel the desktop has, rendered from a snapshot the desktop keeps synced to the organization (fresh from the desktop itself while it is up): model, capabilities, channels, projects, procedures, automations, knowledge, variables, MCP servers, services.
 - **Edit, not just read** — variables, capability toggles, project and procedure CRUD, the automations file, the reflection schedule and turn scores are all written back to the desktop through the same code paths its own panels use.
-- **Open what the agent made** — images, video, audio, PDFs, spreadsheets, code and charts stream out of the desktop's workspace on demand and cache locally.
-- **Send it work** — text, voice notes, photos, videos and documents, uploaded on send.
-- **Be told when something happens** — model-initiated notifications, delivered in-band when the tunnel is up and by push when it isn't.
+- **Open what the agent made** — images, audio, PDFs, spreadsheets, code and charts come from the organization's copy of the workspace on demand and cache locally.
+- **Send it work** — text, voice notes, photos, videos and documents, uploaded to the organization on send and fetched by the desktop when the turn runs.
+- **Be told when something happens** — model-initiated notifications, delivered in-band when the app is open and by push when it isn't.
 - **Try it with no desktop at all** — [demo mode](#demo-mode) runs the whole app against a real, anonymized dataset.
 
 ---
@@ -94,79 +98,73 @@ Requires the [Wolffish desktop app](https://github.com/thewolffish/wolffish-app)
 ## How it connects
 
 ```
-   iPhone / Android                relay.wolffi.sh                 Desktop
-  ┌──────────────────┐          ┌────────────────────┐        ┌──────────────────┐
-  │  wolffish-mobile │──wss────▶│  Cloudflare Worker │◀───wss─│   wolffish-app   │
-  │     "guest"      │          │  + Durable Object  │        │      "host"      │
-  └──────────────────┘          └────────────────────┘        └──────────────────┘
-          │                       forwards opaque                      │
-          └───────────── Noise-encrypted, end to end ──────────────────┘
+   iPhone / Android                 api.wolffi.sh                     Desktop
+  ┌──────────────────┐        ┌──────────────────────┐        ┌──────────────────┐
+  │    wfc-mobile    │──https─▶│  REST: config, index, │◀─https─│   apps/desktop   │
+  │  (signed in)     │        │  records, files, usage │        │  (signed in)     │
+  │                  │──wss──▶│  UserBridge (per user) │◀──wss──│                  │
+  └──────────────────┘        └──────────────────────┘        └──────────────────┘
+                              rpc ▶ · ◀ events · presence
 ```
 
-### The relay is a rendezvous, not a server
+### One account, two devices
 
-`relay.wolffi.sh` matches exactly one **host** (your desktop) with one **guest** (your phone) that presented the same 256-bit rendezvous ID, and forwards binary records between them. It never parses a payload, never stores conversation data, and cannot decrypt anything — every frame is sealed end to end before it reaches the socket. The relay URL travels with the pairing, so a self-hosted relay works with no code change.
-
-The one deliberate exception is `CONTROL` records: plaintext JSON addressed to the relay itself, used only by the [push-notification control plane](#notifications), terminated there and never forwarded.
+The phone is a **device of the same organization account** the desktop is signed in to. It holds a session of its own — an access token that refreshes on a rotating refresh token, kept in the OS keystore — and every request it makes carries it. There is nothing to pin and no key to exchange: the organization's session is the trust, and unpairing is the organization revoking it.
 
 ### Pairing
 
-The desktop shows two ways in, and they differ only in how much the phone learns up front:
+The desktop asks the organization for an **offer**: an 8-character code to type and a longer token the QR carries. Both are single-use and live three minutes. The phone claims whichever it saw and receives its session — the same kind a password login issues — plus the name of the desktop that offered it. The QR also names the API it was minted at, so a fork's desktop points its phones at the fork's API for the life of the pairing.
 
-| | **QR** | **Code** |
-|---|---|---|
-| Carries | Relay URL + desktop public key + pairing secret | Pairing secret only (8 characters) |
-| Handshake | `Noise_IKpsk2_25519_ChaChaPoly_SHA256` — one round trip | `Noise_XXpsk3_…` — one extra message |
-| Desktop key | Already known | Learned inside the handshake and **pinned** |
+|                     | **QR**                       | **Code**                                   |
+| ------------------- | ---------------------------- | ------------------------------------------ |
+| Carries             | API address + one-time token | One-time code (8 characters)               |
+| Where it is claimed | The API in the payload       | The app's built-in API                     |
+| Entropy             | 256 bits                     | 40 bits, rate-limited, three-minute window |
 
-The pairing secret enters both patterns as the pre-shared key, so only a device that actually saw the QR or the code can complete a handshake — a hostile relay that knows the rendezvous ID still cannot sit in the middle. Ephemeral keys give forward secrecy. After a code pairing the desktop's key is pinned, and every reconnect from then on uses the cheaper `IK` path.
+### The bridge
 
-The phone's long-lived keypair and the pairing record live in the **OS keystore** (Keychain on iOS, Keystore-encrypted preferences on Android), readable only while the device is unlocked — never in AsyncStorage.
+Turns run on the desktop, so a message sent from the phone has to reach a running desktop and its reply has to stream back. That is the **bridge**: one Durable Object per user inside the API, with the desktop parked on one WebSocket for as long as it is signed in and the phone on another while it is on screen. It forwards plain JSON — the phone's RPCs, the desktop's events — and answers **presence**, which is the phone's fast "is my desktop up" check on every launch. Nothing durable travels through it, and nothing on it is stored except the phone's push token.
 
 ### Reconnecting is the normal case
 
-iOS suspends a backgrounded app within seconds, so the socket dies every time you leave the app. That is the designed cycle, not an error: the desktop parks on the relay waiting, and returning re-handshakes with fresh session keys in well under a second.
+iOS suspends a backgrounded app within seconds, so the phone's socket dies every time you leave the app. Returning re-dials in well under a second: a token from the keystore, one TLS handshake, one upgrade. Two facts are kept apart on purpose — whether the **organization** is reachable (the socket is up) and whether the **desktop** is on the bridge — because a phone whose desktop is asleep is not broken: it reads everything from the organization and simply cannot run a turn, which the UI says instead of spinning.
 
-Two jobs are kept deliberately separate:
-
-- **Getting connected** belongs to the tunnel: exponential-backoff retries, a 15-second timeout on a dial that hangs, and a liveness timeout that tears down a socket that has gone quiet even when the OS still reports it open. Returning to the app only nudges it past the remaining backoff.
-- **Catching up** hangs off the *connection*, not off the app opening — those are not the same moment. Foregrounding often finds the network still down; a catch-up wired to that alone would leave the phone stale until the user happened to open it again. Instead, every connection that forms brings the phone level with nobody watching.
+- **Getting connected** belongs to the bridge client: exponential-backoff retries, a 15-second timeout on a dial that hangs, and a liveness timeout that tears down a socket that has gone quiet even when the OS still reports it open. Returning to the app only nudges it.
+- **Catching up** hangs off the _organization_ being reachable, not off the desktop being there and not off the app opening. Every time the socket forms, the index, the settings and usage are brought level with the organization; only the desktop-dependent seeds (active runs, the overlay stack, the updater) wait for the desktop to appear.
 
 ---
 
 ## How it syncs
 
-**The desktop owns the truth. The phone mirrors it and asks it to change things.** There is no merge, no CRDT, no offline write queue — offline edits do not exist. When the tunnel is down, editable surfaces go read-only rather than accepting a change with nowhere to land.
+**The organization holds the record; the desktop writes it; the phone mirrors it and asks the desktop to change things.** There is no merge, no CRDT, no offline write queue — offline edits do not exist. When the desktop is not on the bridge, editable surfaces go read-only rather than accepting a change with nowhere to land.
 
 ### Down: metadata first, content on demand
 
 A real workspace is hundreds of conversations and close to a gigabyte of message bodies, and a phone opens one conversation at a time. So the first sync pulls three things and nothing else:
 
-1. **The config snapshot** — everything the settings screens render, in one object.
-2. **The conversation index** — metadata only: title, model, channel, icon, project, counts, stats, summary.
-3. **Usage** — the ledger the Usage screen aggregates on device.
+1. **The config snapshot** — everything the settings screens render, in one object. Asked of the desktop itself while it is on the bridge (`desktop.config.snapshot`); otherwise the copy the desktop keeps synced to the organization as `brain/mobile/snapshot.json`.
+2. **The conversation index** — metadata only, paged from the organization's `since` cursor with the envelope fields the desktop syncs (model, channel, icon, project, stats, summary) and a message count.
+3. **Usage** — the organization's ledger, folded per day for the Usage screen.
 
-A conversation's **body** is fetched the moment you open it and cached in SQLite, stamped with the desktop's own `updatedAt` (never the phone's clock — the two aren't synchronized, and comparing across them either refetches on every open or, worse, never refetches again). Its **files** are prefetched right behind it.
+A conversation's **body** is fetched the moment you open it — the organization's record pages, rebuilt exactly as the desktop rebuilds a transcript after a purge (newest version per message, one envelope, seq order) — cached in SQLite, and stamped with the desktop's own `updatedAt` from the envelope (never the phone's clock). Its files are prefetched right behind it.
 
 Afterwards the phone stays current two ways:
 
-- **Pushes** for anything that moves: conversations created or deleted, config changed, variables changed, usage moved, projects / procedures / automations changed, the automation run pool, memory reindex progress, and turn scores cast on any surface.
-- **Reconcile** on every connection: refetch the config, pull the index since the stored cursor, and prune anything the desktop no longer lists. An incremental pull can only describe what still exists, so the prune is what makes a deletion during a long absence converge.
+- **Pushes** over the bridge for anything that moves while the desktop is up: conversations created or deleted, config changed (with the fresh snapshot riding along), variables changed, usage moved, projects / procedures / automations changed, the automation run pool, memory reindex progress — and `conversation.synced`, which the desktop sends once a conversation's records have actually landed in the organization, the one moment a body may be refetched and expected to carry the turn just watched.
+- **Reconcile** every time the socket forms and on every return to the foreground: refetch the snapshot, pull the index since the stored cursor — tombstones included, so a deletion during a long absence converges without an id sweep — and refresh usage.
 
 The cursor lives in SQLite beside the rows it describes, so it can never disagree with them — clear the database and the phone resyncs from zero automatically.
 
 ### Up: the outbox
 
-The config store is a mirror that every refresh overwrites wholesale, which makes an ordinary optimistic write dangerous: a snapshot fetched an instant *before* an edit can land an instant *after* it and silently put the old value back under the user's thumb.
+The config store is a mirror that every refresh overwrites wholesale, which makes an ordinary optimistic write dangerous: a snapshot fetched an instant _before_ an edit can land an instant _after_ it and silently put the old value back under the user's thumb.
 
 Two ideas prevent it, shared by every phone-editable key:
 
 - A key is **dirty** from its first unsent local edit until the desktop acknowledges the latest one. While dirty, no snapshot may overwrite it.
 - Every key carries an **epoch** that moves on each local edit and each settlement. A refresh captures epochs before fetching and compares after — any movement means the snapshot raced a write, so the local value stays and the next quiet refresh lands desktop truth.
 
-Sends are **whole-value, debounced, and one-in-flight**, so a typing burst becomes a few writes and the desktop's arrival order is the only order there is. There are **no retries** by design: resending a stale value could overwrite a newer edit made elsewhere, so a failed send abandons the local claim and asks for a refresh instead. Honest reversion beats silent divergence.
-
-Every write is applied by the desktop through the exact function its own panel calls, so a change from either screen is one write serialized by one mutation tail — and the push that follows is the confirmation both screens render.
+Sends are **whole-value, debounced, and one-in-flight**, and go to the desktop over the bridge, which applies each through the exact function its own panel calls and syncs the result to the organization. There are **no retries** by design: resending a stale value could overwrite a newer edit made elsewhere, so a failed send abandons the local claim and asks for a refresh instead.
 
 ---
 
@@ -182,28 +180,28 @@ The desktop runs every turn; the phone hands over the prompt and renders what co
 
 Turns that park waiting on you — the agent's multiple-choice **questions** and **approval requests** for flagged tool calls — arrive as cards anchored at the tool result they belong to. Both fail closed: an unanswered request is denied when its turn ends or the phone goes away.
 
-Anything the desktop is busy with in the background — automations, compaction, nightly reflection, a memory reindex — shows as a card in an overlay stack. It is in-memory only and cleared the instant the tunnel drops, because every card asserts something is happening *right now* on a machine the phone can no longer see.
+Anything the desktop is busy with in the background — automations, compaction, nightly reflection, a memory reindex — shows as a card in an overlay stack. It is in-memory only and cleared the instant the desktop leaves the bridge, because every card asserts something is happening _right now_ on a machine the phone can no longer see.
 
 ---
 
 ## Files
 
-Conversation media keeps the desktop's own workspace-relative paths. When a file is needed, its bytes come down the tunnel in 256 KiB chunks riding ordinary RPC frames, land in `Documents/workspace/…` and are tracked in an LRU index.
+Conversation media keeps the desktop's own workspace-relative paths, and the organization holds the newest blob under every one of them. When a file is needed, its bytes come straight from the API — by content hash when the attachment carries one, by path otherwise — land in `Documents/workspace/…` and are tracked in an LRU index.
 
 The cache budget is **50 GB**, and eviction releases the **least recently used conversation whole** — never a file out of a recent one. A dropped file is simply refetched the next time its conversation is opened.
 
-Uploads go the other way through the same shape: staged locally the moment you attach them (so the message renders immediately), then streamed on send. The **desktop chooses the final path**, resolving collisions Finder-style, and the answer is what the phone stores. The same three frames retarget at a project's file list when a `projectId` is supplied.
+Uploads go the other way: staged locally the moment you attach them (so the message renders immediately), then uploaded to the organization on send under a path the phone chooses the way the desktop would (`uploads/conv-<id>/<name>`, renamed Finder-style when the organization already holds a file there). A message without a conversation yet mints one, so its files have a home before the prompt is sent; the desktop creates the conversation under that id when the send arrives and fetches the attachments from the organization before the turn runs. Project, procedure and automation files take the same road, followed by one `desktop.files.adopt` call that attaches the uploaded blob through the desktop's own Add-files code.
 
 ---
 
 ## Notifications
 
-Notifications are **100% model-initiated**: the desktop agent decides to tell you something and calls its notify tool. The desktop — never the model — stamps the notification id and the target phone id, and the relay picks the route:
+Notifications are **100% model-initiated**: the desktop agent decides to tell you something and calls its notify tool. The desktop — never the model — stamps the notification id, and the bridge picks the route for every phone of the user:
 
-- **In-band** over the live tunnel when the phone is connected, and
+- **In-band** over the live socket when the phone is connected (the phone acks within two seconds), and
 - **Expo push** as the fallback when it isn't.
 
-The phone registers its push token by a stable per-device id on pairing, on reconnect and on every foreground, and dedupes by notification id, because both routes can legitimately fire. Where a tap lands is the model's choice, from a fixed list: a deep link must be the app's own `wolffish://` scheme **and** name a screen that exists — the desktop refuses anything else before sending, and the phone ignores a link it cannot resolve rather than navigating somewhere arbitrary.
+The phone registers its push token with the bridge on every connection and every foreground, and dedupes by notification id, because both routes can legitimately fire. Where a tap lands is the model's choice, from a fixed list: a deep link must be the app's own `wolffish://` scheme **and** name a screen that exists — the desktop refuses anything else before sending, and the phone ignores a link it cannot resolve rather than navigating somewhere arbitrary.
 
 ---
 
@@ -219,35 +217,35 @@ Conversation JSON arrives as ~1.5 MB shards, each parsed, imported and released 
 
 ## Screens
 
-| Area | What's there |
-|---|---|
-| **Door** | Pair by QR or code, enter demo mode, or resume straight into chat |
-| **Chat** | Feed, composer (text, voice notes, photos, videos, documents), tool cards, question and approval cards, turn rating, file and chart viewers, conversations sheet |
-| **History** | The conversation index, grouped and searchable, with channel badges |
-| **Settings** | Model · Capabilities · Channels · Projects · Procedures · Automations · Knowledge · Customization · Variables · MCP · Services · Usage · Appearance (theme + language) · Preferences · Data · Relay · Updates · Changelog |
+| Area         | What's there                                                                                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Door**     | Pair by QR or code, enter demo mode, or resume straight into chat                                                                                                                                                              |
+| **Chat**     | Feed, composer (text, voice notes, photos, videos, documents), tool cards, question and approval cards, file and chart viewers, conversations sheet                                                                            |
+| **History**  | The conversation index, grouped and searchable, with channel badges                                                                                                                                                            |
+| **Settings** | Model · Capabilities · Channels · Projects · Procedures · Automations · Knowledge · Customization · Variables · MCP · Services · Usage · Appearance (theme + language) · Preferences · Data · Connection · Updates · Changelog |
 
-The **Relay** screen is the connection itself made legible: status, rendezvous and key fingerprints, session identifier, frame and byte counters, reconnect count and last error. The **Data** screen shows the desktop's footprint and the device's, with a device-scoped factory reset.
+The **Connection** screen is the link made legible: the organization (account, API, status), the desktop (name, running or not), the last catch-up, frame counters, reconnect count and last error — with sign-out, which revokes this phone's session and wipes its copy. The **Data** screen shows the desktop's footprint and the device's, with a device-scoped factory reset.
 
 ---
 
 ## Tech stack
 
-| Layer | Technology |
-|---|---|
-| **Runtime** | Expo SDK 57, React Native 0.86, React 19, Hermes |
-| **Routing** | expo-router (file-based, typed routes) |
-| **Styling** | NativeWind 4 (Tailwind 3) over a token layer, light/dark/system |
-| **Client state** | zustand + AsyncStorage persistence |
-| **Server state** | TanStack Query, persisted (SQLite-backed families excluded) |
-| **Database** | expo-sqlite — conversations, messages, sync cursor, file LRU index |
-| **Transport** | WebSocket + Noise `IKpsk2` / `XXpsk3` via `@noble` (curves, ciphers, hashes) |
-| **Secrets** | expo-secure-store (OS keychain / keystore) |
-| **Media** | expo-image, expo-video, expo-audio, expo-image-picker, expo-document-picker |
-| **Charts** | Vendored ECharts 6 in a WebView, mirroring the desktop's `.chart.json` cards |
-| **i18n** | i18next (English, Arabic) with full RTL |
-| **Updates** | expo-updates (EAS Update) on a fingerprint runtime policy |
-| **Notifications** | expo-notifications + Expo push, relay-routed |
-| **Testing** | jest-expo + @testing-library/react-native (66 suites) |
+| Layer             | Technology                                                                              |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| **Runtime**       | Expo SDK 57, React Native 0.86, React 19, Hermes                                        |
+| **Routing**       | expo-router (file-based, typed routes)                                                  |
+| **Styling**       | NativeWind 4 (Tailwind 3) over a token layer, light/dark/system                         |
+| **Client state**  | zustand + AsyncStorage persistence                                                      |
+| **Server state**  | TanStack Query, persisted (SQLite-backed families excluded)                             |
+| **Database**      | expo-sqlite — conversations, messages, sync cursor, file LRU index                      |
+| **Transport**     | HTTPS to the organization API; one WebSocket to its per-user bridge (plain JSON frames) |
+| **Secrets**       | expo-secure-store (OS keychain / keystore) for the session tokens                       |
+| **Media**         | expo-image, expo-video, expo-audio, expo-image-picker, expo-document-picker             |
+| **Charts**        | Vendored ECharts 6 in a WebView, mirroring the desktop's `.chart.json` cards            |
+| **i18n**          | i18next (English, Arabic) with full RTL                                                 |
+| **Updates**       | expo-updates (EAS Update) on a fingerprint runtime policy                               |
+| **Notifications** | expo-notifications + Expo push, bridge-routed                                           |
+| **Testing**       | jest-expo + @testing-library/react-native (87 suites)                                   |
 
 ---
 
@@ -266,12 +264,13 @@ src/
 │   ├── conversations/  workspace/  settings/  overlays/  pairing/  updates/  history/
 │   └── common/             composed, cross-screen widgets
 ├── lib/
-│   ├── tunnel/             protocol, Noise, pairing, the tunnel endpoint, the client
-│   ├── sync/               what travels over the tunnel, and when
+│   ├── cloud/              the org session, the API client, the bridge client, pairing
+│   ├── bridge/             protocol.ts — THE WIRE, vendored from apps/desktop
+│   ├── sync/               what travels over the API and the bridge, and when
 │   ├── conversations/      SQLite repo, query hooks, feed merge, segments
 │   ├── files/              the 50 GB conversation-scoped LRU cache
 │   ├── db/  query/  i18n/  theme/  charts/  usage/  notifications/  updates/  demo/
-│   └── automations/  emoji/  utils/  api/
+│   └── automations/  emoji/  utils/
 ├── state/                  appStore · demoConfig · chatRuntime · runStatus
 └── changelog/<YYYY-MM>/    release notes (en.md + ar.md), bundled as assets
 
@@ -283,7 +282,7 @@ plugins/    local Expo config plugins
 
 **Path aliases:** `@/*` → `src/*`, `@/assets/*` → `assets/*`.
 
-`src/lib/tunnel/protocol.ts` and `noise.ts` are **vendored byte-identical** with `wolffish-app/src/main/tunnel/`; `pairing.ts` and `tunnel.ts` differ only in import specifiers. The wire contract is a two-repo change by construction — see [AGENTS.md](AGENTS.md).
+`src/lib/bridge/protocol.ts` is **vendored byte-identical** with `apps/desktop/src/main/cloud/bridge-protocol.ts`. The wire contract is a two-app change by construction — see [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -291,22 +290,22 @@ plugins/    local Expo config plugins
 
 ### Requirements
 
-| Tool | Minimum |
-|---|---|
-| Node.js | 24+ |
-| Xcode | for iOS builds |
-| A Wolffish desktop | to pair with — [wolffish-app](https://github.com/thewolffish/wolffish-app) |
+| Tool                     | Minimum                                                        |
+| ------------------------ | -------------------------------------------------------------- |
+| Node.js                  | 24+                                                            |
+| Xcode                    | for iOS builds                                                 |
+| A Wolffish Cloud desktop | to pair with — [`apps/desktop`](../desktop) in this repository |
 
 There is no Expo Go build. Development runs on a native dev client.
 
 ```bash
-git clone git@github.com:thewolffish/wolffish-mobile.git
-cd wolffish-mobile
+git clone git@github.com:thewolffish/wolffish-cloud.git
+cd wolffish-cloud/apps/mobile
 npm install
 npm run ios          # builds and installs the dev client on the simulator
 ```
 
-Then either scan the pairing QR from the desktop's Mobile panel, or tap **Demo mode** and use the app with no desktop at all.
+Then either scan the pairing QR from the desktop's Mobile panel (or type its code), or tap **Demo mode** and use the app with no desktop at all.
 
 ---
 
@@ -323,7 +322,7 @@ npm run format           # prettier --write
 
 Never start Metro with `CI=1` — it disables file watching, and every edit then looks like it did nothing.
 
-Read [AGENTS.md](AGENTS.md) before changing anything under `lib/tunnel/` or `lib/sync/`. The connection is the product, and the failure modes there are quiet ones.
+Read [AGENTS.md](AGENTS.md) before changing anything under `lib/cloud/`, `lib/bridge/` or `lib/sync/`. The connection is the product, and the failure modes there are quiet ones.
 
 ---
 
@@ -331,11 +330,11 @@ Read [AGENTS.md](AGENTS.md) before changing anything under `lib/tunnel/` or `lib
 
 The app ships two ways, and they are not interchangeable:
 
-| | **OTA update** | **Store build** |
-|---|---|---|
-| Carries | JS, assets, locales | Everything, including native |
-| Command | `npm run ota` | `npm run provision` → EAS build → submit → `npm run release` |
-| Reaches users | Minutes, no review | After store review |
+|               | **OTA update**      | **Store build**                                              |
+| ------------- | ------------------- | ------------------------------------------------------------ |
+| Carries       | JS, assets, locales | Everything, including native                                 |
+| Command       | `npm run ota`       | `npm run provision` → EAS build → submit → `npm run release` |
+| Reaches users | Minutes, no review  | After store review                                           |
 
 A native change — a new dependency, an `app.config.ts` plugin, an SDK bump — forks the fingerprint runtime version and can only reach users in a new binary. `npm run ota` generates the local fingerprint, compares it against the latest shipped store build and refuses to publish an update no installed binary could receive.
 
@@ -349,27 +348,26 @@ Versions live in `app.config.ts` — `APP_VERSION` (user-visible) and `CODE_VERS
 
 ## Data on the device
 
-| Store | Holds |
-|---|---|
-| **SQLite** (`wolffish.db`) | Conversations, messages, the sync cursor, the file-cache LRU index |
-| **File cache** (`Documents/workspace/…`) | Workspace media at the desktop's own relative paths, 50 GB budget |
-| **AsyncStorage** | App preferences, the config mirror, the query cache |
-| **OS keystore** | The device identity keypair and the pairing record |
+| Store                                    | Holds                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| **SQLite** (`wolffish.db`)               | Conversations, messages, the sync cursor, the file-cache LRU index                   |
+| **File cache** (`Documents/workspace/…`) | Workspace media at the desktop's own relative paths, 50 GB budget                    |
+| **AsyncStorage**                         | App preferences, the config mirror, the query cache                                  |
+| **OS keystore**                          | The organization session (access + refresh tokens) and the API address it belongs to |
 
-Conversation data never leaves the pair. The relay stores none of it, and there is no Wolffish account.
+Everything on the device is a copy of the organization's record for this account; signing out revokes the session and wipes the copy.
 
 ---
 
 ## Security model
 
-- **End-to-end encrypted.** ChaCha20-Poly1305 over a Noise handshake, with the pairing secret as the pre-shared key. The relay forwards ciphertext it cannot read.
-- **Forward secret.** Every reconnect is a fresh handshake with new ephemeral keys.
-- **Pinned peers.** The desktop's static public key is known from the QR or learned once during a code pairing and pinned from then on.
-- **Keys in the keystore**, unlocked-device-only, never in plain-text storage.
-- **Paths are validated on the desktop** — anything escaping the workspace root is refused, and upload destinations are the desktop's choice, not the phone's.
+- **One session per phone, revocable.** The pairing offer is single-use and expires in three minutes; the session it mints rotates its refresh token on every refresh, and the desktop's Mobile panel (or an admin) revokes it at the organization — which closes the phone's socket and drops its push registration on the spot.
+- **Tokens in the keystore**, unlocked-device-only, never in plain-text storage.
+- **The organization is the trusted party.** Every request is authenticated and scoped to the account; blobs are served only to their owner; the bridge forwards frames only between a user's own devices.
+- **Paths are validated on the desktop** — anything escaping the workspace root is refused, and a phone upload never supersedes a file the desktop already holds under the same name.
 - **Dangerous tool calls still gate.** The desktop's approval flow reaches the phone as a card and fails closed if nobody answers.
 - **Camera is pairing-only.** No capture, no library access, no recording — the photo picker runs out of process and returns only what you chose.
-- **Notifications are desktop-stamped.** Ids and targets come from the pairing record, never from the model, and deep links are restricted to the app's own scheme and to screens it actually has.
+- **Notifications are desktop-stamped.** Ids come from the desktop, never from the model; the bridge addresses the user's own devices; deep links are restricted to the app's own scheme and to screens it actually has.
 
 ---
 
@@ -377,8 +375,7 @@ Conversation data never leaves the pair. The relay stores none of it, and there 
 
 - **Website** — [wolffi.sh](https://wolffi.sh)
 - **App Store** — [Wolffish for iOS](https://apps.apple.com/us/app/wolffish/id6792797989)
-- **Google Play** — [Wolffish for Android](https://play.google.com/store/apps/details?id=sh.wolffi.mobile)
-- **Desktop app** — [thewolffish/wolffish-app](https://github.com/thewolffish/wolffish-app)
+- **Desktop app** — [`apps/desktop`](../desktop) in this repository
 - **Documentation** — [docs.wolffi.sh](https://docs.wolffi.sh/)
 - **Discord** — [Join the community](https://discord.com/invite/F5Ue36PzQ)
 - **X** — [@younesbites](https://x.com/younesbites)

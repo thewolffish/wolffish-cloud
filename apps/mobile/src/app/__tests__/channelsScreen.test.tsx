@@ -14,7 +14,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
  * a status row that quietly became a switch would look identical while lying.
  * The assertions are therefore about the wire: tapping a segment has to leave
  * as a configSet naming the key the desktop accepts, and the allow-list
- * fields have to leave ONCE, on end-editing — a Telegram allow-list write
+ * fields have to leave ONCE, on end-editing — a heavyweight desktop write
  * restarts the desktop's bridge, so nine keystrokes must not be nine
  * restarts.
  *
@@ -27,8 +27,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 const mockRpc = jest.fn()
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return { rpc: mockRpc, connected: true }
     },
@@ -59,7 +59,7 @@ jest.mock('@/lib/sync/useFreshConfig', () => ({ useFreshConfig: () => undefined 
 import ChannelsScreen from '@/app/settings/channels'
 import { ChannelsSummary } from '@/components/settings/TabSummaries'
 import { ThemeContext } from '@/providers/theme/useTheme'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 import { resetOutboxForTests } from '@/lib/sync/outbox'
 import { useDemoConfig } from '@/state/demoConfig'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
@@ -85,7 +85,7 @@ async function draw(node: React.ReactElement): Promise<void> {
  *
  * `nth` disambiguates the rows that deliberately share a label: "Verbose task
  * results" is the wording every non-phone channel uses, so the screen carries
- * four of them (in-app, Telegram, WhatsApp, CLI) and they are told apart by the
+ * two of them (in-app, CLI) and they are told apart by the
  * card they sit in — which is exactly the desktop's own rule for these labels.
  */
 function pressSegment(row: string, segment: 'Off' | 'On', nth = 0): void {
@@ -143,24 +143,15 @@ describe('Channels — this phone', () => {
 })
 
 /**
- * The desktop-owned channel cards — in-app, Telegram, WhatsApp. Editable
- * since the any-setting pass, except the power switches: starting a bridge
- * is the desktop's own act, so those stay status rows, and that split is
- * exactly what these tests hold in place.
+ * The desktop-owned channel card — in-app. Editable since the any-setting
+ * pass; every row is an ordinary config key the desktop accepts.
  */
 describe('Channels — the desktop-owned rows', () => {
   beforeEach(() => {
     resetOutboxForTests()
     mockRpc.mockReset()
     mockRpc.mockResolvedValue({ ok: true })
-    useDemoConfig.setState({
-      inappVerbose: false,
-      telegramEnabled: true,
-      telegramAllowedUserIds: '429753549',
-      telegramAutoRefresh: true,
-      whatsappEnabled: true,
-      whatsappAutoRefresh: true
-    })
+    useDemoConfig.setState({ inappVerbose: false })
   })
 
   it('the in-app feed switch writes inappVerbose to the desktop', async () => {
@@ -171,42 +162,6 @@ describe('Channels — the desktop-owned rows', () => {
       expect(configSetCalls()).toEqual([[Rpc.configSet, { settings: { inappVerbose: true } }]])
     })
     expect(useDemoConfig.getState().inappVerbose).toBe(true)
-  })
-
-  it('a Telegram preference writes through like any other setting', async () => {
-    await draw(<ChannelsScreen />)
-    // Telegram's card renders the screen's first "Auto refresh" row.
-    pressSegment('Auto refresh', 'Off', 0)
-    await waitFor(() => {
-      expect(configSetCalls()).toEqual([
-        [Rpc.configSet, { settings: { telegramAutoRefresh: false } }]
-      ])
-    })
-    expect(useDemoConfig.getState().telegramAutoRefresh).toBe(false)
-  })
-
-  it('the allow-list commits once, when editing ends', async () => {
-    await draw(<ChannelsScreen />)
-    const input = screen.getByDisplayValue('429753549')
-    // Typing alone must put NOTHING on the wire — an allow-list write
-    // restarts the desktop's bridge, so the write is one act, on blur.
-    fireEvent.changeText(input, '429753549, 1001')
-    expect(configSetCalls()).toEqual([])
-    fireEvent(input, 'endEditing', { nativeEvent: { text: '429753549, 1001' } })
-    await waitFor(() => {
-      expect(configSetCalls()).toEqual([
-        [Rpc.configSet, { settings: { telegramAllowedUserIds: '429753549, 1001' } }]
-      ])
-    })
-    expect(useDemoConfig.getState().telegramAllowedUserIds).toBe('429753549, 1001')
-  })
-
-  it('the power switches stay status rows and never write', async () => {
-    await draw(<ChannelsScreen />)
-    // Two "Enabled" rows (Telegram, WhatsApp), neither of them a switch: a
-    // status row exposes no accessible switch control to press.
-    expect(screen.getAllByText('Enabled')).toHaveLength(2)
-    expect(screen.queryByLabelText('Enabled')).toBeNull()
   })
 })
 
@@ -253,9 +208,9 @@ describe('Channels — the terminal', () => {
 
   it('switching the terminal feed on writes cliVerbose to the desktop', async () => {
     await draw(<ChannelsScreen />)
-    // The fourth "Verbose task results" on the screen: in-app, Telegram,
-    // WhatsApp, then the terminal's, in the order the cards render.
-    pressSegment('Verbose task results', 'On', 3)
+    // The second "Verbose task results" on the screen: in-app, then the
+    // terminal's, in the order the cards render.
+    pressSegment('Verbose task results', 'On', 1)
     await waitFor(() => {
       expect(configSetCalls()).toEqual([[Rpc.configSet, { settings: { cliVerbose: true } }]])
     })
@@ -264,7 +219,7 @@ describe('Channels — the terminal', () => {
 
   it('a change made on the desktop moves the row without a remount', async () => {
     await draw(<ChannelsScreen />)
-    const row = (): unknown => screen.getAllByLabelText('Verbose task results')[3]
+    const row = (): unknown => screen.getAllByLabelText('Verbose task results')[1]
     expect(
       (row() as { props: { accessibilityState: { checked: boolean } } }).props.accessibilityState
         .checked
@@ -285,20 +240,14 @@ describe('Channels summary', () => {
   it('reads each channel from its own state, not from being paired', async () => {
     useDemoConfig.setState({
       mobileNotifications: true,
-      telegramEnabled: false,
-      whatsappEnabled: true,
       cli: { pathInstalled: true, serviceActive: true, runMode: 'gui', mechanism: 'launchd' }
     })
     await draw(<ChannelsSummary />)
-    expect(
-      screen.getByLabelText('Phone notifications On, CLI On, Telegram Off, WhatsApp On')
-    ).toBeTruthy()
+    expect(screen.getByLabelText('Phone notifications On, CLI On')).toBeTruthy()
 
     useDemoConfig.setState({ mobileNotifications: false })
     await waitFor(() => {
-      expect(
-        screen.getByLabelText('Phone notifications Off, CLI On, Telegram Off, WhatsApp On')
-      ).toBeTruthy()
+      expect(screen.getByLabelText('Phone notifications Off, CLI On')).toBeTruthy()
     })
 
     // A command the shell cannot find is a channel you cannot reach — and an
@@ -307,9 +256,7 @@ describe('Channels summary', () => {
       cli: { pathInstalled: null, serviceActive: true, runMode: 'gui', mechanism: 'launchd' }
     })
     await waitFor(() => {
-      expect(
-        screen.getByLabelText('Phone notifications Off, CLI Off, Telegram Off, WhatsApp On')
-      ).toBeTruthy()
+      expect(screen.getByLabelText('Phone notifications Off, CLI Off')).toBeTruthy()
     })
   })
 })

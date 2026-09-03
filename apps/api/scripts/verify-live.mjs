@@ -342,16 +342,19 @@ const now = new Date().toISOString()
 const convId = `cnv_verify_${stamp}`
 const items = [
   { type: 'conversation', id: convId, title: 'Verify chat', created_at: now, updated_at: now },
-  { type: 'record', id: `rec_verify_${stamp}_0`, conversation_id: convId, seq: 0, content: { role: 'user', text: 'hello' }, created_at: now },
-  { type: 'record', id: `rec_verify_${stamp}_1`, conversation_id: convId, seq: 1, content: { role: 'assistant', text: 'hi' }, created_at: now },
-  { type: 'episode', id: `epi_verify_${stamp}`, content: { note: 'verified' }, occurred_at: now }
+  // The desktop's message shape (id, role, content, timestamp; seq = timestamp).
+  { type: 'record', id: `rec_verify_${stamp}_0`, conversation_id: convId, seq: Date.parse(now), content: { id: `m_${stamp}_0`, role: 'user', content: 'hello', timestamp: Date.parse(now) }, created_at: now },
+  { type: 'record', id: `rec_verify_${stamp}_1`, conversation_id: convId, seq: Date.parse(now) + 1, content: { id: `m_${stamp}_1`, role: 'assistant', content: 'hi', timestamp: Date.parse(now) + 1 }, created_at: now }
 ]
 const b1 = await api('/v1/sync/batch', { token: VT, body: { items } })
-check('outbox batch accepted', b1.json?.accepted === 4 && b1.json?.rejected === 0, JSON.stringify(b1.json))
+check('outbox batch accepted', b1.json?.accepted === 3 && b1.json?.rejected === 0, JSON.stringify(b1.json))
 const b2 = await api('/v1/sync/batch', { token: VT, body: { items } })
-check('replay is a no-op', b2.json?.accepted === 0 && b2.json?.ignored === 4)
+check('replay is a no-op', b2.json?.accepted === 0 && b2.json?.ignored === 3)
+const badId = `rec_verify_${stamp}_bad`
+const b3 = await api('/v1/sync/batch', { token: VT, body: { items: [{ type: 'record', id: badId, conversation_id: convId, seq: null, content: { role: 'user', content: 'x', timestamp: 1 }, created_at: now }] } })
+check('malformed record refused by id', b3.json?.rejected === 1 && b3.json?.rejected_ids?.[0] === badId, JSON.stringify(b3.json))
 const page = await api(`/v1/conversations/${convId}/records`, { token: VT })
-check('records page back', page.json?.records?.length === 2 && page.json.records[1].content.text === 'hi')
+check('records page back', page.json?.records?.length === 2 && page.json.records[1].content.content === 'hi')
 check('other employee cannot read them', (await api(`/v1/conversations/${convId}/records`, { token: E })).status === 404)
 check('records page terminates with an explicit null cursor', page.json?.next_after === null)
 const convIdx = await api('/v1/conversations?after=0', { token: VT })
@@ -833,6 +836,26 @@ check(
   ['user.invite', 'policy.set', 'user.revoke_sessions', 'user.reset_password', 'user.update', 'device.clear_pin', 'capability.put', 'capability.delete'].every((a) => actions.has(a)),
   [...actions].join(',')
 )
+
+// ── 9 · pairing + the desktop↔phone bridge ───────────────────────────────
+// The phone's whole way in, as one gate: the smoke script IS the contract
+// (scripts/smoke-bridge.mjs), so it runs here verbatim against the edge
+// rather than being paraphrased into a second copy that could drift.
+{
+  const { spawnSync } = await import('node:child_process')
+  const { fileURLToPath } = await import('node:url')
+  const { dirname, join } = await import('node:path')
+  const here = dirname(fileURLToPath(import.meta.url))
+  const run = spawnSync(process.execPath, [join(here, 'smoke-bridge.mjs')], {
+    env: { ...process.env, API_BASE: BASE, WFC_DEMO_PASSWORD: PASSWORD },
+    encoding: 'utf8'
+  })
+  const lines = (run.stdout ?? '').trim().split('\n')
+  for (const line of lines) console.log(`   ${line}`)
+  if (run.stderr) console.log(run.stderr.trim().split('\n').map((l) => `   ${l}`).join('\n'))
+  const summary = lines[lines.length - 1] ?? ''
+  check('pairing + bridge smoke passes end to end', run.status === 0, summary)
+}
 
 // owner signs out
 check('owner logout', (await api('/v1/logout', { token: O, body: {} })).status === 200)

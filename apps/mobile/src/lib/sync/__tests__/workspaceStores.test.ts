@@ -18,8 +18,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const mockRpc = jest.fn()
 const mockReportRpcFailure = jest.fn()
 const link = { connected: true }
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return link.connected
     },
@@ -36,7 +36,7 @@ import { queryClient } from '@/lib/query/queryClient'
 import { automationKeys, applyRunsPush, editAutomations } from '@/lib/sync/automations'
 import { procedureKeys, createProcedure, updateProcedure } from '@/lib/sync/procedures'
 import { projectKeys, deleteProject, updateProject } from '@/lib/sync/projects'
-import { Rpc, type SyncProcedure, type SyncProject } from '@/lib/tunnel/protocol'
+import { Rpc, type SyncProcedure, type SyncProject } from '@/lib/bridge/protocol'
 
 function project(id: string, over: Partial<SyncProject> = {}): SyncProject {
   return {

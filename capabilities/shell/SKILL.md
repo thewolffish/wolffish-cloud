@@ -188,7 +188,7 @@ The selected shell determines the syntax that works. Mismatched syntax fails fas
 - **cmd.exe** — classic cmd syntax. `dir`, `type`, `set FOO=bar`, `%ENV%` expansion, `2>nul`, `&&` / `||` work.
 - **/bin/sh** — POSIX. `ls`, `cat`, `export FOO=bar`, `$ENV`, `2>/dev/null`, `&&` / `||`.
 
-If you're unsure which dialect a command needs, prefer external `.exe` invocations (`where.exe`, `findstr.exe`, `cloudflared.exe`) — those work identically across all three shells.
+If you're unsure which dialect a command needs, prefer external `.exe` invocations (`where.exe`, `findstr.exe`, `curl.exe`) — those work identically across all three shells.
 
 ## Timeout guidelines
 

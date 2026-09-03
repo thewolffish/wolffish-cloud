@@ -8,7 +8,7 @@ import { DialogError, PromptPreview, PromptSheet } from '@/components/workspace/
 import { pickDocuments, pickMedia, type PickedFile } from '@/lib/files/pickAttachments'
 import { MAX_FILES_PER_MESSAGE, uploadErrorMessage, validateUpload } from '@/lib/files/uploadPolicy'
 import { updateProject, uploadProjectFile } from '@/lib/sync/projects'
-import type { SyncProject, SyncProjectFile } from '@/lib/tunnel/protocol'
+import type { SyncProject, SyncProjectFile } from '@/lib/bridge/protocol'
 import { cn } from '@/lib/utils/cn'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -413,7 +413,7 @@ function ProjectDialogBody({
               disabled={readOnly}
               onPress={() => setEmojiOpen(true)}
               className={cn(
-                'bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border/40',
+                'bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border-soft',
                 readOnly && 'opacity-50'
               )}
             >
@@ -543,7 +543,7 @@ function ProjectDialogBody({
                       onPress={() => persistFiles(files.filter((f) => f.path !== file.path))}
                       className={cn(
                         'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                        locked ? 'opacity-40' : 'active:bg-border/40'
+                        locked ? 'opacity-40' : 'active:bg-border-soft'
                       )}
                     >
                       <Delete02Icon size={13} className="text-muted" />
@@ -610,7 +610,7 @@ function ProjectDialogBody({
                     onPress={() => removeFolder(dir)}
                     className={cn(
                       'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                      readOnly ? 'opacity-40' : 'active:bg-border/40'
+                      readOnly ? 'opacity-40' : 'active:bg-border-soft'
                     )}
                   >
                     <Delete02Icon size={13} className="text-muted" />

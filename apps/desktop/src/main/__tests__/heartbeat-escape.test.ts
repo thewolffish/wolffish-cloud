@@ -205,10 +205,7 @@ async function run(): Promise<void> {
   // Lifted from the shipping .mjs byte-for-byte (the plugin exports its tool
   // surface, not its internals) so this pins the real guard.
   const pluginSrc = fs.readFileSync(
-    new URL(
-      '../../../../../capabilities/automations/plugin/index.mjs',
-      import.meta.url
-    ),
+    new URL('../../../../../capabilities/automations/plugin/index.mjs', import.meta.url),
     'utf8'
   )
   const fnStart = pluginSrc.indexOf('function checkInstruction')

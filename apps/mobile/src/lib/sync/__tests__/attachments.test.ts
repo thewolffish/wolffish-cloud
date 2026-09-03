@@ -6,22 +6,21 @@
  * around them, which is where a mobile upload can quietly diverge from a
  * desktop one:
  *
- *  - the conversation the desktop mints for the FIRST file has to carry the
- *    rest of them, or a five-photo message lands in five conversations;
- *  - the path the desktop chose has to be what the message references, not the
- *    name the phone picked, or the attachment is dropped on arrival;
+ *  - a message with no conversation yet mints ONE id for the whole batch, so
+ *    a five-photo message lands in one folder the desktop will create;
+ *  - the path the upload was filed under is what the message references,
+ *    with the content hash the desktop fetches the bytes by;
  *  - a file that fails has to cost only itself.
  */
 
 import type { StagedFile } from '@/lib/files/fileCache'
-import type { UploadResult } from '@/lib/sync/files'
+import type { CloudUpload } from '@/lib/sync/files'
 
-const mockUpload = jest.fn<
-  Promise<UploadResult | null>,
-  [string, string, string | null, string | null]
->()
+const mockUpload = jest.fn<Promise<CloudUpload>, [string, string, string | null]>()
+const mockChoose = jest.fn<Promise<string>, [string, string]>()
 jest.mock('@/lib/sync/files', () => ({
-  uploadFileToDesktop: (...args: Parameters<typeof mockUpload>) => mockUpload(...args)
+  uploadFileToCloud: (...args: Parameters<typeof mockUpload>) => mockUpload(...args),
+  chooseUploadPath: (...args: Parameters<typeof mockChoose>) => mockChoose(...args)
 }))
 
 const mockImport = jest.fn<Promise<string | null>, [string, string, string?]>()
@@ -65,23 +64,20 @@ function staged(name: string, extra: Partial<PickedFile> = {}): StagedAttachment
   }
 }
 
-/** What the desktop answers from uploadCommit. */
-function committed(name: string, conversationId: string): UploadResult {
+/** What the org answers once the bytes landed under the chosen path. */
+function uploaded(filePath: string): CloudUpload {
   return {
-    attachment: {
-      type: 'image',
-      // The desktop's own path, and its own name — a collision renamed it.
-      filePath: `uploads/conv-${conversationId}/${name}`,
-      originalName: name,
-      mimeType: 'image/png',
-      sizeBytes: 999
-    },
-    conversationId
+    filePath,
+    sha256: 'a'.repeat(64),
+    sizeBytes: 999,
+    mimeType: 'image/png',
+    deduped: false
   }
 }
 
 beforeEach(() => {
   mockUpload.mockReset()
+  mockChoose.mockReset().mockImplementation(async (dir, name) => `${dir}/${name}`)
   mockImport.mockReset().mockResolvedValue('file:///workspace/landed')
   mockStage.mockReset()
   mockDiscard.mockReset()
@@ -120,38 +116,52 @@ describe('stagedAttachment', () => {
 })
 
 describe('uploadForSend', () => {
-  it('sends the whole batch into the conversation the first upload minted', async () => {
-    mockUpload
-      .mockResolvedValueOnce(committed('a.png', 'conv-new'))
-      .mockResolvedValueOnce(committed('b.png', 'conv-new'))
+  it('mints one conversation for the whole batch when there is none yet', async () => {
+    mockUpload.mockImplementation(async (_uri, filePath) => uploaded(filePath))
 
     const result = await uploadForSend([staged('a.png'), staged('b.png')], null)
 
-    expect(result.conversationId).toBe('conv-new')
-    // First call asks for a conversation; every one after it names the answer.
-    expect(mockUpload.mock.calls[0][3]).toBeNull()
-    expect(mockUpload.mock.calls[1][3]).toBe('conv-new')
-    expect(result.attachments.map((a) => a.filePath)).toEqual([
-      'uploads/conv-conv-new/a.png',
-      'uploads/conv-conv-new/b.png'
-    ])
+    expect(result.conversationId).toMatch(/^\d{4}-\d{2}-\d{2}_/)
+    const dir = `uploads/conv-${result.conversationId}`
+    // Every file went into the same folder — the one the desktop will create
+    // under this id when the send arrives.
+    expect(mockChoose.mock.calls.map(([d]) => d)).toEqual([dir, dir])
+    expect(result.attachments.map((a) => a.filePath)).toEqual([`${dir}/a.png`, `${dir}/b.png`])
     expect(result.failed).toEqual([])
   })
 
-  it('moves the staged bytes to the path the desktop chose', async () => {
-    mockUpload.mockResolvedValueOnce(committed('a.png', 'conv-1'))
+  it('files under the existing conversation and carries the content hash', async () => {
+    mockUpload.mockImplementation(async (_uri, filePath) => uploaded(filePath))
     const entry = staged('a.png')
 
-    await uploadForSend([entry], 'conv-1')
+    const result = await uploadForSend([entry], 'conv-1')
 
+    expect(result.conversationId).toBe('conv-1')
+    expect(result.attachments[0]).toMatchObject({
+      filePath: 'uploads/conv-conv-1/a.png',
+      sha256: 'a'.repeat(64),
+      mimeType: 'image/png',
+      sizeBytes: 999
+    })
     // The bytes this phone just uploaded become the cache entry for the
-    // desktop's path — opening the conversation later must not re-download it.
+    // org's path — opening the conversation later must not re-download it.
     expect(mockImport).toHaveBeenCalledWith(entry.staged.uri, 'uploads/conv-conv-1/a.png', 'conv-1')
     expect(mockDiscard).toHaveBeenCalledWith(entry.staged.relPath)
   })
 
-  it('carries the phone measurements onto the desktop metadata', async () => {
-    mockUpload.mockResolvedValueOnce(committed('clip.mp4', 'conv-1'))
+  it('takes the collision-free path the org check chose', async () => {
+    mockChoose.mockResolvedValueOnce('uploads/conv-conv-1/a (1).png')
+    mockUpload.mockImplementation(async (_uri, filePath) => uploaded(filePath))
+
+    const result = await uploadForSend([staged('a.png')], 'conv-1')
+
+    expect(mockUpload.mock.calls[0][1]).toBe('uploads/conv-conv-1/a (1).png')
+    expect(result.attachments[0].filePath).toBe('uploads/conv-conv-1/a (1).png')
+    expect(result.attachments[0].originalName).toBe('a.png')
+  })
+
+  it('carries the phone measurements onto the metadata', async () => {
+    mockUpload.mockImplementation(async (_uri, filePath) => uploaded(filePath))
     const result = await uploadForSend(
       [staged('clip.mp4', { width: 1920, height: 1080, durationSeconds: 12.5 })],
       'conv-1'
@@ -166,8 +176,8 @@ describe('uploadForSend', () => {
 
   it('lets a broken transfer cost only its own file', async () => {
     mockUpload
-      .mockRejectedValueOnce(new Error('socket closed'))
-      .mockResolvedValueOnce(committed('b.png', 'conv-1'))
+      .mockRejectedValueOnce(new Error('upload failed (502)'))
+      .mockImplementationOnce(async (_uri, filePath) => uploaded(filePath))
 
     const result = await uploadForSend([staged('a.png'), staged('b.png')], 'conv-1')
 
@@ -175,14 +185,6 @@ describe('uploadForSend', () => {
     expect(result.attachments.map((a) => a.originalName)).toEqual(['b.png'])
     // The file that never went does not leave its bytes staged forever.
     expect(mockDiscard).toHaveBeenCalledWith('uploads/.staging/pick_a.png/a.png')
-  })
-
-  it('treats a tunnel that went away mid-batch as a failure of that file', async () => {
-    // uploadFileToDesktop answers null when nothing is connected.
-    mockUpload.mockResolvedValueOnce(null)
-    const result = await uploadForSend([staged('a.png')], 'conv-1')
-    expect(result.failed).toEqual(['a.png'])
-    expect(result.attachments).toEqual([])
   })
 })
 

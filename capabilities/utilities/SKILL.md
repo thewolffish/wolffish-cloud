@@ -18,14 +18,14 @@ triggers:
   - show the folder
 tools:
   - name: send_file
-    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and the CLI, and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. No size limit in-app or in the CLI; WhatsApp and Telegram refuse files over their own upload ceilings and tell the user where the file is. Pass the file path — absolute, ~/-relative, or workspace-relative."
+    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and the CLI, and reaches the paired phone as a download. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. No size limit in-app or in the CLI; remote surfaces refuse files over their own upload ceilings and tell the user where the file is. Pass the file path — absolute, ~/-relative, or workspace-relative."
     parameters:
       file:
         type: string
         description: "Path to the file to deliver. Absolute (/Users/you/report.pdf), home-relative (~/Desktop/report.pdf), or workspace-relative (files/report.pdf)."
         required: true
   - name: show_path
-    description: "Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens it in the OS file manager), a file gets a Reveal button (opens its folder with the file selected, like Reveal in Finder). Use it whenever the user would want to jump to a location — a folder you created or organized, a batch of outputs, a file deliberately left in place instead of sent. The path must exist. In-app desktop chat only — on WhatsApp/Telegram nothing renders, so name the path in prose there instead."
+    description: "Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens it in the OS file manager), a file gets a Reveal button (opens its folder with the file selected, like Reveal in Finder). Use it whenever the user would want to jump to a location — a folder you created or organized, a batch of outputs, a file deliberately left in place instead of sent. The path must exist. In-app desktop chat only — on the phone nothing renders, so name the path in prose there instead."
     parameters:
       path:
         type: string
@@ -43,7 +43,7 @@ spinning up a new capability for every one-off.
 
 Use `send_file` to actually hand a file to the user inside the conversation. Saving a
 file to disk and telling the user "saved to …/files/report.pdf" is **not** delivery —
-on WhatsApp and Telegram the user never sees the file, and even in the app the path is
+on the phone the user never sees the file, and even in the app the path is
 not the file. `send_file` closes that gap on every channel at once.
 
 ### When to call it — the default, every time
@@ -60,8 +60,8 @@ even if you delivered a file at that same path in an earlier turn. Each new vers
 result the user must see. A new turn, a different file, or an edited version always gets sent.
 
 **Chart cards.** A file whose name ends in `.chart.json` is a chart spec: `send_file` delivers
-it as an interactive chart card in the in-app chat (on WhatsApp/Telegram it arrives as a plain
-document, so prefer a text table there). The spec format and when to chart live in the core
+it as an interactive chart card in the in-app chat (in the terminal it arrives as a plain
+file, so prefer a text table there). The spec format and when to chart live in the core
 `dataviz` tool's manual — call `dataviz` before authoring one.
 
 ### When NOT to call it — almost never
@@ -78,8 +78,8 @@ whether they want it sent rather than silently withholding it.
 - Pass any path: absolute, `~/`-relative, or workspace-relative. Files outside the
   workspace are copied into `files/` automatically so the in-app viewer can load them.
 - No size limit in the in-app chat or the CLI — both read the file straight off local disk.
-  WhatsApp and Telegram enforce their own upload ceilings: an oversized video is re-encoded
-  to fit, anything else is refused with its path so you can tell the user where it lives.
+  The phone enforces its own upload ceiling: an oversized file is refused with its path
+  so you can tell the user where it lives.
 
 ## `show_path` — push an openable location card
 
@@ -95,6 +95,6 @@ jump to a location:
   `send_file` — show where it lives.
 
 The path must exist — the call fails on a typo or a not-yet-created path. **In-app desktop
-chat only**: on WhatsApp/Telegram the card doesn't render (there's no desktop to open), so
+chat only**: on the phone and in the terminal the card doesn't render (there's no desktop to open), so
 name the path in prose there instead. `show_path` complements `send_file`, never replaces
 it — a deliverable FILE still gets `send_file`.

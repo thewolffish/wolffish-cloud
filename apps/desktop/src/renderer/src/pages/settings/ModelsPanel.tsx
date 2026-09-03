@@ -1,5 +1,6 @@
 /**
- * Models — the org catalog, live from GET /v1/models (cached in main).
+ * Models — the org catalog, live from GET /v1/models (held app-wide by
+ * ModelCatalogProvider, cached in main).
  *
  * Every row is what the org allows THIS user: name, id, context window,
  * pricing and capability chips, with the org default badged. Clicking a
@@ -9,7 +10,7 @@
  * what any client asks for.
  */
 import { useFlow } from '@providers/flow/useFlow'
-import type { CatalogModelEntry } from '@preload/index'
+import { useModelCatalog } from '@providers/model-catalog/useModelCatalog'
 import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import { AiBrain01Icon, CloudIcon, EyeIcon, Tick02Icon } from 'hugeicons-react'
@@ -24,27 +25,19 @@ function priceLabel(inMicro: number, outMicro: number): string | null {
 export function ModelsPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const { status, refreshStatus } = useFlow()
-  const [catalog, setCatalog] = useState<CatalogModelEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const { models: catalog, ready, revalidate } = useModelCatalog()
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const model = selected ?? status?.config?.llm.model ?? null
+  // Only a cache that has never answered shows the skeleton; the list is
+  // held from launch, so a visit here normally paints it outright.
+  const loading = !ready
 
+  // A visit here is the natural moment to pick up an admin policy edit —
+  // the revalidation answers from cache and pushes any change.
   useEffect(() => {
-    let cancelled = false
-    void window.api.model
-      .catalog()
-      .then((r) => {
-        if (!cancelled) setCatalog(r.models)
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    revalidate()
+  }, [revalidate])
 
   const pick = async (id: string): Promise<void> => {
     if (id === model || busy) return

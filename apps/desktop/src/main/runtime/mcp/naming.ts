@@ -8,7 +8,7 @@
  * `<slug_with_underscores>_<original_name>`. Distinct slugs therefore
  * guarantee two servers can never collide on a tool name, and the
  * `mcp-` capability prefix keeps server capabilities out of the bundled
- * capability namespace (shell, telegram, …).
+ * capability namespace (shell, phone, …).
  */
 
 /** Providers enforce `^[a-zA-Z0-9_-]{1,64}$` on tool names. */
@@ -16,11 +16,11 @@ export const MAX_TOOL_NAME_LENGTH = 64
 
 /**
  * Capability names an MCP slug must never take, even when the owner is
- * not currently registered: channel capabilities register only while
- * their bot is connected, so an add-time scan of loaded capabilities
- * cannot see them.
+ * not currently registered: the phone's channel capability registers only
+ * while a phone is paired, so an add-time scan of loaded capabilities
+ * cannot see it.
  */
-export const RESERVED_SLUGS = new Set(['telegram', 'whatsapp', 'electron', 'wolffish', 'mcp'])
+export const RESERVED_SLUGS = new Set(['phone', 'electron', 'wolffish', 'mcp'])
 
 export function mcpCapabilityName(slug: string): string {
   // Hostname-derived slugs often already start with "mcp-" (mcp.zapier.com →

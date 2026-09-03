@@ -608,7 +608,7 @@ function ProviderCard({
   locale: string
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const Logo = PROVIDER_LOGOS[provider.provider === 'local' ? 'ollama' : provider.provider]
+  const Logo = PROVIDER_LOGOS[provider.provider]
   const totalTokens = provider.totalInputTokens + provider.totalOutputTokens
   const hasUsage = totalTokens > 0
 

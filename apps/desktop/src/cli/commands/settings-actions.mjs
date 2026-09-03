@@ -1,10 +1,10 @@
 /**
  * The flows that live on a settings card but are not a single value.
  *
- * A provider key, a Notion connection, an MCP server, a WhatsApp QR, a factory
+ * A capability toggle, an MCP server, a phone pairing, a factory
  * reset — none of these is a row you type a value into, and all of them are
  * what someone actually came to the page to do. They are registered against
- * the SAME card ids the scalar rows use (`services.notion`, `channels.cli`, …)
+ * the SAME card ids the scalar rows use (`services.brave`, `channels.cli`, …)
  * so they appear on the card the user is already looking at, rather than
  * behind a separate top-level command they have to know exists.
  *
@@ -13,7 +13,6 @@
  * and reporting the request as though it were the result is how a settings
  * screen ends up lying.
  */
-import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -34,7 +33,7 @@ import {
 } from '../lib/ui.mjs'
 import { pair } from './pair.mjs'
 import { pathCommand, service } from './service.mjs'
-import { brain, capabilities, manageKeys, variables } from './settings.mjs'
+import { capabilities, variables } from './settings.mjs'
 import { isQuit, outOfRange, usage, USAGE_RANGES } from './workspace.mjs'
 
 /**
@@ -67,76 +66,8 @@ export async function pick(items, { label = (item) => String(item), prompt = nul
 }
 
 // ─── Models ─────────────────────────────────────────────────────────────────
-
-/** Ollama's installed models, and switching which one runs locally. */
-async function localModels(client) {
-  const detected = await client.invoke('ollama:detect').catch(() => ({ reachable: false }))
-  heading('Ollama')
-  if (!detected?.reachable) {
-    out(c.yellow('  Ollama is not reachable on this machine'))
-    out(c.gray('  install it from ollama.com, then run: ollama serve'))
-    return 1
-  }
-  const installed = await client.invoke('ollama:listInstalled').catch(() => [])
-  const snapshot = await client.invoke('cli:snapshot').catch(() => ({}))
-  const current = snapshot?.llm?.local?.model ?? null
-  if (installed.length === 0) {
-    out(c.gray('  no models installed — pull one with: ollama pull qwen3'))
-    return 0
-  }
-  const chosen = await pick(installed, {
-    label: (model) =>
-      `${model.name ?? model}${model.name === current || model === current ? c.green(' ' + g.current) : ''}` +
-      (model.size ? c.gray(`  ${bytes(model.size)}`) : ''),
-    prompt: `1-${installed.length} to run locally, blank cancels`
-  })
-  if (!chosen) return 0
-  const name = chosen.name ?? String(chosen)
-  const result = await client.invoke('model:select', name)
-  if (result?.ok === false) {
-    out(`${icon.fail()} ${c.red(result.error ?? 'failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} local model is now ${c.bold(name)}`)
-  return 0
-}
-
-/** Where Ollama keeps its weights — a folder picker in the app, a path here. */
-async function modelsFolder(client) {
-  const current = await client.invoke('ollama:getModelsFolder').catch(() => null)
-  heading('Models folder')
-  keyValue([['now', current ? shortPath(String(current)) : c.gray('default')]])
-  out()
-  if (!interactive()) return 0
-  const next = (await question(`  ${c.dim('new path, blank keeps it')}: `)).trim()
-  if (!next) return 0
-  await client.invoke('ollama:setModelsFolder', next)
-  const after = await client.invoke('ollama:getModelsFolder').catch(() => next)
-  out(`${icon.ok()} ${shortPath(String(after))}`)
-  return 0
-}
-
-/** Drop a provider's key and model entirely. */
-async function removeProvider(client) {
-  const providers = await client.invoke('provider:list').catch(() => [])
-  const configured = providers.filter((p) => p.apiKey)
-  heading('Remove a provider')
-  if (configured.length === 0) {
-    out(c.gray('  none are configured'))
-    return 0
-  }
-  const chosen = await pick(configured, {
-    label: (p) => `${p.id}${p.model ? c.gray(`  ${p.model}`) : ''}`
-  })
-  if (!chosen) return 0
-  if (!(await confirm(`  remove ${c.bold(chosen.id)} and its key?`, false))) {
-    out(c.gray('  unchanged'))
-    return 0
-  }
-  await client.invoke('provider:remove', chosen.id)
-  out(`${icon.ok()} removed ${chosen.id}`)
-  return 0
-}
+// One lane: the model is a pick from the org's catalog (see `model.chat`);
+// there are no provider keys and no local models to manage.
 
 // ─── Channels ───────────────────────────────────────────────────────────────
 
@@ -223,56 +154,6 @@ async function removeAutostart(client) {
 }
 
 /**
- * Send a real message through the bot.
- *
- * `telegram:sendTestMessage` takes `{ token, userId }` — the panel passes what
- * is in its form. This used to invoke it with no argument at all, so the
- * handler dereferenced undefined and every run reported a TypeError as though
- * Telegram had rejected something. The stored config is the terminal's
- * equivalent of the panel's form.
- */
-async function telegramTest(client) {
-  const config = await client.invoke('telegram:getConfig').catch(() => null)
-  const token = String(config?.botToken ?? '').trim()
-  const userId = Number(config?.allowedUserIds?.[0])
-  if (!token) {
-    out(c.yellow('  no bot token saved yet — set one first'))
-    return 1
-  }
-  if (!Number.isFinite(userId)) {
-    out(c.yellow('  no allowed user id saved — set channels.telegram.allowedUserIds first'))
-    out(c.gray('  your id comes from @userinfobot on Telegram'))
-    return 1
-  }
-  const result = await client
-    .invoke('telegram:sendTestMessage', { token, userId })
-    .catch((error) => ({ ok: false, error: error?.message }))
-  if (result?.ok === false) {
-    out(`${icon.fail()} ${c.red(result.error ?? 'failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} test message sent to ${userId}`)
-  return 0
-}
-
-async function telegramDisconnect(client) {
-  if (!(await confirm('  disconnect the Telegram bot?', false))) return 0
-  await client.invoke('telegram:setConfig', { enabled: false, botToken: '' })
-  out(`${icon.ok()} Telegram disconnected`)
-  return 0
-}
-
-async function whatsappLogout(client) {
-  if (
-    !(await confirm('  clear the WhatsApp session? You will scan a new code to link again.', false))
-  )
-    return 0
-  await client.invoke('whatsapp:logout')
-  out(`${icon.ok()} WhatsApp session cleared`)
-  return 0
-}
-
-/**
  * What the daemon actually knows about the phone.
  *
  * The fields are `pairing.*` and `tunnel.*` — this used to read `device.name`,
@@ -289,33 +170,31 @@ async function mobileStatus(client) {
     out(c.gray('  pair one from here, or: wfc pair phone --code'))
     return 0
   }
-  const p = status.pairing ?? {}
-  const tunnel = status.tunnel ?? {}
-  const model = [p.model, p.osVersion].filter(Boolean).join(' · ')
-  const LINK = {
+  const bridge = status.bridge ?? {}
+  const BRIDGE = {
     connected: c.green('connected'),
-    'waiting-for-peer': c.yellow('paired — the app is not open'),
     connecting: c.gray('connecting'),
-    error: c.red('error')
+    reconnecting: c.yellow('reconnecting'),
+    error: c.red('error'),
+    idle: c.gray('off')
+  }
+  for (const p of status.phones ?? []) {
+    const model = [p.model, p.osVersion].filter(Boolean).join(' · ')
+    keyValue([
+      ['device', String(p.name || 'Phone')],
+      ...(model ? [['model', c.gray(model)]] : []),
+      ...(p.appVersion ? [['app', c.gray(String(p.appVersion))]] : []),
+      ['paired', p.pairedAt ? new Date(p.pairedAt).toLocaleString() : c.gray('—')],
+      ['last seen', p.lastSeenAt ? new Date(p.lastSeenAt).toLocaleString() : c.gray('never')],
+      ['app open', p.connected ? c.green('yes — on the bridge') : c.gray('no')]
+    ])
+    out()
   }
   keyValue([
-    ['device', String(p.deviceName ?? 'Phone')],
-    ...(model ? [['model', c.gray(model)]] : []),
-    ...(p.appVersion ? [['app', c.gray(String(p.appVersion))]] : []),
-    ['paired', p.pairedAt ? new Date(p.pairedAt).toLocaleString() : c.gray('—')],
-    ['last seen', p.lastSeenAt ? new Date(p.lastSeenAt).toLocaleString() : c.gray('never')],
-    ['link', LINK[tunnel.status] ?? c.gray(String(tunnel.status ?? 'offline'))],
-    ['relay', c.gray(String(status.relayUrl ?? '—'))],
-    ['how', c.gray(p.method === 'qr' ? 'QR code' : 'typed code')]
+    ['org bridge', BRIDGE[bridge.status] ?? c.gray(String(bridge.status ?? 'off'))],
+    ['api', c.gray(String(status.apiBase ?? '—'))]
   ])
-  if (tunnel.lastError) out(`  ${icon.warn()} ${c.yellow(String(tunnel.lastError))}`)
-  return 0
-}
-
-async function mobileDisconnect(client) {
-  if (!(await confirm('  disconnect? the phone reconnects when it is next opened', false))) return 0
-  await client.invoke('mobile:disconnect')
-  out(`${icon.ok()} disconnected`)
+  if (bridge.lastError) out(`  ${icon.warn()} ${c.yellow(String(bridge.lastError))}`)
   return 0
 }
 
@@ -442,286 +321,6 @@ async function reloadCapabilities(client) {
   for (const cap of added) out(c.green(`  + ${cap.name}`))
   for (const cap of gone) out(c.gray(`  - ${cap.name}`))
   return 0
-}
-
-// ─── Services ───────────────────────────────────────────────────────────────
-
-/**
- * Notion and GitHub are the same shape: any number of labeled connections,
- * each a token the model picks by label. One factory, three flows — a view and
- * two changes — because "show me what is linked" and "link another" are
- * different intentions and a menu that fuses them makes the harmless one feel
- * like the start of the risky one.
- */
-function connectionsView({ title, getChannel, identity }) {
-  return async function list(client) {
-    const config = await client.invoke(getChannel).catch(() => ({ connections: [] }))
-    const rows = Array.isArray(config?.connections) ? config.connections : []
-    heading(title)
-    if (rows.length === 0) {
-      out(c.gray('  none linked yet'))
-      return 0
-    }
-    table(
-      ['label', 'account', 'token'],
-      // The token itself never prints. It is in the config this process just
-      // read, and a terminal is scrollback, tmux buffers and screen shares —
-      // "set" is the whole of what anyone needs to know.
-      rows.map((entry) => [entry.label || c.gray('—'), identity(entry), c.green('set')])
-    )
-    return 0
-  }
-}
-
-function connectionAdd({ title, getChannel, setChannel, testChannel, tokenName, identity }) {
-  return async function add(client) {
-    const config = await client.invoke(getChannel).catch(() => ({ connections: [] }))
-    const rows = Array.isArray(config?.connections) ? config.connections : []
-    heading(`Link a ${title} connection`)
-    const label = (await question(`  ${c.bold('label')} ${c.dim('(e.g. Personal)')}: `)).trim()
-    if (!label) {
-      out(c.gray('  cancelled'))
-      return 0
-    }
-    const token = await question(`  ${c.bold(tokenName)} ${c.dim('(hidden)')}: `, { hidden: true })
-    if (!token.trim()) {
-      out(c.gray('  cancelled'))
-      return 0
-    }
-    // Test before storing: the identity fields (workspace name, login) are what
-    // the model matches on, and they come from the service, not the user. A
-    // token that does not resolve is a connection that silently fails on the
-    // first tool call instead of here.
-    const result = await client.invoke(testChannel, token.trim()).catch(() => ({ ok: false }))
-    if (!result?.ok) {
-      out(
-        `${icon.fail()} ${c.red(result?.error ?? result?.kind ?? 'the service rejected that token')}`
-      )
-      return 1
-    }
-    const entry = {
-      id: randomUUID(),
-      label,
-      token: token.trim(),
-      name: result.name ?? '',
-      email: result.email ?? '',
-      login: result.login ?? ''
-    }
-    await client.invoke(setChannel, [...rows, entry])
-    out(`${icon.ok()} linked ${c.bold(label)} ${c.gray(identity(entry))}`)
-    return 0
-  }
-}
-
-function connectionRemove({ title, getChannel, setChannel, identity }) {
-  return async function remove(client) {
-    const config = await client.invoke(getChannel).catch(() => ({ connections: [] }))
-    const rows = Array.isArray(config?.connections) ? config.connections : []
-    heading(`Remove a ${title} connection`)
-    if (rows.length === 0) {
-      out(c.gray('  none linked'))
-      return 0
-    }
-    const victim = await pick(rows, { label: (entry) => entry.label || identity(entry) })
-    if (!victim) return 0
-    await client.invoke(
-      setChannel,
-      rows.filter((entry) => entry.id !== victim.id)
-    )
-    out(`${icon.ok()} removed ${victim.label || identity(victim)}`)
-    return 0
-  }
-}
-
-/** Google Workspace — what is connected. */
-async function googleStatus(client) {
-  const [status, accounts] = await Promise.all([
-    client.invoke('google:status').catch(() => null),
-    client.invoke('google:listAccounts').catch(() => [])
-  ])
-  heading('Google Workspace')
-  keyValue([
-    [
-      'status',
-      status?.status === 'active' ? c.green('active') : c.gray(status?.status ?? 'inactive')
-    ],
-    ['accounts', accounts.length > 0 ? accounts.join(', ') : c.gray('none')]
-  ])
-  return 0
-}
-
-/**
- * Authorize a Google account from a terminal.
- *
- * "a browser will open for consent" is a lie on a server, and it was the only
- * thing this printed. gogcli emits the consent URL on stdout, the daemon
- * broadcasts it, and PRINTING it is the whole of what makes this usable
- * headless: you open it on a laptop instead.
- *
- * The one thing the URL alone does not solve is the redirect. gogcli listens
- * for the callback on a local port, so consent given on another machine has to
- * come back to THIS one — an SSH tunnel is the usual answer, and saying so here
- * is cheaper than the alternative, which is a flow that hangs for no visible
- * reason.
- */
-async function googleAuthorize(client) {
-  heading('Authorize a Google account')
-  const email = (await question(`  ${c.bold('email')}: `)).trim()
-  if (!email) return 0
-
-  // Subscribed BEFORE the invoke: the URL arrives while it is still pending.
-  let printed = false
-  const off = client.onEvent((channel, payload) => {
-    if (channel !== 'google:authUrl' || !payload?.url) return
-    printed = true
-    out()
-    out(c.gray('  open this to give consent:'))
-    // Unwrapped and on its own line so it can be copied whole.
-    out(`  ${payload.url}`)
-    out()
-    out(
-      wrapText(
-        c.gray(
-          'Consent redirects to a callback on THIS machine. Opening the link elsewhere needs that port reachable — over SSH: ssh -L 8080:localhost:8080 <this host>.'
-        ),
-        2
-      )
-    )
-  })
-
-  try {
-    const result = await client
-      .invoke('google:authAdd', email)
-      .catch((error) => ({ ok: false, error: error?.message }))
-    if (!result?.ok) {
-      out(`${icon.fail()} ${c.red(result?.error ?? 'authorization failed')}`)
-      if (!printed) out(c.gray('  no consent URL was produced — is gogcli installed? Run setup.'))
-      return 1
-    }
-    out(`${icon.ok()} authorized ${result.email ?? email}`)
-    return 0
-  } finally {
-    off()
-  }
-}
-
-async function googleRemove(client) {
-  const accounts = await client.invoke('google:listAccounts').catch(() => [])
-  heading('Remove a Google account')
-  if (accounts.length === 0) {
-    out(c.gray('  none authorized'))
-    return 0
-  }
-  const victim = await pick(accounts)
-  if (!victim) return 0
-  if (!(await confirm(`  remove ${c.bold(victim)}?`, false))) return 0
-  await client.invoke('google:removeAccount', victim)
-  out(`${icon.ok()} removed ${victim}`)
-  return 0
-}
-
-/**
- * Install the gogcli helper — the step everything else on this card depends on.
- *
- * `google:update` refuses when the binary is absent ("gogcli is not installed
- * yet. Run setup first."), and setup had no terminal route, so on a fresh
- * headless box Google Workspace was unreachable and nothing said which step
- * was missing.
- */
-async function googleSetup(client) {
-  heading('Install the Google helper')
-  const before = await client.invoke('google:checkBinary').catch(() => null)
-  if (before?.installed) {
-    out(c.gray(`  already installed${before.gogVersion ? ` · ${before.gogVersion}` : ''}`))
-    if (!(await confirm('  reinstall it?', false))) return 0
-  }
-  out(c.gray('  downloading…'))
-  const result = await client
-    .invoke('google:setup')
-    .catch((error) => ({ ok: false, message: error?.message }))
-  if (!result?.ok) {
-    out(`${icon.fail()} ${c.red(result?.message ?? result?.kind ?? 'setup failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} installed ${c.gray(result.binary?.gogVersion ?? '')}`)
-  out(c.gray('  next: upload the OAuth client JSON, then authorize an account'))
-  return 0
-}
-
-/**
- * The OAuth client JSON, by path.
- *
- * The desktop opens a file picker; a terminal takes a path, which is the same
- * thing without the window. Read here rather than in the daemon so `~` and a
- * relative path both mean what the person typing them expects.
- */
-async function googleCredentials(client) {
-  heading('Google OAuth credentials')
-  out(
-    wrapText(
-      c.gray(
-        'The client_secret JSON from Google Cloud → APIs & Services → Credentials → OAuth client ID (Desktop app).'
-      ),
-      2
-    )
-  )
-  const answer = (await question(`  ${c.bold('path to the JSON')}: `)).trim()
-  if (!answer) return 0
-  const resolved = answer.startsWith('~')
-    ? path.join(os.homedir(), answer.slice(1))
-    : path.resolve(answer)
-  let text
-  try {
-    text = await fs.readFile(resolved, 'utf8')
-  } catch (error) {
-    out(`${icon.fail()} ${c.red(`could not read ${shortPath(resolved)} — ${error?.message}`)}`)
-    return 1
-  }
-  // Fail on the shape here rather than after a round trip: a JSON file that is
-  // not an OAuth client is the common mistake, and the daemon's error for it
-  // says nothing about which file to look for.
-  try {
-    const parsed = JSON.parse(text)
-    if (!parsed.installed && !parsed.web) {
-      out(`${icon.fail()} ${c.red('that JSON has no "installed" or "web" client in it')}`)
-      return 1
-    }
-  } catch {
-    out(`${icon.fail()} ${c.red('that file is not valid JSON')}`)
-    return 1
-  }
-  const result = await client
-    .invoke('google:uploadCredentials', text)
-    .catch((error) => ({ ok: false, message: error?.message }))
-  if (!result?.ok) {
-    out(`${icon.fail()} ${c.red(result?.message ?? 'upload failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} credentials stored`)
-  return 0
-}
-
-async function googleForgetCredentials(client) {
-  if (!(await confirm(c.red('  delete the stored OAuth credentials?'), false))) return 0
-  const result = await client
-    .invoke('google:deleteCredentials')
-    .catch((error) => ({ ok: false, message: error?.message }))
-  if (!result?.ok) {
-    out(`${icon.fail()} ${c.red(result?.message ?? 'failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} removed`)
-  return 0
-}
-
-async function googleUpdateHelper(client) {
-  const result = await client.invoke('google:update').catch(() => ({ ok: false }))
-  out(
-    result?.ok
-      ? `${icon.ok()} ${result.version ? `updated to ${result.version}` : 'up to date'}`
-      : `${icon.fail()} ${c.red(result?.error ?? 'update failed')}`
-  )
-  return result?.ok ? 0 : 1
 }
 
 /** The servers, as they stand. */
@@ -1043,29 +642,6 @@ const testBrave = tester('Brave Search', async (client) => {
   }
 })
 
-const testVideo = tester('Video generation', async (client) => {
-  const result = await client.invoke('video:test')
-  return { ...result, detail: result?.ok ? 'the key works' : undefined }
-})
-
-const testMemes = tester('Memes', async (client) => {
-  const config = await client.invoke('memes:getConfig')
-  const results = []
-  if (config?.giphy?.apiKey) {
-    const giphy = await client.invoke('memes:testGiphy', config.giphy.apiKey)
-    results.push(`Giphy ${giphy?.ok ? 'ok' : 'failed'}`)
-  }
-  if (config?.imgflip?.username) {
-    const imgflip = await client.invoke('memes:testImgflip', {
-      username: config.imgflip.username,
-      password: config.imgflip.password ?? ''
-    })
-    results.push(`Imgflip ${imgflip?.ok ? 'ok' : 'failed'}`)
-  }
-  if (results.length === 0) return { ok: false, error: 'nothing configured — Memegen needs no key' }
-  return { ok: !results.some((line) => line.endsWith('failed')), detail: results.join(', ') }
-})
-
 const testExtension = tester('Browser Extension', async (client) => {
   const result = await client.invoke('browserExtension:testConnection', null)
   const passed = result?.passed ?? 0
@@ -1118,44 +694,6 @@ function engine(kind, title) {
  * the fix for a report that has drifted, which is exactly the thing someone
  * doubts when they are reading the numbers from a terminal.
  */
-/**
- * The relay the phone meets the desktop through.
- *
- * Read-only from the terminal until now, which mattered because the one
- * install that needs a different relay is the self-hosted one — a VPS.
- */
-async function mobileRelay(client) {
-  const status = await client.invoke('mobile:status').catch(() => null)
-  heading('Relay')
-  keyValue([
-    ['now', c.cyan(String(status?.relayUrl ?? '—'))],
-    ['default', c.gray(String(status?.defaultRelayUrl ?? '—'))]
-  ])
-  out()
-  if (!interactive()) return 0
-  out(
-    wrapText(
-      c.gray('A wss:// URL, or blank to keep it. Type "default" to go back to the built-in one.'),
-      2
-    )
-  )
-  const answer = (await question(`  ${c.dim('relay URL')}: `)).trim()
-  if (!answer) return 0
-  const next = answer === 'default' ? null : answer
-  if (next && !/^wss?:\/\//i.test(next)) {
-    out(`${icon.fail()} ${c.red('that is not a ws:// or wss:// URL')}`)
-    return 1
-  }
-  if (status?.paired) {
-    out(c.yellow('  changing the relay unpairs the phone — it has to be paired again'))
-    if (!(await confirm('  go ahead?', false))) return 0
-  }
-  await client.invoke('mobile:setRelayUrl', next)
-  const after = await client.invoke('mobile:status').catch(() => null)
-  out(`${icon.ok()} ${after?.relayUrl ?? next ?? 'default'}`)
-  return 0
-}
-
 /** Where the extension lives, and whether a browser is actually talking to us. */
 async function extensionStatus(client) {
   const [status, extensionPath, config] = await Promise.all([
@@ -1184,39 +722,6 @@ async function extensionStatus(client) {
       2
     )
   )
-  return 0
-}
-
-/** Pull a local model without leaving the terminal. */
-async function pullLocalModel(client) {
-  const detected = await client.invoke('ollama:detect').catch(() => ({ reachable: false }))
-  heading('Pull a local model')
-  if (!detected?.reachable) {
-    out(c.yellow('  Ollama is not reachable — install it and run: ollama serve'))
-    return 1
-  }
-  const available = await client.invoke('ollama:scanAvailable').catch(() => [])
-  const rows = Array.isArray(available) ? available : []
-  if (rows.length > 0) {
-    table(
-      ['model', 'size'],
-      rows.slice(0, 25).map((row) => [row.name ?? String(row), row.size ? bytes(row.size) : ''])
-    )
-    out()
-  }
-  if (!interactive()) return 0
-  const name = (await question(`  ${c.dim('model to pull, blank cancels')}: `)).trim()
-  if (!name) return 0
-  out(c.gray(`  pulling ${name} — this can take a while`))
-  const result = await client
-    .invoke('model:select', name)
-    .catch((error) => ({ ok: false, error: error?.message }))
-  if (result?.ok === false) {
-    out(`${icon.fail()} ${c.red(result.error ?? 'failed')}`)
-    out(c.gray(`  you can also run it yourself: ollama pull ${name}`))
-    return 1
-  }
-  out(`${icon.ok()} ${name}`)
   return 0
 }
 
@@ -1296,24 +801,6 @@ async function toggleCapability(client) {
 
 // ─── The registry ───────────────────────────────────────────────────────────
 
-const NOTION = {
-  title: 'Notion',
-  getChannel: 'notion:getConfig',
-  setChannel: 'notion:setConfig',
-  testChannel: 'notion:test',
-  tokenName: 'integration token',
-  identity: (entry) => entry.name || entry.email || ''
-}
-
-const GITHUB = {
-  title: 'GitHub',
-  getChannel: 'github:getConfig',
-  setChannel: 'github:setConfig',
-  testChannel: 'github:test',
-  tokenName: 'personal access token',
-  identity: (entry) => entry.login || entry.name || ''
-}
-
 /**
  * Flows, keyed by the card they belong to.
  *
@@ -1324,27 +811,7 @@ const GITHUB = {
  * your disk usage should never be step one of erasing it, and it used to be.
  */
 export const ACTIONS = [
-  {
-    section: 'model.providers',
-    label: 'Providers and keys',
-    view: true,
-    run: (client) => manageKeys(client, [])
-  },
-  {
-    section: 'model.providers',
-    label: 'Choose the brain (provider + model)',
-    run: (client) => brain(client, [])
-  },
-  {
-    section: 'model.providers',
-    label: 'Add or replace a provider API key',
-    run: (client) => manageKeys(client, ['set-interactive'])
-  },
-  { section: 'model.providers', label: 'Remove a provider', run: removeProvider },
   { section: 'model.chat', label: 'Reasoning effort', run: reasoningEffort },
-  { section: 'model.local', label: 'Choose the local model', run: localModels },
-  { section: 'model.local', label: 'Pull a model', run: pullLocalModel },
-  { section: 'model.local', label: 'Where models are stored', run: modelsFolder },
 
   {
     section: 'channels.cli',
@@ -1377,67 +844,9 @@ export const ACTIONS = [
     label: 'Pair a phone — typed code (for a headless box)',
     run: (client) => pair(client, ['phone', '--code'])
   },
-  { section: 'channels.mobile', label: 'Relay URL', run: mobileRelay },
-  { section: 'channels.mobile', label: 'Disconnect', run: mobileDisconnect },
   { section: 'channels.mobile', label: 'Unpair', run: mobileUnpair },
-  {
-    section: 'channels.telegram',
-    label: 'Enter the bot token',
-    run: (client) => pair(client, ['telegram'])
-  },
-  { section: 'channels.telegram', label: 'Send a test message', run: telegramTest },
-  { section: 'channels.telegram', label: 'Disconnect the bot', run: telegramDisconnect },
-  {
-    section: 'channels.whatsapp',
-    label: 'Link an account by QR code',
-    run: (client) => pair(client, ['whatsapp'])
-  },
-  {
-    // The route that works on a machine with no screen — and, measured, on any
-    // terminal under about 32 rows, which includes the 80×24 default.
-    section: 'channels.whatsapp',
-    label: 'Link an account by phone number (for a headless box)',
-    run: (client) => pair(client, ['whatsapp', '--number'])
-  },
-  { section: 'channels.whatsapp', label: 'Disconnect', run: whatsappLogout },
 
-  {
-    section: 'services.notion',
-    label: 'Connections',
-    view: true,
-    run: connectionsView(NOTION)
-  },
-  { section: 'services.notion', label: 'Link a connection', run: connectionAdd(NOTION) },
-  { section: 'services.notion', label: 'Remove a connection', run: connectionRemove(NOTION) },
-  {
-    section: 'services.github',
-    label: 'Connections',
-    view: true,
-    run: connectionsView(GITHUB)
-  },
-  { section: 'services.github', label: 'Link a connection', run: connectionAdd(GITHUB) },
-  { section: 'services.github', label: 'Remove a connection', run: connectionRemove(GITHUB) },
-  { section: 'services.google', label: 'Accounts', view: true, run: googleStatus },
-  { section: 'services.google', label: 'Install the Google helper', run: googleSetup },
-  { section: 'services.google', label: 'Load the OAuth credentials JSON', run: googleCredentials },
-  { section: 'services.google', label: 'Authorize an account', run: googleAuthorize },
-  { section: 'services.google', label: 'Remove an account', run: googleRemove },
-  { section: 'services.google', label: 'Update the gogcli helper', run: googleUpdateHelper },
-  {
-    section: 'services.google',
-    label: 'Forget the OAuth credentials',
-    run: googleForgetCredentials
-  },
   { section: 'services.brave', label: 'Check the org lane', run: testBrave },
-  { section: 'services.video', label: 'Test the key', run: testVideo },
-  { section: 'services.memes', label: 'Test Giphy and Imgflip', run: testMemes },
-  {
-    section: 'channels.browser',
-    label: 'Connection and install path',
-    view: true,
-    run: extensionStatus
-  },
-  { section: 'channels.browser', label: 'Test the connection', run: testExtension },
   {
     section: 'services.tts',
     label: 'Engine — status and install',
@@ -1448,6 +857,13 @@ export const ACTIONS = [
     label: 'Engine — status and install',
     run: engine('stt', 'Speech-to-Text')
   },
+  {
+    section: 'channels.browser',
+    label: 'Connection and install path',
+    view: true,
+    run: extensionStatus
+  },
+  { section: 'channels.browser', label: 'Test the connection', run: testExtension },
 
   { section: 'mcp.servers', label: 'Connected servers', view: true, run: mcpList },
   { section: 'mcp.servers', label: 'Add a server', run: mcpAdd },

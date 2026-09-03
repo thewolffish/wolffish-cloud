@@ -80,12 +80,16 @@ function useTransfer(
 }
 
 /**
- * `bg-primary/20` rather than the bar's default `bg-border` track: the same
+ * `bg-primary-line` rather than the bar's default `bg-border` track: the same
  * component sits on a card body, on a bare `bg-border` image placeholder and
  * inside a chart skeleton, and a tint of its own fill is the one track colour
- * that stays visible on all of them.
+ * that stays visible on all of them. It has to be the precomputed line tone,
+ * not `bg-primary/20` — an alpha modifier on a var() colour compiles to no
+ * rule at all (see global.css) and the track disappears everywhere. The softer
+ * `primary-soft` is not enough either: on dark it lands within a shade of
+ * `bg-border`, so the placeholder case would still show a track-less bar.
  */
-const TRACK = 'bg-primary/20'
+const TRACK = 'bg-primary-line'
 
 type DownloadStatusProps = {
   relPath: string

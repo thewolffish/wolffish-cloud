@@ -11,7 +11,7 @@
  * continues from there.
  *
  * The host bridge (PluginContext.askUser) only resolves on channels with an
- * interactive turn (Electron desktop, Telegram, WhatsApp); elsewhere
+ * interactive turn (Electron desktop, the paired phone, the terminal); elsewhere
  * (headless) it resolves `unsupported` and we tell the model to ask in plain
  * text instead.
  */

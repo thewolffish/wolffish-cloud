@@ -1,31 +1,23 @@
-import { BraveLogo, GoogleLogo, NotionLogo, TelegramLogo } from '@components/core/ProviderLogos'
+import { BraveLogo } from '@components/core/ProviderLogos'
 import { RTL_LOCALES, type SupportedLocale } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import { BravePanel } from '@pages/settings/BravePanel'
+import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
+import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
+import { TextToSpeechPanel } from '@pages/settings/TextToSpeechPanel'
 import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { CapabilitiesPanel } from '@pages/settings/CapabilitiesPanel'
 import { ModelsPanel } from '@pages/settings/ModelsPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
 import { ReflectionPanel } from '@pages/settings/ReflectionPanel'
-import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
 import { DataPanel } from '@pages/settings/DataPanel'
-import { GitHubPanel } from '@pages/settings/GitHubPanel'
-import { GooglePanel } from '@pages/settings/GooglePanel'
-import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
 import { CliPanel } from '@pages/settings/CliPanel'
 import { InAppPanel } from '@pages/settings/InAppPanel'
 import { McpPanel } from '@pages/settings/McpPanel'
-import { MemesPanel } from '@pages/settings/MemesPanel'
-import { VideoPanel } from '@pages/settings/VideoPanel'
-import { NotionPanel } from '@pages/settings/NotionPanel'
-import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
 import { MobilePanel } from '@pages/settings/MobilePanel'
-import { TelegramPanel } from '@pages/settings/TelegramPanel'
-import { TextToSpeechPanel } from '@pages/settings/TextToSpeechPanel'
 import { UsagePanel } from '@pages/settings/UsagePanel'
 import { VariablesPanel } from '@pages/settings/VariablesPanel'
-import { WhatsAppPanel } from '@pages/settings/WhatsAppPanel'
 import { WolffishPanel } from '@pages/settings/WolffishPanel'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -33,7 +25,6 @@ import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
 import {
   AiMagicIcon,
   AnalyticsUpIcon,
-  Video01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
   BrainIcon,
@@ -43,17 +34,14 @@ import {
   ComputerTerminal01Icon,
   Database02Icon,
   DnaIcon,
-  GithubIcon,
   Key01Icon,
   McpServerIcon,
   Mic01Icon,
+  VolumeHighIcon,
   NeuralNetworkIcon,
   PaintBoardIcon,
   PuzzleIcon,
-  SmartPhone01Icon,
-  SmileDizzyIcon,
-  VolumeHighIcon,
-  WhatsappIcon
+  SmartPhone01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -182,11 +170,10 @@ export function Settings(): React.JSX.Element {
     [snapshot]
   )
 
-  // Warm up the Google Workspace snapshot and the capability gate the
-  // moment Settings opens, so by the time the user opens a service card
-  // the data is already populated and the panel renders without a flash.
+  // Warm the capability gate the moment Settings opens, so a gated panel's
+  // first paint already has a settled verdict instead of flashing
+  // enabled → blocked.
   useEffect(() => {
-    void prefetchGooglePanel().catch(() => {})
     prefetchCapabilityGate()
   }, [])
 
@@ -408,9 +395,6 @@ type NavIconComponent = React.ComponentType<{ size?: number }>
 const NAV_ICON_SIZE = 14
 const NAV_ICON_SIZE_OVERRIDES = new Map<NavIconComponent, number>([
   [BraveLogo, 13],
-  [GoogleLogo, 13],
-  [NotionLogo, 13],
-  [TelegramLogo, 13],
   [BrowserIcon, 15],
   [ComputerTerminal01Icon, 15]
 ])
@@ -443,46 +427,14 @@ const CHANNEL_ICONS: Record<Channel, NavIconComponent> = {
 type KnowledgeTab = 'compaction' | 'reflection'
 const KNOWLEDGE_TABS: KnowledgeTab[] = ['compaction', 'reflection']
 
-type Service =
-  | 'brave'
-  | 'notion'
-  | 'github'
-  | 'telegram'
-  | 'whatsapp'
-  | 'google'
-  | 'memes'
-  | 'video'
-  | 'tts'
-  | 'stt'
-  | 'computerUse'
+type Service = 'brave' | 'tts' | 'stt' | 'computerUse'
 
-// Every service, always. Pages that depend on a cerebellum capability
-// gate themselves with an alert card instead of vanishing from the grid.
-// A new service is one entry here plus SERVICE_ICONS and SERVICE_PANELS —
-// the grid picks it up from there.
-const SERVICES: Service[] = [
-  'brave',
-  'google',
-  'telegram',
-  'whatsapp',
-  'memes',
-  'video',
-  'notion',
-  'github',
-  'tts',
-  'stt',
-  'computerUse'
-]
+// Every service, always. A new service is one entry here plus SERVICE_ICONS
+// and SERVICE_PANELS — the grid picks it up from there.
+const SERVICES: Service[] = ['brave', 'tts', 'stt', 'computerUse']
 
 const SERVICE_ICONS: Record<Service, NavIconComponent> = {
   brave: BraveLogo,
-  telegram: TelegramLogo,
-  whatsapp: WhatsappIcon,
-  notion: NotionLogo,
-  github: GithubIcon,
-  google: GoogleLogo,
-  memes: SmileDizzyIcon,
-  video: Video01Icon,
   tts: VolumeHighIcon,
   stt: Mic01Icon,
   computerUse: ComputerIcon
@@ -490,13 +442,6 @@ const SERVICE_ICONS: Record<Service, NavIconComponent> = {
 
 const SERVICE_PANELS: Record<Service, React.ComponentType> = {
   brave: BravePanel,
-  telegram: TelegramPanel,
-  whatsapp: WhatsAppPanel,
-  notion: NotionPanel,
-  github: GitHubPanel,
-  google: GooglePanel,
-  memes: MemesPanel,
-  video: VideoPanel,
   tts: TextToSpeechPanel,
   stt: SpeechToTextPanel,
   computerUse: ComputerUsePanel

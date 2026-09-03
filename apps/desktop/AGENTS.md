@@ -1,11 +1,11 @@
 # Wolffish — Agent Guide
 
-Personal AI desktop app. Electron + React + TypeScript. The runtime is modeled as a 15-module brain — see `ARCH.md` for the full mapping.
+The Wolffish Cloud desktop client — the employee's agent, cloud-first. Electron + React + TypeScript. The runtime is modeled as a 15-module brain — see `ARCH.md` for the full mapping.
 
 ## Stack
 
 - Electron via `electron-vite`. Three processes: **main** (Node), **preload** (bridge), **renderer** (React).
-- Tailwind v4, i18next (en / ar), Ollama for local inference.
+- Tailwind v4, i18next (en / ar). Models are served and governed by the org API — no local inference, no provider keys on the device.
 - IPC is the only main↔renderer channel. Never import main code from the renderer or vice versa — go through `preload`.
 
 ## Project layout
@@ -14,18 +14,21 @@ Personal AI desktop app. Electron + React + TypeScript. The runtime is modeled a
 src/
 ├── main/            Electron main process (Node)
 │   ├── index.ts     entry — IPC handlers live here
-│   ├── ollama/      Ollama HTTP client + install detection
+│   ├── cloud/       the org API — auth, sync, capability + catalog mirrors
+│   ├── channels/    the surfaces a turn arrives on (electron/, cli/, mobile/, extension/)
+│   ├── uploads/     attachment staging, validation, owned copies
 │   ├── workspace/   ~/.wfc init, config, purge
-│   ├── lockfile/    single-instance guard
-│   ├── system/      OS info (platform, RAM, disk)
-│   └── runtime/     the brain — one folder per region
-│       ├── thalamus/, prefrontal/, hippocampus/, ...
-│       └── providers/  LLM provider adapters (anthropic/, openai/, local/)
+│   ├── lockfile.ts  single-instance guard
+│   ├── system.ts    OS info (platform, RAM, disk)
+│   └── runtime/     the brain — one file per region
+│       ├── thalamus.ts, prefrontal.ts, hippocampus.ts, ...
+│       └── providers/cloud.ts  the single model lane (the org API)
 ├── preload/         contextBridge — types in index.d.ts
+├── cli/             the `wfc` terminal client — talks to main over the CLI socket
 ├── renderer/src/
 │   ├── App.tsx, main.tsx, env.d.ts, assets/
 │   ├── components/  common/ (composed) and core/ (primitives)
-│   ├── pages/       one folder per screen
+│   ├── pages/       one file per screen (auth/ and settings/ group their own)
 │   ├── providers/   React context providers
 │   ├── hooks/       custom hooks
 │   └── lib/         i18n, utils
@@ -43,10 +46,9 @@ scripts/     build helpers (one folder each)
 Every module lives in its own kebab-case folder, and the file inside matches the folder name:
 
 ```
-components/core/copy-button/CopyButton.tsx
-hooks/use-online/useOnline.ts
-pages/model-picker/ModelPicker.tsx
-main/runtime/hippocampus/hippocampus.ts
+components/common/reasoning-card/ReasoningCard.tsx
+hooks/use-zoom-pan/useZoomPan.ts
+providers/locale/LocaleProvider.tsx
 ```
 
 When a file has both a component and a hook (Fast Refresh requires single-purpose files), split them:
@@ -77,7 +79,7 @@ Hard rule: **uninstall must be `rm -rf ~/.wfc/`**. Every byte the app writes goe
 - `~/.wfc/workspace/` — user data (config.json + brain/ folders)
 - `~/.wfc/runtime/` — Chromium state (cookies, localStorage, GPU cache, ...) via `app.setPath('userData', ...)`
 - `~/.wfc/logs/` — via `app.setAppLogsPath(...)`
-- `~/.wfc/bin/` — every managed binary: `gog`, `ffmpeg`, the voice engines, and the `wolffish` CLI shim. One directory on every platform, and one PATH entry that covers all of them (`google.ts:ensureInUserPath` writes it).
+- `~/.wfc/bin/` — every managed binary: `ffmpeg`, the voice engines, and the `wolffish` CLI shim. One directory on every platform, and one PATH entry that covers all of them (`autostart/cli-path.ts` writes it).
 
 Do not write outside this tree. Do not introduce keytar / electron-store / safeStorage / OS keychains. The Snap target in `electron-builder.yml` is the one known exception (Snap confines writes to `~/snap/`); flag it before shipping a Snap.
 

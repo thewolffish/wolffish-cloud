@@ -34,7 +34,7 @@ export function PanelScreen({
           accessibilityLabel={t('common.back')}
           hitSlop={8}
           onPress={goBack}
-          className="h-9 w-9 items-center justify-center rounded-lg active:bg-border/40"
+          className="h-9 w-9 items-center justify-center rounded-lg active:bg-border-soft"
         >
           <BackIcon size={20} className="text-fg" />
         </Pressable>
@@ -306,7 +306,7 @@ export function NavRow({
       // status only reaches a screen reader if it is spoken with the row.
       accessibilityLabel={trailing ? undefined : status ? `${label}, ${status.label}` : label}
       onPress={onPress}
-      className="bg-surface border-border flex-row items-center gap-3 rounded-xl border px-4 py-3 active:bg-border/30"
+      className="bg-surface border-border flex-row items-center gap-3 rounded-xl border px-4 py-3 active:bg-border-soft"
     >
       {icon}
       <View className="flex-1 flex-col gap-0.5">

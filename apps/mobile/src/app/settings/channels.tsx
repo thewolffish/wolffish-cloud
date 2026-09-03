@@ -1,24 +1,13 @@
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
-import {
-  ConfigSelectRow,
-  ConfigStatusRow,
-  ConfigSwitchRow,
-  ConfigTextRow
-} from '@/components/settings/ConfigRows'
+import { ConfigSwitchRow } from '@/components/settings/ConfigRows'
 import { InfoRow, PanelScreen, Section, StatusRow } from '@/components/settings/SettingsUI'
 import { useCliStatus } from '@/state/demoConfig'
 import { Text } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
-const STALE_HOURS = ['1', '3', '6', '12', '24'].map((value) => ({ value, label: value }))
-
 /**
- * Channels — the desktop's In-App / Telegram / WhatsApp panels. Mobile edits
- * a channel's settings (allow-list, auto-refresh, stale window, verbose,
- * hide-automations) but never its power switch: enabling a channel starts a
- * bridge process on the desktop, which is the desktop's to start, so the
- * enabled row reports state and the rest gate on it. Every row binds to a
- * single config key, so a toggle re-renders only itself.
+ * Channels — the desktop's In-App, Mobile and CLI panels. Every row binds to
+ * a single config key, so a toggle re-renders only itself.
  */
 export default function ChannelsScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.
@@ -46,12 +35,11 @@ export default function ChannelsScreen(): React.JSX.Element {
         />
       </Section>
 
-      {/* This device, as the desktop's Mobile panel sees it — the same two
+      {/* This device, as the desktop's Mobile panel sees it — the same
           settings, the same words, in the desktop's own channel order
-          (in-app, phone, Telegram, WhatsApp). Both are real switches rather
-          than status rows: unlike a Telegram bridge, nothing has to be
-          started on the desktop for either to take effect, so the phone is
-          free to drive its own channel. */}
+          (in-app, phone, terminal). All are real switches rather than
+          status rows: nothing has to be started on the desktop for any of
+          them to take effect, so the phone is free to drive its own channel. */}
       <Section title={t('settings.channels.phone')}>
         <ConfigSwitchRow
           field="mobileNotifications"
@@ -70,87 +58,6 @@ export default function ChannelsScreen(): React.JSX.Element {
           field="mobileRunCards"
           label={t('settings.channels.runCards')}
           description={t('settings.channels.runCardsPhoneDescription')}
-        />
-      </Section>
-
-      <Section title="Telegram">
-        <ConfigStatusRow
-          field="telegramEnabled"
-          label={t('settings.channels.enabled')}
-          description={t('settings.channels.telegramDescription')}
-        />
-        {/* One write on blur, not one per keystroke: an allow-list change
-            restarts the desktop's bridge, so it must arrive as a single
-            deliberate act — the same reason its panel saves on a button. */}
-        <ConfigTextRow
-          field="telegramAllowedUserIds"
-          label={t('settings.channels.allowedUserIds')}
-          placeholder={t('settings.channels.allowedUserIdsPlaceholder')}
-          requires="telegramEnabled"
-          commitOnEndEditing
-        />
-        <ConfigSwitchRow
-          field="telegramAutoRefresh"
-          label={t('settings.channels.autoRefresh')}
-          description={t('settings.channels.autoRefreshDescription')}
-          requires="telegramEnabled"
-        />
-        <ConfigSelectRow
-          field="telegramStaleHours"
-          label={t('settings.channels.staleHours')}
-          options={STALE_HOURS}
-        />
-        <ConfigSwitchRow
-          field="telegramHideAutomations"
-          label={t('settings.channels.hideAutomations')}
-          description={t('settings.channels.hideAutomationsDescription')}
-          requires="telegramEnabled"
-        />
-        <ConfigSwitchRow
-          field="telegramVerbose"
-          label={t('settings.verbose.label')}
-          description={t('settings.verbose.channelDescription')}
-          requires="telegramEnabled"
-        />
-      </Section>
-
-      <Section title="WhatsApp">
-        <ConfigStatusRow
-          field="whatsappEnabled"
-          label={t('settings.channels.enabled')}
-          description={t('settings.channels.whatsappDescription')}
-        />
-        {/* Same one-write-on-blur contract as Telegram's allow-list above. */}
-        <ConfigTextRow
-          field="whatsappAllowedNumbers"
-          label={t('settings.channels.allowedNumbers')}
-          placeholder={t('settings.channels.allowedNumbersPlaceholder')}
-          requires="whatsappEnabled"
-          keyboardType="phone-pad"
-          commitOnEndEditing
-        />
-        <ConfigSwitchRow
-          field="whatsappAutoRefresh"
-          label={t('settings.channels.autoRefresh')}
-          description={t('settings.channels.autoRefreshDescription')}
-          requires="whatsappEnabled"
-        />
-        <ConfigSelectRow
-          field="whatsappStaleHours"
-          label={t('settings.channels.staleHours')}
-          options={STALE_HOURS}
-        />
-        <ConfigSwitchRow
-          field="whatsappHideAutomations"
-          label={t('settings.channels.hideAutomations')}
-          description={t('settings.channels.hideAutomationsDescription')}
-          requires="whatsappEnabled"
-        />
-        <ConfigSwitchRow
-          field="whatsappVerbose"
-          label={t('settings.verbose.label')}
-          description={t('settings.verbose.channelDescription')}
-          requires="whatsappEnabled"
         />
       </Section>
 

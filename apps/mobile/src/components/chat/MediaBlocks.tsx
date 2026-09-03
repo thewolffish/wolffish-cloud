@@ -271,7 +271,7 @@ export function AudioBlock({
           align === 'end' ? 'self-end' : 'self-start'
         )}
       >
-        <View className="bg-border/60 h-9 w-9 items-center justify-center rounded-full">
+        <View className="bg-border h-9 w-9 items-center justify-center rounded-full">
           <DownloadGlyph size={16} />
         </View>
         <View className="flex-1 flex-col gap-1.5">

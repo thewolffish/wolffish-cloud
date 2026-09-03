@@ -17,12 +17,42 @@ const SCHEMA_VERSION = 3
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null
 
+/**
+ * How long a write waits for the lock before giving up. expo-sqlite runs an
+ * exclusive transaction on a connection of its own, and SQLite answers the
+ * other connection's write with "database is locked" the instant one holds
+ * the write lock — seen live as an uncaught rejection the moment a send, a
+ * body refetch and the file cache all wrote at once. With a busy timeout on
+ * BOTH connections that becomes a short wait instead of a lost write.
+ */
+export const BUSY_TIMEOUT_MS = 5_000
+
+type ExclusiveTask = Parameters<SQLite.SQLiteDatabase['withExclusiveTransactionAsync']>[0]
+
+/**
+ * The only way this app opens an exclusive transaction. The transaction's own
+ * connection is fresh and carries no pragmas, so the timeout is its first
+ * statement: a PRAGMA is legal after BEGIN, and the lock is only taken by
+ * the first write. Tasks should lead with a write (or be a single
+ * INSERT…SELECT) — a read that precedes the first write can still lose to a
+ * writer that commits in between, which no timeout retries.
+ */
+export async function withExclusiveTransaction(
+  db: SQLite.SQLiteDatabase,
+  task: ExclusiveTask
+): Promise<void> {
+  await db.withExclusiveTransactionAsync(async (tx) => {
+    await tx.execAsync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+    await task(tx)
+  })
+}
+
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version')
   const current = row?.user_version ?? 0
   if (current >= SCHEMA_VERSION) return
 
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withExclusiveTransaction(db, async (tx) => {
     if (current < 1) {
       await tx.execAsync(`
         CREATE TABLE IF NOT EXISTS conversations (
@@ -84,6 +114,7 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       const db = await SQLite.openDatabaseAsync(DB_NAME)
       // WAL keeps reads (chat feed) unblocked during import/persist writes.
       await db.execAsync('PRAGMA journal_mode = WAL')
+      await db.execAsync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
       await db.execAsync('PRAGMA foreign_keys = ON')
       await migrate(db)
       return db

@@ -143,8 +143,8 @@ async function main(): Promise<void> {
   const config = JSON.stringify(
     {
       providers: [{ id: 'openai', apiKey: 'sk-abcdefghijklmnopqrstuvwxyz012345', model: 'gpt' }],
-      telegram: { botToken: '8012345678:AAH-lorem-ipsum-dolor-sit-amet-xyz' },
-      notion: { token: 'ntn_1234567890abcdefghijklmnopqrstuvwxyz' },
+      pairing: { botToken: '8012345678:AAH-lorem-ipsum-dolor-sit-amet-xyz' },
+      integration: { token: 'ntn_1234567890abcdefghijklmnopqrstuvwxyz' },
       port: 23152,
       enabled: true
     },
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
     !masked.text.includes('8012345678:AAH-lorem-ipsum-dolor-sit-amet-xyz')
   )
   check(
-    'a notion token is masked',
+    'an integration token is masked',
     !masked.text.includes('ntn_1234567890abcdefghijklmnopqrstuvwxyz')
   )
   check('the count is reported', masked.count >= 3, `count was ${masked.count}`)

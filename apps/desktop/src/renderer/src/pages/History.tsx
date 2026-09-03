@@ -111,7 +111,7 @@ export function History(): React.JSX.Element {
   }, [refresh, statusKey])
 
   // Indexed conversations MERGED with this session's live runs, so a
-  // conversation started anywhere — in-app, WhatsApp, Telegram, an automation,
+  // conversation started anywhere — in-app, the phone, the terminal, an automation,
   // a procedure — shows up here the moment its first turn starts, with the
   // same pulsing number chip the rail gives it, instead of only once the work
   // is over and the cortex has caught up.

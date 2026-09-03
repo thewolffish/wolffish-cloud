@@ -129,12 +129,19 @@ for (let round = 0; round < ROUNDS; round++) {
           body: {
             items: [
               { type: 'conversation', id: convId, title: `Sim ${round}`, created_at: now, updated_at: now },
+              // The desktop's own message shape (id, role, content, timestamp;
+              // seq = the timestamp): what restore rebuilds and re-pushes.
               {
                 type: 'record',
                 id: `rec_sim_${user.id}_${stamp}_${round}`,
                 conversation_id: convId,
-                seq: round,
-                content: { role: 'user', text: `round ${round}` },
+                seq: Date.parse(now),
+                content: {
+                  id: `m_${Date.parse(now)}_${round}`,
+                  role: 'user',
+                  content: `round ${round}`,
+                  timestamp: Date.parse(now)
+                },
                 created_at: now
               }
             ]

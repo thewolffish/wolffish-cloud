@@ -10,7 +10,7 @@
  *   1. Broca.closeOpenToolCalls — emits a synthetic tool_result for every
  *      tool_call announced but not resolved when a turn ends abruptly, so the
  *      persisted segment stream is always balanced at the source.
- *   2. assistantSegmentsToHistory (shared Telegram/WhatsApp rebuild) —
+ *   2. assistantSegmentsToHistory (shared channel rebuild) —
  *      backfills a canceled tool result for any dangling tool_call segment,
  *      healing conversations saved before the source-side fix.
  *   3. Motor.executeStep — an aborted signal stops the step without invoking

@@ -1,6 +1,6 @@
 import { markOutboxEdited, settleOutboxKey } from '@/lib/sync/outbox'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc } from '@/lib/bridge/protocol'
 import { refreshConfigSnapshot, useDemoConfig, type DemoConfigValues } from '@/state/demoConfig'
 
 /**
@@ -80,7 +80,7 @@ let sending = false
  * the read-only guard upstream already refused the edit there).
  */
 export function pushReflectionConfig(patch: ReflectionPatch): void {
-  if (!tunnelClient.connected) return
+  if (!bridgeClient.connected) return
   for (const key of patchKeys(patch)) markOutboxEdited(key)
   pending = pending ? mergePatch(pending, patch) : patch
   void flush()
@@ -92,7 +92,7 @@ async function flush(): Promise<void> {
   if (!batch) return
   pending = null
 
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel || !tunnel.connected) {
     // The link is gone, and settings flip read-only with it. Offline edits
     // do not exist — reconnect reconciles from the desktop.
@@ -107,7 +107,7 @@ async function flush(): Promise<void> {
     answer = (await tunnel.rpc(Rpc.setReflectionConfig, batch)) as ReflectionAnswer
   } catch (error) {
     failed = true
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
   } finally {
     sending = false
   }
@@ -141,7 +141,7 @@ async function flush(): Promise<void> {
 export async function runReflectionJob(
   kind: 'reflection' | 'deepClean'
 ): Promise<'running' | 'queued' | 'coalesced' | null> {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel || !tunnel.connected) return null
   try {
     const answer = (await tunnel.rpc(Rpc.runReflection, { kind })) as { result?: unknown }
@@ -149,7 +149,7 @@ export async function runReflectionJob(
     if (answer?.result === 'running') return 'running'
     return 'queued'
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     return null
   }
 }

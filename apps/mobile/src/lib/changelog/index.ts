@@ -1,6 +1,6 @@
 import type { SupportedLocale } from '@/lib/i18n'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc } from '@/lib/bridge/protocol'
 import { Asset } from 'expo-asset'
 import { File } from 'expo-file-system'
 // Assets, not source: Metro follows these at bundle time to pack the markdown
@@ -11,6 +11,8 @@ import ar202607 from '@/changelog/2026-07/ar.md'
 import en202607 from '@/changelog/2026-07/en.md'
 import ar202608 from '@/changelog/2026-08/ar.md'
 import en202608 from '@/changelog/2026-08/en.md'
+import ar202609 from '@/changelog/2026-09/ar.md'
+import en202609 from '@/changelog/2026-09/en.md'
 
 /**
  * Release notes — one markdown page per month per locale, the desktop's
@@ -25,7 +27,8 @@ import en202608 from '@/changelog/2026-08/en.md'
  */
 const PAGES: Record<string, Record<SupportedLocale, number>> = {
   '2026-07': { en: en202607, ar: ar202607 },
-  '2026-08': { en: en202608, ar: ar202608 }
+  '2026-08': { en: en202608, ar: ar202608 },
+  '2026-09': { en: en202609, ar: ar202609 }
 }
 
 /** Months that have notes, newest first — the order the page lists them in. */
@@ -87,7 +90,7 @@ export async function readDesktopChangelog(
   const key = `${month}:${locale}`
   const cached = desktopCache.get(key)
   if (cached !== undefined) return cached
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return null
   try {
     const answer = (await tunnel.rpc(Rpc.changelogRead, { month, locale })) as {

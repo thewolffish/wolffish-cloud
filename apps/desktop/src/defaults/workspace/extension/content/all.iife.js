@@ -1,4 +1,4 @@
-(function(){"use strict";const N="[Wolffish]",E=(...e)=>{console.log(N,...e)},I=e=>g(e).replace(/\n{3,}/g,`
+(function(){"use strict";const N="[Wolffish Cloud]",E=(...e)=>{console.log(N,...e)},I=e=>g(e).replace(/\n{3,}/g,`
 
 `).trim(),L=new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","TEMPLATE","IFRAME"]),M=e=>{if(L.has(e.tagName))return!0;const t=e.style;return!!((t==null?void 0:t.display)==="none"||(t==null?void 0:t.visibility)==="hidden"||e.getAttribute("aria-hidden")==="true"||e.hasAttribute("hidden"))},g=e=>{var r,o;if(e.nodeType===Node.TEXT_NODE)return((r=e.textContent)==null?void 0:r.replace(/\s+/g," "))??"";if(e.nodeType!==Node.ELEMENT_NODE)return"";const t=e;if(M(t))return"";switch(t.tagName){case"H1":return`# ${b(t)}
 

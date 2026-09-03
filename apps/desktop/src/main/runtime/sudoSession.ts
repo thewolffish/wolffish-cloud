@@ -166,7 +166,7 @@ const UNSUPPORTED_PLATFORM_ERROR =
 let cachedPassword: string | null = null
 let helperDir: string | null = null
 let helperPath: string | null = null
-// De-dupe concurrent first-time elevations (e.g. the UI and Telegram both
+// De-dupe concurrent first-time elevations (e.g. the UI and the phone both
 // firing a sudo command at once) so the user sees a single dialog.
 let inflight: Promise<EnsurePasswordResult> | null = null
 // Set once when sudo reports the account isn't in sudoers — re-prompting is

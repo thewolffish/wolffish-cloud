@@ -51,7 +51,7 @@
 
 ## How To Reach You
 
-- Preferred channel: <!-- where Wolffish should reach you, e.g. Telegram, WhatsApp -->
+- Preferred channel: <!-- where Wolffish should reach you, e.g. the phone app -->
 - Notify me about:   <!-- what's worth a ping, e.g. finished tasks, urgent replies -->
 - Don't notify for:  <!-- noise you don't want, e.g. routine progress updates -->
 

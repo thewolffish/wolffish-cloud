@@ -56,12 +56,12 @@ function loadPush(): Push {
   return module
 }
 
-function fakeTunnel(): { sendControl: jest.Mock; onControl: jest.Mock } {
-  return { sendControl: jest.fn(), onControl: jest.fn() }
+function fakeTunnel(): { sendPush: jest.Mock; onFrame: jest.Mock } {
+  return { sendPush: jest.fn(), onFrame: jest.fn() }
 }
 
-function registrations(tunnel: { sendControl: jest.Mock }): Record<string, unknown>[] {
-  return tunnel.sendControl.mock.calls
+function registrations(tunnel: { sendPush: jest.Mock }): Record<string, unknown>[] {
+  return tunnel.sendPush.mock.calls
     .map(([frame]) => frame as Record<string, unknown>)
     .filter((frame) => frame.type === 'register_push')
 }
@@ -98,7 +98,7 @@ describe('push registration', () => {
       const sent = registrations(tunnel)
       expect(sent).toHaveLength(1)
       expect(sent[0].expoPushToken).toBeNull()
-      expect(sent[0].phoneId).toBe('a'.repeat(32))
+      expect(sent[0].type).toBe('register_push')
     } finally {
       jest.useRealTimers()
     }

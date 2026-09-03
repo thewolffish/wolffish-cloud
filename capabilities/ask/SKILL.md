@@ -75,8 +75,8 @@ the tool result, so you just continue from there.
 
 One call takes a **list of questions**. With a single question the card looks
 like a simple ask; with several, the card shows numbered tabs (1 2 3 …) and
-moves to the next question as the user answers each one. On Telegram and
-WhatsApp the questions are posed one message at a time, in order.
+moves to the next question as the user answers each one. In the terminal the
+questions are posed one at a time, in order.
 
 ## When to use it
 

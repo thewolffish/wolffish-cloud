@@ -15,9 +15,8 @@
  * The reference artifact for the contract is the committed demo snapshot
  * (wolffish-mobile/demo-data/config-snapshot.json): every key below exists
  * there in the same shape. Field names come from WorkspaceConfig
- * (workspace/workspace.ts) — the real ones, not paraphrases: `defaultVoice`
- * not `voice`, `allowedPhoneNumbers` not `allowedNumbers`,
- * `hideAutomationsFromResume` not `hideAutomations`. Getting one wrong does
+ * (workspace/workspace.ts) — the real ones, not paraphrases: `screenshotMaxWidth`
+ * not `width`, `runCards` not `cards`. Getting one wrong does
  * not error anywhere; it renders a silent default on the phone forever.
  */
 import type { Agent } from '@main/runtime/agent'
@@ -58,8 +57,6 @@ export type SnapshotSources = {
    * Brave switch as read-only status — the key lives at the edge, not here. */
   searchLane?: () => Promise<{ state: string }>
   usageDays?: () => Promise<unknown[]>
-  ollamaRunning?: () => Promise<boolean>
-  ollamaModels?: () => Promise<string[]>
   /** brain/projects.json — the store the Projects page edits, NOT config.json. */
   projects?: () => Promise<unknown[]>
   /** Brainstem last-run records, for the phone's Knowledge cards. */
@@ -73,10 +70,6 @@ export type SnapshotSources = {
     extensionVersion?: string | null
     browsers?: readonly unknown[]
   }>
-  /** Months this build's own release notes cover (src/changelog), newest
-   * first. The list alone — bodies are served one at a time by
-   * Rpc.changelogRead, because the full set is hundreds of KB. */
-  changelogMonths?: () => Promise<string[]>
   /**
    * Whether autostart is ACTUALLY registered with the OS right now. Optional
    * because it shells out (systemctl / launchctl / schtasks) and a snapshot
@@ -117,13 +110,6 @@ const platformLabel = (platform: NodeJS.Platform): string =>
         ? 'Linux'
         : platform
 
-/**
- * Enough of a key to recognise WHICH credential is installed, never enough to
- * authenticate. The demo ships full-length fakes; a live desktop ships this.
- */
-const maskKey = (key: unknown): string | null =>
-  typeof key === 'string' && key.length > 0 ? `${key.slice(0, 12)}…` : null
-
 /** Never let one unavailable section fail the whole snapshot. */
 async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undefined> {
   if (!fn) return undefined
@@ -142,31 +128,6 @@ async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undef
  * loudly instead of storing junk.
  */
 export const THINKING_MODES = new Set(['off', 'on', 'high', 'max'])
-
-/**
- * The allowed-list fields travel to the phone as one comma-joined line (the
- * `allowedUserIds` / `allowedNumbers` strings the snapshot below mints) and
- * come back the same way through configSet. The parsers live beside the
- * joins so the round trip is one contract in one file — a format change that
- * touched only one direction would revert the field on every edit, silently.
- * Parsing is lenient (whitespace tolerated, junk entries dropped) because
- * the string arrives straight off a phone keyboard.
- */
-export function parseAllowedUserIds(text: string): number[] {
-  return text
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map(Number)
-    .filter((id) => Number.isInteger(id) && id > 0)
-}
-
-export function parseAllowedNumbers(text: string): string[] {
-  return text
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-}
 
 /**
  * The three hand-written documents that shape the agent — the desktop's Soul,
@@ -252,12 +213,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   ])
 
   const llm = (config.llm ?? {}) as Cfg
-  const brain = (llm.brain ?? {}) as Cfg
-  const local = (llm.local ?? {}) as Cfg
-  const telegram = (config.telegram ?? {}) as Cfg
-  const whatsapp = (config.whatsapp ?? {}) as Cfg
   const mobile = (config.mobile ?? {}) as Cfg
-  const google = (config.google ?? {}) as Cfg
   const stt = (config.stt ?? {}) as Cfg
   const tts = (config.tts ?? {}) as Cfg
   const computerUse = (config.computerUse ?? {}) as Cfg
@@ -266,28 +222,13 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   const compaction = (config.compaction ?? {}) as Cfg
   const reflection = (config.reflection ?? {}) as Cfg
   const safety = (config.safety ?? {}) as Cfg
-  const disabledCapabilities: string[] = Array.isArray(config.disabledCapabilities)
-    ? config.disabledCapabilities
-    : []
 
-  const [
-    data,
-    usageDays,
-    ollamaRunning,
-    ollamaModels,
-    projects,
-    compactionRuns,
-    extension,
-    changelogMonths
-  ] = await Promise.all([
+  const [data, usageDays, projects, compactionRuns, extension] = await Promise.all([
     attempt(sources.dataAnalytics),
     attempt(sources.usageDays),
-    attempt(sources.ollamaRunning),
-    attempt(sources.ollamaModels),
     attempt(sources.projects),
     attempt(sources.compactionRuns),
-    attempt(sources.extensionStatus),
-    attempt(sources.changelogMonths)
+    attempt(sources.extensionStatus)
   ])
 
   // Not an `attempt`: the reader already answers '' per unreadable document,
@@ -298,7 +239,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   // actually chosen one for this model — the phone falls back to its default
   // rather than this side inventing a choice the desktop never made.
   const thinkingModes = (llm.thinkingModes ?? {}) as Record<string, unknown>
-  const thinkingMode = thinkingModes[str(brain.model)]
+  const thinkingMode = thinkingModes[str(llm.model)]
 
   const snapshot: Record<string, unknown> = {
     capabilities: capabilities.map((capability) => ({
@@ -339,58 +280,19 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     customization,
 
     services: {
-      google: {
-        // GoogleConfig.status is already 'active' | 'inactive' — the exact
-        // string the phone compares against.
-        status: str(google.status, 'inactive'),
-        projectId: str(google.projectId)
-      },
-      // Connection lists are mapped to {label, detail} — the two lines the
-      // phone renders — and NOTHING else. The stored objects carry live
-      // tokens (PATs, integration secrets) that must never ride the tunnel.
-      github: (Array.isArray(config.github?.connections) ? config.github.connections : []).map(
-        (connection: Cfg) => ({
-          label: str(connection?.label, str(connection?.login, 'GitHub')),
-          detail:
-            [str(connection?.login), str(connection?.name)].filter(Boolean).join(' · ') ||
-            str(connection?.label)
-        })
-      ),
-      notion: (Array.isArray(config.notion?.connections) ? config.notion.connections : []).map(
-        (connection: Cfg) => ({
-          label: str(connection?.label, str(connection?.name, 'Notion')),
-          detail: str(connection?.name, str(connection?.email))
-        })
-      ),
       // Web search is the org's lane: "on" means the org has it switched on
       // with a key at the edge. Sent as '' rather than omitted — an omitted
       // key makes the phone show its demo placeholder, and a phone write to
       // either field is refused by applyMobileSettings.
       braveEnabled: (await attempt(sources.searchLane))?.state === 'ready',
       braveApiKey: '',
-      // Video generation (MiniMax H3): same shape as Brave — an enabled flag
-      // (the capability isn't switched off) plus the editable credential.
-      // Deliberately NOT the MiniMax chat provider's key (see VideoConfig).
-      videoEnabled: !disabledCapabilities.includes('video'),
-      videoApiKey: str(config.video?.apiKey),
-      // Absent-means-on, matching getVideoConfig: only an explicit false
-      // turns the director off.
-      videoDirector: config.video?.director !== false,
-      // Memes has no enabled flag of its own — memegen works with zero
-      // config — so "enabled" means the capability itself isn't switched off.
-      memesEnabled: !disabledCapabilities.includes('memes'),
-      memes: {
-        imgflipUsername: str(config.memes?.imgflip?.username),
-        imgflipPassword: str(config.memes?.imgflip?.password),
-        giphyApiKey: str(config.memes?.giphy?.apiKey)
-      },
       sttModel: str(stt.defaultModel, 'small'),
       // Pinned transcription language ('auto' = Whisper detection). The 'en'
       // fallback mirrors the plugin's own default for an unset config.
       sttLanguage: str(stt.language, 'en'),
       ttsVoice: str(tts.defaultVoice, 'af_bella'),
       ttsSpeed: str(tts.defaultSpeed, '1.0'),
-      // Voice prompts get spoken replies — absent-means-on, like videoDirector.
+      // Voice prompts get spoken replies — absent-means-on.
       ttsVoiceReplies: tts.voiceReplies !== false,
       screenshotMaxWidth: str(computerUse.screenshotMaxWidth, '1280'),
       screenshotFormat: str(computerUse.screenshotFormat, 'jpeg'),
@@ -463,65 +365,19 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         // The phone's own floating automation cards. Off by default, and the
         // phone is the surface that obeys it — the desktop only stores it.
         runCards: bool(mobile.runCards)
-      },
-      telegram: {
-        enabled: bool(telegram.enabled),
-        // Stored as number[]; the phone renders one comma-joined line.
-        allowedUserIds: (Array.isArray(telegram.allowedUserIds) ? telegram.allowedUserIds : [])
-          .map((id: unknown) => str(id))
-          .filter(Boolean)
-          .join(', '),
-        autoRefresh: bool(telegram.autoRefresh, true),
-        staleHours: str(telegram.staleHours, '12'),
-        verbose: bool(telegram.verbose),
-        hideAutomations: bool(telegram.hideAutomationsFromResume, true)
-      },
-      whatsapp: {
-        enabled: bool(whatsapp.enabled),
-        allowedNumbers: (Array.isArray(whatsapp.allowedPhoneNumbers)
-          ? whatsapp.allowedPhoneNumbers
-          : []
-        )
-          .map((n: unknown) => str(n))
-          .filter(Boolean)
-          .join(', '),
-        autoRefresh: bool(whatsapp.autoRefresh, true),
-        staleHours: str(whatsapp.staleHours, '12'),
-        verbose: bool(whatsapp.verbose),
-        hideAutomations: bool(whatsapp.hideAutomationsFromResume, true)
       }
     },
 
+    // One lane: the selected model is an id from the org's catalog. The
+    // phone's Model screen shows it and may pick another (brainModel is the
+    // writable key); there are no provider keys and no local models.
     llm: {
-      brainProvider: str(brain.providerId),
-      brainModel: str(brain.model),
+      brainProvider: 'cloud',
+      brainModel: str(llm.model),
       chatMode: str(llm.mode, 'single'),
-      localOnly: bool(llm.localOnly),
-      restrictPowerfulModels: bool(llm.restrictPowerfulModels, true),
       ...(typeof thinkingMode === 'string' && THINKING_MODES.has(thinkingMode)
         ? { thinkingMode }
-        : {}),
-      local: {
-        enabled: bool(local.enabled),
-        model: typeof local.model === 'string' ? local.model : null,
-        ...(ollamaRunning === undefined ? {} : { running: ollamaRunning }),
-        ...(ollamaModels === undefined ? {} : { models: ollamaModels })
-      },
-      // Key presence, chosen model and the cached catalog — the Model page's
-      // whole surface. The real credential never leaves this machine; the
-      // phone gets a recognisable prefix.
-      providers: (Array.isArray(llm.providers) ? llm.providers : []).map((provider: Cfg) => ({
-        id: str(provider?.id),
-        model: typeof provider?.model === 'string' ? provider.model : null,
-        hasKey: Boolean(provider?.apiKey),
-        apiKey: maskKey(provider?.apiKey),
-        models:
-          Array.isArray(provider?.models) && provider.models.length
-            ? provider.models.filter((model: unknown) => typeof model === 'string')
-            : typeof provider?.model === 'string' && provider.model
-              ? [provider.model]
-              : []
-      }))
+        : {})
     },
 
     preferences: {
@@ -539,11 +395,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       locale: str(config.locale, 'en'),
       bypassPermissions: bool(safety.bypassPermissions),
       blockCredentials: bool(safety.blockCredentials, true),
-      weekStartsOn: config.weekStartsOn === 0 ? 0 : 1,
-      updatesEnabled: bool(config.updates?.enabled, true),
-      ...(typeof config.ollamaModelsFolder === 'string'
-        ? { ollamaModelsFolder: config.ollamaModelsFolder }
-        : {})
+      weekStartsOn: config.weekStartsOn === 0 ? 0 : 1
     },
 
     desktop: {
@@ -592,12 +444,6 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
 
   if (data) snapshot.data = data
   if (Array.isArray(usageDays)) snapshot.usage = { days: usageDays }
-  // The list alone — the phone fetches a month's body over Rpc.changelogRead
-  // when the reader opens it. Omitted (not empty) when the source is absent,
-  // so an older wiring renders the phone's documented empty state.
-  if (Array.isArray(changelogMonths) && changelogMonths.length > 0) {
-    snapshot.changelog = { months: changelogMonths }
-  }
 
   if (Array.isArray(projects)) {
     snapshot.projects = (projects as Cfg[]).map((project) => ({

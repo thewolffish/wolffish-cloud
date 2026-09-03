@@ -9,17 +9,15 @@ import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoni
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { MobileChannel } from '@main/channels/mobile/channel'
+import { BridgeClient } from '@main/cloud/bridge'
+import { SNAPSHOT_PATH } from '@main/cloud/bridge-protocol'
 import {
   CUSTOMIZATION_DOCS,
   CUSTOMIZATION_MAX_BYTES,
   THINKING_MODES,
-  parseAllowedNumbers,
-  parseAllowedUserIds,
   type CustomizationDoc
 } from '@main/channels/mobile/snapshot'
-import { TelegramChannel } from '@main/channels/telegram/channel'
 import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
-import { WhatsAppChannel } from '@main/channels/whatsapp/channel'
 import {
   countConversationsSince,
   createConversation,
@@ -28,15 +26,11 @@ import {
   listConversations,
   loadConversation,
   mergeConversationOnto,
-  mintMessageId,
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
   type ConversationMeta
 } from '@main/conversations'
-import { turnScope } from '@main/runtime/corpus'
-import type { TaskSnapshot } from '@main/runtime/broca'
-import { checkVideoService, videoTasks } from '@main/runtime/video-tasks'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
 import {
   copyDiagnosticArchive,
@@ -44,7 +38,6 @@ import {
   type DiagnosticProgress,
   type DiagnosticResult
 } from '@main/diagnostics'
-import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github'
 import {
   getSttInstallState,
   getTtsInstallState,
@@ -57,16 +50,6 @@ import {
   type EngineRuntimeState,
   type EngineStatus
 } from '@main/voice-engines'
-import {
-  googleService,
-  type GoogleAuthResult,
-  type GoogleBinaryStatus,
-  type GoogleCredentialsResult,
-  type GoogleSetupResult,
-  type GoogleSetupState,
-  type GoogleStatus,
-  type GoogleUpdateResult
-} from '@main/google'
 import { CliChannel } from '@main/channels/cli/channel'
 import { CliServer } from '@main/channels/cli/server'
 import { registerCliIpc, type AutostartFacts } from '@main/channels/cli/ipc'
@@ -81,8 +64,6 @@ import {
 } from '@main/autostart/autostart'
 import { handle, ipcHandlers } from '@main/ipc-registry'
 import { acquireLock, releaseLockSync } from '@main/lockfile'
-import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
-import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import {
   attachFilesToProcedure,
@@ -102,8 +83,15 @@ import {
   updateProject,
   type ProjectFileRef
 } from '@main/projects'
-import { API_BASE } from '@main/cloud/api'
-import { getCatalog, refreshCatalog } from '@main/cloud/catalogSync'
+import {
+  API_BASE,
+  offerPairing,
+  pairingStatus,
+  withdrawPairing,
+  listDevices,
+  revokeDevice
+} from '@main/cloud/api'
+import { getCatalog, onCatalogChanged, refreshCatalog } from '@main/cloud/catalogSync'
 import {
   initCapabilitySync,
   queueUserCapabilityDelete,
@@ -113,12 +101,17 @@ import {
   hydrateConversationFiles,
   initCloudSync,
   markWorkspaceReset,
+  flushOutbox,
   wipeCloudData,
   type HydrationProgress,
-  type RestoreSummary
+  type RestoreSummary,
+  hydrateBlob,
+  ensureFileUploaded
 } from '@main/cloud/sync'
 import { cloudSession, type AuthState } from '@main/cloud/session'
 import { connectCloudProvider } from '@main/runtime/providers/cloud'
+import { workspaceMediaPath } from '@main/media-url'
+import { pathToFileURL } from 'node:url'
 import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
@@ -170,25 +163,17 @@ import {
   factoryReset,
   getBrowserExtensionConfig,
   getCompactionConfig,
-  getComputerUseConfig,
-  getGitHubConfig,
   getReflectionConfig,
   normalizeReflectionConfig,
+  getComputerUseConfig,
   getCliConfig,
-  getGoogleConfig,
+  getSttConfig,
+  getTtsConfig,
   getInAppConfig,
-  getMemesConfig,
   getMobileChannelConfig,
   setMobileChannelConfig as persistMobileChannelConfig,
-  getVideoConfig,
-  setVideoConfig,
-  getNotionConfig,
   getStatus,
-  getSttConfig,
-  getTelegramConfig,
-  getTtsConfig,
   getVariables,
-  getWhatsAppConfig,
   lockfilePath,
   markOnboardingComplete,
   patchConfig,
@@ -200,41 +185,26 @@ import {
   setBypassPermissions as persistBypassPermissions,
   setCliConfig as persistCliConfig,
   setCompactionConfig as persistCompactionConfig,
-  setComputerUseConfig as persistComputerUseConfig,
   setReflectionConfig as persistReflectionConfig,
-  setGitHubConfig as persistGitHubConfig,
-  setGoogleConfig as persistGoogleConfig,
   setInAppConfig as persistInAppConfig,
   setLaunchAtStartup as persistLaunchAtStartup,
   setLocale as persistLocale,
-  setMemesConfig as persistMemesConfig,
-  setNotionConfig as persistNotionConfig,
-  setSttConfig as persistSttConfig,
-  setTelegramConfig as persistTelegramConfig,
   setTheme as persistTheme,
   setThinkingMode as persistThinkingMode,
-  setTtsConfig as persistTtsConfig,
   setVariables as persistVariables,
   setWeekStartsOn as persistWeekStartsOn,
-  setWhatsAppConfig as persistWhatsAppConfig,
   readConfig,
   workspaceRoot,
+  setComputerUseConfig as persistComputerUseConfig,
+  setSttConfig as persistSttConfig,
+  setTtsConfig as persistTtsConfig,
   type BrowserExtensionConfig,
   type ComputerUseConfig,
-  type GitHubConfig,
-  type GitHubConnection,
-  type GoogleConfig,
   type InAppConfig,
-  type MemesConfig,
-  type VideoConfig,
-  type NotionConfig,
-  type NotionConnection,
   type SttConfig,
-  type TelegramConfig,
   type TtsConfig,
   type Variable,
   type WeekStartsOn,
-  type WhatsAppConfig,
   type WorkspaceConfig,
   type WorkspaceStatus
 } from '@main/workspace/workspace'
@@ -259,7 +229,8 @@ import {
 } from 'electron'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 
 // Redirect Chromium/Electron-managed state into ~/.wfc so a single
 // `rm -rf ~/.wfc` wipes every byte the app touches. Must run before
@@ -414,8 +385,8 @@ const agent = new Agent({
   workspaceRoot: workspaceRoot()
 })
 
-// Channels are the user-facing surfaces wfc speaks through. The
-// Electron renderer is the original; Telegram is the second. They share
+// Channels are the user-facing surfaces wfc speaks through — the Electron
+// renderer, the terminal and the paired phone. They share
 // one TurnRunner, which serializes turns PER CONVERSATION (one ordered
 // transcript each) while conversations — across channels and within the
 // renderer — run concurrently. Amygdala's approval bridge dispatches to
@@ -423,12 +394,12 @@ const agent = new Agent({
 // AsyncLocalStorage via the singleton turnRouter.
 const turnRunner = new TurnRunner(agent)
 // Every turn's lifecycle (any channel) is broadcast so the renderer's
-// Conversations sidebar can show live status chips for in-app, WhatsApp,
-// Telegram runs alike.
+// Conversations sidebar can show live status chips for in-app, terminal and
+// phone runs alike.
 turnRunner.setLifecycleListener((ev) => {
   broadcast('chat:turnState', ev)
   // The phone is a second view of this app, not a channel being relayed to:
-  // a turn started anywhere — in-app, Telegram, WhatsApp, the phone itself —
+  // a turn started anywhere — in-app, the terminal, the phone itself —
   // has to show up there as it happens, exactly as it does in the sidebar.
   pushTurnToMobile(ev)
 })
@@ -473,8 +444,6 @@ agent.corpus.on('conversation.indexed', ({ rel }) => {
 // one list-changed when the pass ends so every surface reconciles.
 agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
-const telegramChannel = new TelegramChannel(agent, turnRunner)
-const whatsappChannel = new WhatsAppChannel(agent, turnRunner)
 // The terminal. Same pipeline, same TurnRunner, no window — which is also
 // what makes a VPS install possible: nothing here needs one.
 const cliChannel = new CliChannel(agent, turnRunner)
@@ -529,10 +498,9 @@ const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false }
  * A whitelist, deliberately: the phone names flat keys from its own config
  * surface, and anything unlisted throws — the phone treats the error as a
  * refusal and refetches the snapshot, so an out-of-date app can never write
- * somewhere unexpected. Two absences are deliberate: the extension PORT
+ * somewhere unexpected. One absence is deliberate: the extension PORT
  * (moving it restarts the local pairing server, which is the desktop's own
- * act) and the Telegram/WhatsApp power switches (starting a bridge process
- * is likewise this machine's act; the phone renders those rows as status).
+ * act).
  */
 async function applyMobileSettings(settings: Record<string, unknown>): Promise<void> {
   const str = (value: unknown): string => (typeof value === 'string' ? value : String(value ?? ''))
@@ -549,46 +517,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         // API's /v1/search lane — so there is nothing on this device to edit.
         // The phone treats the refusal like any other and refetches.
         throw new Error('Brave Search is managed by your organization')
-      case 'imgflipUsername':
-      case 'imgflipPassword': {
-        const memes = await getMemesConfig()
-        await persistMemesConfig({
-          imgflip: {
-            username: key === 'imgflipUsername' ? str(value) : memes.imgflip.username,
-            password: key === 'imgflipPassword' ? str(value) : memes.imgflip.password
-          }
-        })
-        memesService.resetCache()
-        break
-      }
-      case 'giphyApiKey':
-        await persistMemesConfig({ giphy: { apiKey: str(value) } })
-        memesService.resetCache()
-        break
-      case 'videoApiKey':
-        // Video generation's own key (never the MiniMax chat provider's —
-        // see VideoConfig). The broadcast keeps an open desktop panel and
-        // the composer's URL-attach gate in sync with a phone-side save.
-        await setVideoConfig({ apiKey: str(value) })
-        broadcast('services:changed', { service: 'video' })
-        break
-      case 'videoDirector':
-        // Director mode is a model directive, not a harness behavior —
-        // persisting it is the whole job; the next turn's system prompt
-        // picks it up.
-        await setVideoConfig({ director: value === true })
-        broadcast('services:changed', { service: 'video' })
-        break
-      case 'videoEnabled':
-        // The video switch is the capability itself — same path as the
-        // Capabilities screen, locked-core guard and panel refresh included.
-        await mobileSetCapabilityEnabled('video', value === true)
-        break
-      case 'memesEnabled':
-        // The memes switch is the capability itself — same path as the
-        // Capabilities screen, locked-core guard and panel refresh included.
-        await mobileSetCapabilityEnabled('memes', value === true)
-        break
       case 'sttModel':
         await persistSttConfig({ defaultModel: str(value) })
         break
@@ -662,12 +590,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         await persistBlockCredentials(value === true)
         turnRunner.setBlockCredentials(value === true)
         break
-      case 'updatesEnabled':
-        await patchConfig((c) => ({
-          ...c,
-          updates: { ...(c.updates ?? { enabled: true }), enabled: value === true }
-        }))
-        break
       case 'weekStartsOn':
         // 0 (Sunday) or 1 (Monday) — the same two values the panel's own
         // segmented control can send `runtime:setWeekStartsOn`.
@@ -678,8 +600,8 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         break
       // The Model screen and the composer's control cluster. Each key maps
       // onto the exact handler its own desktop control calls —
-      // `provider:setMode`, `runtime:setThinkingMode`, `runtime:setLocalOnly`,
-      // `model:select`, `provider:setBrain` — same persistence, same live
+      // `provider:setMode`, `runtime:setThinkingMode`, `model:select` —
+      // same persistence, same live
       // runtime update, same announcement, so a pick on either screen is the
       // same act.
       case 'chatMode': {
@@ -812,46 +734,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         broadcast('inapp:configChange', updated.inapp ?? EMPTY_INAPP)
         break
       }
-      // Telegram / WhatsApp — every editable row of the phone's Channels
-      // screen, through the same patch helpers `telegram:setConfig` and
-      // `whatsapp:setConfig` call, restart semantics included: an allow-list
-      // change restarts a running bridge, a preference-only change does not.
-      // The power switches are deliberately absent — starting a bridge is
-      // the desktop's own act, and the phone renders them as status rows.
-      case 'telegramAllowedUserIds':
-        await applyTelegramConfigPatch({ allowedUserIds: parseAllowedUserIds(str(value)) })
-        break
-      case 'telegramAutoRefresh':
-        await applyTelegramConfigPatch({ autoRefresh: value === true })
-        break
-      case 'telegramStaleHours': {
-        const hours = int(value)
-        if (hours) await applyTelegramConfigPatch({ staleHours: hours })
-        break
-      }
-      case 'telegramVerbose':
-        await applyTelegramConfigPatch({ verbose: value === true })
-        break
-      case 'telegramHideAutomations':
-        await applyTelegramConfigPatch({ hideAutomationsFromResume: value === true })
-        break
-      case 'whatsappAllowedNumbers':
-        await applyWhatsAppConfigPatch({ allowedPhoneNumbers: parseAllowedNumbers(str(value)) })
-        break
-      case 'whatsappAutoRefresh':
-        await applyWhatsAppConfigPatch({ autoRefresh: value === true })
-        break
-      case 'whatsappStaleHours': {
-        const hours = int(value)
-        if (hours) await applyWhatsAppConfigPatch({ staleHours: hours })
-        break
-      }
-      case 'whatsappVerbose':
-        await applyWhatsAppConfigPatch({ verbose: value === true })
-        break
-      case 'whatsappHideAutomations':
-        await applyWhatsAppConfigPatch({ hideAutomationsFromResume: value === true })
-        break
       default:
         throw new Error(`"${key}" is not editable from the phone`)
     }
@@ -889,10 +771,6 @@ function customizationDocFor(relativePath: string): CustomizationDoc | null {
 
 /** Which service panel each phone-editable key belongs to, for re-seeding. */
 const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
-  memesEnabled: 'memes',
-  imgflipUsername: 'memes',
-  imgflipPassword: 'memes',
-  giphyApiKey: 'memes',
   sttModel: 'stt',
   sttLanguage: 'stt',
   ttsVoice: 'tts',
@@ -903,70 +781,6 @@ const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
   browserScreenshotMaxWidth: 'browserExtension',
   browserScreenshotFormat: 'browserExtension',
   browserScreenshotQuality: 'browserExtension'
-}
-
-/**
- * Persist a Telegram patch and run the channel lifecycle — one path however
- * the change arrives (the settings IPC or the phone's configSet). A patch
- * that touches only runtime preferences (verbose, autoRefresh, staleHours,
- * hideAutomations) needs no bot restart — those are read fresh per
- * message/turn. Restart stays reserved for connection changes (token,
- * allow-list, enable transitions).
- */
-async function applyTelegramConfigPatch(patch: Partial<TelegramConfig>): Promise<{
-  status: ReturnType<TelegramChannel['getStatus']>
-  config: TelegramConfig
-}> {
-  const updated = await persistTelegramConfig(patch)
-  const next = updated.telegram ?? {
-    enabled: false,
-    botToken: '',
-    allowedUserIds: []
-  }
-  const touchesConnection =
-    patch.enabled !== undefined ||
-    patch.botToken !== undefined ||
-    patch.allowedUserIds !== undefined
-  if (next.enabled) {
-    if (touchesConnection) {
-      // Re-running start with a different token must restart the
-      // long-poll loop, otherwise the old bot keeps replying.
-      await telegramChannel.restart(next).catch(() => undefined)
-    }
-  } else {
-    await telegramChannel.stop('config disabled').catch(() => undefined)
-  }
-  return { status: telegramChannel.getStatus(), config: next }
-}
-
-/**
- * WhatsApp's counterpart, same contract: persist, mirror the allow-list into
- * the live channel, start/stop on enable transitions, and announce the
- * status to every surface — whichever device made the change.
- */
-async function applyWhatsAppConfigPatch(patch: Partial<WhatsAppConfig>): Promise<{
-  status: ReturnType<WhatsAppChannel['getStatus']>
-  config: WhatsAppConfig
-}> {
-  const previous = await getWhatsAppConfig()
-  const updated = await persistWhatsAppConfig(patch)
-  const next = updated.whatsapp ?? { enabled: false, allowedPhoneNumbers: [] }
-  whatsappChannel.updateAllowedPhoneNumbers(next.allowedPhoneNumbers ?? [])
-  if (previous.enabled !== next.enabled) {
-    if (next.enabled) {
-      if (whatsappChannel.isStarted()) {
-        whatsappChannel.setProcessingEnabled(true)
-      } else {
-        await whatsappChannel.start(next).catch(() => undefined)
-      }
-    } else {
-      whatsappChannel.setProcessingEnabled(false)
-    }
-  }
-  const status = whatsappChannel.getStatus()
-  // Every surface, not just the window (or phone) that asked.
-  broadcast('whatsapp:statusChange', status)
-  return { status, config: next }
 }
 
 /**
@@ -986,9 +800,45 @@ async function applyReflectionPatch(
   return cfg
 }
 
+/**
+ * The desktop's socket to the org bridge — started and stopped with the
+ * cloud session below (a socket needs a token, and a signed-out machine has
+ * no phone to talk to). The channel registers its handlers on it.
+ */
+const mobileBridge = new BridgeClient({
+  identity: { name: os.hostname(), platform: process.platform, appVersion: app.getVersion() },
+  log: (line) => wlog.info('mobile', line),
+  debug: (line) => wlog.debug('mobile', line)
+})
+
 const mobileChannel = new MobileChannel({
   agent,
   runner: turnRunner,
+  bridge: mobileBridge,
+  // Pairing and the paired-phone list are the org's: an offer is minted
+  // there, the phone claims it there, and revoking a phone's sessions there
+  // is what unpairing means.
+  pairing: {
+    offer: async () => {
+      const wire = await cloudSession.withAccessToken((token) => offerPairing(token))
+      return {
+        id: wire.id,
+        code: wire.code,
+        qr: wire.qr,
+        expiresAt: Date.parse(wire.expires_at) || Date.now() + 180_000
+      }
+    },
+    status: (id) => cloudSession.withAccessToken((token) => pairingStatus(token, id)),
+    withdraw: (id) => cloudSession.withAccessToken((token) => withdrawPairing(token, id))
+  },
+  devices: {
+    list: () => cloudSession.withAccessToken((token) => listDevices(token)),
+    revoke: (id) => cloudSession.withAccessToken((token) => revokeDevice(token, id))
+  },
+  // Files the phone uploaded straight to the org, materialized here on
+  // demand — and the diagnostic archive going the other way.
+  hydrateBlob: (rel, sha) => hydrateBlob(rel, sha),
+  uploadWorkspaceFile: (rel, mime) => ensureFileUploaded(rel, mime),
   serializeCapabilities: () => mobileSerializeCapabilities(),
   // The phone's reflection controls write through to the same config the
   // settings panel edits; run-now rides the same brainstem queue.
@@ -1010,10 +860,6 @@ const mobileChannel = new MobileChannel({
   // the lane switched on and a key set; there is no key to edit anywhere.
   searchLane: () => braveService.getStatus(),
   dataAnalytics: () => getDataAnalytics(),
-  // No local models in Wolffish Cloud — constant answers keep the phone
-  // protocol satisfied until the mobile re-aim.
-  ollamaRunning: async () => false,
-  ollamaModels: async () => [],
   projects: () => listProjects(),
   compactionRuns: () => agent.brainstem.getCompactionRuns(),
   // What the OS has ACTUALLY registered, not the stored intent — the two
@@ -1060,7 +906,7 @@ const mobileChannel = new MobileChannel({
   // `grep -v DEBUG` on the day's log gives back the ordinary story.
   debug: (line) => wlog.debug('mobile', line)
 })
-// Live-mirror in-flight channel turns into the in-app view: a Telegram/WhatsApp
+// Live-mirror in-flight channel turns into the in-app view: a terminal or phone
 // run streams throttled assistant-message snapshots to the renderer so an open
 // conversation reflects it AS IT HAPPENS, instead of the whole transcript
 // appearing at once only after the end-of-turn disk save. The snapshot's stable
@@ -1087,7 +933,7 @@ const mirrorMessageToRenderer = (
   }
   try {
     // The phone gets the same in-flight snapshot the renderer does, so a
-    // Telegram or WhatsApp run is visible there while it is still writing —
+    // terminal run is visible there while it is still writing —
     // as the FULL message (prose + segments, stable id), which the phone
     // upserts into its cached body. Upsert, not refetch-per-tick: the
     // payload IS the state, so tool and task cards render mid-turn and the
@@ -1095,7 +941,7 @@ const mirrorMessageToRenderer = (
     //
     // The prompt rides along. It IS on disk for a channel turn, but the phone
     // deliberately does not re-read the body mid-turn, so without this the
-    // Telegram message being answered is invisible there until the turn ends.
+    // message being answered is invisible there until the turn ends.
     mobileChannel.pushMessageAppended(conversationId, message ?? undefined, userMessage)
   } catch {
     // and neither must a broken tunnel
@@ -1129,9 +975,7 @@ function pushTurnToMobile(ev: {
     // never let a dead tunnel disturb a turn
   }
 }
-telegramChannel.setMessageMirror(mirrorMessageToRenderer)
-whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
-// A terminal turn mirrors exactly like a Telegram one: it persists its user
+// A terminal turn mirrors the same way: it persists its user
 // message before running, so both the app window and the phone can follow a
 // CLI run live instead of learning about it at the fold.
 cliChannel.setMessageMirror(mirrorMessageToRenderer)
@@ -1290,12 +1134,10 @@ const knowledgeStore = new KnowledgeStore({
   })
 }
 // Feed live channel connectivity to the introspect capability so the agent can
-// check whether Telegram/WhatsApp are reachable (via `channel_status` /
-// `wolffish_status`) and tell the user how to reconnect a disconnected one.
+// check which channels are reachable (via `channel_status` / `wolffish_status`)
+// and tell the user how to reconnect a disconnected one.
 agent.cerebellum.setChannelStatusProvider(() =>
   collectChannelStatus({
-    telegram: () => telegramChannel.getStatus(),
-    whatsapp: () => whatsappChannel.getStatus(),
     mobile: () => mobileChannel.getStatus(),
     // The agent's own view has to include the terminal, or on a headless box
     // it believes it has no way to answer the person it is talking to.
@@ -1303,136 +1145,6 @@ agent.cerebellum.setChannelStatusProvider(() =>
     headless: () => IS_HEADLESS
   })
 )
-// ── Video generation (MiniMax H3) ────────────────────────────────────────
-// Wire the async-task bridge the `video` capability's plugin receives in its
-// init context. VideoTaskManager owns the whole task lifetime (media prep,
-// task creation, 10s poll loop, artifact download); the host stamps the
-// active conversation/turn onto every submit so tasks land in the right
-// transcript and ride the right turn's segment stream.
-agent.cerebellum.setVideoTasksHost({
-  check: () => checkVideoService(),
-  submit: (input) =>
-    videoTasks.submit(
-      agent.cerebellum.getCurrentConversationId(),
-      turnScope.getStore()?.turnId ?? null,
-      input
-    ),
-  awaitTask: (taskId, signal) => videoTasks.awaitTask(taskId, signal),
-  cancel: (taskId) => videoTasks.cancel(taskId),
-  get: (taskId) => videoTasks.get(taskId),
-  list: () => videoTasks.listFor(agent.cerebellum.getCurrentConversationId())
-})
-// Every snapshot change reaches the renderer so an open conversation's task
-// card updates live even after its turn ended — the renderer folds the push
-// into its in-memory copy, so its next whole-file save carries it.
-// High-frequency-adjacent → MOBILE_CONFIG_SILENT below.
-videoTasks.onSnapshot((snapshot) => broadcast('task:changed', snapshot))
-// Terminal fallback: when a task outlives its turn (the model moved on, the
-// turn was cancelled, the app restarted), the manager still has to finish
-// the job — persist the final card state and get the artifact to a channel
-// user. While the owning turn is live this is a no-op: the model is the
-// delivery path (video_await → send_file / channel send tools).
-videoTasks.onTerminal((snapshot) => {
-  void deliverVideoTaskFallback(snapshot)
-})
-void videoTasks.init()
-
-async function deliverVideoTaskFallback(snapshot: TaskSnapshot): Promise<void> {
-  if (videoTasks.isOwningTurnLive(snapshot.taskId)) return
-  const conversationId = snapshot.conversationId
-  if (!conversationId) return
-  // 1. Write the terminal snapshot into the conversation file. No turn is
-  //    alive to persist segments, so without this a reopen would show the
-  //    card frozen mid-run. Replaces the existing task segment in place
-  //    (keeping its ids); if the turn died before any segment persisted,
-  //    a minimal assistant message carries the card instead.
-  await updateConversation(conversationId, (current) => {
-    if (!current) return null
-    let found = false
-    for (const message of current.messages) {
-      for (const seg of message.segments ?? []) {
-        if (seg.kind === 'task' && seg.snapshot.taskId === snapshot.taskId) {
-          seg.snapshot = snapshot
-          found = true
-        }
-      }
-    }
-    if (!found) {
-      current.messages.push({
-        id: mintMessageId(),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        segments: [
-          {
-            kind: 'task',
-            turnId: `task_${snapshot.taskId}`,
-            segmentId: `task_${snapshot.taskId}`,
-            snapshot
-          }
-        ]
-      })
-    }
-    return current
-  }).catch(() => undefined)
-  broadcast('conversation:changed', { id: conversationId })
-  // The write-through above just refreshed the on-disk body — nudge the
-  // phone to re-read it so an open mobile conversation shows the finished
-  // task card (and its video) without waiting for a manual refresh.
-  if (mobileChannel.hasPeer) mobileChannel.pushMessageAppended(conversationId, undefined)
-
-  // 2. Channel delivery. In-app the card itself shows the video; Telegram/
-  //    WhatsApp users get the artifact (or the failure) pushed to them via
-  //    the channel send tools — the same post-turn path heartbeats use.
-  //    Cancelled tasks stay silent: the user asked for that.
-  const conversation = await loadConversation(conversationId).catch(() => null)
-  const channel = conversation?.channel
-  if (channel !== 'telegram' && channel !== 'whatsapp') return
-  // Single-user default recipient: telegram tools default on their own; the
-  // whatsapp tools need an explicit JID, so derive it from the first allowed
-  // number (a group-originated conversation falls back to the primary user).
-  const waJid =
-    channel === 'whatsapp'
-      ? await getWhatsAppConfig()
-          .then((cfg) => {
-            const phone = cfg.allowedPhoneNumbers?.[0]?.replace(/[^0-9]/g, '')
-            return phone ? `${phone}@s.whatsapp.net` : null
-          })
-          .catch(() => null)
-      : null
-  if (channel === 'whatsapp' && !waJid) return
-  const sendText = async (message: string): Promise<void> => {
-    const sendTool = channel === 'telegram' ? 'telegram_send' : 'whatsapp_send'
-    await agent.cerebellum
-      .executeTool(sendTool, channel === 'telegram' ? { message } : { jid: waJid, message })
-      .catch(() => undefined)
-  }
-  const title = snapshot.title
-  if (snapshot.status === 'succeeded' && snapshot.outputPath) {
-    const tool = channel === 'telegram' ? 'telegram_send_video' : 'whatsapp_send_video'
-    const args =
-      channel === 'telegram'
-        ? { path: snapshot.outputPath, caption: `🎬 ${title}` }
-        : { jid: waJid, path: snapshot.outputPath, caption: `🎬 ${title}` }
-    const result = await agent.cerebellum
-      .executeTool(tool, args as Record<string, unknown>)
-      .catch(() => ({ success: false as const, error: 'send failed' }))
-    if (result.success) {
-      // Tell the manager the artifact already reached the user, so the
-      // pending runtime-tail notice flips to "already delivered". Without
-      // this the model's next turn is told to present it and sends the same
-      // video a second time.
-      videoTasks.markDelivered(snapshot.taskId)
-    } else {
-      await sendText(
-        `🎬 ${title}: the video is ready — open the app to watch it (sending it here failed).`
-      )
-    }
-  } else if (snapshot.status === 'failed') {
-    await sendText(`🎬 ${title}: video generation failed — ${snapshot.error ?? 'unknown error'}`)
-  }
-}
-
 // Rolling prefix summarizer: fires after conversation persistence (channel
 // post-turn saves + the conversation:save IPC). The onUpdated push tells the
 // renderer to fold {summary, mark} into its in-memory conversation so its
@@ -1819,10 +1531,10 @@ const MOBILE_CONFIG_SILENT = new Set([
   'diagnostics:progress',
   'heartbeat:jobLog',
   'mobile:statusChange',
+  'model:catalogChanged',
   'model:pullProgress',
   'projects:copyProgress',
-  'reindex:progress',
-  'task:changed'
+  'reindex:progress'
 ])
 
 /**
@@ -1931,8 +1643,6 @@ async function buildCliStatus(callerPath?: string | null): Promise<Record<string
     autostart,
     path: cliPath,
     channels: collectChannelStatus({
-      telegram: () => telegramChannel.getStatus(),
-      whatsapp: () => whatsappChannel.getStatus(),
       mobile: () => mobileChannel.getStatus(),
       cli: () => ({ clients: cliServer.clientCount(), listening: cliServer.isListening() }),
       headless: () => IS_HEADLESS
@@ -1971,13 +1681,61 @@ function broadcast<T>(channel: string, payload: T): void {
       // doing, and a throw escaping a timer callback takes the main process
       // with it — this runs on every settings change, so it must be inert
       // when anything about the tunnel is wrong.
-      try {
-        if (mobileChannel.hasPeer) mobileChannel.pushConfigChanged(channel)
-      } catch {
-        // a dead tunnel is not the settings save's problem
-      }
+      // Every config change also rewrites the phone's snapshot file, which
+      // syncs to the org like any workspace file — so a phone whose desktop
+      // is asleep still reads the settings as they last stood. The same
+      // snapshot rides the push while a phone is on the bridge, so it lands
+      // without a round trip.
+      void writePhoneSnapshot()
+        .then((snapshot) => {
+          if (mobileChannel.hasPeer) mobileChannel.pushConfigChanged(channel, snapshot ?? undefined)
+        })
+        .catch(() => {
+          // a dead link is not the settings save's problem
+        })
     }, 300)
   }
+}
+
+/**
+ * The phone's config snapshot, written where the org will pick it up
+ * (brain/mobile/snapshot.json — under a synced root). Built by the same
+ * function the phone's RPC is served from, so the file and the live answer
+ * can never disagree. Coalesced: one build per burst of config broadcasts.
+ */
+let snapshotWriteInFlight: Promise<Record<string, unknown> | null> | null = null
+let snapshotWriteAgain = false
+function writePhoneSnapshot(): Promise<Record<string, unknown> | null> {
+  if (snapshotWriteInFlight) {
+    snapshotWriteAgain = true
+    return snapshotWriteInFlight
+  }
+  snapshotWriteInFlight = (async () => {
+    let last: Record<string, unknown> | null = null
+    try {
+      do {
+        snapshotWriteAgain = false
+        const status = cloudSession.getState().status
+        if (status !== 'ready' && status !== 'locked') return null
+        const snapshot = await mobileChannel.buildSnapshot()
+        // Usage is the org's record and the phone reads it from the API;
+        // it would make this file churn on every turn for nothing.
+        delete snapshot.usage
+        const abs = join(workspaceRoot(), SNAPSHOT_PATH)
+        await mkdir(dirname(abs), { recursive: true })
+        const tmp = `${abs}.tmp`
+        await writeFile(tmp, JSON.stringify(snapshot))
+        await rename(tmp, abs)
+        last = snapshot
+      } while (snapshotWriteAgain)
+    } catch (err) {
+      wlog.warn('mobile', 'phone snapshot write failed:', err)
+    } finally {
+      snapshotWriteInFlight = null
+    }
+    return last
+  })()
+  return snapshotWriteInFlight
 }
 
 /**
@@ -2026,10 +1784,6 @@ async function shutdownGracefully(): Promise<void> {
   isShuttingDown = true
 
   electronChannel.abort()
-  telegramChannel.abort()
-  whatsappChannel.abort()
-  await telegramChannel.stop('app shutdown').catch(() => undefined)
-  await whatsappChannel.stop('app shutdown').catch(() => undefined)
   await extensionServer.stop().catch(() => undefined)
   await mcpManager.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
@@ -2068,12 +1822,7 @@ function waitForBackgroundDrain(): Promise<void> {
 }
 
 function hasInflightWork(): boolean {
-  return (
-    electronChannel.hasActiveTurn() ||
-    telegramChannel.hasActiveTurn() ||
-    whatsappChannel.hasActiveTurn() ||
-    pendingBackgroundTasks > 0
-  )
+  return electronChannel.hasActiveTurn() || pendingBackgroundTasks > 0
 }
 
 async function drainAndQuit(): Promise<void> {
@@ -2117,12 +1866,24 @@ function resolveShellPath(): void {
  * relaunch (factory reset, restore-applied, account switch) starts clean.
  * app.exit() skips before-quit/will-quit, so children must die here.
  */
+/**
+ * The cache leaves with the session: after an explicit sign-out (outbox
+ * drained) or a PIN lockout, the workspace is purged and the app relaunches
+ * to the sign-in screen. The next sign-in restores it from the org — the
+ * same path a fresh install takes — and a different user signing in on this
+ * machine never finds the previous user's data on disk.
+ */
+async function purgeCacheAfterSignOut(reason: string): Promise<void> {
+  wlog.info('sync', `${reason}: purging the local cache and relaunching`)
+  await teardownForRelaunch(reason)
+  await purgeWorkspace().catch((err) => wlog.warn('sync', 'cache purge failed:', err))
+  app.relaunch()
+  app.exit(0)
+}
+
 async function teardownForRelaunch(reason: string): Promise<void> {
+  wlog.info('sync', `tearing down for relaunch: ${reason}`)
   electronChannel.abort()
-  telegramChannel.abort()
-  whatsappChannel.abort()
-  await telegramChannel.stop(reason).catch(() => undefined)
-  await whatsappChannel.stop(reason).catch(() => undefined)
   await mcpManager.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
   if (lockAcquired) {
@@ -2241,12 +2002,36 @@ app.whenReady().then(async () => {
     onConfigAdopted: (cfg) => applyAdoptedConfig(cfg),
     // On-open media hydration ticks → the chat's download banner.
     onHydrationProgress: (progress: HydrationProgress) =>
-      broadcast('conversation:hydrationProgress', progress)
+      broadcast('conversation:hydrationProgress', progress),
+    // A conversation's records reached the org — the phone may read its
+    // body from the API now and find the turn it just watched in it.
+    onConversationPushed: (id, updatedAt) => mobileChannel.pushConversationSynced(id, updatedAt)
   })
   // Avatar cache revalidations land here: updated/removed photos reach
   // every open surface without a refetch.
   cloudSession.onAvatar((dataUrl) => {
     broadcast('auth:avatarChanged', dataUrl)
+  })
+  // The renderer holds the catalog from launch instead of fetching it on
+  // every picker open, so a refresh that lands a different list (session
+  // ready, a stale-copy revalidation, an admin policy edit) is pushed.
+  onCatalogChanged((models) => broadcast('model:catalogChanged', { models }))
+  // The bridge socket lives exactly as long as the session holds tokens.
+  // A signed-out desktop has nothing to park for; a fresh sign-in dials
+  // straight away and re-lists the paired phones.
+  let bridgeUp = false
+  cloudSession.onState((state) => {
+    const authenticated = state.status === 'ready' || state.status === 'locked'
+    if (authenticated && !bridgeUp) {
+      bridgeUp = true
+      mobileBridge.start()
+      void mobileChannel.sessionReady().catch(() => undefined)
+      void writePhoneSnapshot()
+    } else if (!authenticated && bridgeUp) {
+      bridgeUp = false
+      mobileBridge.stop()
+      mobileChannel.sessionGone()
+    }
   })
   cloudSession.onState((state) => {
     broadcast('auth:changed', state)
@@ -2326,18 +2111,6 @@ app.whenReady().then(async () => {
     void reassertAutostart().catch((err) =>
       wlog.warn('[autostart]', `re-assert failed: ${err instanceof Error ? err.message : err}`)
     )
-  }
-
-  if (cfg?.telegram?.enabled) {
-    void telegramChannel
-      .start(cfg.telegram)
-      .catch((err) => console.error('telegram start failed:', err))
-  }
-
-  if (cfg?.whatsapp?.enabled) {
-    void whatsappChannel
-      .start(cfg.whatsapp)
-      .catch((err) => console.error('whatsapp start failed:', err))
   }
 
   {
@@ -2470,129 +2243,6 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
-  // Telegram channel — read config, save partial updates, run lifecycle
-  // hooks, ship a one-off test message. The lifecycle hooks live here
-  // (not inside the channel) so the IPC handler can return the new
-  // status synchronously — a UI that flips the toggle wants the chip
-  // to update without polling.
-  handle('telegram:getConfig', (): Promise<TelegramConfig> => getTelegramConfig())
-
-  handle(
-    'telegram:setConfig',
-    async (
-      _e,
-      patch: Partial<TelegramConfig>
-    ): Promise<{
-      ok: true
-      status: ReturnType<TelegramChannel['getStatus']>
-      config: TelegramConfig
-    }> => {
-      // Shared with the phone's configSet path (applyTelegramConfigPatch) so
-      // the restart rules cannot drift between the two writers.
-      const result = await applyTelegramConfigPatch(patch)
-      return { ok: true as const, ...result }
-    }
-  )
-
-  handle(
-    'telegram:status',
-    (): ReturnType<TelegramChannel['getStatus']> => telegramChannel.getStatus()
-  )
-
-  // Push Telegram status changes to the renderer as they happen, the same
-  // way WhatsApp does. Without this the settings panel only learns the
-  // status on mount or after a manual Save — so a bot that finishes
-  // starting in the background reads "starting" forever until the user
-  // re-saves. The channel emits `telegram.statusChanged` on every
-  // transition; we forward the current snapshot.
-  // Through `broadcast()` for the same reason WhatsApp's are: a terminal
-  // watching a channel come up is as real a surface as a settings panel, and
-  // on a headless box it is the ONLY one.
-  agent.corpus.on('telegram.statusChanged', () =>
-    broadcast('telegram:statusChange', telegramChannel.getStatus())
-  )
-
-  handle(
-    'telegram:sendTestMessage',
-    (_e, payload: { token: string; userId: number }): Promise<{ ok: boolean; error?: string }> =>
-      telegramChannel.sendTestMessage(payload.token, payload.userId)
-  )
-
-  // WhatsApp channel — Baileys-based WhatsApp Web client. Persistent
-  // WebSocket that registers/unregisters tools with the cerebellum as
-  // the connection comes up and goes down.
-  handle('whatsapp:getConfig', (): Promise<WhatsAppConfig> => getWhatsAppConfig())
-
-  handle(
-    'whatsapp:setConfig',
-    async (
-      _e,
-      patch: Partial<WhatsAppConfig>
-    ): Promise<{
-      ok: true
-      status: ReturnType<WhatsAppChannel['getStatus']>
-      config: WhatsAppConfig
-    }> => {
-      // Shared with the phone's configSet path (applyWhatsAppConfigPatch) so
-      // the lifecycle rules cannot drift between the two writers.
-      const result = await applyWhatsAppConfigPatch(patch)
-      return { ok: true as const, ...result }
-    }
-  )
-
-  handle(
-    'whatsapp:status',
-    (): ReturnType<WhatsAppChannel['getStatus']> => whatsappChannel.getStatus()
-  )
-
-  handle('whatsapp:logout', async (): Promise<void> => {
-    await whatsappChannel.logout()
-    await persistWhatsAppConfig({ enabled: false })
-    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
-  })
-
-  handle('whatsapp:requestQr', (): void => {
-    whatsappChannel.requestQr()
-    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
-  })
-
-  /**
-   * Link by phone number instead of QR. The only route that works on a
-   * machine with no screen — and, measured, on any ordinary 80×24 terminal,
-   * where a WhatsApp QR needs 27 rows before its caption.
-   */
-  handle(
-    'whatsapp:requestPairingCode',
-    (_e, phoneNumber: string): { ok: boolean; error?: string } => {
-      const result = whatsappChannel.requestPairingCode(phoneNumber)
-      broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
-      return result
-    }
-  )
-
-  /**
-   * Push QR codes and status changes out as they happen — through
-   * `broadcast()`, NOT straight at the windows.
-   *
-   * These used to call `BrowserWindow.getAllWindows()` directly, and that made
-   * linking WhatsApp from a terminal impossible rather than merely awkward:
-   * `wfc pair whatsapp` subscribes to `whatsapp:statusChange` and waits
-   * for the code, and the code was only ever posted to renderer processes. On
-   * the machine this CLI exists for — a VPS with no window at all — the events
-   * went to an empty array and the terminal sat at "waiting for a code…"
-   * forever. `broadcast()` is the chokepoint that already fans out to windows,
-   * attached terminals AND the phone, so the pairing flow reaches whoever
-   * actually asked for it.
-   */
-  agent.corpus.on('whatsapp.qr', ({ qr }) => broadcast('whatsapp:qr', qr))
-  agent.corpus.on('whatsapp.pairingCode', ({ code }) => broadcast('whatsapp:pairingCode', code))
-  const pushWhatsAppStatus = (): void =>
-    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
-  agent.corpus.on('whatsapp.started', pushWhatsAppStatus)
-  agent.corpus.on('whatsapp.stopped', pushWhatsAppStatus)
-  agent.corpus.on('whatsapp.error', pushWhatsAppStatus)
-  agent.corpus.on('whatsapp.statusChanged', pushWhatsAppStatus)
-
   // In-app (desktop) chat — the primary renderer feed, not a remote relay
   // channel. Only a display preference (verbose) to persist; no lifecycle,
   // no restart. After a write we broadcast the new config so an open chat
@@ -2642,108 +2292,6 @@ app.whenReady().then(async () => {
     'brave:status',
     (_e, opts?: { refresh?: boolean }): Promise<BraveStatus> =>
       braveService.getStatus(Boolean(opts?.refresh))
-  )
-
-  // Notion — stateless service. The notion cerebellum plugin reads the
-  // persisted config and uses the integration token for API calls. No
-  // long-poll, no in-process server: just a token.
-  handle('notion:getConfig', (): Promise<NotionConfig> => getNotionConfig())
-
-  handle(
-    'notion:setConfig',
-    async (
-      _e,
-      connections: NotionConnection[]
-    ): Promise<{ ok: true; status: NotionStatus; config: NotionConfig }> => {
-      const updated = await persistNotionConfig(connections)
-      const next = updated.notion ?? { connections: [] }
-      return { ok: true as const, status: await notionService.getStatus(), config: next }
-    }
-  )
-
-  handle('notion:status', (): Promise<NotionStatus> => notionService.getStatus())
-
-  handle(
-    'notion:test',
-    (_e, token: string): Promise<NotionTestResult> => notionService.testToken(token)
-  )
-
-  // GitHub — stateless service. The github cerebellum plugin reads the
-  // persisted config and uses the PAT for API calls. No daemon, no
-  // in-process server: just a token.
-  handle('github:getConfig', (): Promise<GitHubConfig> => getGitHubConfig())
-
-  handle(
-    'github:setConfig',
-    async (
-      _e,
-      connections: GitHubConnection[]
-    ): Promise<{ ok: true; status: GitHubStatus; config: GitHubConfig }> => {
-      const updated = await persistGitHubConfig(connections)
-      const next = updated.github ?? { connections: [] }
-      return { ok: true as const, status: await githubService.getStatus(), config: next }
-    }
-  )
-
-  handle('github:status', (): Promise<GitHubStatus> => githubService.getStatus())
-
-  handle(
-    'github:test',
-    (_e, token: string): Promise<GitHubTestResult> => githubService.testToken(token)
-  )
-
-  // Memes — stateless service. The memes cerebellum plugin reads
-  // config.json directly on every tool call. This module provides test
-  // helpers and a status view for the settings panel.
-  // Video generation (MiniMax H3). Its own key by design — see VideoConfig
-  // in workspace.ts for why it is not shared with the MiniMax chat provider.
-  handle('video:getConfig', (): Promise<VideoConfig> => getVideoConfig())
-
-  handle(
-    'video:setConfig',
-    async (_e, patch: Partial<VideoConfig>): Promise<{ ok: true; config: VideoConfig }> => {
-      const updated = await setVideoConfig(patch)
-      broadcast('services:changed', { service: 'video' })
-      const config = updated.video ?? { apiKey: '', director: true }
-      return {
-        ok: true as const,
-        config: { apiKey: config.apiKey, director: config.director !== false }
-      }
-    }
-  )
-
-  handle('video:test', () => checkVideoService())
-
-  handle('memes:getConfig', (): Promise<MemesConfig> => getMemesConfig())
-
-  handle(
-    'memes:setConfig',
-    async (
-      _e,
-      patch: Partial<MemesConfig>
-    ): Promise<{ ok: true; status: MemesStatus; config: MemesConfig }> => {
-      const updated = await persistMemesConfig(patch)
-      const next = updated.memes ?? {
-        imgflip: { username: '', password: '' },
-        giphy: { apiKey: '' }
-      }
-      memesService.resetCache()
-      broadcast('services:changed', { service: 'memes' })
-      return { ok: true as const, status: await memesService.getStatus(), config: next }
-    }
-  )
-
-  handle('memes:status', (): Promise<MemesStatus> => memesService.getStatus())
-
-  handle(
-    'memes:testGiphy',
-    (_e, apiKey: string): Promise<MemesTestResult> => memesService.testGiphy(apiKey)
-  )
-
-  handle(
-    'memes:testImgflip',
-    (_e, payload: { username: string; password: string }): Promise<MemesTestResult> =>
-      memesService.testImgflip(payload.username, payload.password)
   )
 
   // Computer Use — desktop automation. Plugin reads config.json directly;
@@ -2881,159 +2429,6 @@ app.whenReady().then(async () => {
       }
     }
   })
-
-  // Google Workspace (gogcli) — credential storage and OAuth are
-  // delegated to the gog binary. We only persist safe public metadata
-  // (client_id, project_id, account email) in config.json.
-  handle('google:getConfig', (): Promise<GoogleConfig> => getGoogleConfig())
-
-  handle(
-    'google:setConfig',
-    async (
-      _e,
-      patch: Partial<GoogleConfig>
-    ): Promise<{ ok: true; status: GoogleStatus; config: GoogleConfig }> => {
-      const updated = await persistGoogleConfig(patch)
-      const next = updated.google ?? {
-        status: 'inactive' as const,
-        account: '',
-        clientId: '',
-        projectId: '',
-        credentialsStored: false
-      }
-      googleService.resetCache()
-      return { ok: true as const, status: await googleService.getStatus(), config: next }
-    }
-  )
-
-  handle('google:status', (): Promise<GoogleStatus> => googleService.getStatus())
-
-  handle('google:checkBinary', (): Promise<GoogleBinaryStatus> => googleService.checkBinary())
-
-  // Broadcast setup/update progress as a full {stage, percent} state to ALL
-  // windows (not just the invoking sender), so a panel remounted after the user
-  // navigates away — in any window — keeps tracking the running install and
-  // learns of completion. Paired with google:getSetupState for mount recovery.
-  const broadcastGoogleSetupState = (payload: GoogleSetupState): void => {
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.webContents.send('google:setupState', payload)
-    }
-  }
-  handle('google:getSetupState', (): GoogleSetupState => googleService.getSetupState())
-  handle('google:setup', async (): Promise<GoogleSetupResult> => {
-    const result = await googleService.setup((percent) =>
-      broadcastGoogleSetupState({ stage: 'setup', percent })
-    )
-    broadcastGoogleSetupState({ stage: 'idle', percent: result.ok ? 100 : 0 })
-    return result
-  })
-
-  handle('google:update', async (): Promise<GoogleUpdateResult> => {
-    const result = await googleService.update((percent) =>
-      broadcastGoogleSetupState({ stage: 'updating', percent })
-    )
-    broadcastGoogleSetupState({ stage: 'idle', percent: result.ok ? 100 : 0 })
-    return result
-  })
-
-  handle(
-    'google:uploadCredentials',
-    async (_e, jsonContent: string): Promise<GoogleCredentialsResult> => {
-      const result = await googleService.uploadCredentials(jsonContent)
-      if (result.ok) {
-        await persistGoogleConfig({
-          clientId: result.clientId,
-          projectId: result.projectId,
-          credentialsStored: true
-        })
-      }
-      return result
-    }
-  )
-
-  handle(
-    'google:authAdd',
-    async (_event, email: string, opts?: { reauth?: boolean }): Promise<GoogleAuthResult> => {
-      // Capture the auth list before the OAuth flow so we can detect which
-      // email gogcli actually stored — Google's OAuth returns the user's
-      // real email, which often differs from whatever the user typed.
-      const before = await googleService.listAccounts()
-      const result = await googleService.authAdd(
-        email,
-        (url) => {
-          /**
-           * `broadcast`, not `event.sender.send`.
-           *
-           * The CLI dispatches these handlers with a null event (see
-           * `server.ts`), and this callback fires from gogcli's stdout
-           * listener with nothing around it — so `event.sender` was an
-           * uncaught TypeError in the main process the instant a terminal
-           * user asked to authorize an account. Broadcasting also happens to
-           * be what a headless box needs: there is no browser to open, so the
-           * consent URL has to be printable in the terminal.
-           */
-          broadcast('google:authUrl', { url })
-        },
-        opts
-      )
-      if (result.ok) {
-        const after = await googleService.listAccounts()
-        const newlyAdded = after.find((a) => !before.includes(a))
-        // A re-auth overwrites an entry that was already listed, so there is
-        // no "newly added" email to detect — fall back to the one we asked for.
-        const actual = newlyAdded ?? (after.includes(email) ? email : (after[0] ?? email))
-        await persistGoogleConfig({ status: 'active' })
-        return { ok: true as const, account: actual }
-      }
-      return result
-    }
-  )
-
-  handle('google:listAccounts', (): Promise<string[]> => googleService.listAccounts())
-
-  handle(
-    'google:checkAccounts',
-    (): Promise<Record<string, boolean>> => googleService.checkAccounts()
-  )
-
-  handle('google:cancelAuth', (): boolean => googleService.cancelAuth())
-
-  handle(
-    'google:deleteCredentials',
-    async (): Promise<{ ok: true } | { ok: false; message: string }> => {
-      const result = await googleService.deleteCredentials()
-      if (result.ok) {
-        await persistGoogleConfig({
-          status: 'inactive',
-          clientId: '',
-          projectId: '',
-          credentialsStored: false
-        })
-        googleService.resetCache()
-      }
-      return result
-    }
-  )
-
-  handle(
-    'google:removeAccount',
-    async (
-      _e,
-      email: string
-    ): Promise<{ ok: true; accounts: string[] } | { ok: false; message: string }> => {
-      const result = await googleService.removeAccount(email)
-      if (!result.ok) return result
-      const remaining = await googleService.listAccounts()
-      // Status follows whether any account is still authorized — there is
-      // no "primary" to promote anymore. The cerebellum plugin requires
-      // an explicit `account` parameter on every call.
-      await persistGoogleConfig({
-        status: remaining.length > 0 ? 'active' : 'inactive'
-      })
-      googleService.resetCache()
-      return { ok: true as const, accounts: remaining }
-    }
-  )
 
   // STT/TTS — persisted defaults the cerebellum plugins read on every
   // tool call, so users' panel choices override the plugin's
@@ -3236,8 +2631,30 @@ app.whenReady().then(async () => {
     cloudSession.completePasswordChange(newPassword)
   )
   handle('auth:setPin', (_e, pin: string) => cloudSession.setPin(pin))
-  handle('auth:unlock', (_e, pin: string) => cloudSession.unlock(pin))
-  handle('auth:signOut', () => cloudSession.signOut())
+  handle('auth:unlock', async (_e, pin: string) => {
+    const state = await cloudSession.unlock(pin)
+    // Five misses degraded the quick lock to the password door: the session
+    // is already revoked; the cache goes with it (see purgeCacheAfterSignOut).
+    if (state.status === 'loggedOut' && state.lastError === 'pin_lockout') {
+      void purgeCacheAfterSignOut('pin lockout')
+    }
+    return state
+  })
+  // Sign out = revoke the session AND wipe this machine's cache. The
+  // workspace is a cache of the org's record, so nothing is lost — provided
+  // the outbox is empty. A final bounded drain runs first; if it cannot
+  // finish (offline), the cache stays for the next sign-in and says so.
+  handle('auth:signOut', async () => {
+    const drained = await flushOutbox(20_000).catch(() => false)
+    const state = await cloudSession.signOut()
+    if (drained) void purgeCacheAfterSignOut('sign out')
+    else
+      wlog.warn(
+        'sync',
+        'sign-out: outbox not fully drained — local cache kept for the next sign-in'
+      )
+    return state
+  })
   handle('auth:lock', () => cloudSession.lock())
   handle('auth:changePin', (_e, currentPin: string, nextPin: string) =>
     cloudSession.changePin(currentPin, nextPin)
@@ -3375,8 +2792,9 @@ app.whenReady().then(async () => {
   handle('mobile:status', () => mobileChannel.getStatus())
   handle('mobile:offerQr', () => mobileChannel.offerQr())
   handle('mobile:offerCode', () => mobileChannel.offerCode())
-  handle('mobile:disconnect', () => mobileChannel.disconnect())
-  handle('mobile:unpair', () => mobileChannel.unpair())
+  handle('mobile:unpair', (_event, deviceId?: string) =>
+    mobileChannel.unpair(typeof deviceId === 'string' && deviceId ? deviceId : undefined)
+  )
   // Both of these settings live on two screens — this panel and the phone's
   // own Channels page — so each one tells the other side. The phone's writes
   // come back through applyMobileSettings and are announced by the broadcast
@@ -3398,9 +2816,7 @@ app.whenReady().then(async () => {
     pushMobileChannelConfig()
     return status
   })
-  handle('mobile:setRelayUrl', (_event, url: string | null) =>
-    mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
-  )
+  handle('mobile:cancelOffer', () => mobileChannel.cancelOffer())
 
   // Restore a stored pairing so a phone that was connected yesterday
   // reconnects without anyone touching either device.
@@ -4141,14 +3557,6 @@ app.whenReady().then(async () => {
   handle('runtime:runDeepCleanNow', async () => {
     return agent.brainstem.runDeepCleanNow()
   })
-  // Task-card cancel button (generic async-generation tasks; video today).
-  // Mirrors what the model's video_cancel tool does — same manager, same
-  // server-side DELETE — so the user can stop a run without waiting on the
-  // model to notice.
-  handle('task:cancel', async (_e, payload: { taskId: string }) => {
-    return videoTasks.cancel(payload.taskId)
-  })
-
   // Viewer — read-only tree + read/write of individual workspace files.
   handle('viewer:readTree', (): Promise<ViewerTreeNode[]> => readViewerTree())
   handle('viewer:resync', (): Promise<ViewerTreeNode[]> => readViewerTree())
@@ -4638,10 +4046,8 @@ app.whenReady().then(async () => {
   )
 
   // Active-model capability check used by the renderer to decide whether
-  // to allow image uploads. Cloud models go through the well-known-family
-  // check in vision.ts (text-only APIs like DeepSeek reject image parts
-  // with HTTP 400); for local Ollama we ask /api/show whether the model
-  // declares a "vision" capability (cached in LocalProvider). Returns
+  // to allow image uploads: the org catalog's vision flag (vision.ts), with
+  // the well-known-family name markers as the cold-cache fallback. Returns
   // false when no model is available at all so the renderer can dim the
   // upload button.
   handle(
@@ -4667,9 +4073,10 @@ app.whenReady().then(async () => {
     }
   )
 
-  // The org catalog, straight from GET /v1/models (cached 5 min). The
-  // renderer's picker renders exactly this list — admin edits the policy,
-  // the list changes, the picker follows.
+  // The org catalog from the main cache: answered at once, a stale copy
+  // revalidated behind the answer (a changed list reaches the renderer as
+  // model:catalogChanged). The picker renders exactly this list — admin
+  // edits the policy, the list changes, the picker follows.
   handle('model:catalog', async () => {
     const models = await getCatalog()
     return { models }
@@ -4715,7 +4122,7 @@ app.whenReady().then(async () => {
   handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {
     const conversationId = payload?.conversationId ?? null
     const result = await electronChannel.cancel(conversationId)
-    // Nothing in-app owned that conversation — it's a Telegram/WhatsApp (or
+    // Nothing in-app owned that conversation — it's a terminal, phone (or
     // automation) run the user is watching from the app, so abort it through
     // the runner. Without this the Stop button on a mirrored channel run
     // would be a dead control.
@@ -4746,7 +4153,7 @@ app.whenReady().then(async () => {
   // mid-run seeds its feed from it instead of showing a bare thinking bubble
   // until the next mirror tick, which across a long tool call is minutes
   // away. Served from the mobile channel's mirror cache, which every
-  // channel's mirror feeds — a run started on the phone, Telegram, the CLI
+  // channel's mirror feeds — a run started on the phone, the CLI
   // or an automation all answer here.
   handle('chat:turnMirror', (_e, conversationId: string) =>
     mobileChannel.turnMirrorFor(String(conversationId ?? ''))
@@ -4858,10 +4265,13 @@ app.whenReady().then(async () => {
     return { ok: true as const }
   })
 
+  // Inline images in transcripts and the browser capability's screenshot
+  // links: `wolffish-media://<workspace-relative path>`, served from the
+  // workspace. The parser is shared with the renderer's scheme constant.
   protocol.handle('wolffish-media', (request) => {
-    const relativePath = decodeURIComponent(request.url.replace('wfc-media://', ''))
-    const absolutePath = join(workspaceRoot(), relativePath)
-    return net.fetch(`file://${absolutePath}`)
+    const relativePath = workspaceMediaPath(request.url)
+    if (!relativePath) return new Response('not found', { status: 404 })
+    return net.fetch(pathToFileURL(join(workspaceRoot(), relativePath)).href)
   })
 
   // The CLI socket serves BOTH modes: a desktop user gets `wfc` in a

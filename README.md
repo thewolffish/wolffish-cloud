@@ -1,33 +1,30 @@
 # wolffish-cloud
 
-> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup.** It carves the existing local-first personal-agent repos into one monorepo and re-aims them at a multi-tenant B2B platform. The personal repos remain the upstream and keep their own history; every folder here was carried over from its personal repo (see [Provenance](#provenance)).
+> **This repository is a fork of the personal [Wolffish](https://github.com/thewolffish) setup**, re-aimed at a B2B platform: every employee runs their own AI agent on their own machine, and the organization's API is the master record. The personal repos remain the upstream for the agent core (see [Provenance](#provenance)).
 
 **Keep the agent on the device. Move the truth to the edge.**
 
-Wolffish Cloud is the enterprise edition of Wolffish — a B2B platform where every employee runs their own local AI agent on their own machine, while every config, setting, conversation, and file syncs to a Cloudflare-backed master record owned by their company. Admins route every model request, govern who uses which model, cap token spend, watch the stream in real time, and revoke access instantly.
+Wolffish Cloud is the enterprise edition of Wolffish: a desktop agent that thinks, acts and learns on the employee's machine, while every model call, every conversation, every file and every setting flows through one Cloudflare Worker the organization owns. Admins route every model request, decide who may use which model, cap spend, and revoke access in one call. The device holds a session, never a provider key; the folder on disk is a cache the API can rebuild.
 
 ---
 
-## The vision
+## The design, as built
 
-Wolffish today is a personal agent: `~/.wolffish` on your machine is the single source of truth, and the relay is a dumb pipe that forwards end-to-end-encrypted bytes and retains nothing. Delete the folder and the agent is gone — one device, one truth, one owner.
+One architectural inversion from the personal edition, and everything else follows from it: **the API is the master, the device folder is the cache.**
 
-Wolffish Cloud inverts exactly one architectural fact, and it changes everything about ownership, governance, and recoverability:
-
-**The API becomes the master; the device folder becomes the cache.**
-
-- The agent still runs entirely on the employee's device — the brain, the tools, the files, the sessions. Execution never moves to the cloud.
-- After every execution, an outbox ships the results (conversation records, memory episodes, generated files, settings deltas) to the org's API. Reinstall the app, log in, and the exact same state returns.
-- The agent never calls a model provider directly. Every model request flows through one choke-point Worker that authenticates the device, enforces the org's model allowlist and token budgets, strips identity to an anonymous UUID, and forwards to Cloudflare AI Gateway on **Zero Data Retention**.
-- Two guarantees, deliberately separate: **the org retains everything the agent did** (its own master record), and **no model provider retains anything about the request** (ZDR). Nothing is lost, and nothing leaks.
-- Cloud-model keys never exist on the employee device. Provider keys live at the router (BYOK per org); the device gets short-lived scoped tokens.
+- **The agent runs on the device.** The 15-region brain, the tools, the files, the sessions — execution never moves to the cloud. `~/.wfc` holds all of it.
+- **One lane for models.** The agent never calls a model provider. Every request goes to `POST /ai/v1/chat/completions` on the org's API with the device's session token; the Worker enforces the org's model allowlist and quotas, admits the call through a fair queue in front of the org's hosts, forwards it with the org's key, streams the answer back and meters the call. Provider keys live in Worker secrets, never on a device.
+- **One lane for web search.** `POST /v1/search` does the same for the org's search plan (Brave): one key at the edge, a fair per-employee queue, per-query metering, no query text ever stored.
+- **Everything syncs.** Seconds after a turn ends, the desktop pushes the conversation (incrementally), workspace files (content-addressed blobs) and the config row. Delete `~/.wfc`, sign in on any machine, and the workspace walks back out of the org — conversation media hydrates when a conversation is opened. Signing out drains the outbox, revokes the session and purges the cache.
+- **Capabilities are cloud-distributed.** The org's capability registry (versioned zip packages in R2, indexed in D1) is mirrored onto every desktop on session ready; admins publish, update or retire a capability and every device follows on its next pull. Sources live in [`capabilities/`](capabilities/).
+- **Admin is pure API.** Invites, roles, suspend and revoke, PIN clear, per-user model policy, org defaults, usage totals, live gate stats, audit log. The admin UI lives in the admin's own desktop client; every admin endpoint re-verifies the role server-side.
 
 ### Two tiers, one system
 
 | Tier | Where | What lives there |
 | --- | --- | --- |
-| **Tier 1 — the agent** | Employee device | The 15-region brain (prefrontal, thalamus, hippocampus, cerebellum, cortex, …), skills as markdown + plugins, services, the markdown workspace. `~/.wolffish` becomes workbench + cache. |
-| **Tier 2 — the master** | Cloudflare edge | One choke-point Worker (auth, ZDR router, sync ingest, device relay, admin backend). D1 holds the relational master, R2 the blobs, KV the hot config, Durable Objects the per-device/per-conversation state, Queues the async work. |
+| **Tier 1 — the agent** | Employee device | The 15-region brain (prefrontal, thalamus, hippocampus, cerebellum, cortex, …), capabilities as markdown + plugins, channels (Telegram, WhatsApp, CLI, browser extension), the markdown workspace. `~/.wfc` is workbench + cache. |
+| **Tier 2 — the master** | Cloudflare edge | One Worker (auth, model router, search lane, sync ingest, capability registry, admin). D1 holds the relational master, R2 the blobs and archives, KV the hot config cache and session kill-markers, two Durable Objects the admission gates and the exact quota counters. |
 
 ---
 
@@ -36,125 +33,96 @@ Wolffish Cloud inverts exactly one architectural fact, and it changes everything
 ```
 wolffish-cloud/
 ├── apps/
-│   ├── api/         · NEW — the master API, one Cloudflare Worker, live at api.wolffi.sh (Tier 2)
-│   ├── desktop/     ← wolffish-app       · the Electron desktop agent (Tier 1)
-│   ├── mobile/      ← wolffish-mobile    · the Expo/React Native remote
+│   ├── api/         · the master API — one Cloudflare Worker, live at api.wolffi.sh (Tier 2)
+│   ├── desktop/     · the Electron desktop agent, cloud-first (Tier 1)
+│   ├── mobile/      · the Expo companion phone app — carried over, PARKED (see below)
 │   └── site/
-│       ├── landing/ ← wolffish-landing   · marketing site (Next.js)
-│       └── docs/    ← wolffish-docs      · documentation (Mintlify, EN + AR)
+│       ├── landing/ · marketing site (Next.js)
+│       └── docs/    · documentation (Mintlify, EN + AR)
 ├── packages/
-│   └── extension/   ← wolffish-extension · browser capability, bundled into desktop
-└── capabilities/    ← official capability sources — seeded to the org registry
-                       (R2 via api.wolffi.sh), never bundled into clients
+│   └── extension/   · browser capability, bundled into desktop; local-only, no cloud endpoint
+├── capabilities/    · official capability sources — published to the org registry, never bundled
+└── .github/workflows/ci.yml · typecheck both apps + the desktop seam tests on every push
 ```
 
-Except `apps/api` — the first genuinely new code — each folder is a clean export of the corresponding personal repo: same code, same READMEs, own lockfiles, with the per-module `LICENSE` files (all identical MIT) collapsed into one root [LICENSE](LICENSE). The carried clients have not been rewired yet.
+Every app is self-contained (own lockfile, own package manager); `cd` into it and run it as its README describes. There is no workspace tooling yet.
 
 ## The modules
 
-### `apps/desktop` — the agent (from `wolffish-app`)
+### `apps/api` — the master
 
-A local-first, markdown-powered personal AI desktop agent built with Electron (macOS, Windows, Linux). Built around a 15-module runtime modeled after the human brain — routing, planning, memory consolidation, safety gating — with every piece of state in readable markdown and a `cortex.db` SQLite index derived from it. Skills are markdown procedures plus optional plugins under `brain/cerebellum/<name>/SKILL.md`; services connect models, MCP, Google/GitHub/Notion and channel providers.
+The single choke point at `api.wolffi.sh`. Auth (invite-only, temp password with forced first-login change, 15-minute signed access tokens, rotating refresh tokens with reuse detection, instant server-side revoke, e-mailed reset codes), the model router (OpenAI-compatible, per-user allowlists, daily and monthly token caps, exact metering with the host's own cost), the web-search lane, sync (last-write-wins config sealed at rest, idempotent outbox batches that name every item they refuse, content-addressed files in R2, one-call bootstrap restore, per-user usage read-back), the capability registry, and the full admin layer.
 
-**What it becomes:** stays local-first; gains device login (OAuth 2.0 device authorization grant), the outbox sync engine, and a router client replacing direct model calls. `~/.wolffish` becomes the cache tier — files release under an eviction policy and rehydrate from R2 on demand. This is the biggest unchanged asset: the brain, the skills system, the services and the markdown workspace carry over nearly untouched.
+Built to carry hundreds of employees running long agentic sessions at once, and to slow down rather than fail when they all arrive together: the `ModelGate` Durable Object admits every model call against the org's hosts' documented concurrency (fair by employee, sticky per conversation for the host's prefix cache, cooldowns on 429/5xx, durable leases with a heartbeat), the `SearchGate` does the same for the search plans, streams are pumped rather than buffered, and D1 stays a bounded hot window (idle conversations move to gzipped archives in R2 nightly; raw usage rows retire after 180 days while a daily rollup keeps the totals).
 
-### `apps/mobile` — the remote (from `wolffish-mobile`)
+Verified by: per-layer smoke suites against `wrangler dev` with mock hosts (`npm test`), a 500-employee load simulation (`scripts/load-500.mjs`), and the live gate `scripts/verify-live.mjs` that runs every scenario against the deployed edge with no test-mode bypass.
 
-The companion phone app (Expo/React Native, iOS + Android). Today it pairs with the desktop over an end-to-end-encrypted tunnel through the relay.
+### `apps/desktop` — the agent
 
-**What it becomes:** remote only — talks to the tenant's API instead of a standalone relay.
+The employee's desktop app. Sign-in (email + password, forced first-login change, emailed reset), a 4-digit PIN quick-lock that never leaves the device, the one cloud lane, the sync engine, the capability mirror, and the full agent core carried from the personal edition: brain regions, channels, workspace. Dev-only by design (`npm run dev`); client forks ship their own signed builds. See [`apps/desktop/README.md`](apps/desktop/README.md) for the cloud-first contract and [`apps/desktop/src/defaults/AGENTS.md`](apps/desktop/src/defaults/AGENTS.md) for the per-path map of what syncs.
 
-### `apps/api` — the master (new code, live)
+### `apps/mobile` — the phone
 
-The single choke-point Worker at `api.wolffi.sh` — every request the clients make flows through it. Auth (invite-only, temp password, forced first-login reset, 15-minute signed access tokens, rotating refresh with reuse detection, instant server-side revoke), the model router (OpenAI-compatible `/ai/v1/chat/completions` behind per-user allowlists and daily/monthly token quotas, with exact usage metering and the host's own cost), the web-search lane (`/v1/search` on the org's search plans, with per-user daily and org monthly search caps and per-query metering — no key ever on a device, no query text ever logged), sync (last-write-wins config, idempotent outbox batches, content-addressed files in R2, one-call bootstrap restore), and the full admin layer as pure API — invites, roles, policies, suspend/revoke, PIN clear, usage, audit, gate status, on-demand maintenance. There is deliberately **no separate admin console**: the admin UI lives in the admin's own desktop client, and every admin endpoint re-verifies the role server-side.
+The companion phone app, re-aimed at the API. Pairing (QR or a typed code the desktop offers) claims an org session for the phone; from then on it reads and writes the record at the API — config snapshot, conversation index and bodies, files, usage — and reaches the desktop for live turns and workspace edits over the API's per-user `UserBridge` Durable Object. No relay, no end-to-end cipher: the org is the trusted party on both ends. See [`apps/mobile/README.md`](apps/mobile/README.md) for how it connects and syncs, and [`apps/mobile/AGENTS.md`](apps/mobile/AGENTS.md) for the wire contract.
 
-Built to carry hundreds of employees running long agentic sessions at once, and to slow down rather than fail when they all arrive together:
+### `apps/site` — the tenant-facing web
 
-- **Two Durable Object gates, one global instance each.** The `ModelGate` admits every model call against a pool of hosts (`MODEL_UPSTREAMS`: id, base URL, key, model-id map, concurrency per model). Nothing above a host's documented concurrency is ever in flight; everything else queues, fairly by employee, for as long as it takes. Conversations stick to one host (by `prompt_cache_key`) so the host's prefix cache keeps hitting, spill to the freest host when theirs is full, and a host that answers 429 or 5xx rests while the call is re-admitted elsewhere — the employee never sees it. The `SearchGate` does the same for the org's search plans (`SEARCH_PROVIDERS`), pacing each plan's sliding one-second window evenly and failing over when a plan's month is spent. More capacity comes from a raised limit or another plan — never from more keys on one account, which neither vendor's terms allow.
-- **Exact quota counters** live in the gates' durable storage, incremented by the call they admit — the eventually-consistent KV counters they replace are gone, and the KV config cache can no longer fail a request (a lost cache write is not an error).
-- **Streams are pumped, not buffered**: the usage block is read on its way past, a client that hangs up stops the host within a chunk and is metered for what it consumed, and a slot is a lease with a heartbeat so a dead Worker cannot hold one.
-- **D1 is a bounded hot window**: a conversation idle for 14 days has its records moved, nightly, to one gzipped blob in R2 and served back through the same records read; raw usage rows past 180 days are exported to R2 and deleted; admin totals read a per-day rollup the meter keeps in the same batch as every raw row.
+The bilingual Next.js landing page and the Mintlify docs, side by side, unmodified from the personal edition.
 
-Single-org by design (the fork is the tenant boundary), backed by D1 (`wfc-master`), KV (`wfc-auth`, `wfc-config`), and R2 (`wfc-blobs`). Ships with a deterministic 50-employee "Wolffish Inc" demo seed, a traffic simulator that drives the real API with no test-mode bypass, and a 500-employee load simulation (`scripts/load-500.mjs`, against `wrangler dev` with mock hosts that enforce real-host concurrency limits) whose assertions are the definition of "takes the load": no errors, no host overrun, queueing instead of failure, counters equal to the ledger. Verified by per-layer smoke suites against local simulations (auth, admin, sync, ai, search, archive) plus the live suite and simulator against the deployed edge.
+### `packages/extension` — the browser capability
 
-### `apps/site` — the tenant-facing web (from `wolffish-landing` + `wolffish-docs`)
-
-Two repos placed side by side for now: the bilingual (EN/AR) Next.js landing page published at wolffi.sh, and the bilingual Mintlify documentation published at docs.wolffi.sh.
-
-**What it becomes:** one white-labelable marketing + docs site per tenant.
-
-### `packages/extension` — the browser capability (from `wolffish-extension`)
-
-The browser extension that gives the agent eyes and hands in Chrome. Internally a small pnpm/turbo workspace (`chrome-extension`, `pages`, shared packages). It lives under `packages/` rather than `apps/` because it is bundled into the desktop app, not deployed on its own.
-
-**What it becomes:** bundled as before; its endpoint points at the tenant's API.
-
-### Planned, not yet created
-
-Per the engineering plan, these workspaces will be **new** code and deliberately do not exist yet:
-
-| Planned workspace | What it will be |
-| --- | --- |
-| `packages/protocol` | The tunnel wire contract, today vendored in each repo, extracted to one shared source — and extended into the API contract. |
-| `packages/auth` | Session client (login, token refresh, session guard) — shared by desktop/mobile. |
-| `packages/sync` | The outbox engine + idempotent ingest client — shared by desktop/mobile. |
-| `packages/types` | Shared TypeScript types for the master data model. |
-
-(The formerly planned `apps/admin` web console was cut by design: the admin layer shipped as pure API inside `apps/api`, and its UI belongs to the admin's desktop client. The device relay/tunnel from `wolffish-relay` still gets re-homed into `apps/api` as Durable Objects when mobile integration lands, with the upstream repo as the reference.)
-
-Monorepo tooling (pnpm workspaces + Turborepo, one lockfile, orchestrated builds) also comes later. Right now every app is self-contained exactly as its source repo was: `cd` into it, install with its own package manager, run it as its own README describes.
+The Chrome extension that gives the agent eyes and hands in the user's own browser. Local-only: it talks to the desktop over `localhost:23152`, needs no cloud endpoint, and is bundled into the desktop defaults (`apps/desktop/scripts/extension/sync.mjs` copies a build in).
 
 ---
 
 ## How it all works together
 
-One path, one choke point — the same Worker that authenticates the device routes the model call and ingests the sync batch. That is what makes per-user attribution, model allowlists, quotas and real-time monitoring possible without touching client config.
-
-1. **Login** — the desktop agent logs in like a smart TV: it shows a short device code, the employee approves it in a browser through their org's SSO (Cloudflare Access), and the app receives a short-lived access token plus a rotating refresh token bound to a `device_sessions` row. Admin revoke is one call: token killed, connection dropped, kill signal pushed to the device.
-2. **Provision** — the app fetches its config, skill catalog, model allowlist and file manifest lazily, on demand. Reinstall is a non-event: a fresh app is a blank workspace that streams down only what the employee actually touches.
+1. **Sign in** — the desktop posts email + password to `/auth/login`; the Worker checks the PBKDF2 hash, reuses the device row it already knows, and issues a 15-minute access token plus a rotating refresh token. The desktop seals both with the OS keychain and asks for a local PIN.
+2. **Restore** — on the first ready state the desktop calls `/v1/sync/bootstrap` and walks every page of the conversation index and file manifest; a fresh install adopts the org's config, rebuilds every transcript and materializes the workspace files before the chat screen opens. Conversation media downloads when a conversation is opened.
 3. **Run** — the agent does the work locally: brain, tools, files, sessions. Nothing syncs during execution.
-4. **Route** — every model request hits `POST /ai/v1/chat/completions` on the org's API: verify device session → enforce model allowlist + token caps → replace identity with an anonymous UUID → forward to AI Gateway with `store:false` (ZDR) → stream back → meter tokens, latency, cost → write a usage row → emit a telemetry event to the admin stream.
-5. **Sync** — on turn completion the agent writes a durable batch to a local outbox: records go to the API (idempotent — client-generated id + sequence, replays are no-ops), files go to R2 content-addressed by hash. Acknowledged entries become eligible for local eviction.
-6. **Govern** — the admin console reads the same telemetry the router and sync engine emit: live stream (who, which model, tokens, latency, cost, decision — never prompt content), edit rules that push to devices live, assist with consent, revoke instantly. Every admin action lands in the audit log.
+4. **Route** — every model request hits `POST /ai/v1/chat/completions`: verify session → enforce allowlist and caps → admit through the ModelGate → forward with the org's key → pump the stream back → meter tokens, latency, cost → release the slot. Web searches take the same path through `/v1/search`.
+5. **Sync** — within seconds of a turn, the outbox pushes the conversation row, its envelope and the new message records (idempotent, replays are no-ops), uploads attachments as content-addressed blobs, and pushes the config row when it changed. The usage ledger is read back from the org's metering table so every device shows the org's record.
+6. **Govern** — admins read the same tables the router and sync engine write: usage totals per user, live gate state, the audit log; they edit policy and it lands on devices within the edge cache window; they revoke and the session dies at the next request.
 
 ---
 
-## Releases, deployment, and the per-tenant model
+## Forking this repository for a tenant
 
-**This repository ships no production builds.** There is no desktop app distribution, no mobile store deployment, no extension store publishing, and no hosted production environment here — which is also why the personal setup's signing and certificate material (`wolffish-signing`, `wolffish-certs`) is not part of this monorepo, and never will be.
+The deployment model is fork-per-tenant: fork, brand, deploy under the tenant's own Cloudflare account, keys and domains. The minimum to bring a fork up:
 
-Instead, wolffish-cloud is developed as a complete **open-source enterprise platform** and versioned as tagged releases of the source. The deployment model is fork-per-tenant:
+1. **Create the resources** in the tenant's Cloudflare account and put their ids in `apps/api/wrangler.jsonc`: a D1 database (`wfc-master`), two KV namespaces (`wfc-auth`, `wfc-config`), an R2 bucket (`wfc-blobs`), and the custom domain the desktop will use (`API_BASE` in `apps/desktop/src/main/cloud/api.ts`, overridable with `WFC_API_URL`).
+2. **Set the secrets** with `wrangler secret put`: `JWT_SECRET`, `DEEPINFRA_API_KEY` (or a `MODEL_UPSTREAMS` pool), `BRAVE_API_KEY` (or `SEARCH_PROVIDERS`), `RESEND_API_KEY` for reset e-mails, and `CONFIG_ENC_KEY` (32 random bytes, base64) to seal synced configs at rest. Remove the `ADMIN_RESET_CODE_READ` var — it exists for the release gate only.
+3. **Migrate and deploy**: `npm run db:migrate:remote && npm run deploy` in `apps/api`.
+4. **Create the first owner.** Either run the demo seed (`WFC_DEMO_PASSWORD=… npm run seed:remote`, which mints the 50-person Wolffish Inc roster) or replace it with a one-owner seed; then invite everyone else through `POST /admin/users` from the owner's desktop. Rotate the seed password and drop the sign-in form's demo prefill (`apps/desktop/src/renderer/src/pages/auth/AuthGate.tsx`).
+5. **Publish the capabilities**: `node apps/api/scripts/seed-capabilities.mjs` (idempotent; `--check` is the drift guard for CI).
+6. **Verify**: `node apps/api/scripts/verify-live.mjs` against the new edge.
+7. **Rebrand the phone app**, which is a distinct application per tenant rather than a shared one. Every identifier is a constant at the top of `apps/mobile/app.config.ts`: `APP_NAME`, `APP_SCHEME`, `PACKAGE_IDENTIFIER` and `EXPO_PROJECT_SLUG`. Change `APP_SCHEME` and you must change `DEEPLINK_SCHEME` in **both** copies of the wire file (`apps/mobile/src/lib/bridge/protocol.ts` and `apps/desktop/src/main/cloud/bridge-protocol.ts`), which are byte-identical by contract. Then `npx eas init` under the tenant's Expo account to create its own project and write `EXPO_PROJECT_ID` back — it ships `null`, so builds stop and ask rather than publishing under someone else's project. Point the build at the tenant edge with `EXPO_PUBLIC_API_URL`. For Android push, register the new package in the tenant's Firebase project, replace `google-services.json` and uncomment `googleServicesFile`; iOS push needs only EAS credentials. Replace the icon and splash under `apps/mobile/assets/images/` — the stock artwork is shared with the personal edition.
+8. **Decide what to do with demo mode.** It is a tour that runs with no pairing, served from `cdn.wolffi.sh/demo`. Either rebuild and publish it to the tenant's own CDN (`node scripts/demo/build-demo-bundle.mjs` in `apps/mobile`, then set `EXPO_PUBLIC_DEMO_BASE_URL`) or drop the entry from the door. Left alone it points every install at this repository's bundle.
 
-1. **Fork** this repository for each Wolffish Cloud client.
-2. **Customize** it to them — branding, white-label app builds, their `api.<their>.domain` endpoint, their defaults and policies.
-3. **They deploy under their own everything** — their own Cloudflare account (or their own D1 database + R2 bucket), their own BYOK model-provider keys, their own Apple/Google developer accounts and store listings, their own signing keys, their own domains and SSO.
+Nothing about the agent's code changes between tenants — only the endpoint, the branding and, for the phone, the identifiers a store keys on.
 
-Nothing about the agent's code changes between tenants — only the endpoint and the branding. The whole stack is per-tenant exportable by design, and a "local-only" storage policy (raw work product never leaves the device) can be enabled per org.
-
-## Status & roadmap
-
-**Current state:** the monorepo is carved (desktop, mobile, extension, landing and docs placed unmodified) and **the master API is built and live at `api.wolffi.sh`** — auth, roles, the DeepInfra router, sync, the admin layer, and the seeded 50-employee Wolffish Inc demo org, verified end to end on the deployed edge (131-check live suite + concurrent-employee simulator). No CI/CD or workspace tooling yet.
+## Status
 
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Carve the monorepo; place the sources | done |
-| 1 | API: auth — users, roles, invites, sessions, password login, revoke | done, live |
-| 2 | API: router — DeepInfra DeepSeek, allowlists, quotas, metering | done, live |
-| 3 | API: sync — config, outbox ingest, R2 files, bootstrap restore | done, live |
-| 4 | API: admin layer + Wolffish Inc seed + simulator | done, live |
-| 5 | Desktop: strip providers/services, add login + PIN + org provider + sync client (`~/.wolffish` → `~/.wolffish-cloud` as a cache) | next |
-| 6 | Mobile re-aim (sync from desktop, tunnel re-homed into the API); packages extraction; CI/CD; release tagging | later |
+| 1 | API: auth — users, roles, invites, sessions, password login, reset e-mails, revoke | done, live |
+| 2 | API: router — host pool + ModelGate, allowlists, quotas, metering | done, live |
+| 3 | API: sync — sealed config, outbox ingest, R2 files, bootstrap restore, archive window | done, live |
+| 4 | API: admin layer, capability registry, search lane, Wolffish Inc seed, simulator, load sim | done, live |
+| 5 | Desktop: one cloud lane, sign-in + PIN, sync engine, capability mirror, personal-edition residue removed | done |
+| 6 | Mobile re-aim: pairing as an org session, the record read from the API, the desktop reached over the `UserBridge` Durable Object (api 1.7.1) | done, live |
+| 7 | Packages extraction; release tagging | later |
+
+CI (`.github/workflows/ci.yml`) typechecks both apps and runs the desktop seam tests on every push; the API's smoke suites and the live gate stay a local step because they need a running Worker and a Cloudflare account.
 
 ## Versioning
 
-Two levels, incremented independently:
-
-- **The monorepo** carries a master version in [VERSION](VERSION) — the number a platform release gets tagged with (`v0.1.0`). It moves when the platform as a whole reaches a new state, not when a single module does.
-- **Each module** versions itself in its own manifest and increments on its own cadence: `apps/api` moves fastest (shown live at [api.wolffi.sh](https://api.wolffi.sh) and in `/health`), the extension was re-identified as "Wolffish Cloud" at 0.2.0 (own name, own gecko id, own port — it coexists with the personal edition's extension), and the remaining carried clients keep the versions they arrived with (desktop 1.0.274, mobile 1.0.48) until wolffish-cloud starts changing them.
+Two levels, incremented independently: the monorepo carries a master version in [VERSION](VERSION) for platform releases; each module versions itself in its own manifest (`apps/api` moves fastest and shows its version at `/health`).
 
 ## Provenance
 
-Every folder is a clean export of the corresponding personal repo (tracked files only, no history imported). The original repos remain the reference for history before the carve; the exact export commits are recorded in this repo's initial commit message.
+Every carried folder is a clean export of the corresponding personal repo (tracked files only, no history imported); `apps/api` and `capabilities/` are new to this repository.
 
 | Folder | Source repo |
 | --- | --- |

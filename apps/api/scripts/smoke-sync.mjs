@@ -3,7 +3,7 @@
  * Sync smoke test against `wrangler dev` (:8787). Proves the cloud is the
  * master and the folder is a cache:
  *
- *   config put/get LWW → outbox batch (conversations/records/episodes) →
+ *   config put/get LWW → outbox batch (conversations/records) →
  *   exact replay is a no-op → cross-user hijack rejected → lazy record
  *   pages → content-addressed file upload (hash verified, deduped) →
  *   download round-trips bytes → bootstrap rehydrates a "fresh install".
@@ -88,15 +88,42 @@ const items = [
     conversation_id: convId,
     seq,
     kind: 'message',
-    content: { role: seq % 2 ? 'assistant' : 'user', text: `turn ${seq}` },
+    // The desktop's message shape: id, role, content, timestamp (seq = timestamp).
+    content: {
+      id: `m_${stamp}_${seq}`,
+      role: seq % 2 ? 'assistant' : 'user',
+      content: `turn ${seq}`,
+      timestamp: Date.parse(now) + seq
+    },
     created_at: now
-  })),
-  { type: 'episode', id: `epi_${stamp}`, content: { note: 'learned something' }, occurred_at: now }
+  }))
 ]
 const batch1 = await api('/v1/sync/batch', { token: a.access_token, body: { items } })
-check('batch accepted', batch1.json?.accepted === 5 && batch1.json?.rejected === 0, JSON.stringify(batch1.json))
+check('batch accepted', batch1.json?.accepted === 4 && batch1.json?.rejected === 0, JSON.stringify(batch1.json))
 const batch2 = await api('/v1/sync/batch', { token: a.access_token, body: { items } })
-check('exact replay is a no-op', batch2.json?.accepted === 0 && batch2.json?.ignored === 5, JSON.stringify(batch2.json))
+check('exact replay is a no-op', batch2.json?.accepted === 0 && batch2.json?.ignored === 4, JSON.stringify(batch2.json))
+// A malformed item is refused BY ID, so the client can quarantine it — in
+// its own conversation, so the page checks below keep their counts.
+const badConv = `cnv_${stamp}_bad`
+const badId = `rec_${stamp}_bad`
+const bad = await api('/v1/sync/batch', {
+  token: a.access_token,
+  body: {
+    items: [
+      { type: 'conversation', id: badConv, title: 'Bad batch', created_at: now, updated_at: now },
+      { type: 'record', id: badId, conversation_id: badConv, seq: null, kind: 'message', content: { role: 'user', content: 'x', timestamp: 1 }, created_at: now },
+      { type: 'record', id: `rec_${stamp}_bad_ok`, conversation_id: badConv, seq: 9, kind: 'message', content: { id: 'm_9', role: 'user', content: 'nine', timestamp: 9 }, created_at: now }
+    ]
+  }
+})
+check(
+  'malformed item refused by id, its neighbours accepted',
+  bad.json?.rejected === 1 && bad.json?.accepted === 2 && Array.isArray(bad.json?.rejected_ids) && bad.json.rejected_ids[0] === badId,
+  JSON.stringify(bad.json)
+)
+// Tombstoned again so the index and bootstrap counts below stay exact.
+await api(`/v1/conversations/${badConv}`, { token: a.access_token, method: 'DELETE' })
+check('an episode item is no longer a batch item', (await api('/v1/sync/batch', { token: a.access_token, body: { items: [{ type: 'episode', id: 'epi_x', content: {}, occurred_at: now }] } })).json?.rejected === 1)
 
 // LWW title update via newer conversation item
 const later = new Date(Date.now() + 1000).toISOString()
@@ -123,7 +150,7 @@ check('B sees no conversations', (await api('/v1/conversations', { token: b.acce
 
 // Lazy record pages
 const page = await api(`/v1/conversations/${convId}/records`, { token: a.access_token })
-check('records page', page.json?.records?.length === 3 && page.json.records[0].content.text === 'turn 0')
+check('records page', page.json?.records?.length === 3 && page.json.records[0].content.content === 'turn 0')
 const page2 = await api(`/v1/conversations/${convId}/records?after_seq=1`, { token: a.access_token })
 check('after_seq pagination', page2.json?.records?.length === 1 && page2.json.records[0].seq === 2)
 check('B cannot read A records', (await api(`/v1/conversations/${convId}/records`, { token: b.access_token })).status === 404)

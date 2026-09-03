@@ -2,9 +2,7 @@ import {
   Activity04Icon,
   ComputerTerminal01Icon,
   PlayIcon,
-  SmartPhone01Icon,
-  TelegramLogo,
-  WhatsAppLogo
+  SmartPhone01Icon
 } from '@/components/core/icons'
 import type { ConversationChannel } from '@/lib/conversations/types'
 import { Text } from 'react-native'
@@ -41,10 +39,6 @@ export function ChannelBadge({
     )
   }
   switch (channel) {
-    case 'telegram':
-      return <TelegramLogo size={size} className="text-muted" />
-    case 'whatsapp':
-      return <WhatsAppLogo size={size} className="text-muted" />
     case 'mobile':
       return <SmartPhone01Icon size={size} className="text-muted" />
     case 'cli':

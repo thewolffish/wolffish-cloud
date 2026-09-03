@@ -29,7 +29,7 @@ choose the form by the data's job (and when NOT to chart), assign series colors 
 the fixed validated palette slots in order, author interactive chart cards for the
 in-app chat by writing a `.chart.json` spec and delivering it with `send_file`,
 hand-author inline-SVG charts for documents rendered to PDF (exact geometry recipes),
-and fall back to aligned tables on WhatsApp/Telegram.
+and fall back to aligned tables in the terminal.
 
 The manual itself lives in `manual.md` beside this file; the plugin reads and returns
 it. The core contract (`agents.core.md`) tells you to call `dataviz` before any chart

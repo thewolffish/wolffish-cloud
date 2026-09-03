@@ -64,9 +64,6 @@ async function run(): Promise<void> {
   ok('uploads artifact indexable', ingest.isIndexablePath('uploads/conv-abc/photo.png'))
   ok('config excluded', !ingest.isIndexablePath('config.json'))
   ok('config.bak excluded', !ingest.isIndexablePath('config.json.bak'))
-  ok('whatsapp auth excluded', !ingest.isIndexablePath('whatsapp/auth/creds.json'))
-  ok('whatsapp read-history indexable', ingest.isIndexablePath('whatsapp/read-history.json'))
-  ok('telegram maps excluded', !ingest.isIndexablePath('telegram/chats.json'))
   ok('cerebellum code excluded', !ingest.isIndexablePath('brain/cerebellum/shell/SKILL.md'))
   ok('dot-dir excluded', !ingest.isIndexablePath('brain/cerebellum/.shell/SKILL.md'))
   ok('.debug excluded', !ingest.isIndexablePath('brain/prefrontal/.debug/2026-07-01.md'))
@@ -96,7 +93,7 @@ async function run(): Promise<void> {
     JSON.stringify({
       id: convId,
       title: 'Flight plan delivery',
-      channel: 'telegram',
+      channel: 'mobile',
       createdAt: 1751360400000,
       updatedAt: 1751364000000,
       sealed: false,
@@ -153,36 +150,12 @@ async function run(): Promise<void> {
   write(
     root,
     'logs/2026-07-01.log',
-    'boot ok\ntelegram connected\nmcp zapier session error E_SESSION\n'
+    'boot ok\nphone connected\nmcp zapier session error E_SESSION\n'
   )
   write(root, 'files/quarterly-report.pdf', 'PDFBYTES')
   write(root, 'uploads/conv-2026-07-01_12-00-00_000-fp1234/flightplan.pdf', 'PDFBYTES2')
   write(root, 'brain/prefrontal/.debug/should-not-index.md', 'nope')
   write(root, 'config.json', '{"secret":"nope"}')
-  write(
-    root,
-    'whatsapp/read-history.json',
-    JSON.stringify({
-      '966555000111@s.whatsapp.net': [
-        {
-          id: 'w1',
-          jid: '966555000111@s.whatsapp.net',
-          fromMe: false,
-          sender: 'Sana',
-          text: 'remember the picnic basket for Friday',
-          timestamp: 1751364000
-        },
-        {
-          id: 'w2',
-          jid: '966555000111@s.whatsapp.net',
-          fromMe: true,
-          sender: 'me',
-          text: 'noted — basket, juice, frisbee',
-          timestamp: 1751364060
-        }
-      ]
-    })
-  )
 
   const dbPath = path.join(root, 'brain', 'cortex.db')
   const cortex = new Cortex({ workspaceRoot: root, dbPath })
@@ -227,11 +200,6 @@ async function run(): Promise<void> {
   )
   const logHits = cortex.searchRecords('E_SESSION zapier', { sources: ['log'] })
   ok('app log tail searchable', logHits.length > 0)
-  const waHits = cortex.searchRecords('picnic basket Friday', { sources: ['conversation'] })
-  ok(
-    'whatsapp inbound history searchable',
-    waHits.some((h) => h.ref.includes('whatsapp/read-history'))
-  )
   const feedbackHits = cortex.searchRecords('flightplan OERK', { sources: ['feedback'] })
   ok('basalganglia searchable', feedbackHits.length > 0)
 
@@ -246,12 +214,12 @@ async function run(): Promise<void> {
   // ── Conversation enumeration ────────────────────────────────────────
   const convs = cortex.listConversations({})
   check('one conversation listed', convs.length, 1)
-  check('conversation channel', convs[0]?.channel, 'telegram')
+  check('conversation channel', convs[0]?.channel, 'mobile')
   check('conversation msg count', convs[0]?.messageCount, 2)
   // The list fast path feeds the rail's number-chip badge straight from this
   // row — a missing icon column is why the badge only showed on a cold index.
   check('conversation icon', convs[0]?.icon, '🛩️')
-  const byChannel = cortex.listConversations({ channel: 'whatsapp' })
+  const byChannel = cortex.listConversations({ channel: 'cli' })
   check('channel filter empty', byChannel.length, 0)
 
   // ── Conversation count (usage:getStats fast path) ───────────────────

@@ -44,7 +44,6 @@ triggers:
   - which provider
   - current model
   - current provider
-  - api key
   - token count
   - context window
   - latency
@@ -84,10 +83,10 @@ triggers:
   - locate file
 tools:
   - name: wolffish_status
-    description: Get current Wolffish status including uptime, active provider, loaded capabilities, and system health
+    description: Get current Wolffish status including uptime, the organization-provided model in use, loaded capabilities, and system health
     parameters: {}
   - name: channel_status
-    description: Check whether each chat channel (Telegram, WhatsApp, in-app) is currently connected, with reconnect steps for any that are down
+    description: Check whether each chat channel (the paired phone, the terminal, in-app) is currently connected, with reconnect steps for any that are down
     parameters: {}
   - name: wolffish_performance
     description: Get performance stats including task success rates, most used tools, and error rates
@@ -154,7 +153,7 @@ tools:
         required: false
         description: Max records for prefix refs (default 50)
   - name: conversation_list
-    description: 'Enumerate your past conversations, newest first: id, channel (electron/telegram/whatsapp/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
+    description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/cli/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
     parameters:
       channel:
         type: string
@@ -276,7 +275,7 @@ tools:
 - `usage_report` — your own LLM spend (requests, tokens, cost, per model).
 - `wolffish_recall` — stable alias over the same index (query/date/source);
   memory_search offers richer filters.
-- `wolffish_status` — uptime, provider, capabilities, RAM, disk, index size
+- `wolffish_status` — uptime, model (provided by the organization), capabilities, RAM, disk, index size
 - `wolffish_performance` — task counts, success rate, most used / denied tools
 - `wolffish_memory` — episode topics, knowledge file coverage, feedback counts
 - `wolffish_list_files` — structured tree of **your own workspace** files
@@ -291,8 +290,6 @@ one tool call away:
 
 - "Send me the flight plan" → `memory_search` `query: "flight plan"` → follow
   the ref with `conversation_read` or `memory_get`.
-- "What did Sana say on WhatsApp?" → `memory_search` — inbound channel
-  messages are indexed too (whatsapp read-history).
 - "What did we do on the 18th?" → `wolffish_recall` with `date: "2026-06-18"`.
 - "Did that World Cup task finish?" → `memory_search` `query: "world cup"`,
   `sources: "task"`.

@@ -22,7 +22,6 @@ import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/Spreads
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
-import { TaskCard } from '@components/common/task-card/TaskCard'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
@@ -35,10 +34,8 @@ import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
 import {
-  upsertTaskSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
-  type TaskSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import {
@@ -142,7 +139,7 @@ type StagingFile = { id: string; name: string; percent: number | null }
 
 /**
  * Render-only bubble shown while a run this session doesn't own (a
- * Telegram/WhatsApp turn, an automation) is working on the open
+ * phone or terminal turn, an automation) is working on the open
  * conversation and hasn't mirrored an assistant message yet. Empty segments
  * + 'streaming' is exactly what an in-app turn renders before its first
  * token, so the feed reads the same either way. timestamp 0 suppresses the
@@ -157,7 +154,7 @@ const REMOTE_RUN_PLACEHOLDER: AssistantMessage = {
   timestamp: 0
 }
 
-// In-app verbose display preference, mirroring the Telegram / WhatsApp
+// In-app verbose display preference, mirroring the phone
 // channel toggle but for what the renderer DISPLAYS (history is untouched).
 // false (default) = clean feed: agent replies, file-bearing tool results,
 // and errors only; the model/provider chip, tool-activity and compaction
@@ -327,7 +324,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const [streaming, setStreaming] = useState(false)
   /**
    * A turn running for THIS conversation that this session does NOT own:
-   * started from Telegram / WhatsApp, from an automation, or before this
+   * started from the phone or terminal, from an automation, or before this
    * window existed. `streaming` only ever tracks turns this session itself
    * sent, so without this a channel conversation opened mid-run rendered as
    * an idle, ready-to-send chat — composer live, model switchable, no stop —
@@ -463,8 +460,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // shows the last state (including the previous turn's elapsed time) after
   // a reload or restart.
   const [convStats, setConvStats] = useState<ConversationStats | null>(null)
-  // True when the latest brain call reported no usage (Ollama blip, stream
-  // died before the terminal meta). The meter keeps its last reading instead
+  // True when the latest brain call reported no usage (stream died before
+  // the terminal meta). The meter keeps its last reading instead
   // of wiping to 0%; the card labels the reading as unavailable.
   const [usageUnavailable, setUsageUnavailable] = useState(false)
   // Most recent brain API call — the card's footnote row plus the window
@@ -525,7 +522,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   // A conversation's event log. In-app turns build `timelineEntries` live and
-  // persist it; channel-owned conversations (WhatsApp / Telegram) never do —
+  // persist it; channel-owned conversations (phone / terminal) never do —
   // their turns run in the main process, which doesn't write a timeline. So
   // when there is no stored/live timeline, derive one from the persisted
   // messages (a turn divider per prompt + a row per tool call / result) so the
@@ -915,7 +912,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         return
       }
 
-      // Channel-owned conversations (WhatsApp / Telegram / heartbeat /
+      // Channel-owned conversations (phone / terminal / heartbeat /
       // procedure) are saved from here too — they are continued in-app like any
       // other chat, and blocking the write would stream a reply and then lose it
       // on reopen. This is a whole-file save of a copy loaded when the
@@ -1198,7 +1195,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     }
   }, [activeConversationId])
 
-  // Live mirror of an IN-FLIGHT Telegram/WhatsApp turn. The channel streams
+  // Live mirror of an IN-FLIGHT channel turn. The channel streams
   // throttled snapshots of its in-progress assistant message (main-side
   // conversation:messageMirror); we upsert by id so an open channel
   // conversation fills in AS THE RUN HAPPENS — instead of the whole transcript
@@ -1257,32 +1254,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       cancelled = true
     }
   }, [activeConversationId, remoteRunning])
-
-  // Async-task snapshots (video generation) keep flowing AFTER the owning
-  // turn ends — poll transitions, artifact download. Fold each push into the
-  // matching `task` segment in both the reactive messages and the in-memory
-  // conversation copy, so the card updates live and the next whole-file save
-  // carries the new state. During streaming the same snapshot also arrives
-  // as a broca segment; both paths upsert by taskId, so double delivery is
-  // idempotent.
-  useEffect(() => {
-    if (!activeConversationId) return
-    const targetId = activeConversationId
-    return window.api.task.onChanged((snapshot) => {
-      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
-      setMessages((prev) => foldTaskSnapshot(prev, snapshot))
-      const conv = conversationRef.current
-      if (conv && conv.id === targetId) {
-        for (const message of conv.messages) {
-          for (const seg of message.segments ?? []) {
-            if (seg.kind === 'task' && seg.snapshot.taskId === snapshot.taskId) {
-              seg.snapshot = snapshot
-            }
-          }
-        }
-      }
-    })
-  }, [activeConversationId])
 
   const shouldPersistRef = useRef(false)
 
@@ -1455,12 +1426,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (!matchesTurn(turnId, conversationId)) return
         if (type === 'context.built') {
           // The window the backend just built this turn with is the freshest
-          // reading there is — the turn resolves the local model's real context
-          // length (via /api/show) before this fires. Adopt it AND refresh the
-          // ref, so a capabilities fetch that happened to run while Ollama was
-          // still starting (and returned the 16k fallback) can't keep pinning the
-          // meter to that stale value. Previously the stale ref won here, which
-          // re-asserted 16k on every turn even after the backend had recovered.
+          // reading there is — the org catalog's context window for the model
+          // that actually ran. Adopt it AND refresh the ref, so a capabilities
+          // fetch that ran against a cold catalog cache (and returned the
+          // fallback window) can't keep pinning the meter to that stale value.
           if (typeof payload.tokenBudget === 'number' && payload.tokenBudget > 0) {
             modelContextWindowRef.current = payload.tokenBudget
             setContextBudget(payload.tokenBudget)
@@ -1528,8 +1497,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               }
               stats.contextTokens = uncached + cacheRead + cacheCreated
             } else {
-              // Provider reported no usage (Ollama blip, stream died before
-              // the terminal meta). Keep the last known reading instead of
+              // Provider reported no usage (stream died before the terminal
+              // meta). Keep the last known reading instead of
               // wiping the meter to 0% — but say so.
               setUsageUnavailable(true)
             }
@@ -1919,7 +1888,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // above the composer and flushes when the turn ends. sendingRef counts
     // as mid-turn too — a send is already in flight, and clearing the
     // composer into sendContent's re-entry guard would silently eat the
-    // message. A live Telegram/WhatsApp turn queues identically: the reply
+    // message. A live channel turn queues identically: the reply
     // goes out when that run finishes, in one ordered transcript.
     if (busy || sendingRef.current) {
       setQueuedPrompts((prev) => [...prev, { id: cryptoId(), text: trimmed, attachments: atts }])
@@ -2757,7 +2726,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       </div>
 
       {/* Composer: identical for every conversation, whatever channel it came
-          from. A WhatsApp / Telegram / heartbeat / procedure conversation is
+          from. A phone / terminal / heartbeat / procedure conversation is
           continued from here exactly like an in-app one — same file, same
           agent, same turn path; only the reply's delivery differs (it renders
           here rather than being pushed back to the channel). */}
@@ -3754,7 +3723,7 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
 }
 
 // Reconstruct a conversation's event log from its persisted messages. Channel-
-// owned conversations (WhatsApp / Telegram) run their turns in the main
+// owned conversations (phone / terminal) run their turns in the main
 // process, which never writes a `timeline`, so the live-built one is empty on
 // load. Walking the messages recovers the same shape the live path builds: one
 // `turn.started` divider per user prompt, then a row per tool call / result
@@ -4264,7 +4233,7 @@ function renderSegments(
   const flushTextOnly = (): void => {
     if (textBuffer.length === 0) return
     textRun += 1
-    // A standalone wolffish-media image (e.g. a generated meme/GIF) renders as
+    // A standalone wolffish-media image (e.g. a generated chart) renders as
     // a proper file card — filename + reveal/download — matching every other
     // attachment, instead of a bare floating photo.
     const mediaImage = textBuffer.trim().match(/^!\[[^\]]*\]\(wolffish-media:\/\/([^)]+)\)$/)
@@ -4351,14 +4320,6 @@ function renderSegments(
       // conversations render identically.
       flushText()
       blocks.push(<WorkflowCard key={`wf-${seg.snapshot.workflowId}`} snapshot={seg.snapshot} />)
-    } else if (seg.kind === 'task') {
-      // The generic async-task card (video generation today): one
-      // deterministic card per task, upserted by taskId on append (live) and
-      // folded from task:changed pushes after the turn ends. Renders
-      // regardless of verbose — like the chart card, it is output FOR the
-      // user, not tool mechanics.
-      flushText()
-      blocks.push(<TaskCard key={`task-${seg.snapshot.taskId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
       flushText()
@@ -5260,7 +5221,7 @@ function extToBucket(filePath: string): DeliveredBucket {
 
 // Arg KEYS whose value names a file path. An allowlist (not a value-only
 // heuristic) is what keeps out the look-alikes that share the "ends in .ext"
-// shape: gmail `account` (foo@gmail.com → ".com"), WhatsApp `jid` (…@g.us),
+// shape: an email `account` (foo@example.com → ".com"), a chat `jid` (…@g.us),
 // CSS `selector` (div.a.b), `command`/`args` shell strings, memory `ref`. Only
 // genuine path fields are read. Case-insensitive.
 const FILE_PATH_ARG_KEYS = new Set([
@@ -5322,8 +5283,8 @@ function normalizeFilePathArg(raw: unknown): string | null {
 // Pull the file paths out of a tool call's args — only from allowlisted path
 // keys, and only string / string-array values (nested objects are skipped to
 // bound surprises). This is what turns View Files into a complete log:
-// producers (browser_pdf output_path, document_convert), channel send tools
-// (telegram_send_document path) and file readers/writers all name their file in
+// producers (browser_pdf output_path, document_convert) and file readers/writers
+// all name their file in
 // the args, and none leave a [wolffish-output:] marker.
 function argFilePaths(args: Record<string, unknown> | undefined): string[] {
   if (!args) return []
@@ -5517,33 +5478,16 @@ function isUser(m: ChatMessage): m is Extract<ChatMessage, { role: 'user' }> {
  * matching `task` segment. No-op when the task isn't in this transcript
  * (e.g. a push for another conversation raced the open).
  */
-function foldTaskSnapshot(messages: ChatMessage[], snapshot: TaskSnapshot): ChatMessage[] {
-  return messages.map((m) => {
-    if (!isAssistant(m)) return m
-    if (!m.segments.some((s) => s.kind === 'task' && s.snapshot.taskId === snapshot.taskId)) {
-      return m
-    }
-    return {
-      ...m,
-      segments: m.segments.map((s) =>
-        s.kind === 'task' && s.snapshot.taskId === snapshot.taskId ? { ...s, snapshot } : s
-      )
-    }
-  })
-}
-
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
     const m = out[i]
     if (isAssistant(m) && m.status === 'streaming') {
-      // Workflow and task snapshots REPLACE their predecessor for the same
-      // run/task — the segment kinds' documented contract (see broca.ts
-      // WorkflowSnapshot/TaskSnapshot), not render-layer dedup. Everything
-      // else appends.
+      // Workflow snapshots REPLACE their predecessor for the same run — the
+      // segment kind's documented contract (see broca.ts WorkflowSnapshot),
+      // not render-layer dedup. Everything else appends.
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
-      else if (segment.kind === 'task') upsertTaskSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
       if (segment.kind === 'turn_end') next.stopReason = segment.stopReason

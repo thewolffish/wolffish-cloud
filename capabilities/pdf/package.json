@@ -1,11 +1,13 @@
 {
   "name": "@wolffish-cap/pdf",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
-  "description": "Wolffish PDF capability — runtime npm dependencies installed lazily on first use.",
+  "description": "Wolffish PDF capability — runtime npm dependencies installed lazily on first use. pdfjs-dist and @napi-rs/canvas are pinned to exactly what pdf-parse 2.4.5 pins (the plugin imports both through the same specifiers pdf-parse uses, so one copy must serve both); re-pin all three together when bumping pdf-parse.",
   "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
     "pdf-lib": "^1.17.1",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "2.4.5",
+    "pdfjs-dist": "5.4.296"
   }
 }

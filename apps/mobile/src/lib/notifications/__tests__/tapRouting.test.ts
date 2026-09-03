@@ -1,3 +1,4 @@
+import { DEEPLINK_SCHEME } from '@/lib/bridge/protocol'
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 )
@@ -64,7 +65,7 @@ beforeEach(() => {
 
 describe('the tap that launched the app', () => {
   it('is readable synchronously, and only once', () => {
-    mockLastResponse = tap('n1', 'wolffish://chat?id=2026-08-05_10-00-00')
+    mockLastResponse = tap('n1', `${DEEPLINK_SCHEME}chat?id=2026-08-05_10-00-00`)
     const push = loadPush()
 
     expect(push.launchDeeplink()).toEqual({
@@ -81,13 +82,13 @@ describe('the tap that launched the app', () => {
   })
 
   it('does not also navigate when the listener replays it', () => {
-    mockLastResponse = tap('n1', 'wolffish://chat?id=2026-08-05_10-00-00')
+    mockLastResponse = tap('n1', `${DEEPLINK_SCHEME}chat?id=2026-08-05_10-00-00`)
     const push = loadPush()
     push.launchDeeplink()
 
     push.initNotifications()
     mockListeners.forEach((listener) =>
-      listener(tap('n1', 'wolffish://chat?id=2026-08-05_10-00-00'))
+      listener(tap('n1', `${DEEPLINK_SCHEME}chat?id=2026-08-05_10-00-00`))
     )
 
     expect(mockRouterPush).not.toHaveBeenCalled()
@@ -96,7 +97,7 @@ describe('the tap that launched the app', () => {
   // The launch that never went through the entry screen — nothing has taken
   // the tap, so init routes it rather than dropping it.
   it('is still routed by init when nobody took it', () => {
-    mockLastResponse = tap('n1', 'wolffish://settings/automations')
+    mockLastResponse = tap('n1', `${DEEPLINK_SCHEME}settings/automations`)
     const push = loadPush()
 
     push.initNotifications()
@@ -105,7 +106,7 @@ describe('the tap that launched the app', () => {
   })
 
   it('is forgotten once the entry screen has had it', () => {
-    mockLastResponse = tap('n1', 'wolffish://history')
+    mockLastResponse = tap('n1', `${DEEPLINK_SCHEME}history`)
     const push = loadPush()
     push.launchDeeplink()
 
@@ -122,7 +123,7 @@ describe('a tap while the app is running', () => {
     const push = loadPush()
     push.initNotifications()
 
-    mockListeners.forEach((listener) => listener(tap('n2', 'wolffish://settings/usage')))
+    mockListeners.forEach((listener) => listener(tap('n2', `${DEEPLINK_SCHEME}settings/usage`)))
 
     expect(mockRouterPush).toHaveBeenCalledWith('/settings/usage')
   })
@@ -131,7 +132,7 @@ describe('a tap while the app is running', () => {
     const push = loadPush()
     push.initNotifications()
 
-    mockListeners.forEach((listener) => listener(tap('n3', 'wolffish://runs/1')))
+    mockListeners.forEach((listener) => listener(tap('n3', `${DEEPLINK_SCHEME}runs/1`)))
     mockListeners.forEach((listener) => listener(tap('n4', 'https://evil.example/x')))
     mockListeners.forEach((listener) => listener(tap('n5', undefined)))
 
@@ -142,8 +143,8 @@ describe('a tap while the app is running', () => {
     const push = loadPush()
     push.initNotifications()
 
-    mockListeners.forEach((listener) => listener(tap('n6', 'wolffish://history')))
-    mockListeners.forEach((listener) => listener(tap('n6', 'wolffish://history')))
+    mockListeners.forEach((listener) => listener(tap('n6', `${DEEPLINK_SCHEME}history`)))
+    mockListeners.forEach((listener) => listener(tap('n6', `${DEEPLINK_SCHEME}history`)))
 
     expect(mockRouterPush).toHaveBeenCalledTimes(1)
   })
@@ -159,7 +160,7 @@ describe('what a tap tells the sync', () => {
     push.initNotifications()
 
     mockListeners.forEach((listener) =>
-      listener(tap('n7', 'wolffish://chat?id=2026-08-25_09-00-00'))
+      listener(tap('n7', `${DEEPLINK_SCHEME}chat?id=2026-08-25_09-00-00`))
     )
 
     expect(mockMarkDirty).toHaveBeenCalledWith('2026-08-25_09-00-00')
@@ -167,7 +168,7 @@ describe('what a tap tells the sync', () => {
   })
 
   it('the launch tap marks it too, before anything navigates', () => {
-    mockLastResponse = tap('n8', 'wolffish://chat?id=2026-08-25_10-00-00')
+    mockLastResponse = tap('n8', `${DEEPLINK_SCHEME}chat?id=2026-08-25_10-00-00`)
     const push = loadPush()
 
     push.launchDeeplink()
@@ -179,8 +180,8 @@ describe('what a tap tells the sync', () => {
     const push = loadPush()
     push.initNotifications()
 
-    mockListeners.forEach((listener) => listener(tap('n9', 'wolffish://settings/usage')))
-    mockListeners.forEach((listener) => listener(tap('n10', 'wolffish://chat?id=current')))
+    mockListeners.forEach((listener) => listener(tap('n9', `${DEEPLINK_SCHEME}settings/usage`)))
+    mockListeners.forEach((listener) => listener(tap('n10', `${DEEPLINK_SCHEME}chat?id=current`)))
 
     expect(mockMarkDirty).not.toHaveBeenCalled()
   })

@@ -51,7 +51,7 @@ fs.writeFileSync(
   // writes, and testing against one tests a machine that cannot exist.
   JSON.stringify({
     version: 1,
-    llm: { mode: 'single', local: {}, providers: [], brain: {} },
+    llm: { mode: 'single', model: null },
     safety: {}
   })
 )

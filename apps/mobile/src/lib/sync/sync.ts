@@ -1,13 +1,22 @@
 import { coalesceTextSegments, messageFilePaths } from '@/lib/conversations/segments'
 import type { ConversationMessage, Segment } from '@/lib/conversations/types'
-import { getDb } from '@/lib/db/database'
+import { getDb, withExclusiveTransaction } from '@/lib/db/database'
 import { resolveWorkspaceFile } from '@/lib/files/fileCache'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { fromBase64Url } from '@/lib/tunnel/pairing'
-import { CHUNK_SIZE, Event, Rpc, type ConversationMeta } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { cloudSession } from '@/lib/cloud/session'
+import {
+  conversationRecords,
+  conversationsSince,
+  usageDays as fetchUsageDays,
+  type WireConversationRow,
+  type WireRecord
+} from '@/lib/cloud/api'
+import { fetchConfigSnapshot } from '@/lib/sync/snapshot'
+import { Event, type ConversationMeta } from '@/lib/bridge/protocol'
 import {
   applyVariablesPush,
   refreshConfigSnapshot,
+  applyPushedSnapshot,
   useDemoConfig,
   type ConfigSnapshot
 } from '@/state/demoConfig'
@@ -17,6 +26,7 @@ import { applyOverlayReindex, applyOverlayRuns, readReindex, readRuns } from '@/
 import { applyUpdaterPush, readUpdaterState } from '@/lib/sync/updater'
 import { invalidateProcedures } from '@/lib/sync/procedures'
 import { invalidateProjects } from '@/lib/sync/projects'
+import { usageDaysFromWire } from '@/lib/usage/ledger'
 import { useAppStore } from '@/state/appStore'
 import { useBadges } from '@/state/badges'
 import { useChatRuntime } from '@/state/chatRuntime'
@@ -26,18 +36,25 @@ import { invalidateConversation, invalidateConversationList } from '@/lib/conver
 import { beginSync } from '@/lib/sync/activity'
 
 /**
- * Live sync with the paired desktop.
+ * Sync with the org — the phone's copy of the user's record.
  *
  * The shape mirrors demo mode deliberately. Demo mode downloads a bundle into
- * SQLite and applies a config snapshot; paired mode pulls the same two things
- * from the desktop instead of the CDN. Every screen downstream — conversation
- * list, settings, usage — reads the same local store either way and cannot
- * tell the difference, which is what keeps demo mode intact rather than
- * special-cased.
+ * SQLite and applies a config snapshot; paired mode pulls the same things
+ * from the ORG instead of the CDN: the settings snapshot the desktop keeps
+ * synced (fresh from the desktop itself while it is on the bridge), the
+ * conversation index, and usage. Every screen downstream reads the same
+ * local store either way and cannot tell the difference.
  *
- * What travels up front is deliberately small: conversation *metadata* only.
- * A real workspace is ~900 MB of message bodies and the phone opens one
- * conversation at a time, so bodies are fetched on open and cached after.
+ * What travels up front is deliberately small: conversation METADATA only —
+ * a real workspace is hundreds of conversations and close to a gigabyte of
+ * message bodies, and a phone opens one conversation at a time, so bodies
+ * are fetched on open (the org's record pages, rebuilt exactly as the
+ * desktop rebuilds them after a purge) and cached after.
+ *
+ * Nothing here needs the desktop to be awake. The desktop is needed to RUN
+ * things — turns, edits — and lib/sync/prompt and the outbox own that; the
+ * bridge's pushes are what keep this mirror live in between, and the org's
+ * `since` cursor is what brings it level after time away.
  */
 
 export type SyncPhase = 'connect' | 'config' | 'conversations' | 'usage' | 'done'
@@ -71,9 +88,6 @@ const PHASE_START: Record<SyncPhase, number> = {
 export async function initialSync(
   onProgress?: (progress: SyncProgress) => void
 ): Promise<SyncResult> {
-  const tunnel = tunnelClient.active
-  if (!tunnel) throw new Error('not connected')
-
   const report = (phase: SyncPhase, within = 0, imported = 0, total = 0): void => {
     const start = PHASE_START[phase]
     const next = phase === 'done' ? 1 : PHASE_START[nextPhase(phase)]
@@ -88,46 +102,30 @@ export async function initialSync(
   report('connect', 1)
 
   // 1. Config — the settings surface, straight into the same store demo mode
-  //    fills, so every settings screen works with no branch.
+  //    fills, so every settings screen works with no branch. A workspace the
+  //    desktop has not written a snapshot for yet (its first launch on this
+  //    account) is not a failure: the screens render their defaults until
+  //    the desktop's next config change lands one.
   report('config', 0)
-  const snapshot = (await tunnel.rpc(Rpc.configSnapshot)) as ConfigSnapshot
-  useDemoConfig.getState().applySnapshot(snapshot)
+  const snapshot = (await fetchConfigSnapshot()) as ConfigSnapshot | null
+  if (snapshot) useDemoConfig.getState().applySnapshot(snapshot)
   report('config', 1)
 
-  // 2. Conversation index — metadata only.
+  // 2. Conversation index — metadata only, every page from the beginning.
   report('conversations', 0)
-  const index = (await tunnel.rpc(Rpc.conversationIndex, { since: 0 })) as {
-    rows: ConversationMeta[]
-    total: number
-    at: number
-  }
-  const rows = index.rows ?? []
-  await upsertConversations(rows, (done) =>
-    report('conversations', rows.length ? done / rows.length : 1, done, rows.length)
-  )
+  await setSyncCursor('')
+  const pulled = await pullIndex((done) => report('conversations', 0.5, done, 0))
+  report('conversations', 1, pulled.upserted, pulled.upserted)
 
-  // 3. Usage — the ledger the Usage screen aggregates on device.
+  // 3. Usage — the org's ledger, folded per day, for the Usage screen.
   report('usage', 0)
-  try {
-    // The ledger rows are the desktop's shape verbatim; the phone's usage
-    // screen owns their meaning, so they travel through untouched.
-    const usage = (await tunnel.rpc(Rpc.usage)) as {
-      days?: ConfigSnapshot['usage'] extends { days?: infer D } | undefined ? D : never
-    }
-    if (Array.isArray(usage?.days)) {
-      useDemoConfig.getState().applySnapshot({ ...snapshot, usage: { days: usage.days } })
-    }
-  } catch {
-    // Usage is a nice-to-have; a desktop that cannot answer must not fail a
-    // pairing that has already delivered conversations and settings.
-  }
+  await refreshUsage().catch(() => undefined)
   report('usage', 1)
 
-  await setSyncCursor(index.at ?? Date.now())
   invalidateConversationList()
   noteSynced()
-  report('done', 1, rows.length, rows.length)
-  return { conversations: rows.length, at: Date.now() }
+  report('done', 1, pulled.upserted, pulled.upserted)
+  return { conversations: pulled.upserted, at: Date.now() }
 }
 
 function nextPhase(phase: SyncPhase): SyncPhase {
@@ -136,73 +134,82 @@ function nextPhase(phase: SyncPhase): SyncPhase {
 }
 
 /**
- * Catch-up sync: ask only for what changed since the last cursor.
- *
- * The phone is often asleep while the desktop keeps working, so this runs on
- * every foreground and whenever a screen that renders desktop-owned data
- * opens. Cheap by construction — an unchanged desktop answers with an empty
- * list.
- *
- * `withIds` additionally asks for the desktop's full id list and prunes
- * anything missing from it. An incremental pull can only ever describe what
- * still exists, so without this a conversation deleted while the phone was
- * away would survive on the phone indefinitely.
+ * Walk the org's index from the stored cursor: rows whose server stamp moved
+ * past it, tombstones included. Every page is applied as it lands and the
+ * cursor advances with it, so an interrupted pull resumes where it stopped
+ * rather than starting over.
  */
-export async function refreshSync(
-  withIds = false
-): Promise<{ changed: number; removed: number; changedIds: string[] }> {
-  const tunnel = tunnelClient.active
-  if (!tunnel) return { changed: 0, removed: 0, changedIds: [] }
-  const since = await getSyncCursor()
-
-  const startedAt = Date.now()
-  const index = (await tunnel.rpc(Rpc.conversationIndex, { since, withIds })) as {
-    rows: ConversationMeta[]
-    at: number
-    ids?: string[]
-  }
-  const rows = index.rows ?? []
+async function pullIndex(
+  onProgress?: (done: number) => void
+): Promise<{ upserted: number; removed: number; changedIds: string[] }> {
+  let since = await getSyncCursor()
+  let upserted = 0
   let removed = 0
-  if (rows.length) await upsertConversations(rows)
-  if (Array.isArray(index.ids)) {
-    removed = await pruneMissing(index.ids)
-    // Badges follow the same rule as rows: a conversation the desktop no
-    // longer has cannot keep one. Buckets younger than this fetch are spared
-    // — their conversation may simply be newer than the id list.
-    useBadges.getState().prune(index.ids, startedAt)
+  const changedIds: Array<{ id: string; updatedAt: number }> = []
+  for (let guard = 0; guard < 10_000; guard++) {
+    const page = await cloudSession.withAccessToken((token) => conversationsSince(token, since))
+    // A malformed row is not a conversation, it is a bad frame — dropped
+    // before anything reads it, so it can neither throw nor become a ghost.
+    const rows = (page.conversations ?? []).filter(
+      (row): row is WireConversationRow =>
+        Boolean(row) && typeof row === 'object' && typeof row.id === 'string' && row.id.length > 0
+    )
+    const live = rows.filter((row) => !row.deleted_at)
+    const dead = rows.filter((row) => Boolean(row.deleted_at))
+    if (live.length) await upsertConversations(live.map(toMeta))
+    for (const row of dead) {
+      if (await deleteConversation(row.id)) removed++
+      clearConversationBadges(row.id)
+    }
+    upserted += live.length
+    for (const row of live)
+      changedIds.push({ id: row.id, updatedAt: Date.parse(row.updated_at) || 0 })
+    onProgress?.(upserted)
+    const cursor = typeof page.cursor === 'string' ? page.cursor : null
+    if (cursor && cursor !== since) {
+      since = cursor
+      await setSyncCursor(cursor)
+    }
+    if (!page.next) break
   }
-  if (rows.length || removed) invalidateConversationList()
-  // Every changed conversation's own query too, not just the list. The one
-  // on screen is the one that matters: its query re-ran on the connected
-  // edge, BEFORE this pull moved updated_at, judged its cached body current
-  // and pinned it (staleTime: Infinity) — which is how a phone that slept
-  // through a finished turn kept showing the old transcript until the user
-  // left and came back. Invalidated here, the mounted screen re-reads
-  // against the fresh metadata and fetches exactly when it is behind.
-  for (const row of rows) {
-    if (row?.id) invalidateConversation(row.id)
-  }
-  await setSyncCursor(index.at ?? Date.now())
-  noteSynced()
-  // Newest first, so a caller refreshing bodies under a cap spends it on the
-  // conversations the user is most likely to open next.
-  const changedIds = rows
-    .filter((row): row is ConversationMeta => Boolean(row?.id))
-    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-    .map((row) => row.id)
-  return { changed: rows.length, removed, changedIds }
+  changedIds.sort((a, b) => b.updatedAt - a.updatedAt)
+  return { upserted, removed, changedIds: changedIds.map((row) => row.id) }
 }
 
 /**
- * Everything the phone mirrors, brought level with the desktop in one pass:
- * settings, usage (which rides in the same snapshot), the conversation index,
- * and the deletions an incremental pull cannot express.
+ * Catch-up sync: ask only for what changed since the last cursor.
  *
- * This is what runs on every reconnect and every return to the foreground —
- * the answer to "the phone was off and missed the events". Silent by design:
- * it reports nothing and shows nothing, because the user did not ask for it.
- * Each half is independent, so a desktop that cannot answer one still brings
- * the other up to date.
+ * The phone is often asleep while the desktop keeps working, so this runs on
+ * every foreground and whenever a screen that renders org-owned data opens.
+ * Cheap by construction — an unchanged record answers with an empty page —
+ * and complete: deletions ride the same cursor as tombstones, so a
+ * conversation deleted while the phone was away converges without a full id
+ * sweep.
+ */
+export async function refreshSync(
+  _withIds = false
+): Promise<{ changed: number; removed: number; changedIds: string[] }> {
+  const pulled = await pullIndex()
+  if (pulled.upserted || pulled.removed) invalidateConversationList()
+  // Every changed conversation's own query too, not just the list. The one
+  // on screen is the one that matters: its query pinned a body it judged
+  // current before this pull moved updated_at; invalidated, the mounted
+  // screen re-reads against the fresh metadata and fetches exactly when it
+  // is behind.
+  for (const id of pulled.changedIds) invalidateConversation(id)
+  noteSynced()
+  return { changed: pulled.upserted, removed: pulled.removed, changedIds: pulled.changedIds }
+}
+
+/**
+ * Everything the phone mirrors, brought level with the org in one pass:
+ * settings, the conversation index (deletions included), and usage.
+ *
+ * This is what runs on every connection and every return to the foreground
+ * — the answer to "the phone was off and missed the events". Silent by
+ * design: it reports nothing and shows nothing, because the user did not ask
+ * for it. Each half is independent, so a part that cannot be answered still
+ * leaves the others up to date.
  */
 export async function reconcile(): Promise<void> {
   const progress = beginSync()
@@ -222,7 +229,8 @@ export async function reconcile(): Promise<void> {
         .finally(() => {
           conversations = true
           progress.step({ settings, conversations })
-        })
+        }),
+      refreshUsage()
     ])
   } finally {
     // Always, including on failure: an overlay left up after a sync that
@@ -230,12 +238,10 @@ export async function reconcile(): Promise<void> {
     progress.end()
   }
   // Bodies, for the conversations that moved while the phone was away — the
-  // half a metadata pull cannot deliver, and the reason a finished turn used
-  // to sit stale until the next open. Bounded and newest-first: only
+  // half a metadata pull cannot deliver. Bounded and newest-first: only
   // conversations whose body is already on the device refetch (the rest
   // download on open, as ever), and a week of catch-up must not become a
-  // download storm on the connect edge. After progress.end(), deliberately —
-  // this is background freshening, not the sync the overlay reports.
+  // download storm on the connect edge.
   for (const id of changedIds.slice(0, RECONCILE_BODY_REFRESH_MAX)) {
     await refreshChangedBody(id).catch(() => undefined)
   }
@@ -244,6 +250,13 @@ export async function reconcile(): Promise<void> {
 /** How many changed conversations a single reconcile refreshes the bodies
  *  of. The rest stay metadata-fresh and download on open. */
 const RECONCILE_BODY_REFRESH_MAX = 4
+
+/** The org's usage ledger, folded per local day, into the config store. */
+export async function refreshUsage(): Promise<void> {
+  const tz = -new Date().getTimezoneOffset()
+  const wire = await cloudSession.withAccessToken((token) => fetchUsageDays(token, tz))
+  useDemoConfig.getState().setUsageDays(usageDaysFromWire(wire.days ?? []))
+}
 
 /**
  * The settle path for a conversation whose turn just ended — registered by
@@ -258,12 +271,12 @@ export function setConversationSettleHook(hook: (conversationId: string) => void
 }
 
 /**
- * Bring one changed conversation's BODY level with the desktop, respecting
- * the live-turn contract. One rule set, shared by the upsert push handler and
- * reconcile's catch-up pass, so the two signals cannot disagree:
+ * Bring one changed conversation's BODY level with the org, respecting the
+ * live-turn contract. One rule set, shared by the push handlers and
+ * reconcile's catch-up pass, so the signals cannot disagree:
  *
- *  - a turn still streaming fetches nothing — the assistant message is not on
- *    disk yet, and a mid-turn body is the transcript from BEFORE the turn;
+ *  - a turn still streaming fetches nothing — the assistant message is not in
+ *    the org yet, and a mid-turn body is the transcript from BEFORE the turn;
  *  - a turn just ended routes through the settle path, which fetches AND
  *    releases the live overlay against the stored copy;
  *  - otherwise, a cached-but-stale body refetches. A conversation never
@@ -285,8 +298,7 @@ async function refreshChangedBody(id: string): Promise<void> {
 /**
  * When the last catch-up finished. Persisted in sync_meta beside the cursor:
  * "last synced" is a fact about the data on this device, and the data
- * survives a relaunch, so the timestamp must too — a phone that cold-starts
- * offline with yesterday's rows should say "yesterday", never "pending".
+ * survives a relaunch, so the timestamp must too.
  */
 let lastSyncedAt: number | null = null
 let lastSyncedHydrated = false
@@ -300,9 +312,6 @@ function noteSynced(): void {
 export function getLastSyncedAt(): number | null {
   if (!lastSyncedHydrated) {
     lastSyncedHydrated = true
-    // Fire-and-forget: callers poll (the Relay screen, every 5 s), so the
-    // persisted value appears one tick later. A sync finishing in between
-    // wins the race by construction — it is strictly newer.
     void getMeta('lastSyncedAt')
       .then((value) => {
         const at = Number(value)
@@ -338,14 +347,10 @@ setOutboxRefreshHook(scheduleConfigRefresh)
 
 /**
  * Pull the newest config without touching conversations — for settings
- * screens and change pushes.
- *
- * One fetch at a time, with a trailing rerun. Concurrent pulls could apply
- * out of order — whichever RESPONSE lands last wins, which is not whichever
- * state is newest — so late callers share the running fetch, and a signal
- * that arrives mid-flight queues exactly one more round after it. The fetch
- * itself goes through refreshConfigSnapshot, which keeps this phone's
- * mid-edit keys local rather than letting a raced snapshot undo them.
+ * screens and change pushes. One fetch at a time, with a trailing rerun:
+ * concurrent pulls could apply out of order, so late callers share the
+ * running fetch, and a signal that arrives mid-flight queues exactly one
+ * more round after it.
  */
 let configRefreshRunning: Promise<void> | null = null
 let configRefreshAgain = false
@@ -370,21 +375,10 @@ export function refreshConfig(): Promise<void> {
 
 /**
  * Flip one capability — the write path that makes the Capabilities screen's
- * toggle real on the paired desktop rather than cosmetic.
- *
- * The local store updates first so the switch answers the finger instantly;
- * the outbox then owns the wire (pushCapability): it sends the flip, holds
- * the key's dirty window so a snapshot raced against the edit cannot revert
- * the switch, and on any failure or refusal (locked core, stale row) asks
- * for a corrective refresh that lands the state the desktop actually holds.
- * The desktop persists through the same path as its own panel's toggle,
- * moves that panel live, and pushes config.changed back as confirmation.
- *
- * Demo mode (unpaired) keeps its offline behavior: the store owns the config
- * outright and the local edit is the whole act. Paired but disconnected
- * refuses, exactly like setConfigValue — these are the desktop's values, and
- * an edit with nowhere to land would sit on screen until the next sync
- * silently undid it.
+ * toggle real on the paired desktop rather than cosmetic. The local store
+ * updates first so the switch answers the finger instantly; the outbox then
+ * owns the wire. Demo mode keeps its offline behavior; paired but the
+ * desktop away refuses, exactly like setConfigValue.
  */
 export function setCapabilityEnabled(name: string, enabled: boolean): void {
   const store = useDemoConfig.getState()
@@ -392,119 +386,108 @@ export function setCapabilityEnabled(name: string, enabled: boolean): void {
     store.setMapEntry('capabilities', name, enabled)
     return
   }
-  if (!tunnelClient.connected) return
+  if (!bridgeClient.connected) return
   store.setMapEntry('capabilities', name, enabled)
   pushCapability(name, enabled)
 }
 
 /**
  * Subscribe to the desktop's pushes so the phone feels live rather than
- * polled: a conversation started on the desktop appears here immediately, the
- * same way it appears in the desktop's own list.
+ * polled: a conversation started on the desktop appears here immediately,
+ * the same way it appears in the desktop's own list.
  */
 export function attachLiveUpdates(): () => void {
-  const tunnel = tunnelClient.active
-  if (!tunnel) return () => undefined
+  const bridge = bridgeClient.active
+  if (!bridge) return () => undefined
 
-  tunnel.onEvent(Event.conversationUpserted, (payload) => {
+  bridge.onEvent(Event.conversationUpserted, (payload) => {
     const meta = payload as ConversationMeta
-    void upsertConversations([meta]).then(async () => {
+    void upsertConversations([meta]).then(() => {
       invalidateConversationList()
       if (!meta?.id) return
-      // Unconditionally, before any staleness verdict: a mounted screen
-      // showing this conversation must re-read against the metadata that
-      // just landed. The old gate only invalidated when a cached body was
-      // refetched, so a screen sitting on an empty or failed first fetch
-      // (opened while the tunnel was still dialing) never re-ran its query
-      // and stayed blank-or-stale for the session.
+      // Unconditionally: a mounted screen showing this conversation must
+      // re-read against the metadata that just landed.
       invalidateConversation(meta.id)
-      // A run on the desktop, or from Telegram, moves this conversation's
-      // updated_at. If its body is already on the phone it is now behind, so
-      // pull it — otherwise the list would show a new message count against
-      // a transcript that stops short of it. Shared with reconcile's
-      // catch-up pass: mid-turn fetches nothing, a just-ended turn settles.
-      await refreshChangedBody(meta.id)
     })
   })
 
-  tunnel.onEvent(Event.conversationDeleted, (payload) => {
+  // The desktop's push of the records to the org completed — the one signal
+  // that means "the body in the org is the one you just watched". Metadata
+  // pushes say the desktop changed; this says the org has it.
+  bridge.onEvent(Event.conversationSynced, (payload) => {
+    const { id, updatedAt } = (payload ?? {}) as { id?: string; updatedAt?: number }
+    if (!id) return
+    void (async () => {
+      if (typeof updatedAt === 'number' && Number.isFinite(updatedAt)) {
+        const db = await getDb()
+        await db.runAsync('UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?', [
+          updatedAt,
+          id
+        ])
+      }
+      await refreshChangedBody(id)
+      invalidateConversation(id)
+    })().catch(() => undefined)
+  })
+
+  bridge.onEvent(Event.conversationDeleted, (payload) => {
     const id = (payload as { id?: string })?.id
     if (id) {
-      // A deleted conversation cannot keep a badge — the row it would mark is
-      // gone, and an unclearable count on the icon is worse than a missed one.
-      // The full clear (not just the bucket): its notifications leave the tray
-      // too, or the next reconciliation would find them with no row to charge.
       clearConversationBadges(id)
       void deleteConversation(id).then(invalidateConversationList)
     }
   })
 
-  tunnel.onEvent(Event.configChanged, () => {
+  // The desktop sends its fresh snapshot with the change when it has one —
+  // applied straight in (the outbox's dirty keys still win); otherwise a
+  // debounced fetch lands it.
+  bridge.onEvent(Event.configChanged, (payload) => {
+    const snapshot = (payload as { snapshot?: unknown } | null)?.snapshot
+    if (
+      snapshot &&
+      typeof snapshot === 'object' &&
+      Array.isArray((snapshot as ConfigSnapshot).capabilities)
+    ) {
+      applyPushedSnapshot(snapshot as ConfigSnapshot)
+      return
+    }
     scheduleConfigRefresh()
   })
 
-  // Variables arrive with their payload — straight into the store, no
-  // snapshot fetch, so an edit on the desktop is on this screen in the
-  // push's own latency. The debounced config.changed that follows the same
-  // save is then a no-op for this key and truth for everything else.
-  tunnel.onEvent(Event.variablesChanged, (payload) => {
+  bridge.onEvent(Event.variablesChanged, (payload) => {
     applyVariablesPush((payload as { variables?: unknown })?.variables)
   })
 
-  // Usage moves on every scored turn from any channel. The desktop has always
-  // announced it; nothing was listening, so the Usage screen only ever showed
-  // what the last snapshot happened to carry. Usage travels inside the config
-  // snapshot, so both signals land on the same fetch.
-  tunnel.onEvent(Event.usageChanged, () => {
-    scheduleConfigRefresh()
+  // Usage moves on every scored turn from any channel; the org's ledger is
+  // the record, one small read away.
+  bridge.onEvent(Event.usageChanged, () => {
+    void refreshUsage().catch(() => undefined)
   })
 
-  // The three workspace stores the phone edits alongside the desktop. Each push
-  // fires on EVERY committed write to its store, whoever wrote — the desktop's
-  // own page, the agent's project_*/procedure_*/automation_* tools, an
-  // autonomous run, or this phone's editor echoing back. Invalidation, not a
-  // fetch: react-query only re-reads for a screen that is actually mounted, so
-  // a push while the user is in chat costs nothing.
-  tunnel.onEvent(Event.projectsChanged, () => {
+  bridge.onEvent(Event.projectsChanged, () => {
     invalidateProjects()
   })
 
-  tunnel.onEvent(Event.proceduresChanged, () => {
+  bridge.onEvent(Event.proceduresChanged, () => {
     invalidateProcedures()
   })
 
-  tunnel.onEvent(Event.automationsChanged, () => {
+  bridge.onEvent(Event.automationsChanged, () => {
     invalidateAutomations()
   })
 
-  // The run pool carries its state, so it folds in without a fetch — and it is
-  // also the signal that an automation just FIRED, which is the one moment a
-  // served `nextRunMs` goes stale. Re-reading on it keeps the "fires in" line
-  // honest instead of counting backwards past a run that already happened.
-  //
-  // Two folds off one push, each with an owner: the automations screen's cache,
-  // which gates its play buttons, and the overlay stack, which draws a card per
-  // run. One read of the wire feeds both, so they cannot disagree.
-  tunnel.onEvent(Event.automationRunsChanged, (payload) => {
+  bridge.onEvent(Event.automationRunsChanged, (payload) => {
     const runs = readRuns(payload)
     applyRunsPush(runs)
     applyOverlayRuns(runs)
     invalidateAutomations()
   })
 
-  // The memory index started, moved, or finished rebuilding — the fourth
-  // overlay kind, and the only one that is not a brainstem run. Payload-carrying
-  // and throttled on the desktop; `{ status: null }` is the end, which is what
-  // takes the card away.
-  tunnel.onEvent(Event.reindexChanged, (payload) => {
+  bridge.onEvent(Event.reindexChanged, (payload) => {
     applyOverlayReindex(readReindex(payload))
   })
 
-  // The desktop's self-updater — phase, download percent, ready/installing,
-  // error — so the Updates screen mirrors it live. Payload-carrying like the
-  // run pool: it ticks once per downloaded percent, and a fetch per tick
-  // would be pure overhead.
-  tunnel.onEvent(Event.updaterChanged, (payload) => {
+  bridge.onEvent(Event.updaterChanged, (payload) => {
     applyUpdaterPush(readUpdaterState(payload))
   })
 
@@ -523,6 +506,25 @@ async function hasCachedBody(id: string): Promise<boolean> {
 
 // --------------------------------------------------------------- persistence
 
+/** An org index row as the local table stores it. */
+function toMeta(row: WireConversationRow): ConversationMeta {
+  const updatedAt = Date.parse(row.updated_at) || Date.now()
+  return {
+    id: row.id,
+    title: row.title ?? '',
+    model: typeof row.model === 'string' ? row.model : null,
+    channel: typeof row.channel === 'string' ? row.channel : null,
+    icon: typeof row.icon === 'string' ? row.icon : null,
+    projectId: typeof row.project_id === 'string' ? row.project_id : null,
+    sealed: row.sealed === 1 || row.sealed === true,
+    createdAt: Date.parse(row.created_at) || updatedAt,
+    updatedAt,
+    messageCount: typeof row.message_count === 'number' ? row.message_count : 0,
+    stats: row.stats ?? null,
+    summary: typeof row.summary === 'string' ? row.summary : null
+  }
+}
+
 /**
  * Upsert metadata. Conflicts resolve last-write-wins on `updated_at`: whoever
  * edited most recently owns the row, which matches how the two apps are used
@@ -533,16 +535,12 @@ async function upsertConversations(
   onProgress?: (done: number) => void
 ): Promise<void> {
   // A row without a string id is not a conversation, it is a malformed
-  // frame — and INSERTed it becomes a NULL-keyed ghost: pruneMissing can
-  // never select it (`NULL NOT IN (...)` is never true), every list keyed
-  // by id trips over it, and it renders as an untitled row nothing can
-  // delete. Found the hard way: a test harness once pushed a wrapped
-  // payload and four such ghosts survived every reconcile since.
+  // frame — and INSERTed it becomes a NULL-keyed ghost nothing can delete.
   rows = rows.filter((row) => typeof row?.id === 'string' && row.id.length > 0)
   if (!rows.length) return
   const db = await getDb()
   let done = 0
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withExclusiveTransaction(db, async (tx) => {
     for (const row of rows) {
       await tx.runAsync(
         `INSERT INTO conversations
@@ -551,15 +549,15 @@ async function upsertConversations(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
-           model = excluded.model,
-           channel = excluded.channel,
-           icon = excluded.icon,
+           model = COALESCE(excluded.model, conversations.model),
+           channel = COALESCE(excluded.channel, conversations.channel),
+           icon = COALESCE(excluded.icon, conversations.icon),
            project_id = excluded.project_id,
            sealed = excluded.sealed,
            updated_at = excluded.updated_at,
            message_count = excluded.message_count,
-           stats_json = excluded.stats_json,
-           summary = excluded.summary
+           stats_json = COALESCE(excluded.stats_json, conversations.stats_json),
+           summary = COALESCE(excluded.summary, conversations.summary)
          WHERE excluded.updated_at >= conversations.updated_at`,
         [
           row.id,
@@ -583,55 +581,26 @@ async function upsertConversations(
   onProgress?.(done)
 }
 
-/**
- * Drop every local conversation the desktop no longer lists. Runs inside one
- * statement rather than a loop: the id list is the desktop's whole truth, so
- * this is a set difference, not a sequence of decisions.
- */
-async function pruneMissing(ids: string[]): Promise<number> {
+async function deleteConversation(id: string): Promise<boolean> {
   const db = await getDb()
-  // Everything except the conversation ON SCREEN. An id sweep that omits the
-  // open conversation is far more likely a desktop-side read race (its index
-  // skips a file it happened to catch mid-life) than a real deletion — and
-  // pruning it yanks the transcript out from under the user, which is how a
-  // chat went blank mid-file-download until it was reselected. Real deletions
-  // arrive as conversation.deleted pushes, which do take the open one down;
-  // a genuinely deleted conversation the user is sitting in goes on the first
-  // sweep after they leave it.
-  const active = getActiveConversation()
-  const keep = active && !ids.includes(active) ? [...ids, active] : ids
-  // An empty desktop is a real state (everything deleted) and must prune all.
-  const placeholders = keep.map(() => '?').join(',')
-  const where = keep.length ? `WHERE id NOT IN (${placeholders})` : ''
-  const doomed = await db.getAllAsync<{ id: string }>(`SELECT id FROM conversations ${where}`, keep)
-  if (!doomed.length) return 0
-  await db.withExclusiveTransactionAsync(async (tx) => {
-    for (const row of doomed) {
-      await tx.runAsync('DELETE FROM messages WHERE conversation_id = ?', [row.id])
-      await tx.runAsync('DELETE FROM conversations WHERE id = ?', [row.id])
-    }
-  })
-  return doomed.length
-}
-
-async function deleteConversation(id: string): Promise<void> {
-  const db = await getDb()
+  // Everything except the conversation ON SCREEN: a tombstone for the open
+  // one would yank the transcript out from under the user; it goes on the
+  // first sweep after they leave it (its query re-asks the org on open).
+  if (getActiveConversation() === id) return false
   await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', [id])
-  await db.runAsync('DELETE FROM conversations WHERE id = ?', [id])
+  const res = await db.runAsync('DELETE FROM conversations WHERE id = ?', [id])
+  return (res.changes ?? 0) > 0
 }
 
 /**
- * Fetch one conversation's messages. Called when the user opens it, never up
- * front — this is the whole reason the index carries metadata alone.
+ * Fetch one conversation's messages from the org. Called when the user
+ * opens it, never up front — this is the whole reason the index carries
+ * metadata alone.
  *
- * Single-flight per conversation, with a trailing rerun. Three callers can
- * want the same body inside one second — the open query, the settle after a
- * finished turn, the upsert push that follows the save — and un-coordinated
- * they raced whole-transcript downloads on one socket, with the LOSER's
- * DELETE+INSERT committing last: an older copy could overwrite a newer one,
- * and the duplicate download is exactly the "opening feels slower" tax. A
- * caller arriving mid-fetch now joins the flight and asks for one rerun
- * after it — its signal may describe a save the running fetch predates — so
+ * Single-flight per conversation, with a trailing rerun: three callers can
+ * want the same body inside one second — the open query, the settle after
+ * a finished turn, the push that follows the org's write — and a caller
+ * arriving mid-fetch joins the flight and asks for one rerun after it, so
  * everyone resolves against the freshest copy, downloaded once.
  */
 export function fetchConversationBody(id: string): Promise<boolean> {
@@ -659,110 +628,133 @@ export function fetchConversationBody(id: string): Promise<boolean> {
 
 const bodyFetches = new Map<string, { again: boolean; run: Promise<boolean> }>()
 
+type RebuiltConversation = {
+  updatedAt: number | null
+  messages: Array<{
+    id: string
+    role: string
+    content: string
+    timestamp: number
+    payload?: Record<string, unknown>
+  }>
+}
+
+/**
+ * The org's record pages → one conversation. The same rules the desktop
+ * applies when it rebuilds a transcript after a purge: message versions
+ * share a base id (the record id carries a content hash suffix) and the
+ * version the org received LAST wins — `records` is in the server's insert
+ * order, and the desktop pushes its current truth every time. Not the
+ * highest seq: seq is the message's timestamp, and a writer re-stamping a
+ * message between pushes leaves a stale copy with the younger seq (seen
+ * live: a prompt 1.5 s "younger" than its own reply, rendered under it).
+ * The last snapshot is the envelope; messages sort by seq, insert order
+ * breaking ties so a prompt and its reply stamped in the same millisecond
+ * keep their places.
+ */
+function rebuildConversation(records: WireRecord[]): RebuiltConversation {
+  let envelope: Record<string, unknown> = {}
+  const byMessage = new Map<string, WireRecord>()
+  for (const rec of records) {
+    if (rec.kind === 'snapshot') {
+      envelope = (rec.content as Record<string, unknown>) ?? {}
+    } else if (rec.kind === 'message') {
+      const base = rec.id.replace(/\.[0-9a-f]{8}$/, '')
+      // A message keeps the map slot of its first version; the value is the
+      // version seen last.
+      byMessage.set(base, rec)
+    }
+  }
+  const messages = [...byMessage.values()]
+    .sort((a, b) => a.seq - b.seq)
+    .map((rec) => {
+      const raw = (
+        rec.content && typeof rec.content === 'object' && !Array.isArray(rec.content)
+          ? rec.content
+          : {}
+      ) as Record<string, unknown>
+      const rawTs = raw.timestamp
+      const timestamp =
+        typeof rawTs === 'number' && Number.isFinite(rawTs) && rawTs > 0
+          ? rawTs
+          : Number.isFinite(rec.seq) && rec.seq > 1_000_000_000_000
+            ? rec.seq
+            : Date.parse(rec.created_at) || Date.now()
+      const { id: rawId, role: rawRole, content: rawContent, text, timestamp: _ts, ...rest } = raw
+      const id = typeof rawId === 'string' && rawId ? rawId : rec.id.replace(/\.[0-9a-f]{8}$/, '')
+      return {
+        id,
+        role: rawRole === 'assistant' ? 'assistant' : 'user',
+        content: typeof rawContent === 'string' ? rawContent : typeof text === 'string' ? text : '',
+        timestamp,
+        payload: Object.keys(rest).length ? rest : undefined
+      }
+    })
+  const updatedAt =
+    typeof envelope.updatedAt === 'number' && Number.isFinite(envelope.updatedAt)
+      ? envelope.updatedAt
+      : null
+  return { updatedAt, messages }
+}
+
+async function pullRecords(conversationId: string): Promise<WireRecord[] | null> {
+  const all: WireRecord[] = []
+  let after = 0
+  for (let guard = 0; guard < 10_000; guard++) {
+    const page = await cloudSession.withAccessToken((token) =>
+      conversationRecords(token, conversationId, after)
+    )
+    if (!Array.isArray(page?.records)) return null
+    all.push(...page.records)
+    const next = page.next_after
+    if (typeof next !== 'number' || page.records.length === 0 || !(next > after)) break
+    after = next
+  }
+  return all
+}
+
 async function fetchConversationBodyOnce(id: string): Promise<boolean> {
-  const tunnel = tunnelClient.active
-  if (!tunnel) return false
+  if (!cloudSession.isSignedIn) return false
   const db = await getDb()
 
-  // body_synced_at answers one question — WHICH VERSION is the copy on this
-  // device — and the honest answer travels with the copy: the desktop builds
-  // the reply from a single read of the conversation file, so its `updatedAt`
-  // describes exactly the messages in it. Two hazards it has to keep clearing:
-  //
-  // The clock. It must hold the desktop's own updated_at, never this phone's
-  // Date.now(): the two clocks are not synchronised, so comparing across them
-  // either refetches on every open (phone behind) or — the silent one — never
-  // refetches again (phone ahead). The served value is the desktop's, and it
-  // is the same field the index and the upsert pushes carry, so both sides of
-  // the comparison in isBodyStale are one number from one file.
-  //
-  // The ordering. A change landing after that read still moves the desktop's
-  // updated_at past this stamp, and the push carrying it makes the copy stale
-  // again — so nothing is missed. What this CANNOT do, and what reading the
-  // phone's row after the fetch could, is record a version the copy does not
-  // contain.
-  //
-  // The local row is the fallback only. Read before the RPC, it holds the
-  // PRE-turn updated_at for a turn run on the desktop — `turn.status: done`
-  // arrives, this fetch pulls the finished transcript, and the meta push with
-  // the new updated_at lands a few hundred ms later. Stamping that pre-turn
-  // value marked a complete body stale and bought a second, identical
-  // download of the whole conversation moments after the first.
+  // body_synced_at answers WHICH VERSION is the copy on this device, and the
+  // honest answer travels with the copy: the envelope's own updatedAt, the
+  // same number the index and the desktop's pushes carry — never this
+  // phone's clock, which is not synchronized with the desktop's.
   const before = await db.getFirstAsync<{ updated_at: number }>(
     'SELECT updated_at FROM conversations WHERE id = ?',
     [id]
   )
-  // Taken here, not read off `before` later: the fallback is "what this phone
-  // knew when it asked", and a push landing mid-fetch must not rewrite it.
   const askedAt = before?.updated_at ?? 0
 
-  // `chunked: true` says this build can pull an oversize body in windows. A
-  // finished tool-heavy turn can outgrow the relay's one-frame record cap,
-  // and an inline answer past it does not arrive late — it CLOSES the
-  // tunnel, after which every open of the conversation kills the link again.
-  // The desktop answers inline when the body fits (the ordinary case) and
-  // with a spool handle when it does not.
-  let answer = (await tunnel.rpc(Rpc.conversationBody, { id, chunked: true })) as {
-    updatedAt?: number
-    messages?: Array<{
-      id: string
-      role: string
-      content: string
-      timestamp: number
-      payload?: unknown
-    }>
+  let records: WireRecord[] | null
+  try {
+    records = await pullRecords(id)
+  } catch {
+    return false
   }
-  if ((answer as { chunked?: unknown } | null)?.chunked === true) {
-    const pulled = await pullChunkedBody(
-      (method, params, timeoutMs) => tunnel.rpc(method, params, timeoutMs),
-      answer as { bodyId?: unknown; sizeBytes?: unknown }
-    )
-    // A broken pull leaves the copy in hand untouched, exactly as a
-    // malformed inline answer does below.
-    if (pulled === null || typeof pulled !== 'object') return false
-    answer = pulled as typeof answer
-  }
-  const body = answer
-  const served = body?.updatedAt
-  const syncedTo = typeof served === 'number' && Number.isFinite(served) ? served : askedAt
-  // No messages array is a failed lookup, not an empty conversation. The old
-  // `?? []` turned any malformed answer into a DELETE of a good transcript —
-  // the worst outcome available here, and invisible until the user scrolls.
-  const messages = Array.isArray(body?.messages) ? body.messages : null
-  if (messages === null) return false
-  // An explicit empty answer over a NON-empty local copy is refused too.
-  // Nothing in the product empties a conversation in place — deletion removes
-  // it whole, and that arrives as conversation.deleted — so a served [] for a
-  // transcript this phone holds is a desktop-side race, not a fact: the one
-  // real producer is a NEW conversation's titled shell, on disk before its
-  // first turn folds, handed to a fetch that raced the fold. Honouring it
-  // deleted the local transcript, flipped the open chat to the empty state,
-  // and the user read that as the chat going blank. A conversation with no
-  // local messages still takes [] fine (there is nothing to lose), so a
-  // genuinely empty one syncs as it always did.
-  //
-  // A LIVE overlay extends the same refusal to a conversation with nothing
-  // cached yet: a turn this phone is rendering (or settling) means the served
-  // [] IS that turn's pre-fold shell — a notification tap lands exactly in
-  // this window, with the run seeded before the first body fetch answers.
-  // Stamping the shell as the synced body cost a wasted round of emptiness;
-  // refused, the settle's own retries pull the folded transcript instead.
+  if (records === null) return false
+  const body = rebuildConversation(records)
+  const syncedTo = body.updatedAt ?? askedAt
+  const messages = body.messages
+  // An empty answer over a NON-empty local copy is refused: nothing in the
+  // product empties a conversation in place — deletion removes it whole,
+  // and that arrives as a tombstone — so a served [] for a transcript this
+  // phone holds is the desktop's push racing this read, not a fact. A live
+  // overlay extends the refusal to a conversation with nothing cached yet:
+  // the turn this phone is rendering has not reached the org.
   if (messages.length === 0) {
     if (await hasCachedBody(id)) return false
     if (useChatRuntime.getState().streams[id]) return false
   }
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withExclusiveTransaction(db, async (tx) => {
     await tx.runAsync('DELETE FROM messages WHERE conversation_id = ?', [id])
     let seq = 0
     for (const message of messages) {
-      // Compact at the store boundary: the desktop streams prose as one text
-      // segment per model tick and (until it coalesces its own persists) can
-      // serve a single reply as THOUSANDS of few-character segments — one
-      // meme automation's answer arrived as 2,441 of them, ~250 KB of pure
-      // segment envelope on a 10 KB reply, re-parsed on every later read.
-      // Adjacent same-run text folds into one segment here, once, so SQLite
-      // and every render after it hold the compact shape.
-      let payload = message.payload as Record<string, unknown> | null | undefined
+      // Compact at the store boundary: adjacent same-run text folds into one
+      // segment here, once, so SQLite and every render after it hold the
+      // compact shape.
+      let payload = message.payload
       if (payload && Array.isArray(payload.segments)) {
         payload = { ...payload, segments: coalesceTextSegments(payload.segments as Segment[]) }
       }
@@ -782,195 +774,36 @@ async function fetchConversationBodyOnce(id: string): Promise<boolean> {
     }
     // Stamped inside the same transaction as the rows it describes, so a
     // failed write can never leave the phone believing it is current.
-    await tx.runAsync('UPDATE conversations SET body_synced_at = ? WHERE id = ?', [syncedTo, id])
+    await tx.runAsync(
+      'UPDATE conversations SET body_synced_at = ?, message_count = ? WHERE id = ?',
+      [syncedTo, messages.length, id]
+    )
   })
-  // The copy in hand is fresh — whatever evidence a notification carried
-  // about this conversation is answered by it.
   clearConversationDirty(id)
-  // Every file this conversation shows, pulled into the cache now rather than
-  // when its card scrolls into view — the difference between attachments that
-  // are simply there and a screen of spinners resolving one by one. Fire and
-  // forget: the viewers resolve the same paths themselves and dedupe against
-  // this via the cache's in-flight map, so a slow prefetch delays nothing.
-  //
-  // Only for the conversation on screen (or an open that outran the focus
-  // report). Body fetches also run in the BACKGROUND now — settle retries,
-  // reconcile's catch-up, the upsert push — and their file prefetches were
-  // contending on the one socket with the transfers the visible cards were
-  // waiting on; a starved transfer times out, and a timed-out card used to
-  // read as "deleted". Background conversations keep fresh transcripts and
-  // download their files on open, exactly as before the catch-up existed.
+  // Every file this conversation shows, pulled into the cache now rather
+  // than when its card scrolls into view. Only for the conversation on
+  // screen (or an open that outran the focus report); background fetches
+  // keep fresh transcripts and download their files on open.
   const active = getActiveConversation()
   if (active === null || active === id) {
-    void prefetchConversationFiles(id, referencedFilePaths(messages))
+    void prefetchConversationFiles(id, referencedFiles(messages))
   }
   return true
 }
 
-/** Sanity ceiling on a chunked body — far above any real conversation, and
- *  the guard that a corrupt `sizeBytes` can never drive an unbounded pull. */
-const CHUNKED_BODY_MAX_BYTES = 64 * 1024 * 1024
-
-/** Chunk pulls in flight at once. The tunnel multiplexes RPCs on one socket,
- *  so the win is pipelining: each serial window paid a full relay round trip
- *  of dead air, which on a big transcript was the whole "opening this
- *  conversation got slower". Three keeps under a megabyte of base64 in
- *  flight — comfortably inside the relay's per-record cap per answer. */
-const CHUNK_PULL_CONCURRENCY = 3
-
 /**
- * Pull an oversize conversation body the desktop spooled for chunked pickup —
- * base64url windows on the fileRead contract, reassembled and parsed here.
- * Returns the parsed wire conversation, or null on ANY failure (expired
- * spool, short read, malformed JSON): the caller then keeps its cached copy
- * untouched, exactly as it does for a malformed inline answer.
- *
- * Windows are pulled CONCURRENTLY at fixed offsets, which is safe because the
- * desktop serves exactly the window asked for (capped only by CHUNK_SIZE and
- * the end of the spool). A server that answers short anyway — some other
- * implementation of the contract — drops this to the sequential pull below,
- * which advances by the bytes actually served, exactly as before.
- *
- * Takes the rpc function rather than the tunnel so tests can drive it
- * without a transport.
+ * The workspace paths a fetched body renders, unioned across its messages,
+ * each with the content hash the desktop stamped on the attachment when it
+ * synced it (a direct download, no path lookup).
  */
-export async function pullChunkedBody(
-  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
-  meta: { bodyId?: unknown; sizeBytes?: unknown }
-): Promise<unknown | null> {
-  const bodyId = typeof meta.bodyId === 'string' ? meta.bodyId : ''
-  const sizeBytes =
-    typeof meta.sizeBytes === 'number' && Number.isFinite(meta.sizeBytes) ? meta.sizeBytes : 0
-  if (!bodyId || sizeBytes <= 0 || sizeBytes > CHUNKED_BODY_MAX_BYTES) return null
-  const fast = await pullWindowsParallel(rpc, bodyId, sizeBytes)
-  if (fast !== 'short') return fast
-  return pullWindowsSequential(rpc, bodyId, sizeBytes)
-}
-
-/** Bulk-window timeout, matching the file transfer's: a CHUNK_SIZE frame on
- *  a slow link can honestly need more than the 30s control-RPC default. */
-const BODY_WINDOW_TIMEOUT_MS = 120_000
-
-/** One window off the wire, or null on any transport/shape failure. */
-async function pullWindow(
-  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
-  bodyId: string,
-  offset: number
-): Promise<Uint8Array | null> {
-  try {
-    const chunk = (await rpc(
-      Rpc.conversationBodyChunk,
-      {
-        bodyId,
-        offset,
-        length: CHUNK_SIZE
-      },
-      BODY_WINDOW_TIMEOUT_MS
-    )) as { data?: unknown } | null
-    return fromBase64Url(typeof chunk?.data === 'string' ? chunk.data : '')
-  } catch {
-    return null
-  }
-}
-
-/**
- * The fast path: every window at its computed offset, a few in flight at a
- * time. `'short'` means a window came back smaller than the contract promises
- * — not an error, a server this path does not understand — and the caller
- * falls back to the sequential pull. Empty windows and transport failures are
- * final: the spool expired, and a truncated transcript must never parse as a
- * complete one.
- */
-async function pullWindowsParallel(
-  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
-  bodyId: string,
-  sizeBytes: number
-): Promise<unknown | null | 'short'> {
-  const offsets: number[] = []
-  for (let at = 0; at < sizeBytes; at += CHUNK_SIZE) offsets.push(at)
-  const parts = new Array<Uint8Array | null>(offsets.length).fill(null)
-  let failed = false
-  let short = false
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (!failed && !short) {
-      const index = next
-      next += 1
-      if (index >= offsets.length) return
-      const offset = offsets[index]
-      const bytes = await pullWindow(rpc, bodyId, offset)
-      if (bytes === null || bytes.length === 0) {
-        failed = true
-        return
-      }
-      const expected = Math.min(CHUNK_SIZE, sizeBytes - offset)
-      if (bytes.length !== expected) {
-        short = true
-        return
-      }
-      parts[index] = bytes
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(CHUNK_PULL_CONCURRENCY, offsets.length) }, worker)
-  )
-  if (failed) return null
-  if (short) return 'short'
-  return assembleBody(parts as Uint8Array[], sizeBytes)
-}
-
-/** The tolerant path: advance by the bytes actually served, whatever their
- *  size — the original contract, kept for any peer that windows differently. */
-async function pullWindowsSequential(
-  rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>,
-  bodyId: string,
-  sizeBytes: number
-): Promise<unknown | null> {
-  const parts: Uint8Array[] = []
-  let offset = 0
-  while (offset < sizeBytes) {
-    const bytes = await pullWindow(rpc, bodyId, offset)
-    // An empty window before the promised end means the spool expired or
-    // shrank — a truncated transcript must never parse as a complete one.
-    if (bytes === null || bytes.length === 0) return null
-    parts.push(bytes)
-    offset += bytes.length
-  }
-  return assembleBody(parts, offset)
-}
-
-function assembleBody(parts: Uint8Array[], totalBytes: number): unknown | null {
-  try {
-    const whole = new Uint8Array(totalBytes)
-    let at = 0
-    for (const part of parts) {
-      whole.set(part, at)
-      at += part.length
-    }
-    return JSON.parse(new TextDecoder().decode(whole))
-  } catch {
-    return null
-  }
-}
-
-/**
- * The workspace paths a fetched body renders, unioned across its messages.
- * Each wire message is reshaped exactly as the repo stores it — payload
- * spread under the core columns — before messageFilePaths reads it, so the
- * collection sees what the feed will see.
- */
-function referencedFilePaths(
-  messages: Array<{
-    id: string
-    role: string
-    content: string
-    timestamp: number
-    payload?: unknown
-  }>
-): string[] {
-  const seen = new Set<string>()
+function referencedFiles(
+  messages: RebuiltConversation['messages']
+): Array<{ relPath: string; sha256: string | null }> {
+  const seen = new Map<string, string | null>()
   for (const message of messages) {
-    const payload = (message.payload ?? {}) as Partial<ConversationMessage>
+    const payload = (message.payload ?? {}) as Partial<ConversationMessage> & {
+      attachments?: Array<{ filePath?: string; sha256?: string }>
+    }
     const full: ConversationMessage = {
       ...payload,
       id: message.id,
@@ -978,23 +811,23 @@ function referencedFilePaths(
       content: message.content ?? '',
       timestamp: message.timestamp
     }
-    for (const relPath of messageFilePaths(full)) seen.add(relPath)
+    for (const relPath of messageFilePaths(full)) if (!seen.has(relPath)) seen.set(relPath, null)
+    for (const att of payload.attachments ?? []) {
+      if (att?.filePath && typeof att.sha256 === 'string') seen.set(att.filePath, att.sha256)
+    }
   }
-  return [...seen]
+  return [...seen.entries()].map(([relPath, sha256]) => ({ relPath, sha256 }))
 }
 
-/**
- * One file at a time, deliberately: the tunnel serializes onto one socket
- * anyway, and a burst of parallel downloads would only compete with the
- * chunk requests of whichever file the user is actually looking at.
- */
+/** One file at a time: a burst of parallel downloads would only compete
+ *  with the file the user is actually looking at. */
 async function prefetchConversationFiles(
   conversationId: string,
-  relPaths: string[]
+  files: Array<{ relPath: string; sha256: string | null }>
 ): Promise<void> {
-  for (const relPath of relPaths) {
+  for (const file of files) {
     try {
-      await resolveWorkspaceFile(relPath, conversationId)
+      await resolveWorkspaceFile(file.relPath, conversationId, file.sha256 ?? undefined)
     } catch {
       // A file that will not come is the viewer's problem to report.
     }
@@ -1002,11 +835,9 @@ async function prefetchConversationFiles(
 }
 
 /**
- * Has this conversation changed on the desktop since its body was pulled?
- *
- * The check that keeps an already-cached conversation from going stale: a
- * body is only skipped when it is empty *and* current, never merely because
- * it has messages in it.
+ * Has this conversation changed at the org since its body was pulled? A body
+ * is only skipped when it is empty *and* current, never merely because it
+ * has messages in it.
  */
 export async function isBodyStale(id: string): Promise<boolean> {
   const db = await getDb()
@@ -1048,10 +879,14 @@ async function setMeta(key: string, value: string): Promise<void> {
   )
 }
 
-export async function getSyncCursor(): Promise<number> {
-  return Number(await getMeta('cursor')) || 0
+/** The org's `since` cursor — '' means "from the beginning". A cursor left
+ *  by the relay-era app (a bare epoch number) is treated as none. */
+export async function getSyncCursor(): Promise<string> {
+  const stored = await getMeta('cursor')
+  if (!stored || !/T/.test(stored)) return ''
+  return stored
 }
 
-async function setSyncCursor(at: number): Promise<void> {
-  await setMeta('cursor', String(at))
+async function setSyncCursor(cursor: string): Promise<void> {
+  await setMeta('cursor', cursor)
 }

@@ -29,7 +29,6 @@ import { BasalGanglia } from '@main/runtime/basalganglia'
 import { Brainstem } from '@main/runtime/brainstem'
 import {
   Broca,
-  upsertTaskSegment,
   appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -53,7 +52,6 @@ import type { ActiveRun, TurnLifecycleEvent } from '@main/channels/turn-runner'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
-import { videoTasks } from '@main/runtime/video-tasks'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
 import { Motor } from '@main/runtime/motor'
@@ -67,10 +65,9 @@ import {
 import {
   formatLastMessageNotice,
   formatRuntimeStatus,
-  PHONE_NOTIFY_CHANNEL_NOTICE,
   PHONE_NOTIFY_NOTICE,
-  PHONE_NOTIFY_SENT_NOTICE,
-  VOICE_REPLY_NOTICE
+  VOICE_REPLY_NOTICE,
+  PHONE_NOTIFY_SENT_NOTICE
 } from '@main/runtime/outbound'
 import fs from 'node:fs/promises'
 import { Prefrontal } from '@main/runtime/prefrontal'
@@ -158,7 +155,7 @@ const ATTACHMENT_VERBATIM_WINDOW = 4
 /**
  * Live-mirror cadence for an autonomous run's in-progress assistant message —
  * the same 500ms every channel uses, so a heartbeat/procedure conversation
- * open in the app fills in exactly like a Telegram one.
+ * open in the app fills in exactly like a phone one.
  */
 const AUTONOMOUS_MIRROR_THROTTLE_MS = 500
 
@@ -223,7 +220,7 @@ export type AgentTurnOptions = {
   /**
    * Delivery channel for this turn's user-facing prose. Threaded into the
    * system prompt so the model writes in the channel's native text
-   * formatting (WhatsApp renders no Markdown; see prefrontal's channel
+   * formatting (a channel renderer may lack Markdown; see prefrontal's channel
    * overlay). Omitted for in-app and background turns → no overlay.
    */
   channel?: ConversationChannel
@@ -290,16 +287,6 @@ export type AgentTurnOptions = {
    * global setting for that run. Omitted ⇒ the global mode.
    */
   modeOverride?: 'single' | 'workflow'
-  /**
-   * Channel-format feedback pull. A prose-mirroring channel (Telegram/
-   * WhatsApp) validates every prose block it delivers to the user's phone;
-   * a block that leaked raw markup parks a notice which this drains once
-   * per iteration. Notices ride the volatile runtime tail (same vehicle
-   * and cache rationale as the no-progress notice) so the model can repair
-   * the delivered message and write clean blocks for the rest of the turn.
-   * Observe-and-notify only — the framework never rewrites model prose.
-   */
-  formatNotices?: () => string[]
 }
 
 export type AgentTurnResult = {
@@ -419,7 +406,7 @@ export class Agent {
   // same chat:turnState broadcast in index.ts. 'started' rides it too now: the
   // conversation is created and saved BEFORE the run begins (like every other
   // conversation), so there IS a row to pulse mid-run, and the rail/chat show
-  // it processing exactly like a Telegram turn. The Heartbeat page's run cards
+  // it processing exactly like a channel turn. The Heartbeat page's run cards
   // keep their own live log on top of that.
   private autonomousLifecycle: ((ev: TurnLifecycleEvent) => void) | null = null
 
@@ -836,21 +823,9 @@ export class Agent {
           }
         )
       : null
-    // Video tasks born in this turn ride its broca as live task-card
-    // segments (the workflow-card pattern). Registered for the turn's whole
-    // life and removed in the finally so VideoTaskManager can tell "turn
-    // still streaming" (broca path) from "turn ended" (broadcast +
-    // conversation-file write-through + channel fallback delivery).
-    const unregisterVideoEmitter = videoTasks.registerTurnEmitter(turn.turnId, (snapshot) =>
-      broca.emitTask(turn.turnId, snapshot)
+    return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
+      this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
     )
-    try {
-      return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
-        this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
-      )
-    } finally {
-      unregisterVideoEmitter()
-    }
   }
 
   private async runRespond(
@@ -957,13 +932,7 @@ export class Agent {
       turn.role !== 'agent' &&
       !this.cerebellum.isDisabled('phone') &&
       this.cerebellum.getCapabilities().some((c) => c.name === 'phone')
-    // Telegram/WhatsApp turns get the narrower notice: the reply itself
-    // arrives on that same phone as a message with its own notification, so a
-    // turn-end push is a second buzz for one thing. Major beats only there.
-    const phoneNotifyIdle =
-      turn.channel === 'telegram' || turn.channel === 'whatsapp'
-        ? PHONE_NOTIFY_CHANNEL_NOTICE
-        : PHONE_NOTIFY_NOTICE
+    const phoneNotifyIdle = PHONE_NOTIFY_NOTICE
     // Flips once, the first time a notify_phone call reaches the phone this
     // turn (or may have — see the UNCONFIRMED note at the call site). One tail
     // transition per turn, like deliveredThisTurn.
@@ -997,27 +966,6 @@ export class Agent {
     const optimizationConfig = cfg?.contextOptimization
     const optimizeContext = optimizationConfig?.enabled !== false
     const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
-    // ONE unified path for every model, local or cloud: same context, same
-    // tools, same memory, same doctrine. The only local-specific artifact is
-    // a small honesty overlay (prefrontal LOCAL_MODEL_PROMPT) — prompt text,
-    // not logic. The old stateless/restrict lobotomies existed because the
-    // full-fat context drowned small models; the lean assembly removed the
-    // reason they existed. A per-agent model override is always cloud.
-    const isLocalProvider = false
-
-    // Resolve the local model's real context window up front — before the
-    // system prompt is built and the conversation runs — by hitting Ollama's
-    // /api/show (warms the LocalProvider cache). Without this, the first turn
-    // after Ollama starts reads a cold cache: context assembly, the
-    // `context.built` meter event, and num_ctx would all use the 16k fallback
-    // until a later turn happens to warm it. Cached after the first call, so
-    // this is a no-op on subsequent turns; cloud providers resolve
-    // synchronously. Best-effort — if Ollama is momentarily unreachable the
-    // window stays uncached and falls back, exactly as before.
-    if (isLocalProvider) {
-      await this.thalamus.resolveActiveContextWindow().catch(() => undefined)
-    }
-
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
     // Cerebellum tool-surface version captured when the pin was built. When a
@@ -1101,15 +1049,6 @@ export class Agent {
         const noProgressSignal = noProgress.signal()
         const noProgressText = noProgressNotice(noProgressSignal) ?? undefined
 
-        // Channel-format notices — a prose-mirroring channel reporting that an
-        // already-DELIVERED prose block reached the user's phone with raw
-        // markup (observe-and-notify: the model repairs its own text; nothing
-        // rewrites it). Drained once per iteration; rides the same volatile
-        // vehicle as the no-progress notice so it never perturbs the cached
-        // prompt prefix. Empty (the common case) renders nothing.
-        const channelNotices = turn.formatNotices?.() ?? []
-        const channelFormatText = channelNotices.length > 0 ? channelNotices.join(' ') : undefined
-
         // Control-token notice — this conversation's previous model call ended
         // its visible text in a literal tokenizer control token, which the user
         // saw as-is (observe-and-notify: the model repairs its own behaviour;
@@ -1117,12 +1056,6 @@ export class Agent {
         // same volatile vehicle as the no-progress notice so it never perturbs
         // the cached prompt prefix. Undefined (the common case) renders nothing.
         const controlTokenText = drainControlTokenNotice(turn.conversationId ?? null)
-
-        // Async video-task landings the model has not consumed (it moved on
-        // instead of calling video_await). Rides the same volatile vehicle;
-        // drained once per iteration so a landing is announced exactly once.
-        const videoNotices = videoTasks.drainNotices(turn.conversationId ?? null)
-        const videoTasksText = videoNotices.length > 0 ? videoNotices.join(' ') : undefined
 
         // Phone-notification notice for THIS iteration: the cadence reminder
         // until something goes out, then the don't-repeat guard. Undefined
@@ -1158,9 +1091,7 @@ export class Agent {
           online,
           lastMessage: lastMessageNotice,
           noProgress: noProgressText,
-          channelFormat: channelFormatText,
           controlToken: controlTokenText,
-          videoTasks: videoTasksText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText
         }
@@ -1185,7 +1116,6 @@ export class Agent {
               runtime,
               toolRole,
               {
-                localModel: isLocalProvider,
                 channel: turn.channel,
                 conversationId: turn.conversationId ?? null
               }
@@ -1208,7 +1138,6 @@ export class Agent {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
           systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole, {
-            localModel: isLocalProvider,
             channel: turn.channel,
             conversationId: turn.conversationId ?? null
           })
@@ -1291,10 +1220,7 @@ export class Agent {
           // prefix hash.
           volatileStatus:
             optimizeContext &&
-            // voiceReplyNotice keeps iteration 1 in: a conversational voice
-            // turn often ends without a single tool call, so a tail deferred
-            // to iteration 2 would never render the one notice that matters.
-            // phoneNotifyText is in for exactly the same reason — a turn that
+            // phoneNotifyText keeps iteration 1 in — a turn that
             // answers from knowledge alone still has to close with a
             // notification, and it never reaches iteration 2 to be told.
             // lastMessageNotice too: a "welcome back after 3 weeks" turn is
@@ -1308,11 +1234,9 @@ export class Agent {
               workingFoldersBlock ||
               !online ||
               lastMessageNotice ||
-              noProgressText ||
-              channelFormatText ||
-              controlTokenText ||
-              videoTasksText ||
               voiceReplyNotice ||
+              noProgressText ||
+              controlTokenText ||
               phoneNotifyText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
@@ -1321,9 +1245,7 @@ export class Agent {
                   online,
                   lastMessage: lastMessageNotice,
                   noProgress: noProgressText,
-                  channelFormat: channelFormatText,
                   controlToken: controlTokenText,
-                  videoTasks: videoTasksText,
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
@@ -2232,18 +2154,14 @@ export class Agent {
     }
 
     const sink: SegmentSink = (seg) => {
-      // Workflow/task snapshots supersede each other — keep only the latest
-      // per run/task in the sealed conversation, mirroring every other
-      // persist path.
+      // Workflow snapshots supersede each other — keep only the latest per
+      // run in the sealed conversation, mirroring every other persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
-      else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
-      // Task snapshots flush immediately — a card flipping to running/succeeded
-      // should not wait out the text throttle.
-      scheduleMirror(seg.kind === 'task')
+      scheduleMirror(false)
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {

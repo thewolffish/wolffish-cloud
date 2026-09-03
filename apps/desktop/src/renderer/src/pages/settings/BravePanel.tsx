@@ -14,7 +14,7 @@ import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import { PanelBackChevron } from '@pages/settings/drillNav'
 import type { BraveStatus } from '@preload/index'
-import { CloudIcon, LinkSquare02Icon } from 'hugeicons-react'
+import { CloudIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -66,77 +66,76 @@ export function BravePanel(): React.JSX.Element {
         })
       : `${formatCompact(used)} · ${t('settings.services.brave.rows.unlimited')}`
 
-  const rows: Array<{ key: string; label: string; value: React.ReactNode }> = status
-    ? [
-        {
-          key: 'provider',
-          label: t('settings.services.brave.rows.provider'),
-          value: (
-            <span className="flex items-center gap-1.5">
-              <BraveLogo size={13} />
-              <span>Brave Search</span>
-            </span>
-          )
-        },
-        {
-          key: 'status',
-          label: t('settings.services.brave.rows.status'),
-          value: (
-            <span className="flex items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={cn('h-2 w-2 shrink-0 rounded-full', STATE_DOT[status.state])}
-              />
-              <span>{t(`settings.services.brave.state.${status.state}`)}</span>
-            </span>
-          )
-        },
-        {
-          key: 'today',
-          label: t('settings.services.brave.rows.today'),
-          value: allowance(status.usedToday, status.dailyCap)
-        },
-        {
-          key: 'month',
-          label: t('settings.services.brave.rows.month'),
-          value: allowance(status.orgUsedMonth, status.orgMonthlyCap)
-        },
-        {
-          key: 'price',
-          label: t('settings.services.brave.rows.price'),
-          value: `$${status.pricePerQueryUsd.toFixed(3)}`
-        },
-        {
-          key: 'rate',
-          label: t('settings.services.brave.rows.rate'),
-          value: t('settings.services.brave.rows.perSecond', { count: status.planQps })
-        }
-      ]
-    : []
+  // The labels are the same in both states and only the value column pulses
+  // while the first read is in flight, so every row is the same height by
+  // construction and nothing moves when the status lands.
+  const rows: Array<{
+    key: string
+    label: string
+    value: (s: BraveStatus) => React.ReactNode
+    /** Width of the pulse bar that stands in for the value while loading. */
+    placeholder: string
+  }> = [
+    {
+      key: 'provider',
+      label: t('settings.services.brave.rows.provider'),
+      value: () => (
+        <span className="flex items-center gap-1.5">
+          <BraveLogo size={13} />
+          <span>Brave Search</span>
+        </span>
+      ),
+      placeholder: 'w-24'
+    },
+    {
+      key: 'status',
+      label: t('settings.services.brave.rows.status'),
+      value: (s) => (
+        <span className="flex items-center gap-2">
+          <span
+            aria-hidden="true"
+            className={cn('h-2 w-2 shrink-0 rounded-full', STATE_DOT[s.state])}
+          />
+          <span>{t(`settings.services.brave.state.${s.state}`)}</span>
+        </span>
+      ),
+      placeholder: 'w-16'
+    },
+    {
+      key: 'today',
+      label: t('settings.services.brave.rows.today'),
+      value: (s) => allowance(s.usedToday, s.dailyCap),
+      placeholder: 'w-20'
+    },
+    {
+      key: 'month',
+      label: t('settings.services.brave.rows.month'),
+      value: (s) => allowance(s.orgUsedMonth, s.orgMonthlyCap),
+      placeholder: 'w-20'
+    },
+    {
+      key: 'price',
+      label: t('settings.services.brave.rows.price'),
+      value: (s) => `$${s.pricePerQueryUsd.toFixed(3)}`,
+      placeholder: 'w-12'
+    },
+    {
+      key: 'rate',
+      label: t('settings.services.brave.rows.rate'),
+      value: (s) => t('settings.services.brave.rows.perSecond', { count: s.planQps }),
+      placeholder: 'w-24'
+    }
+  ]
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5">
-              <PanelBackChevron />
-              <h1 className="text-fg text-2xl font-semibold tracking-tight">
-                {t('settings.services.brave.title')}
-              </h1>
-            </div>
-            <a
-              href={BRAVE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(
-                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
-              )}
-            >
-              <span>{t('settings.services.brave.platform')}</span>
-              <LinkSquare02Icon size={13} className="shrink-0" />
-            </a>
+          <div className="flex items-center gap-1.5">
+            <PanelBackChevron />
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.brave.title')}
+            </h1>
           </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.brave.subtitle')}
@@ -159,35 +158,24 @@ export function BravePanel(): React.JSX.Element {
               disabled={refreshing || status === null}
               onClick={() => void load(true)}
             >
-              {refreshing
-                ? t('settings.services.brave.refreshing')
-                : t('settings.services.brave.refresh')}
+              {t('settings.services.brave.refresh')}
             </Button>
           </div>
 
           <div className="border-border/60 border-t" />
 
-          {status === null ? (
-            <div className="flex flex-col gap-3" aria-hidden="true">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="flex items-center justify-between gap-3">
-                  <span className="bg-border/40 h-3 w-32 animate-pulse rounded" />
-                  <span className="bg-border/40 h-3 w-24 animate-pulse rounded" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <dl className="flex flex-col gap-3">
-              {rows.map((row) => (
-                <div key={row.key} className="flex items-center justify-between gap-3">
-                  <dt className="text-muted text-xs font-medium uppercase tracking-wider">
-                    {row.label}
-                  </dt>
-                  <dd className="text-fg text-sm">{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
+          <dl className="flex flex-col gap-3" aria-busy={status === null}>
+            {rows.map((row) => (
+              <div key={row.key} className="flex items-center justify-between gap-3">
+                <dt className="text-muted text-xs font-medium uppercase tracking-wider">
+                  {row.label}
+                </dt>
+                <dd className="text-fg text-sm">
+                  {status ? row.value(status) : <SkeletonBar className={row.placeholder} />}
+                </dd>
+              </div>
+            ))}
+          </dl>
 
           {status?.error ? (
             <pre
@@ -216,6 +204,27 @@ export function BravePanel(): React.JSX.Element {
         <HowItWorksSection />
       </div>
     </div>
+  )
+}
+
+/**
+ * A pulse bar that is a real — if transparent — text node, so its height is
+ * the exact line box of the value it stands in for (the same trick the Usage
+ * panel uses). The hand-sized `h-3` bars this replaces were shorter than every
+ * row, and there were four of them for six rows, which is what made the card
+ * jump when the status landed.
+ */
+function SkeletonBar({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'bg-border/60 inline-block animate-pulse rounded text-transparent select-none',
+        className
+      )}
+    >
+      &nbsp;
+    </span>
   )
 }
 

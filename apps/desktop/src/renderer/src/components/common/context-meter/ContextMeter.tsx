@@ -1,17 +1,3 @@
-import {
-  AnthropicLogo,
-  DeepSeekLogo,
-  KimiLogo,
-  MimoLogo,
-  MiniMaxLogo,
-  OllamaLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  QwenLogo,
-  StepfunLogo,
-  XAILogo,
-  ZaiLogo
-} from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
@@ -22,6 +8,7 @@ import {
   ArrowUp02Icon,
   ChartHistogramIcon,
   Clock01Icon,
+  CloudIcon,
   ComputerTerminal01Icon,
   CpuIcon,
   Database01Icon,
@@ -32,25 +19,8 @@ import {
   RepeatIcon,
   WorkflowSquare03Icon
 } from 'hugeicons-react'
-import type { ComponentType } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-
-// provider id → brand logo, for the card header. Local (Ollama) included.
-const PROVIDER_LOGOS: Record<string, ComponentType<{ size?: number; className?: string }>> = {
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo,
-  local: OllamaLogo
-}
 
 /** Workflow-agent + summarization spend observed during the live turn. */
 export type SideSpend = {
@@ -452,7 +422,8 @@ export function ContextMeter({
     : 0
 
   const hasAnything = hasReading || hasTurnData || allTime !== null || workflowVisible
-  const HeaderLogo = provider ? PROVIDER_LOGOS[provider] : undefined
+  // One lane: the org's cloud icon heads the card whenever a model ran.
+  const HeaderLogo = provider ? CloudIcon : undefined
 
   return (
     <span

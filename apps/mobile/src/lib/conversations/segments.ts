@@ -3,7 +3,6 @@ import type {
   NoProviderAvailableInfo,
   Segment,
   SegmentTurnEndReason,
-  TaskSnapshot,
   ToolResultStatus,
   ToolTiming,
   WorkflowSnapshot
@@ -66,7 +65,6 @@ export type RenderBlock =
   | { type: 'file'; key: string; relPath: string; kind: DeliveredFileKind }
   | { type: 'path'; key: string; path: string; kind: 'folder' | 'file' }
   | { type: 'workflow'; key: string; snapshot: WorkflowSnapshot }
-  | { type: 'task'; key: string; snapshot: TaskSnapshot }
   | {
       type: 'compaction'
       key: string
@@ -212,7 +210,6 @@ export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
   const openTools = new Map<string, number>() // toolCallId -> block index
   const emittedFiles = new Set<string>()
   const workflowIndexById = new Map<string, number>()
-  const taskIndexById = new Map<string, number>()
   let textBuffer = ''
   let textKey = ''
   let reasoningBuffer = ''
@@ -353,21 +350,6 @@ export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
         }
         break
       }
-      case 'task': {
-        // Async generation task card — replace-by-taskId, exactly like the
-        // workflow fold above (the desktop's upsertTaskSegment contract).
-        flushText()
-        const id = segment.snapshot?.taskId
-        if (!id) break
-        const existing = taskIndexById.get(id)
-        if (existing !== undefined) {
-          blocks[existing] = { type: 'task', key: `tk:${id}`, snapshot: segment.snapshot }
-        } else {
-          taskIndexById.set(id, blocks.length)
-          blocks.push({ type: 'task', key: `tk:${id}`, snapshot: segment.snapshot })
-        }
-        break
-      }
       case 'compaction_started':
         flushText()
         compactionStartedIndex = blocks.length
@@ -469,11 +451,6 @@ export function messageFilePaths(message: ConversationMessage): string[] {
   if (message.role === 'assistant') {
     for (const block of buildRenderBlocks(message)) {
       if (block.type === 'file' || block.type === 'media') paths.add(block.relPath)
-      // A finished generation task renders its mp4 inline — prefetch it with
-      // the conversation instead of downloading lazily on first render.
-      if (block.type === 'task' && block.snapshot.outputPath) {
-        paths.add(toWorkspaceRelative(block.snapshot.outputPath))
-      }
     }
   }
   // Only paths the desktop can serve: anything still absolute would spend

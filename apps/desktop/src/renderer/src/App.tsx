@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ThemeProvider } from '@providers/theme/ThemeProvider'
+import { ModelCatalogProvider } from '@providers/model-catalog/ModelCatalogProvider'
 import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
@@ -198,26 +199,30 @@ function useGlobalDropGuard(): void {
 
 function App(): React.JSX.Element {
   useGlobalDropGuard()
+  // The catalog provider sits outermost so its seed fetch runs alongside
+  // the theme gate below instead of one round trip after it.
   return (
-    <ThemeProvider>
-      <LocaleProvider>
-        <ToastProvider>
-          <NetworkToasts />
-          <FlowProvider>
-            <ChatSessionsProvider>
-              <div className="app-titlebar" aria-hidden />
-              <Screens />
-              {/* Floating live-run card (automations). Rendered AFTER Screens
-                  so it paints above same-z screen chrome; the app stays fully
-                  usable while a background run is active. */}
-              <ActiveRunCard />
-              <ClosingOverlay />
-              <InputContextMenu />
-            </ChatSessionsProvider>
-          </FlowProvider>
-        </ToastProvider>
-      </LocaleProvider>
-    </ThemeProvider>
+    <ModelCatalogProvider>
+      <ThemeProvider>
+        <LocaleProvider>
+          <ToastProvider>
+            <NetworkToasts />
+            <FlowProvider>
+              <ChatSessionsProvider>
+                <div className="app-titlebar" aria-hidden />
+                <Screens />
+                {/* Floating live-run card (automations). Rendered AFTER Screens
+                    so it paints above same-z screen chrome; the app stays fully
+                    usable while a background run is active. */}
+                <ActiveRunCard />
+                <ClosingOverlay />
+                <InputContextMenu />
+              </ChatSessionsProvider>
+            </FlowProvider>
+          </ToastProvider>
+        </LocaleProvider>
+      </ThemeProvider>
+    </ModelCatalogProvider>
   )
 }
 

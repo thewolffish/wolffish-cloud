@@ -350,10 +350,10 @@ function ImportSection({
           'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
           importing
-            ? 'border-border pointer-events-none opacity-60'
+            ? 'border-border bg-bg/40 pointer-events-none opacity-60'
             : dragActive
               ? 'border-primary bg-primary/5 cursor-copy'
-              : 'border-border hover:border-muted cursor-pointer'
+              : 'border-border bg-bg/40 hover:border-muted cursor-pointer'
         )}
       >
         {importing ? (

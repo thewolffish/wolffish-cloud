@@ -118,12 +118,6 @@ export function isIndexablePath(rel: string): boolean {
   if (norm.startsWith('brain/cortex.db')) return false
   // Secrets and operational state — never indexed.
   if (norm.startsWith('config.json')) return false
-  // Inbound channel messages ARE memory — but nothing else under whatsapp/
-  // (auth/ holds Baileys credentials). Accepted here explicitly because the
-  // generic fall-through below only admits .md files.
-  if (norm === 'whatsapp/read-history.json') return true
-  if (norm.startsWith('whatsapp/')) return false
-  if (norm.startsWith('telegram/')) return false
   if (norm.startsWith('extension/')) return false
   if (norm.startsWith('brain/brainstem/heartbeat-state.json')) return false
   if (norm.startsWith('brain/cerebellum/')) return false
@@ -217,9 +211,6 @@ export function ingestTextFile(rel: string, raw: string, mtimeMs: number): Inges
 
   if (norm.startsWith('brain/conversations/') && norm.endsWith('.json')) {
     return ingestConversation(norm, raw)
-  }
-  if (norm === 'whatsapp/read-history.json') {
-    return { records: ingestWhatsAppHistory(norm, raw) }
   }
   if (norm.startsWith('brain/motor/tasks/')) {
     return { records: ingestTaskFile(norm, raw, mtimeMs) }
@@ -392,66 +383,6 @@ function collectSegmentText(segments: RawSegment[] | undefined): string {
   for (const seg of segments) {
     if (seg.kind === 'text' && typeof (seg as { delta?: string }).delta === 'string') {
       out += (seg as { delta?: string }).delta
-    }
-  }
-  return out
-}
-
-// ── WhatsApp inbound history ──────────────────────────────────────────
-
-const WHATSAPP_CHUNK_MESSAGES = 40
-
-type WhatsAppHistoryMsg = {
-  fromMe?: boolean
-  sender?: string
-  text?: string
-  timestamp?: number
-}
-
-/**
- * whatsapp/read-history.json: a rolling per-chat buffer of the messages seen
- * on the channel (both directions), keyed by JID. Indexed in per-chat chunks
- * so "what did Sana say on WhatsApp" is a memory_search away. Note the
- * buffer itself is rolling (MAX_PER_CHAT in read-history.ts) — the index
- * mirrors what the buffer currently holds; full exchanges wolffish took part
- * in also persist independently in brain/conversations.
- */
-export function ingestWhatsAppHistory(rel: string, raw: string): IngestRecord[] {
-  let parsed: Record<string, WhatsAppHistoryMsg[]>
-  try {
-    parsed = JSON.parse(raw) as Record<string, WhatsAppHistoryMsg[]>
-  } catch {
-    return []
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
-  const out: IngestRecord[] = []
-  for (const [jid, msgs] of Object.entries(parsed)) {
-    if (!Array.isArray(msgs) || msgs.length === 0) continue
-    const chatLabel = jid.split('@')[0]
-    for (let i = 0; i < msgs.length; i += WHATSAPP_CHUNK_MESSAGES) {
-      const chunk = msgs.slice(i, i + WHATSAPP_CHUNK_MESSAGES)
-      const lines: string[] = []
-      let lastTs = 0
-      for (const m of chunk) {
-        const text = typeof m.text === 'string' ? m.text.trim() : ''
-        if (!text) continue
-        if (typeof m.timestamp === 'number' && m.timestamp > lastTs) lastTs = m.timestamp
-        const when =
-          typeof m.timestamp === 'number'
-            ? formatYmd(new Date(m.timestamp * (m.timestamp < 1e12 ? 1000 : 1)))
-            : ''
-        const who = m.fromMe ? 'me' : (m.sender ?? 'them')
-        lines.push(`[${when}] ${who}: ${text}`)
-      }
-      if (lines.length === 0) continue
-      out.push({
-        source: 'conversation',
-        ref: `file:${rel}#${jid}#${i}`,
-        date: lastTs ? formatYmd(new Date(lastTs * (lastTs < 1e12 ? 1000 : 1))) : null,
-        title: `WhatsApp chat ${chatLabel} (messages ${i + 1}-${i + chunk.length})`,
-        content: capContent(lines.join('\n'), SECTION_HEAD, SECTION_TAIL),
-        meta: JSON.stringify({ channel: 'whatsapp', jid })
-      })
     }
   }
   return out

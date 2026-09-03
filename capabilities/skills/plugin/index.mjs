@@ -53,7 +53,7 @@ const toolDefinitions = [
   {
     name: 'skill_read_source',
     description:
-      "Read a skill's source code — its SKILL.md, plugin/index.mjs, package.json, and any bundled files (e.g. a Python worker). Use this to understand how a skill is written before amending it, or to learn from an official skill (e.g. read speech-to-text to see the Python-worker pattern). Call with just `name` for an overview (file tree + key files), or add `file` to read one file in full.",
+      "Read a skill's source code — its SKILL.md, plugin/index.mjs, package.json, and any bundled files (e.g. a Python worker). Use this to understand how a skill is written before amending it, or to learn from an official skill (e.g. read speech-to-text to see how a bundled Python worker is driven). Call with just `name` for an overview (file tree + key files), or add `file` to read one file in full.",
     parameters: {
       type: 'object',
       properties: {
@@ -130,6 +130,11 @@ const toolDefinitions = [
         extra_files: {
           type: 'array',
           required: false,
+          items: {
+            type: 'object',
+            properties: { path: { type: 'string' }, content: { type: 'string' } },
+            required: ['path', 'content']
+          },
           description:
             'Optional. Additional files to bundle in the skill folder, as an array of { "path": "<relative path>", "content": "<text>" }. Use for non-JS workers (e.g. {"path":"plugin/worker.py","content":"..."}), shell scripts, templates, or data. Paths are relative to the skill root; no absolute paths or "..". This is how you build complex, multi-language skills like the Python-backed speech tools.'
         }

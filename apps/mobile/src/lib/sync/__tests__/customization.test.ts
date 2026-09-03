@@ -23,8 +23,8 @@ const mockRpc = jest.fn()
 const mockReportRpcFailure = jest.fn()
 let mockConnected = true
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: mockRpc, connected: true } : null
     },
@@ -69,50 +69,24 @@ function snapshotWith(customization?: ConfigSnapshot['customization']): ConfigSn
     mcpServers: [],
     variables: [],
     services: {
-      google: { status: 'inactive', projectId: '' },
-      github: [],
-      notion: [],
       braveEnabled: false,
-      memesEnabled: false,
       sttModel: 'base',
       ttsVoice: 'af_bella',
       ttsSpeed: '1.0',
       screenshotMaxWidth: '1280',
       screenshotFormat: 'jpeg'
     },
-    channels: {
-      telegram: {
-        enabled: false,
-        allowedUserIds: '',
-        autoRefresh: true,
-        staleHours: '12',
-        verbose: false,
-        hideAutomations: true
-      },
-      whatsapp: {
-        enabled: false,
-        allowedNumbers: '',
-        autoRefresh: true,
-        staleHours: '12',
-        verbose: false,
-        hideAutomations: true
-      }
-    },
+    channels: {},
     llm: {
       brainProvider: 'anthropic',
       brainModel: 'claude-opus-4-8',
-      chatMode: 'single',
-      localOnly: false,
-      restrictPowerfulModels: true,
-      local: { enabled: false, model: null },
-      providers: []
+      chatMode: 'single'
     },
     preferences: {
       launchAtStartup: true,
       bypassPermissions: false,
       blockCredentials: true,
-      weekStartsOn: 1,
-      updatesEnabled: true
+      weekStartsOn: 1
     },
     ...(customization ? { customization } : {})
   }

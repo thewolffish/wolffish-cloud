@@ -1,21 +1,18 @@
 /**
- * `wfc pair` — phone, WhatsApp, Telegram.
+ * `wfc pair` — the phone.
  *
  * Pairing is the one flow where the terminal has to draw a picture, and the
- * picture has a hard size. Measured against the payloads these channels
- * actually emit:
+ * picture has a hard size. Measured against the payload the channel
+ * actually emits:
  *
- *   WhatsApp link code  ~215 chars  →  49×49 modules at ECC L  →  27 rows × 55 cols
  *   phone pairing URL   ~162 chars  →  49×49 modules at ECC L  →  27 rows × 55 cols
  *
  * A default SSH window is 80×24. Twenty-four rows cannot hold twenty-seven,
  * and a QR that scrolls is a QR that will not scan — the finder pattern in the
  * top-left goes off screen and no decoder recovers from that. So the rule here
  * is: measure first, draw only if it fits, and when it does not, say exactly
- * what is missing and route to the fallback that has no picture at all. The
- * phone has one built in (`offerCode`), and WhatsApp has one too — linking by
- * phone number, which is the route this file added to the channel because
- * without it a headless box simply cannot join WhatsApp.
+ * what is missing and route to the fallback that has no picture at all — the
+ * phone has one built in (`offerCode`).
  *
  * Colour is not decoration either. Drawn as plain glyphs the dark modules take
  * the terminal's foreground colour, which on a dark theme is LIGHT — the code
@@ -86,7 +83,7 @@ function renderQr(matrix, { color = true } = {}) {
 /**
  * The smallest matrix that can carry this text.
  *
- * Error correction level L rather than M: measured on a real WhatsApp payload
+ * Error correction level L rather than M: measured on a real pairing payload
  * that is 49 modules instead of 53, which is two printed rows and four columns
  * saved. A QR on a screen is not being read off a crumpled receipt — the extra
  * redundancy buys nothing here and costs the fit.
@@ -212,44 +209,36 @@ export async function pair(client, args) {
   if (!target) {
     heading('Pairing')
     out('  wfc pair phone [--code]        pair the mobile app')
-    out('  wfc pair whatsapp [--number]   link a WhatsApp account')
-    out('  wfc pair telegram              set the bot token')
     out()
     out(
       wrapText(
         c.gray(
-          'On a machine with no screen, or any terminal shorter than about 32 rows, use --code for the phone and --number for WhatsApp: neither draws a QR.'
+          'On a machine with no screen, or any terminal shorter than about 32 rows, use --code: it draws no QR.'
         ),
         2
       )
     )
     out()
-    // Unlinking lives on the settings cards and was reachable only by
+    // Unlinking lives on the settings card and was reachable only by
     // browsing to it — this is the page someone reads when they want the
     // opposite of what it does.
-    out(c.gray('  to UNLINK:'))
-    out(c.gray('    wfc settings whatsapp   ' + g.chevron + '  Disconnect'))
-    out(c.gray('    wfc settings telegram   ' + g.chevron + '  Disconnect the bot'))
+    out(c.gray('  to UNPAIR:'))
     out(c.gray('    wfc settings mobile     ' + g.chevron + '  Unpair'))
     out()
     return 2
   }
   if (target === 'phone') return pairPhone(client, rest)
-  if (target === 'whatsapp') return pairWhatsApp(client, rest)
-  if (target === 'telegram') return pairTelegram(client)
   err(c.red(`unknown pairing target: ${target}`))
-  err(c.gray('  phone · whatsapp · telegram'))
+  err(c.gray('  phone'))
   return 2
 }
 
 // ── Phone ───────────────────────────────────────────────────────────────────
 
 /**
- * Pairing a phone REPLACES whatever phone is paired now — the offer overwrites
- * the stored keys, and an offer nobody claims expires into a full unpair. On a
- * box that already has a phone on it that is a destructive act, so it is asked
- * about first. The desktop panel has the same shape as two separate buttons;
- * here the only signal available is the question.
+ * Pairing is an offer the org mints and a phone claims. Nothing here
+ * replaces anything: a second phone pairs alongside the first, and an
+ * unclaimed offer simply expires at the org.
  */
 async function pairPhone(client, rest) {
   let preferCode = rest.includes('--code')
@@ -257,25 +246,13 @@ async function pairPhone(client, rest) {
 
   const before = await client.invoke('mobile:status').catch(() => null)
   if (before?.paired) {
-    const name = before.pairing?.deviceName ?? 'a phone'
-    out(wrapText(c.yellow(`  ${name} is already paired.`), 0))
+    const names = (before.phones ?? []).map((p) => p.name || 'a phone').join(', ')
     out(
       wrapText(
-        c.gray(
-          'Pairing again replaces it — the current phone loses its link and has to be paired back.'
-        ),
-        2
+        c.gray(`  already paired: ${names || 'a phone'}. Another phone can pair alongside.`),
+        0
       )
     )
-    if (!interactive()) {
-      out(c.gray('  refusing to replace it without a confirmation. Run this from a terminal.'))
-      return 1
-    }
-    const answer = (await question(`  replace it? ${c.dim('[y/N]')} `)).trim().toLowerCase()
-    if (answer !== 'y' && answer !== 'yes') {
-      out(c.gray('  unchanged'))
-      return 0
-    }
   }
 
   for (;;) {
@@ -353,288 +330,13 @@ function waitForPairing(client, expiresAt) {
     }
     const off = client.onEvent((channel, payload) => {
       if (channel !== 'mobile:statusChange') return
-      // `paired` alone is true the moment the OFFER is stored, before any
-      // phone has answered — claiming success there would be a lie. A real
-      // handshake is what fills in the peer key.
-      if (payload?.pairing?.peerPublicKey || payload?.tunnel?.peerPresent) finish('paired')
+      // The org tells this desktop the moment a phone claims the offer: the
+      // offer leaves the status and the phone appears in the list. An offer
+      // still open with a phone already paired from before is not success.
+      if (payload?.paired && !payload?.offer) finish('paired')
     })
     const offCancel = onCancel(() => finish('cancelled'))
     const remaining = expiresAt ? expiresAt - Date.now() : 0
     const timer = remaining > 0 ? setTimeout(() => finish('expired'), remaining + 500) : null
   })
-}
-
-// ── WhatsApp ────────────────────────────────────────────────────────────────
-
-/**
- * Link WhatsApp — by phone number when asked, by QR otherwise, and by phone
- * number anyway when the QR will not fit.
- *
- * Refuses outright while an account is linked. `whatsapp:requestQr` is
- * harmless in that state (it only arms a flag) but it also does nothing, so
- * the old behaviour was to sit at "waiting for a code…" forever on a machine
- * that was already working perfectly.
- */
-async function pairWhatsApp(client, rest) {
-  heading('Link WhatsApp')
-
-  const status = await client.invoke('whatsapp:status').catch(() => null)
-  if (status?.status === 'connected') {
-    out(
-      `  ${icon.ok()} already linked${status.connectedName ? c.gray(` — ${status.connectedName}`) : ''}`
-    )
-    out(c.gray('  to link a different account, disconnect first:'))
-    out(c.gray('    wfc settings whatsapp   →   Disconnect'))
-    return 0
-  }
-
-  const numberFlag = rest.findIndex((arg) => arg === '--number' || arg === '--code')
-  let number = numberFlag >= 0 ? (rest[numberFlag + 1] ?? '') : null
-  if (numberFlag >= 0 && !number) {
-    if (!interactive()) return usage('wfc pair whatsapp --number +15551234567')
-    number = await question(
-      `  ${c.bold('your WhatsApp number')} ${c.gray('(with country code)')}: `
-    )
-  }
-
-  /**
-   * The channel is enabled only once something is LINKED.
-   *
-   * Enabling up front left a cancelled attempt with `whatsapp.enabled = true`
-   * and no session — a channel the app then keeps trying to start, and a
-   * settings row that says On for something that was never connected. The
-   * daemon needs it enabled to open a socket at all, so it is turned on for
-   * the attempt and turned back off if the attempt does not finish.
-   */
-  const before = await client.invoke('whatsapp:getConfig').catch(() => null)
-  const wasEnabled = before?.enabled === true
-  await client.invoke('whatsapp:setConfig', { enabled: true }).catch(() => undefined)
-  const restoreIfAbandoned = async () => {
-    if (wasEnabled) return
-    await client.invoke('whatsapp:setConfig', { enabled: false }).catch(() => undefined)
-  }
-
-  for (;;) {
-    const outcome = number
-      ? await linkByNumber(client, number)
-      : await linkByQr(client, { allowFallback: interactive() })
-
-    if (outcome === 'linked') {
-      out(`${icon.ok()} ${c.green('WhatsApp linked')}`)
-      return 0
-    }
-    if (outcome === 'cancelled') {
-      await restoreIfAbandoned()
-      out()
-      out(c.gray('  cancelled — WhatsApp was left as it was'))
-      return 1
-    }
-    if (outcome === 'needs-number') {
-      out()
-      out(wrapText(c.gray('Linking by phone number instead — it needs no picture.'), 2))
-      number = await question(
-        `  ${c.bold('your WhatsApp number')} ${c.gray('(with country code)')}: `
-      )
-      if (!number.trim()) return 1
-      continue
-    }
-    // failed / expired
-    if (!interactive()) {
-      await restoreIfAbandoned()
-      return 1
-    }
-    const again = (await question(`  try again? ${c.dim('[Y/n]')} `)).trim().toLowerCase()
-    if (again === 'n' || again === 'no') {
-      await restoreIfAbandoned()
-      return 1
-    }
-    // A retry has to start from a clean socket, which is what a fresh request
-    // does; nothing else is carried over.
-  }
-}
-
-async function linkByNumber(client, number) {
-  const result = await client
-    .invoke('whatsapp:requestPairingCode', number.trim())
-    .catch((error) => ({ ok: false, error: error?.message }))
-  if (result?.ok === false) {
-    err(`${icon.fail()} ${c.red(result.error ?? 'WhatsApp refused the request')}`)
-    return 'failed'
-  }
-  out()
-  out(c.gray('  asking WhatsApp for a code…'))
-  return watchWhatsApp(client, {
-    onCode: (code) => {
-      out()
-      out(`  ${c.bold(c.cyan(formatPairingCode(code)))}`)
-      out()
-      out(wrapText(c.gray('On your phone: WhatsApp → Settings → Linked devices →'), 2))
-      out(wrapText(c.gray('Link a device → Link with phone number instead.'), 2))
-      out(wrapText(c.gray('Type the code above. It is valid for about a minute.'), 2))
-    }
-  })
-}
-
-async function linkByQr(client, { allowFallback }) {
-  await client.invoke('whatsapp:requestQr').catch(() => undefined)
-  out(c.gray('  asking WhatsApp for a code…'))
-  let fits = true
-  const outcome = await watchWhatsApp(client, {
-    onQr: async (qr) => {
-      const drew = await printQr(client, qr)
-      if (drew === 'drawn') {
-        out()
-        out(wrapText(c.gray('WhatsApp → Settings → Linked devices → Link a device'), 2))
-      } else {
-        fits = false
-      }
-    }
-  })
-  if (!fits && allowFallback && outcome !== 'linked') return 'needs-number'
-  return outcome
-}
-
-/** WhatsApp codes are shown in two groups of four. */
-function formatPairingCode(code) {
-  const clean = String(code).replace(/\s+/g, '')
-  return clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
-}
-
-/**
- * Follow the channel until it links, fails, or the user gives up.
- *
- * Every branch resolves. The old version listened only for `connected` and for
- * a QR, which meant the two ways this actually ends on a server — the code
- * expiring, and WhatsApp rejecting the request — both left the terminal
- * printing "waiting" until it was killed.
- */
-function watchWhatsApp(client, { onQr, onCode } = {}) {
-  return new Promise((resolve) => {
-    let done = false
-    let shownQr = null
-    let shownCode = null
-    const finish = (value) => {
-      if (done) return
-      done = true
-      off()
-      offCancel()
-      resolve(value)
-    }
-    const off = client.onEvent(async (channel, payload) => {
-      if (channel === 'whatsapp:pairingCode' && onCode) {
-        if (payload && payload !== shownCode) {
-          shownCode = payload
-          onCode(payload)
-        }
-        return
-      }
-      if (channel !== 'whatsapp:statusChange') return
-      const state = payload?.status
-      if (state === 'connected') return finish('linked')
-      if (state === 'error') {
-        err(`${icon.fail()} ${c.red(payload?.error ?? 'WhatsApp reported an error')}`)
-        return finish('failed')
-      }
-      if (state === 'disconnected') {
-        // Reached only after a code was shown: that is the expiry path.
-        if (shownQr || shownCode) {
-          out()
-          out(c.yellow(`  ${payload?.error ?? 'the code expired'}`))
-          return finish('expired')
-        }
-        return
-      }
-      if (payload?.pairingCode && onCode && payload.pairingCode !== shownCode) {
-        shownCode = payload.pairingCode
-        onCode(payload.pairingCode)
-        return
-      }
-      if (payload?.qr && onQr && payload.qr !== shownQr) {
-        shownQr = payload.qr
-        await onQr(payload.qr)
-      }
-    })
-    const offCancel = onCancel(() => finish('cancelled'))
-    out(c.gray('  (Ctrl-C to stop)'))
-  })
-}
-
-// ── Telegram ────────────────────────────────────────────────────────────────
-
-async function pairTelegram(client) {
-  heading('Telegram bot')
-  out(wrapText(c.gray('Create a bot with @BotFather and paste its token below.'), 2))
-  out()
-  if (!interactive()) {
-    err(c.red('  a token has to be typed — run this from a terminal'))
-    err(c.gray('  or set it non-interactively: wfc settings set channels.telegram.enabled on'))
-    return 1
-  }
-  const token = await question(`  ${c.bold('bot token')} ${c.dim('(hidden)')}: `, { hidden: true })
-  if (!token.trim()) {
-    out(c.yellow('  nothing entered — unchanged'))
-    return 1
-  }
-  // A token that is not shaped like one never reaches the network: BotFather
-  // issues `<digits>:<35 or so of base64-ish>`, and pasting a truncated copy is
-  // the common mistake. Failing here names the problem; failing at Telegram
-  // returns "401 Unauthorized", which does not.
-  if (!/^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token.trim())) {
-    err(`${icon.fail()} ${c.red('that does not look like a bot token')}`)
-    err(c.gray('  BotFather issues them as 123456789:AA... — check for a truncated paste'))
-    return 1
-  }
-  const result = await client.invoke('telegram:setConfig', {
-    botToken: token.trim(),
-    enabled: true
-  })
-  if (result?.ok === false) {
-    err(`${icon.fail()} ${c.red(result.error ?? 'failed')}`)
-    return 1
-  }
-  out(`${icon.ok()} token saved — starting the bot`)
-  return waitForTelegram(client)
-}
-
-/**
- * Say whether the bot actually came up. Saving a token that Telegram rejects
- * used to print a tick and exit 0, and the failure only surfaced later as
- * silence from a channel the user believed was connected.
- */
-function waitForTelegram(client) {
-  return new Promise((resolve) => {
-    let done = false
-    const finish = (code) => {
-      if (done) return
-      done = true
-      off()
-      offCancel()
-      clearTimeout(timer)
-      resolve(code)
-    }
-    const off = client.onEvent((channel, payload) => {
-      if (channel !== 'telegram:statusChange') return
-      if (payload?.status === 'connected' || payload?.connected === true) {
-        out(
-          `${icon.ok()} ${c.green(`connected${payload.username ? ` as @${payload.username}` : ''}`)}`
-        )
-        finish(0)
-      } else if (payload?.status === 'error' || payload?.error) {
-        err(`${icon.fail()} ${c.red(String(payload.error ?? 'Telegram rejected the token'))}`)
-        finish(1)
-      }
-    })
-    const offCancel = onCancel(() => finish(1))
-    // Bounded: a bot that has not answered in fifteen seconds is a story for
-    // `wfc status`, not a reason to hold the terminal.
-    const timer = setTimeout(() => {
-      out(c.gray('  still starting — check it with: wfc status'))
-      finish(0)
-    }, 15000)
-  })
-}
-
-function usage(line) {
-  err(c.red(`usage: ${line}`))
-  return 2
 }

@@ -80,7 +80,7 @@ const MIME_BY_EXT: Record<string, string> = {
 /**
  * Classify a file into a coarse type bucket + mimetype, primarily from its
  * extension. `mimeHint` is a fallback for files whose extension is unknown
- * or absent — inbound channel media (WhatsApp/Telegram) that arrives with a
+ * or absent — inbound channel media (the phone) that arrives with a
  * reliable mimetype but no usable filename extension. Without it, such files
  * collapse to `other`/`application/octet-stream`, and the file-processor
  * gates PDF/image handling on the mime, so the model would silently never
@@ -243,9 +243,8 @@ export async function saveUpload(
 }
 
 /**
- * Save an in-memory buffer as a conversation upload. Used by the
- * Telegram channel, which receives files as bytes from grammY rather
- * than as a path on disk. Same naming and collision behavior as
+ * Save an in-memory buffer as a conversation upload. Used by channels
+ * that receive files as bytes rather than as a path on disk. Same naming and collision behavior as
  * saveUpload — Finder-style " (1)" suffix, type/mime classification,
  * relative path returned for the conversation message.
  */
@@ -319,7 +318,7 @@ export async function saveUploadFromFile(
 
 /**
  * Strip path separators and trim to something safe for the filesystem.
- * Telegram document names come from the user's machine and may contain
+ * Channel document names come from another device and may contain
  * slashes or null bytes on adversarial input. Empty or all-suspect
  * names fall back to a generic placeholder.
  */

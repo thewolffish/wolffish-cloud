@@ -10,7 +10,7 @@ import {
 import { purgeDemoState } from '@/lib/demo/reset'
 import { attachLiveUpdates, initialSync, type SyncProgress } from '@/lib/sync/sync'
 import { attachTurnStream } from '@/lib/sync/prompt'
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 import { useAppStore } from '@/state/appStore'
 import { useToast } from '@/providers/toast/useToast'
 import { invalidateConversationList } from '@/lib/conversations/cache'
@@ -126,13 +126,15 @@ export default function Home(): React.JSX.Element {
   }
 
   /**
-   * Runs once the sheet has handed us a live tunnel: pull everything the app
-   * renders, under the same progress bar the demo import uses, then open chat
-   * against real data.
+   * Runs once the sheet has claimed a session: dial the org bridge (so the
+   * desktop, when it is up, answers the freshest settings), pull everything
+   * the app renders under the same progress bar the demo import uses, then
+   * open chat against real data.
    */
   const afterPaired = async (): Promise<void> => {
     setPairing(false)
     setSync({ phase: 'connect', ratio: 0, imported: 0, total: 0 })
+    void bridgeClient.resume().catch(() => undefined)
     try {
       // A pairing starts from a clean slate. Demo leftovers are not inert
       // here: demo conversations linger in the list until a reconcile prunes
@@ -153,8 +155,8 @@ export default function Home(): React.JSX.Element {
       })
       router.replace('/chat')
     } catch {
-      // The pairing itself survives a failed first sync — the Relay screen can
-      // retry it without scanning again.
+      // The session itself survives a failed first sync — the Connection
+      // screen can retry it without scanning again.
       toast.show({ tone: 'error', message: t('pair.syncFailed') })
     } finally {
       setSync(null)
@@ -282,9 +284,9 @@ export default function Home(): React.JSX.Element {
   )
 }
 
-/** Reconnect a stored pairing at launch, before the user touches anything. */
+/** Reconnect a stored session at launch, before the user touches anything. */
 export async function resumePairing(): Promise<boolean> {
-  const resumed = await tunnelClient.resume()
+  const resumed = await bridgeClient.resume()
   if (resumed) attachLiveUpdates()
   return resumed
 }

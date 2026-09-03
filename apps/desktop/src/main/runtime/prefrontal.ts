@@ -104,16 +104,6 @@ export type RuntimeContext = {
    */
   noProgress?: string
   /**
-   * Channel-format notice for this iteration — a prose-mirroring channel
-   * (Telegram/WhatsApp) reporting that a prose block ALREADY DELIVERED to
-   * the user's phone carried raw markup (leaked Markdown, broken HTML), so
-   * the model can repair the delivered message and write clean blocks for
-   * the rest of the turn. Observe-and-notify: nothing rewrites model prose.
-   * Same vehicle and cache rationale as noProgress. Undefined renders
-   * nothing.
-   */
-  channelFormat?: string
-  /**
    * Control-token notice for this iteration — this conversation's previous
    * model call ended its user-visible text in a literal tokenizer control
    * token (e.g. a plain-text `<|eos|>`), which reached the user as gibberish,
@@ -122,27 +112,6 @@ export type RuntimeContext = {
    * cache rationale as noProgress. Undefined renders nothing.
    */
   controlToken?: string
-  /**
-   * Async video-task landing notice — VideoTaskManager reporting that a
-   * generation task reached a terminal state while the model was doing
-   * other work (it moved on instead of calling video_await), so the model
-   * can present the artifact or the failure. Drained once per iteration.
-   * Same vehicle and cache rationale as noProgress. Undefined renders
-   * nothing.
-   */
-  videoTasks?: string
-  /**
-   * Voice-reply notice, present on every master/single turn while the Voice
-   * replies preference is ON — the switch alone gates it (no per-turn voice
-   * detection; the notice's wording is conditional, so it reads truthfully
-   * on typed turns). The deterministic every-iteration restatement of "a
-   * <voice_note> turn ends with one voice_respond". Computed once per turn
-   * by the Agent (preference + capability + role gates live there); stable
-   * across the turn's iterations, so it rides the same volatile vehicle as
-   * noProgress with the same cache rationale. Undefined (setting off, TTS
-   * disabled, agent role) renders nothing.
-   */
-  voiceReply?: string
   /**
    * Phone-notification notice, present on every master/single turn while a
    * phone is paired and notify_phone is registered (the mobile channel ties
@@ -155,6 +124,18 @@ export type RuntimeContext = {
    * the same volatile vehicle with the same cache rationale as noProgress.
    * Undefined (no phone, capability disabled, agent role) renders nothing.
    */
+  /**
+   * Voice-reply notice, present on every master/single turn while the Voice
+   * replies preference is ON — the switch alone gates it (no per-turn voice
+   * detection; the notice's wording is conditional, so it reads truthfully
+   * on typed turns). The deterministic every-iteration restatement of "a
+   * <voice_note> turn ends with one voice_respond". Computed once per turn
+   * by the Agent (preference + capability + role gates live there); stable
+   * across the turn's iterations, so it rides the same volatile vehicle as
+   * noProgress with the same cache rationale. Undefined (setting off, TTS
+   * disabled, agent role) renders nothing.
+   */
+  voiceReply?: string
   phoneNotify?: string
 }
 
@@ -178,14 +159,13 @@ const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['workflow'])
 
 /**
  * Channel egress capabilities — the live messaging channels register their send
- * tools in-process under these names when connected (TELEGRAM_CAPABILITY_NAME /
- * WHATSAPP_CAPABILITY_NAME / MOBILE_CAPABILITY_NAME in
- * src/main/channels/*\/tools.ts). Their sends hit the channel API directly, so
- * a worker holding them could message the user out-of-band — `phone` even
+ * tools in-process under these names when connected (MOBILE_CAPABILITY_NAME in
+ * src/main/channels/mobile/tools.ts). Their sends hit the channel API directly, so
+ * a worker holding them could message the user out-of-band — `phone`
  * buzzes a pocket. Hard-coded here (not imported) to keep runtime decoupled
  * from the channel layer; the values are stable identifiers.
  */
-const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp', 'phone'])
+const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['phone'])
 
 /**
  * Everything an agent role is denied on top of delegation: channel egress
@@ -207,57 +187,6 @@ const AGENT_EXCLUDED_CAPABILITIES: ReadonlySet<string> = new Set([
   'ask',
   'utilities'
 ])
-
-// Self-qualifying overlay for locally-run models. Deliberately NOT a
-// capability claim ("you are small") — a capable local 70B would be lied to,
-// and any size-based branch would reintroduce the special-casing this
-// replaced. One overlay, zero branching, full access.
-const LOCAL_MODEL_PROMPT = `<local_model>
-You are running as a locally-hosted model on the user's own machine. If a task exceeds what you can do reliably, say so plainly and suggest switching to a capable cloud model — hallucinating capability serves nobody. But if the user insists, comply fully: you have the same tools, memory, and context as any other model here, and nothing is withheld from you.
-</local_model>`
-
-// Channel formatting overlays, keyed by the turn's delivery channel (see
-// AgentTurnOptions.channel). Appended when the turn's prose is delivered
-// through a messaging channel whose renderer differs from the in-app chat.
-// Keyed by hard-coded name — same decoupling rationale as
-// CHANNEL_CAPABILITIES above. There is NO egress converter: the channels
-// send the model's prose verbatim (Telegram with parse_mode HTML), so
-// these overlays are the only thing standing between the model's habits
-// and raw Markdown in the user's chat — the model IS the formatter.
-const CHANNEL_PROMPTS: Readonly<Record<string, string>> = {
-  whatsapp: `<channel>
-You are talking with the user over WhatsApp: EVERY prose block you write — full replies AND the one-line narration between tool calls ("Checking the flight…", "Found it —") — is delivered VERBATIM to their phone as a WhatsApp message the moment you call the next tool or end the turn. Nothing you write here is internal, in-app-only, or "thinking out loud"; there is no Markdown renderer and no converter between you and the user. WhatsApp does NOT render Markdown; write ALL prose, narration included, in WhatsApp's own text formatting and nothing else:
-- *bold* (single asterisks), _italic_ (single underscores), ~strikethrough~ (single tildes), \`inline code\` (backticks), \`\`\`monospace block\`\`\` (triple backticks, no language tag).
-- Lists: start a line with "- " for a bullet or "1. " for a numbered item. Quote: start the line with "> ".
-- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules. Every leaked marker reaches the user as raw, ugly syntax: the send tools REFUSE Markdown outright, and narration that leaks it lands on their phone before anything can stop it. GOOD: *Flight details*\n_Gate 22_. BAD: **Flight details**\n| gate | 22 |. BAD narration: "Key findings:\n- **Departed**: 10:23 PM" — write "Key findings:\n- *Departed:* 10:23 PM".
-- NEVER use HTML: WhatsApp renders no tags and no entities — <b>hi</b> and &amp; reach the user as literal text. Write plain & < > characters and WhatsApp markup, never Telegram-style HTML. To show a tag or code as text on purpose, wrap it in \`backticks\`.
-- If a message contains any formatting, call whatsapp_check_format on the exact text FIRST and only send once it comes back clean.
-- Instead of a heading, write a short *bold* line. Instead of a table, write one "*Label:* value" line per fact. For a link, paste the bare URL — WhatsApp makes it clickable.
-- NEVER draw horizontal divider lines: no ━━━━━, ═════, ─────, -----, _____, or any line of repeated bar/dash characters — a phone's narrow bubble wraps them into several broken lines of bars, and the send tools reject them. A blank line separates sections; an emoji + *bold* line is the header. Progress bars like ▓▓▓▓░░ 60% are fine — the ban is on drawn rules, not block-character bars.
-- The same applies to everything you relay: tool results, file contents, and subagent reports are often Markdown — rewrite them in WhatsApp formatting before quoting them.
-- Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
-- ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no formatting markers.
-- Emojis render natively — use them naturally to aid scanning; a leading emoji on a *bold* line does a heading's job (✈️ *Flight details*).
-- Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with whatsapp_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
-- Voice notes and audio that are meant to PLAY in WhatsApp (a voice reply, a spoken memo, any audio the user will tap and hear) MUST be OGG/Opus (audio/ogg; codecs=opus): WhatsApp PTT voice notes only play that container. Default to OGG/Opus — if your audio is MP3/WAV (e.g. a TTS voice reply comes out as mp3), transcode it to OGG/Opus first: ~/.wfc/bin/ffmpeg/ffmpeg -i in.mp3 -c:a libopus -b:a 24k out.ogg, then pass the .ogg path to whatsapp_send_audio. Only send an MP3 as-is when the user explicitly needs or asks for an MP3 (a file to save or share, not a voice note to play) — a bare mp3 sent as a voice note will not play.
-- This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
-</channel>`,
-  telegram: `<channel>
-You are talking with the user over Telegram: EVERY prose block you write — full replies AND the one-line narration between tool calls ("Checking the flight…", "Found it —") — is delivered VERBATIM to their phone as a Telegram message (sent with parse_mode HTML) the moment you call the next tool or end the turn. Nothing you write here is internal, in-app-only, or "thinking out loud"; there is no Markdown renderer and no converter between you and the user. Telegram does NOT render Markdown; write ALL prose, narration included, in Telegram's HTML subset and nothing else:
-- Allowed tags: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>inline code</code>, <pre>multi-line code block</pre> (or <pre><code class="language-python">…</code></pre>), <a href="https://…">link</a>, <blockquote>quote</blockquote>, <span class="tg-spoiler">spoiler</span>.
-- NO other tags exist: no <br> (use real newlines), no <p>, <ul>, <li>, <h1>, <table>, and NEVER wrap the message in a container tag like <message>/<html>. One unknown tag, unclosed tag, or bare < / & makes Telegram reject the ENTIRE message and it arrives as raw tag soup — write literal & as &amp;, < as &lt;, > as &gt;, in prose and inside <code>/<pre> alike, and close every tag you open. The tags THEMSELVES are raw < > characters — entity-escaping a tag (&lt;b&gt; instead of <b>) makes Telegram show the user literal "<b>" text instead of bold. GOOD: <b>Digest</b>\ncost &lt;5. BAD: <b>Digest</b>…</message> (stray wrapper), &lt;b&gt;Digest&lt;/b&gt; (escaped tags — arrive as literal text), line<br>line, cost < 5 & up (unescaped).
-- If a message contains ANY HTML tag or literal < / &, call telegram_check_format on the exact text FIRST and only send once it returns valid — never guess.
-- NEVER use Markdown syntax: no **bold**, no # headings, no | tables |, no [text](url), no --- rules. Every leaked marker reaches the user as raw, ugly syntax: the send tools REFUSE Markdown outright, and narration that leaks it lands on their phone before anything can stop it. BAD narration: "Key findings:\n- **Departed**: 10:23 PM" — write "Key findings:\n- <b>Departed:</b> 10:23 PM".
-- Instead of a heading, write a short <b>bold</b> line. Instead of a table, write one "<b>Label:</b> value" line per fact. Lists are plain lines starting with "- " or "1. " (literal text is fine there).
-- NEVER draw horizontal divider lines: no ━━━━━, ═════, ─────, -----, _____, or any line of repeated bar/dash characters — a phone's narrow bubble wraps them into several broken lines of bars, and the send tools reject them. A blank line separates sections; an emoji + <b>bold</b> line is the header. Progress bars like ▓▓▓▓░░ 60% are fine — the ban is on drawn rules, not block-character bars.
-- The same applies to everything you relay: tool results, file contents, and subagent reports are often Markdown — rewrite them in Telegram HTML before quoting them.
-- Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
-- ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no HTML and no formatting markers.
-- Emojis render natively — use them naturally to aid scanning; a leading emoji on a <b>bold</b> line does a heading's job (✈️ <b>Flight details</b>).
-- Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with telegram_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
-- This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
-</channel>`
-}
 
 // Non-sensitive config variables longer than this are previewed, not dumped
 // verbatim, into the (RAS-bypassing) <variables> block. Generous enough that
@@ -327,7 +256,6 @@ export class Prefrontal {
        * honesty overlay — prompt text, never divergent assembly: a local
        * model gets the same context, tools, and memory as any cloud model.
        */
-      localModel?: boolean
       channel?: string
       conversationId?: string | null
     }
@@ -336,35 +264,9 @@ export class Prefrontal {
     const blocks = [
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
-      opts?.localModel ? LOCAL_MODEL_PROMPT : '',
-      opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : '',
-      await this.buildVideoPromptingBlock(),
       await this.buildVoicePromptingBlock(role)
     ].filter((b) => b && b.length > 0)
     return blocks.join('\n\n')
-  }
-
-  /**
-   * The video Director-mode directive — a pure instruction, honored by the
-   * model alone: the harness never rewrites, embellishes, or refuses a
-   * prompt in either mode. Read from config at prompt build (turn-stable,
-   * like the project overlay), so flipping the Settings toggle changes the
-   * NEXT turn's prompt; the rarity of a flip is what makes the cache cost
-   * acceptable. Empty when the video capability is disabled — no dead
-   * instructions for tools that don't ship.
-   */
-  private async buildVideoPromptingBlock(): Promise<string> {
-    if (this.cerebellum?.isDisabled('video')) return ''
-    const config = await readConfig().catch(() => null)
-    const director = config?.video?.director !== false
-    if (director) {
-      return `<video_prompting>
-Director mode is ON (a Settings toggle the user controls). When generating a video you are the DIRECTOR: expand the user's request into a full cinematic prompt — subject, action, camera movement, light, mood — before calling video_generate. Directing rewrites the PROSE only: specs the user stated are orders, not context — a named length goes in duration_seconds, named quality in resolution, named orientation in ratio (format words inside the prompt text change nothing) — and only what they left unstated is yours to pick. Sparse prompts produce flat footage; your rewrite is where the quality comes from. AFTER submitting, show the user the optimized prompt you actually sent, as a short quoted block introduced naturally (e.g. "Directed as:") — they steer the next take by editing it. Never present the rewrite as the user's own words.
-</video_prompting>`
-    }
-    return `<video_prompting>
-Director mode is OFF (a Settings toggle the user controls). When generating a video, pass the user's request to video_generate VERBATIM as the prompt — no rewriting, no embellishment, no added camera or style language, even when you are sure it would look better. Trim only what is clearly not the prompt itself (e.g. "make a video of ..." framing). You still SET the parameters: a length, quality or orientation the user named goes in duration_seconds/resolution/ratio (words in the prompt text alone change nothing — '15 seconds' left there produces the 6s default), defaults fill only what they left unstated. You may mention that Director mode is available if a result looks flat.
-</video_prompting>`
   }
 
   /**
@@ -492,7 +394,7 @@ The ONLY exception: the user's own message explicitly asks for something else ("
     message = '',
     runtime?: RuntimeContext,
     role?: 'master' | 'agent',
-    opts?: { localModel?: boolean; conversationId?: string | null }
+    opts?: { conversationId?: string | null }
   ): Promise<ContextBundle> {
     // LEAN BY DESIGN: the prompt carries the essentials only — identity, the
     // behavioral contract, device facts, the learned-preferences digest, a
@@ -879,14 +781,13 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.noProgress) lines.push(`  ${runtime.noProgress}`)
     // Channel-format notice (prose delivered to a phone with raw markup) —
     // same vehicle, same reason.
-    if (runtime.channelFormat) lines.push(`  ${runtime.channelFormat}`)
     // Control-token notice (a control token leaked into user-visible text) —
     // same vehicle, same reason.
     if (runtime.controlToken) lines.push(`  ${runtime.controlToken}`)
-    // Video-task landing notice — same vehicle, same reason.
-    if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.
+    // Voice-reply notice (Voice replies ON) — same vehicle, stable across
+    // the turn.
     if (runtime.voiceReply) lines.push(`  ${runtime.voiceReply}`)
     // Phone-notification notice (a phone is paired) — same vehicle, same
     // reason.

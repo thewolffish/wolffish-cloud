@@ -22,7 +22,7 @@ function Section({ title, children }: { title: string; children: ReactNode }): R
   )
 }
 
-type Channel = 'telegram' | 'whatsapp' | 'extension' | 'inapp'
+type Channel = 'cli' | 'phone' | 'extension' | 'inapp'
 type Model = 'claude' | 'gpt' | 'gemini' | 'llama' | 'mistral' | 'qwen' | 'deepseek'
 
 const MODEL_OPTIONS: readonly SelectOption<Model>[] = [
@@ -61,8 +61,8 @@ export default function Showcase(): React.JSX.Element {
 
   const channelOptions: readonly SelectOption<Channel>[] = [
     { value: 'inapp', label: t('app.name') },
-    { value: 'telegram', label: 'Telegram' },
-    { value: 'whatsapp', label: 'WhatsApp' },
+    { value: 'cli', label: 'CLI' },
+    { value: 'phone', label: 'Phone' },
     { value: 'extension', label: 'Extension', disabled: true }
   ]
 

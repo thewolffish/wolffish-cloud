@@ -404,7 +404,7 @@
       "stopReason": "end_turn"
     }
   ],
-  "channel": "whatsapp",
+  "channel": "electron",
   "stats": {
     "allTime": {
       "turns": 3,

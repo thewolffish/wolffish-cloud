@@ -24,13 +24,13 @@ const toolDefinitions = [
   {
     name: 'wolffish_status',
     description:
-      'Get current Wolffish status including uptime, active provider, loaded capabilities, channel connectivity, and system health.',
+      'Get current Wolffish status including uptime, the organization-provided model in use, loaded capabilities, channel connectivity, and system health.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
     name: 'channel_status',
     description:
-      'Check whether each messaging channel — Telegram, WhatsApp, and the in-app chat — is currently connected, and when one is not, exactly how the user can reconnect it. Telegram and WhatsApp are connected channels reached via their own tools (telegram_send / whatsapp_send), NOT desktop apps. Call this before sending the user an out-of-band message on a channel, or right after a channel send fails, so you can fail gracefully and relay the reconnect steps instead of guessing.',
+      'Check whether each messaging channel — the paired phone, the terminal, and the in-app chat — is currently connected, and when one is not, exactly how the user can reconnect it. Use this before promising to reach the user somewhere: presence in the tool index means installed, not connected.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -117,7 +117,7 @@ const toolDefinitions = [
   {
     name: 'conversation_list',
     description:
-      'Enumerate your past conversations, newest first: id, channel (electron/telegram/whatsapp/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use this when the user refers to a past chat you cannot see.',
+      'Enumerate your past conversations, newest first: id, channel (electron/mobile/cli/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use this when the user refers to a past chat you cannot see.',
     parameters: {
       type: 'object',
       properties: {
@@ -233,7 +233,7 @@ async function getStatus() {
     diskFree,
     cortexDbSize,
     capabilities,
-    providers,
+    model,
     bootTime,
     connectivity,
     feedbackCounts
@@ -242,7 +242,7 @@ async function getStatus() {
     getDiskFree(),
     fileSize(path.join(workspaceRoot, 'brain', 'cortex.db')),
     listCapabilities(),
-    readProviders(),
+    readModel(),
     getSystemBootTime(),
     checkConnectivity(),
     countFeedback()
@@ -255,14 +255,14 @@ async function getStatus() {
 
   lines.push(`- **Running since:** ${formatTimestamp(startedAt)} (${formatUptime(uptimeSec)})`)
 
-  if (providers.all.length > 0) {
-    const list = providers.all.map((p) => {
-      const tag = p === providers.active ? ' ✦' : ''
-      return `${p.id}/${p.model}${tag}`
-    })
-    lines.push(`- **Providers:** ${list.join(', ')}`)
+  if (model.model) {
+    const detail = [`mode ${model.mode}`]
+    if (model.thinking) detail.push(`thinking ${model.thinking}`)
+    lines.push(`- **Model:** ${model.model} — provided by the organization (${detail.join(', ')})`)
   } else {
-    lines.push('- **Providers:** none configured')
+    lines.push(
+      '- **Model:** none selected yet — models are provided by the organization; pick one in Settings'
+    )
   }
 
   const capList = capabilities.length === 0 ? 'none' : capabilities.join(', ')
@@ -344,7 +344,7 @@ async function getChannelStatusReport() {
     lines.push('')
   }
   lines.push(
-    'To message the user on a channel, use that channel’s send tools (e.g. `telegram_send`, `whatsapp_send`) — these are connected channels, not desktop apps, so never `app_open` or osascript them. A channel’s send tools are only available while it is connected; if a channel is not connected, tell the user and relay the reconnect steps above instead of retrying.'
+    'To reach the user out-of-band, use the paired phone’s `notify_phone` — a connected channel, not a desktop app, so never `app_open` or osascript a messaging app. The tool is only available while a phone is paired; check `channel_status` first.'
   )
   return { success: true, output: lines.join('\n').trim() }
 }
@@ -627,48 +627,36 @@ async function checkConnectivity() {
 }
 
 // ---------------------------------------------------------------------------
-// Provider config
+// Model config
 // ---------------------------------------------------------------------------
 
-async function readProviders() {
+// config.json carries only the user's selection: `llm.model` is the id of the
+// organization-provided model (the catalog itself is served per user by the
+// Wolffish Cloud API), `llm.mode` the chat mode ('single' or 'workflow'),
+// `llm.thinkingModes` the per-model thinking choice. There are no provider
+// entries and no API keys on the device — the organization holds those
+// behind its API.
+async function readModel() {
+  const empty = { model: null, mode: 'single', thinking: null }
   const configPath = path.join(workspaceRoot, 'config.json')
   let raw
   try {
     raw = await fs.readFile(configPath, 'utf8')
   } catch {
-    return { all: [], active: null }
+    return empty
   }
   let cfg
   try {
     cfg = JSON.parse(raw)
   } catch {
-    return { all: [], active: null }
+    return empty
   }
-
-  const cloud = Array.isArray(cfg?.llm?.providers) ? cfg.llm.providers : []
-  const brain = cfg?.llm?.brain ?? null
-  const localOnly = Boolean(cfg?.llm?.localOnly)
-  const local = cfg?.llm?.local
-
-  const all = []
-  for (const p of cloud) {
-    if (p?.id && p?.model) {
-      all.push({ id: p.id, model: p.model, hasKey: Boolean(p.apiKey) })
-    }
-  }
-  if (local?.model) {
-    all.push({ id: 'local', model: local.model, hasKey: true })
-  }
-
-  // The single active model: the local model in local-only mode, else the Brain.
-  let active = null
-  if (localOnly) {
-    active = all.find((p) => p.id === 'local') ?? null
-  } else if (brain?.providerId && brain?.model) {
-    active = all.find((p) => p.id === brain.providerId && p.hasKey) ?? null
-  }
-
-  return { all, active }
+  const llm = cfg?.llm && typeof cfg.llm === 'object' ? cfg.llm : {}
+  const model = typeof llm.model === 'string' && llm.model.trim() ? llm.model.trim() : null
+  const mode = typeof llm.mode === 'string' && llm.mode ? llm.mode : 'single'
+  const modes = llm.thinkingModes && typeof llm.thinkingModes === 'object' ? llm.thinkingModes : {}
+  const thinking = model && typeof modes[model] === 'string' ? modes[model] : null
+  return { model, mode, thinking }
 }
 
 // ---------------------------------------------------------------------------

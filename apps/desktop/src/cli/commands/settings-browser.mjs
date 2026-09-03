@@ -5,16 +5,16 @@
  *
  *   wfc settings                     the pages
  *   wfc settings channels            that page's cards
- *   wfc settings channels telegram   that card's settings and flows
- *   wfc settings telegram            the same card, named directly
+ *   wfc settings channels mobile     that card's settings and flows
+ *   wfc settings mobile              the same card, named directly
  *   wfc settings verbose             everything matching, wherever it lives
  *
  * The hierarchy is not decoration. Labels in this app are CARD-SCOPED — inside
- * a Telegram card, a row called "Status" or "Verbose task results" is
- * unambiguous, and four channels legitimately carry the same two words. Print
- * them as one flat list and the result is what this replaced: fifty-six rows
- * with "Verbose task results" appearing four times and no way to tell which
- * one is WhatsApp's. Grouping is the disambiguation, and it is also how
+ * a Mobile card, a row called "Task results" or "Verbose task results" is
+ * unambiguous, and several channels legitimately carry the same two words. Print
+ * them as one flat list and the result is what this replaced: dozens of rows
+ * with "Verbose task results" appearing several times and no way to tell which
+ * one is the phone's. Grouping is the disambiguation, and it is also how
  * someone who knows where a setting lives on screen finds it here.
  *
  * Blank always goes UP one level (and out at the top), so there is one key to
@@ -78,7 +78,7 @@ const cardSize = (cards, sectionId) =>
  *
  * Page name, card name, `page card`, or anything else — which becomes a
  * search. Matching is on ids and labels, and a single hit wins outright: a
- * user who types `notion` means the Notion card, not a menu that leads to it.
+ * user who types `brave` means the Brave card, not a menu that leads to it.
  */
 function resolveTarget({ groups, cards }, words) {
   if (words.length === 0) return { kind: 'pages' }
@@ -93,7 +93,7 @@ function resolveTarget({ groups, cards }, words) {
   const fullId = sections.find((section) => section.id.toLowerCase() === needle)
   if (fullId) return { kind: 'card', id: fullId.id }
 
-  // `channels telegram` — a page and a card, the way the breadcrumb reads.
+  // `channels mobile` — a page and a card, the way the breadcrumb reads.
   if (words.length > 1) {
     const twoPart = sections.find(
       (section) => section.id.toLowerCase() === words.join('.').toLowerCase()

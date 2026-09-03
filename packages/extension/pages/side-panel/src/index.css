@@ -1,6 +1,6 @@
 @import '@extension/ui/global.css';
 
-/* ─── IBM Plex Sans Arabic — matches wolffish-app ─── */
+/* ─── IBM Plex Sans Arabic — matches the desktop app (apps/desktop) ─── */
 
 @font-face {
   font-family: 'IBM Plex Sans Arabic';
@@ -54,7 +54,7 @@ body {
   height: 100%;
 }
 
-/* ─── Scrollbar — matches wolffish-app ─── */
+/* ─── Scrollbar — matches the desktop app (apps/desktop) ─── */
 
 * {
   scrollbar-width: thin;

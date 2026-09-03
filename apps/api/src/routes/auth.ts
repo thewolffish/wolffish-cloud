@@ -275,12 +275,18 @@ auth.post('/refresh', async (c) => {
   if (!user || user.status !== 'active') return c.json({ error: 'account_disabled' }, 403)
 
   const newSecret = randomHex(32)
-  await c.env.DB.prepare(
-    `UPDATE device_sessions SET refresh_hash = ?1, refresh_generation = refresh_generation + 1,
-       refreshed_at = ?2, expires_at = ?3 WHERE id = ?4`
-  )
-    .bind(await sha256Hex(newSecret), nowIso(), addDays(REFRESH_IDLE_DAYS), sessionId)
-    .run()
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE device_sessions SET refresh_hash = ?1, refresh_generation = refresh_generation + 1,
+         refreshed_at = ?2, expires_at = ?3 WHERE id = ?4`
+    ).bind(await sha256Hex(newSecret), nowIso(), addDays(REFRESH_IDLE_DAYS), sessionId),
+    // A rotating refresh is the device saying "still here" — the paired-
+    // devices list reads last_seen_at, so it moves on every one.
+    c.env.DB.prepare('UPDATE devices SET last_seen_at = ?1 WHERE id = ?2').bind(
+      nowIso(),
+      session.device_id
+    )
+  ])
 
   const now = Math.floor(Date.now() / 1000)
   const access = await signJwt(
@@ -306,13 +312,14 @@ auth.post('/refresh', async (c) => {
 
 
 // ── Password reset: emailed 6-digit code, then a new password ────────────
-// The code lives in KV for 10 minutes (5 tries), stored plain: it is
-// short-lived, single-purpose, and admins already hold a stronger reset
-// power — which is also what lets the release gate read it to prove the
-// flow end to end.
+// The code lives in D1 (one row per user) for 10 minutes with 5 tries,
+// stored plain: it is short-lived, single-purpose, and admins already hold
+// a stronger reset power — which is also what lets the release gate read it
+// to prove the flow end to end. D1 rather than KV because a used code must
+// be dead at once, everywhere: KV's eventual consistency let a code be
+// replayed with a different password for up to a minute after use.
 
 export const RESET_TTL_SECONDS = 600
-const resetKey = (userId: string) => `reset:${userId}`
 
 function sixDigitCode(): string {
   const buf = new Uint32Array(1)
@@ -344,11 +351,13 @@ auth.post('/reset/request', async (c) => {
   }
 
   const code = sixDigitCode()
-  await c.env.AUTH_KV.put(
-    resetKey(user.id),
-    JSON.stringify({ code, attempts: 0 }),
-    { expirationTtl: RESET_TTL_SECONDS }
+  await c.env.DB.prepare(
+    `INSERT INTO password_resets (user_id, code, attempts, expires_at) VALUES (?1, ?2, 0, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET code = excluded.code, attempts = 0,
+       expires_at = excluded.expires_at, created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
   )
+    .bind(user.id, code, new Date(Date.now() + RESET_TTL_SECONDS * 1000).toISOString())
+    .run()
   const sent = await sendSystemEmail(c.env, {
     to: user.email,
     subject: `${code} is your Wolffish Cloud reset code`,
@@ -379,21 +388,28 @@ auth.post('/reset/confirm', async (c) => {
     .first<UserRow>()
   if (!user) return c.json({ error: 'email_not_found' }, 401)
 
-  const raw = await c.env.AUTH_KV.get(resetKey(user.id))
-  if (!raw) return c.json({ error: 'code_expired' }, 401)
-  const entry = JSON.parse(raw) as { code: string; attempts: number }
-  if (entry.attempts >= 5) {
-    await c.env.AUTH_KV.delete(resetKey(user.id))
+  const entry = await c.env.DB.prepare(
+    'SELECT code, attempts, expires_at FROM password_resets WHERE user_id = ?1'
+  )
+    .bind(user.id)
+    .first<{ code: string; attempts: number; expires_at: string }>()
+  const dropEntry = () =>
+    c.env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?1').bind(user.id).run()
+  if (!entry) return c.json({ error: 'code_expired' }, 401)
+  if (entry.expires_at < nowIso() || entry.attempts >= 5) {
+    await dropEntry()
     return c.json({ error: 'code_expired' }, 401)
   }
-  if (entry.code !== body.code) {
-    await c.env.AUTH_KV.put(
-      resetKey(user.id),
-      JSON.stringify({ ...entry, attempts: entry.attempts + 1 }),
-      { expirationTtl: RESET_TTL_SECONDS }
-    )
+  if (!timingSafeEqualHex(entry.code, body.code)) {
+    await c.env.DB.prepare('UPDATE password_resets SET attempts = attempts + 1 WHERE user_id = ?1')
+      .bind(user.id)
+      .run()
     return c.json({ error: 'invalid_code' }, 401)
   }
+  // Single-use, enforced by a consistent store: the row is gone before the
+  // new password is usable anywhere, so the same code can never be replayed.
+  const consumed = await dropEntry()
+  if ((consumed.meta.changes ?? 0) === 0) return c.json({ error: 'code_expired' }, 401)
 
   const salt = randomHex(16)
   const hash = await hashPassword(body.new_password, salt)
@@ -406,7 +422,6 @@ auth.post('/reset/confirm', async (c) => {
   )
     .bind(hash, salt, nowIso(), user.id)
     .run()
-  await c.env.AUTH_KV.delete(resetKey(user.id))
 
   // A reset is a "someone else may know my password" event: every existing
   // session dies with it.

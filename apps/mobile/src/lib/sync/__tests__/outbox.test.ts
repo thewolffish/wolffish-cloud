@@ -2,8 +2,8 @@ const mockRpc = jest.fn()
 const mockConnection = { connected: true }
 const mockReportRpcFailure = jest.fn()
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return mockConnection.connected
     },
@@ -22,7 +22,7 @@ import {
   resetOutboxForTests,
   setOutboxRefreshHook
 } from '@/lib/sync/outbox'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 
 /**
  * The outbox is what makes phone edits deterministic: a typing burst becomes

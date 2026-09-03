@@ -116,7 +116,7 @@ export function EmojiPicker({
                       onPick(emoji)
                       setQuery('')
                     }}
-                    className="h-10 w-10 items-center justify-center rounded-md active:bg-border/40"
+                    className="h-10 w-10 items-center justify-center rounded-md active:bg-border-soft"
                   >
                     <Text className="text-xl leading-7">{emoji}</Text>
                   </Pressable>

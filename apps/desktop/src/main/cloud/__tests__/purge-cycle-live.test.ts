@@ -178,7 +178,7 @@ async function phaseMain(): Promise<void> {
         names.includes('brain/notes/dup-b.txt') &&
         names.includes('files/empty.marker') &&
         lazyMediaSeedFiles().every(([rel]) => names.includes(rel)) &&
-        names.includes('whatsapp/chats.json')
+        names.includes('brain/channels/chats.json')
       )
     }, 240_000)
     if (!pushed) {
@@ -375,7 +375,10 @@ async function orchestrate(): Promise<void> {
     (await runPhase('seed', { WFC_TEST_TOKEN: a.token, WFC_TEST_USER: a.userId })) === 0
   )
   const namesAfterSeed = await walkManifestNames(a.token)
-  ok('whatsapp auth NEVER uploaded', !namesAfterSeed.some((n) => n.startsWith('whatsapp/auth/')))
+  ok(
+    'cerebellum-local keys NEVER uploaded',
+    !namesAfterSeed.some((n) => n.startsWith('brain/cerebellum/'))
+  )
   ok('deleted file gone from live manifest', !namesAfterSeed.includes('files/temp-note.txt'))
   const idsAfterSeed = await walkConversationIds(a.token)
   ok(

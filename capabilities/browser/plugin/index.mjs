@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { access, mkdir, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -119,11 +119,51 @@ async function launchBrowser(bt, browserType, launchOpts) {
   )
 }
 
-function resolveUserPath(p, workspaceRoot) {
-  if (!p) return null
-  if (p.startsWith('~')) return path.resolve(homedir(), p.slice(2))
+// The workspace root the cerebellum handed us at init; the standard
+// ~/.wfc/workspace location when running headless (tests).
+function effectiveWorkspaceRoot() {
+  return workspaceRoot || path.join(homedir(), '.wfc', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
+// resolve against the workspace root (files/…, downloads/…), never against
+// the process cwd or the home directory. Mirrors the filesystem plugin.
+function resolveUserPath(p) {
+  if (!p || typeof p !== 'string') return null
+  if (p === '~') return homedir()
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(homedir(), p.slice(2))
   if (path.isAbsolute(p)) return path.resolve(p)
-  return path.resolve(workspaceRoot || homedir(), p)
+  return path.resolve(effectiveWorkspaceRoot(), p)
+}
+
+// Where auto-named screenshots and downloads land: <workspace>/<kind>/
+// conv-<conversation id>/ — the per-conversation layout computer-use and the
+// browser extension use, so the files sync lazily with their conversation
+// instead of living in this capability's folder (which an org update
+// replaces wholesale). Outside any conversation: <kind>/misc/.
+function conversationDir(kind) {
+  const convId = getConversationId()
+  const safe = convId == null ? '' : String(convId).replace(/[^A-Za-z0-9._-]/g, '_')
+  return path.join(effectiveWorkspaceRoot(), kind, safe ? `conv-${safe}` : 'misc')
+}
+
+// Keep the site's filename, reduced to one safe path segment, and never
+// clobber an earlier download of the same name in the same folder.
+async function uniqueDownloadPath(dir, suggested) {
+  const base =
+    path.basename(String(suggested || '')).replace(/[\\/:*?"<>|]/g, '_').trim() ||
+    `download-${Date.now()}`
+  const ext = path.extname(base)
+  const stem = base.slice(0, base.length - ext.length)
+  let candidate = path.join(dir, base)
+  for (let n = 2; ; n++) {
+    try {
+      await access(candidate)
+    } catch {
+      return candidate
+    }
+    candidate = path.join(dir, `${stem}-${n}${ext}`)
+  }
 }
 
 function htmlToMarkdown(html) {
@@ -232,7 +272,7 @@ function getPage(session, tabId) {
 
 // ── Tool Implementations ──
 
-async function browserLaunch(args, screenshotsDir) {
+async function browserLaunch(args) {
   const lib = await loadPlaywright()
   if (!lib) {
     return { success: false, error: 'playwright-core is not installed. The browser capability needs its npm dependencies — this should resolve automatically on next launch.' }
@@ -282,8 +322,7 @@ async function browserLaunch(args, screenshotsDir) {
     context,
     pages: new Map([[tabId, page]]),
     activeTab: tabId,
-    networkLog,
-    screenshotsDir
+    networkLog
   })
 
   return {
@@ -349,7 +388,7 @@ async function browserNavigate(args) {
   }
 }
 
-async function browserScreenshot(args, screenshotsDir) {
+async function browserScreenshot(args) {
   const session = getSession(args?.session_id)
   if (!session) return { success: false, error: `No session found: ${args?.session_id}` }
 
@@ -357,9 +396,9 @@ async function browserScreenshot(args, screenshotsDir) {
   if (!page) return { success: false, error: 'No active page in session.' }
 
   const format = args?.format || 'png'
-  const outputPath = args?.output_path
-    ? resolveUserPath(args.output_path)
-    : path.join(screenshotsDir, `${Date.now()}.${format}`)
+  const outputPath =
+    resolveUserPath(args?.output_path) ??
+    path.join(conversationDir('screenshots'), `${Date.now()}.${format}`)
 
   await mkdir(path.dirname(outputPath), { recursive: true })
 
@@ -379,9 +418,12 @@ async function browserScreenshot(args, screenshotsDir) {
     await page.screenshot(opts)
   }
 
+  // wolffish-media:// addresses a workspace-relative path; a screenshot the
+  // user pointed outside the workspace has no media URL.
   let mediaUrl = null
-  if (workspaceRoot && outputPath.startsWith(workspaceRoot)) {
-    const rel = outputPath.slice(workspaceRoot.length).replace(/^\//, '')
+  const root = effectiveWorkspaceRoot()
+  if (outputPath.startsWith(root + path.sep)) {
+    const rel = path.relative(root, outputPath).split(path.sep).join('/')
     mediaUrl = `wolffish-media://${encodeURIComponent(rel)}`
   }
 
@@ -744,17 +786,19 @@ async function browserEvaluate(args) {
   return { success: true, output: output ?? 'undefined' }
 }
 
-async function browserDownload(args, workspaceRoot) {
+async function browserDownload(args) {
   const session = getSession(args?.session_id)
   if (!session) return { success: false, error: `No session found: ${args?.session_id}` }
 
   const page = getPage(session, args?.tab_id)
   if (!page) return { success: false, error: 'No active page in session.' }
 
-  const outputPath = resolveUserPath(args.output_path, workspaceRoot)
-  if (!outputPath) return { success: false, error: 'output_path is required.' }
-
-  await mkdir(path.dirname(outputPath), { recursive: true })
+  // An explicit output_path wins; otherwise the file keeps the name the site
+  // suggests and lands in downloads/conv-<id>/, synced with the conversation
+  // (the same folder the extension's ext_pdf uses).
+  const explicitPath = resolveUserPath(args?.output_path)
+  const targetDir = explicitPath ? path.dirname(explicitPath) : conversationDir('downloads')
+  await mkdir(targetDir, { recursive: true })
 
   const timeout = args?.timeout_ms || 60_000
 
@@ -763,6 +807,8 @@ async function browserDownload(args, workspaceRoot) {
     await page.locator(args.trigger_selector).first().click()
   }
   const download = await downloadPromise
+  const outputPath =
+    explicitPath ?? (await uniqueDownloadPath(targetDir, download.suggestedFilename()))
   await download.saveAs(outputPath)
 
   return {
@@ -819,14 +865,14 @@ async function browserNetworkLog(args) {
   return { success: true, output: JSON.stringify(logs) }
 }
 
-async function browserPdf(args, workspaceRoot) {
+async function browserPdf(args) {
   const session = getSession(args?.session_id)
   if (!session) return { success: false, error: `No session found: ${args?.session_id}` }
 
   const page = getPage(session, args?.tab_id)
   if (!page) return { success: false, error: 'No active page in session.' }
 
-  const outputPath = resolveUserPath(args.output_path, workspaceRoot)
+  const outputPath = resolveUserPath(args?.output_path)
   if (!outputPath) return { success: false, error: 'output_path is required.' }
 
   await mkdir(path.dirname(outputPath), { recursive: true })
@@ -1255,17 +1301,17 @@ const toolDefinitions = [
   },
   {
     name: 'browser_download',
-    description: 'Trigger and capture a file download from the page.',
+    description: 'Trigger and capture a file download from the page. Without output_path the file keeps the name the site suggests and lands in downloads/conv-<conversation id>/ in the workspace.',
     parameters: {
       type: 'object',
       properties: {
         session_id: { type: 'string', description: 'Browser session.' },
         trigger_selector: { type: 'string', description: 'Element to click to start download.' },
-        output_path: { type: 'string', description: 'Where to save the file.' },
+        output_path: { type: 'string', description: 'Where to save the file. Absolute, ~/-relative, or workspace-relative. Default: downloads/conv-<conversation id>/<suggested filename> in the workspace.' },
         timeout_ms: { type: 'number', description: 'Download timeout. Default 60000.' },
         tab_id: { type: 'string', description: 'Target tab.' }
       },
-      required: ['session_id', 'output_path']
+      required: ['session_id']
     }
   },
   {
@@ -1326,9 +1372,11 @@ const toolDefinitions = [
 
 // ── Plugin Export ──
 
-let pluginDir = ''
 let workspaceRoot = ''
-let screenshotsDir = ''
+// The conversation whose turn is in flight (the cerebellum's
+// getCurrentConversationId), read at execute time; null between turns or
+// when the host never wired it.
+let getConversationId = () => null
 
 const plugin = {
   name: 'browser',
@@ -1336,10 +1384,11 @@ const plugin = {
   describeAction,
 
   async init(context) {
-    pluginDir = context.pluginDir
-    workspaceRoot = context.workspaceRoot
-    screenshotsDir = path.join(pluginDir, 'screenshots')
-    await mkdir(screenshotsDir, { recursive: true })
+    workspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+    getConversationId =
+      typeof context?.getCurrentConversationId === 'function'
+        ? context.getCurrentConversationId
+        : () => null
   },
 
   async execute(toolName, args) {
@@ -1347,7 +1396,7 @@ const plugin = {
       let result
       switch (toolName) {
         case 'browser_launch':
-          result = await browserLaunch(args, screenshotsDir)
+          result = await browserLaunch(args)
           break
         case 'browser_close':
           result = await browserClose(args)
@@ -1356,7 +1405,7 @@ const plugin = {
           result = await browserNavigate(args)
           break
         case 'browser_screenshot':
-          result = await browserScreenshot(args, screenshotsDir)
+          result = await browserScreenshot(args)
           break
         case 'browser_page_content':
           result = await browserPageContent(args)
@@ -1407,7 +1456,7 @@ const plugin = {
           result = await browserEvaluate(args)
           break
         case 'browser_download':
-          result = await browserDownload(args, workspaceRoot)
+          result = await browserDownload(args)
           break
         case 'browser_cookies':
           result = await browserCookies(args)
@@ -1416,7 +1465,7 @@ const plugin = {
           result = await browserNetworkLog(args)
           break
         case 'browser_pdf':
-          result = await browserPdf(args, workspaceRoot)
+          result = await browserPdf(args)
           break
         case 'browser_multi_tab':
           result = await browserMultiTab(args)

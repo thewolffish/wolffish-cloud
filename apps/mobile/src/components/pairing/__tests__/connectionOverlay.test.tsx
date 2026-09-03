@@ -58,12 +58,22 @@ jest.mock('@/components/common/BlockingProgress', () => {
 
 // `mock`-prefixed: jest hoists these factories above the file, and only names
 // it can prove are mocks may cross that boundary.
-type PublishedState = { status: string; reconnects: number; lastError: string | null }
+type PublishedState = {
+  status: string
+  reconnects: number
+  lastError: string | null
+  online?: boolean
+}
 let mockPublish: ((state: PublishedState) => void) | null = null
-const mockBaseState: PublishedState = { status: 'connected', reconnects: 0, lastError: null }
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
-    get state() {
+const mockBaseState: PublishedState = {
+  status: 'connected',
+  online: true,
+  reconnects: 0,
+  lastError: null
+}
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
+    get current() {
       return mockBaseState
     },
     subscribe: (listener: (state: PublishedState) => void) => {
@@ -94,7 +104,11 @@ function startSync(): ReturnType<typeof beginSync> {
 }
 
 function publish(over: Partial<PublishedState>): void {
-  mockPublish?.({ ...mockBaseState, ...over })
+  // The real client's `online` follows the socket: up while connected (or
+  // merely waiting for the desktop), down through every other phase.
+  const status = over.status ?? mockBaseState.status
+  const online = over.online ?? (status === 'connected' || status === 'waiting-for-desktop')
+  mockPublish?.({ ...mockBaseState, ...over, online })
 }
 
 async function mount(): Promise<void> {

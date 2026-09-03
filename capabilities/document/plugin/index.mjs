@@ -66,7 +66,7 @@ const toolDefinitions = [
   },
   {
     name: 'document_convert',
-    description: 'Convert between document formats (docx, html, markdown, text, pdf).',
+    description: 'Convert between document formats (docx, html, markdown, text). Not to PDF — for that take the pdf-design route (document_read, then pdf_design → HTML → browser_pdf).',
     parameters: {
       type: 'object',
       properties: {
@@ -155,13 +155,25 @@ function parseJsonParam(value, name) {
   throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
 }
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
+function workspaceRoot() {
+  return contextWorkspaceRoot || path.join(os.homedir(), '.wfc', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
+// resolve against the workspace root — where the agent keeps generated files
+// (files/…) and uploads (uploads/…) — never against the process cwd (the repo
+// in dev, "/" in a packaged app). Mirrors the filesystem plugin.
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
   if (input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(os.homedir(), input.slice(2))
   }
-  return path.resolve(input)
+  return path.resolve(workspaceRoot(), input)
 }
 
 /** Existence probe (throws ENOENT early with a clean message); never a size gate. */
@@ -691,11 +703,12 @@ async function documentConvert(args) {
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${markdownToHtml(md)}</body></html>`
       await fs.writeFile(outputPath, html, 'utf8')
     } else if (srcExt === '.docx' && dstExt === '.pdf') {
-      // docx->pdf: read content, create PDF via the pdf capability
-      // Since we can't call another plugin directly, we extract text and create a basic PDF
+      // No page renderer here (mammoth extracts content, it does not lay out
+      // pages), so point at the route that yields a designed PDF instead of
+      // pretending — or dumping plain text through pdf_create.
       return {
         success: false,
-        error: 'docx->pdf conversion requires the pdf capability. Use document_read to extract content, then pdf_create to build the PDF.'
+        error: 'docx→pdf is not supported by this capability. Take the pdf-design route: document_read to get the content, then pdf_design for the design manual, author the HTML, print it with browser_pdf (browser capability), and send_file the result.'
       }
     } else {
       return { success: false, error: `Unsupported conversion: ${srcExt} → ${dstExt}` }
@@ -1036,6 +1049,9 @@ const plugin = {
   name: 'document',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args) {
     switch (toolName) {
       case 'document_read': return documentRead(args)

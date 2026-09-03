@@ -44,7 +44,7 @@ export type SessionInfo = {
 /**
  * Live/last-known run state per conversation, driven by the main process's
  * chat:turnState broadcast — which fires for EVERY channel's turns (in-app,
- * WhatsApp, Telegram), so the sidebar chips cover them all.
+ * the phone, the terminal), so the sidebar chips cover them all.
  */
 export type ConversationRunPhase = 'processing' | 'completed' | 'failed' | 'stopped'
 

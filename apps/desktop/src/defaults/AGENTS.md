@@ -60,7 +60,7 @@ Three ideas hold the whole design together:
   ledger) syncs to the org API within seconds of changing, and a fresh sign-in on
   any machine restores it (§3, "What syncs"). Uninstall with `rm -rf ~/.wfc/` —
   nothing is lost. Only device-bound plumbing (session tokens, pairing keys,
-  WhatsApp's Signal session, the search index) stays local, and each of those
+  the search index) stays local, and each of those
   regenerates or re-links.
 
 Built by Younes Alturkey. Tagline: *Wolffish. Bite through anything.* 🐺
@@ -78,7 +78,6 @@ Built by Younes Alturkey. Tagline: *Wolffish. Bite through anything.* 🐺
 | Event bus | `mitt` (typed pub/sub) |
 | LLM lane | One: the org's Wolffish Cloud API (`/ai/v1/chat/completions`, OpenAI-compatible, session-token auth). The API serves the model catalog (`/v1/models`), enforces allowlists and quotas, and meters every call. No API keys on the device. |
 | Cloud sync | The same API is the master record: conversations as records, workspace files as content-addressed blobs, config as one row, usage from the metering table (`src/main/cloud/sync.ts` in the app source) |
-| Messaging channels | `grammy` (Telegram), Baileys (WhatsApp) |
 | File processing | Sharp (images), pdf-parse, mammoth (docx), xlsx |
 | Speech | Whisper (speech-to-text), neural TTS (text-to-speech) |
 | i18n | i18next — English + Arabic (full RTL) |
@@ -163,9 +162,6 @@ workspace/
 ├── screenshots/       screenshots/conv-*/ — browser/computer-use captures per conversation.
 ├── voice/             voice/conv-*/ — recorded voice notes (the transcript is the prompt).
 ├── speech/            speech/conv-*/ — generated TTS replies.
-├── generations/       video/registry.json + video/conv-*/ — generated video per conversation.
-├── telegram/          chat → conversation maps and dedupe ids (thread continuity).
-├── whatsapp/          same maps — plus whatsapp/auth/, the device-bound Signal session.
 ├── mobile/            pairing.json — this machine's phone-pairing keypair (device-bound).
 └── bin/               Downloaded helper binaries (ffmpeg). Machine state.
 ```
@@ -273,7 +269,7 @@ records that a search happened, never what was searched.
 
 ```
 logs/
-├── YYYY-MM-DD.log         Pino app log (updater, extension socket, errors)
+├── YYYY-MM-DD.log         Pino app log (sync, extension socket, errors)
 └── extension/             browser-extension event stream
     ├── YYYY-MM-DD_HH-MM-SS.jsonl   one JSON line per browser event (navigate/click/…)
     └── .debug/                     extra extension debug dumps
@@ -287,15 +283,16 @@ Everything below the line "device-local" is a cache of the org's record. Delete
 | What | How it syncs | After a purge + sign-in |
 |---|---|---|
 | `brain/conversations/*.json` | As records: one row per message (content-hashed id, replays are no-ops) plus one envelope row per conversation; pushed a few seconds after every turn, incrementally | Every transcript rebuilt from the org, in full, before the chat screen opens |
-| Message media — `uploads/conv-*/`, `voice/conv-*/`, `speech/conv-*/`, `screenshots/conv-*/`, `generations/video/conv-*/` | Content-addressed blobs (SHA-256; identical bytes stored once) | Downloaded **when the conversation is opened**, with a progress banner — never all at once |
-| `files/`, `uploads/project-*/`, `uploads/procedure-*/`, `generations/video/registry.json` | Blobs, swept after every drain; a changed file replaces the org's newest copy | Restored eagerly, before first use |
+| Message media — `uploads/conv-*/`, `voice/conv-*/`, `speech/conv-*/`, `screenshots/conv-*/`, `downloads/conv-*/` | Content-addressed blobs (SHA-256; identical bytes stored once) | Downloaded **when the conversation is opened**, with a progress banner — never all at once |
+| `files/`, `uploads/project-*/`, `uploads/procedure-*/` | Blobs, swept after every drain; a changed file replaces the org's newest copy | Restored eagerly, before first use |
 | `brain/` (identity, prefrontal/agents.md, hippocampus, reflection, basalganglia, motor/tasks, brainstem/heartbeat.md + run-history.md, projects.json, procedures.json) | Blobs — the durable mind and its automations | Restored eagerly; a customized `soul.md` or `heartbeat.md` wins over the bundled default |
 | `config.json` | One row, last-write-wins by server stamp; an admin can fix a user's config from the console and the app adopts it within ~2 minutes | Adopted from the org before anything else; a fresh install never overwrites it with defaults |
 | `usage/providers/cloud.md`, `usage/providers/brave.md`, `usage/daily/` | Not a file sync: rebuilt/reconciled from the org's metering table (`/v1/usage`), every device's calls and searches included | Rebuilt |
-| `logs/extension/*.jsonl`, `telegram/`, `whatsapp/*.json` | Blobs | Restored eagerly |
+| `logs/extension/*.jsonl` | Blobs | Restored eagerly |
 | `brain/cerebellum/` (capabilities) | The org's capability registry (versioned packages; user-scoped imports sync two-way) | Mirrored on session ready |
 | Deletions | A deleted conversation or file is tombstoned at the org, durably (queued even offline or mid-restore) | Stays deleted |
-| **Device-local (never synced)** | `runtime/` (session, device id, avatar cache), `mobile/pairing.json`, `whatsapp/auth/` (Signal session — re-link with a QR), `brain/cortex.db` (rebuilt), `brain/corpus/` and `brain/prefrontal/.debug/` (diagnostics), `logs/*.log`, `bin/`, `extension/`, `.lock`, `.sync-state.json`, app-managed prompt files (`agents.core.md`, `workflow*.md`) | Regenerated or re-linked |
+| **Sign-out** | The outbox drains, the session is revoked, and this machine's cache is **purged** (same for a PIN lockout). Offline, the cache is kept and the log says so | The next sign-in restores everything from the org |
+| **Device-local (never synced)** | `runtime/` (session, device id, avatar cache), `mobile/pairing.json`, `brain/cortex.db` (rebuilt), `brain/corpus/` and `brain/prefrontal/.debug/` (diagnostics), `logs/*.log`, `bin/`, `extension/`, `.lock`, `.sync-state.json`, app-managed prompt files (`agents.core.md`, `workflow*.md`) | Regenerated or re-linked |
 
 > **Reality vs. older diagrams.** `conversations/` and `cortex.db` live **under `brain/`**
 > (not at the workspace root); capabilities are **dot-prefixed**; and
@@ -324,13 +321,13 @@ When the user asks "where is …", this is your lookup table.
 | Schedule a **recurring background job** | `workspace/brain/brainstem/heartbeat.md` |
 | Check **token spend / costs** | `workspace/usage/providers/cloud.md` (every device's calls) and `usage/daily/*.md` |
 | Change **model, theme, locale, safety, integrations, secrets** | `workspace/config.json` (models are whatever the org allows — `/v1/models`) |
-| Debug **app crashes / updater / extension** | `workspace/logs/*.log` and `workspace/logs/extension/*.jsonl` |
+| Debug **app crashes / sync / extension** | `workspace/logs/*.log` and `workspace/logs/extension/*.jsonl` |
 | See **what the agent learned worked/failed** | `workspace/brain/basalganglia/YYYY-MM-DD.md` |
-| Find generated files / screenshots / voice notes | `workspace/files/`, `screenshots/conv-*/`, `voice/conv-*/`, `generations/video/` |
-| **Reset** this machine's cache | `rm -rf ~/.wfc/` — sign in again and the org restores the workspace |
+| Find generated files / screenshots | `workspace/files/`, `screenshots/conv-*/` |
+| **Reset** this machine's cache | `rm -rf ~/.wfc/`, or simply sign out — sign in again and the org restores the workspace |
 | **Wipe** the data for real (org copy too) | Settings → factory reset (tombstones the org record, keeps preferences) |
 | **Repair** a slow/odd search index | delete `workspace/brain/cortex.db*` — it rebuilds |
-| **Move** to another machine | just sign in there; the org holds the record (WhatsApp re-links with a QR) |
+| **Move** to another machine | just sign in there; the org holds the record (the phone re-pairs) |
 
 ---
 
@@ -382,7 +379,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (28 capabilities)
+### The full catalog (27 capabilities)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -395,23 +392,18 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | **Web** | `.web-search` | `web_search` (Brave, through the org's `/v1/search` lane — no key on the device), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** browsers (Chrome, Edge, Brave, Firefox — several can be connected at once) via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_screenshot`, `ext_wait`, …; `ext_browsers` lists connections, `ext_use_browser` picks one per conversation) |
-| | `.cloudflared` | Expose a local service — `cloudflared_tunnel` |
 | **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
 | | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |
 | **Media** | `.ffmpeg` | Audio/video — `ffmpeg_run` |
 | | `.speech-to-text` | Whisper, offline — `stt_transcribe`, `stt_transcribe_voice_memo` |
 | | `.text-to-speech` | Neural TTS — `voice_generate`, `voice_respond` |
-| | `.memes` | `meme_generate`, `meme_templates`, `gif_search`, `gif_trending` |
 | **Code / services** | `.git` | Git conventions on top of `.shell` (pure skill) |
-| | `.github` | GitHub API — ~60 `github_*` tools (repos, issues, PRs, Actions, releases, gists, …) |
-| | `.google` | Workspace — `google_gmail_*`, `google_drive_*`, `google_calendar_*`, `google_sheets_*`, contacts, tasks |
-| | `.notion` | Pages, databases, blocks — `notion_search/read_page/create_page/…` |
 | **Desktop** | `.computer-use` | Screen control with a verified-aim loop — `computer_screenshot`, `computer_zoom`, `computer_mouse_click`, `computer_mouse_drag`, `computer_keyboard_type`, … |
 | **Meta** | `.skills` | The agent manages/authors its own capabilities — `skill_list`, `skill_search`, `skill_read_source`, `skill_enable`, `skill_disable`, `skill_delete`, `skill_create`, `skill_reload` |
 | | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
-| | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` |
+| | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` (masked), `get_secret` (reveal on request) |
 | | `.ask` | Ask the user one or more multiple-choice questions via an in-app card — `ask_user` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
 
@@ -456,7 +448,7 @@ markdown-as-truth payoff.
 
 ## 7. How things work
 
-**The agent loop.** A message (from the desktop UI, Telegram, or WhatsApp) enters
+**The agent loop.** A message (from the desktop UI, the terminal, or the phone) enters
 the pipeline in §5. The prefrontal reads `soul.md`, `user.md`, the agent
 procedures, matched skills, and relevant memory, and assembles one system prompt.
 The model streams a response; tool calls are parsed out, safety-checked, executed
@@ -499,7 +491,7 @@ pipeline as if the user typed it. Schedule kinds: `Startup`, `Every (Nm)`,
 `Weekly (Day HH:MM)`, `Monthly (DD HH:MM)`, and raw `Cron (expr)`. In a fresh
 install every example is commented out — uncomment a block to activate it.
 
-**Channels.** The desktop app, Telegram, and WhatsApp all share one brain. A
+**Channels.** The desktop app, the terminal, and the phone all share one brain. A
 `TurnRunner` serializes turns (FIFO) so the channels don't collide; a `TurnRouter`
 sends approval prompts back to whichever channel owns the active turn.
 
@@ -536,8 +528,7 @@ Reading these confidently lets you answer almost any question about the agent.
   "theme": "light",                          // light | dark | system
   "onboardingCompleted": true,
   "variables": [ { "name": "SECRET", "value": "***", "sensitive": true } ],  // user secrets the agent may use
-  "telegram": { "enabled": false, "botToken": "***", "allowedUserIds": [] },
-  "whatsapp": { … }, "mobile": { … }, "google": { … }, "notion": { … }, "github": { … },
+  "mobile": { … }, "stt": { … }, "tts": { … }, "computerUse": { … },
   "mcp": { … },                              // MCP servers + their OAuth state
   "compaction": { … }, "reflection": { … },
   "disabledCapabilities": [], "pinnedCapabilities": [],
@@ -665,8 +656,8 @@ and no offline mode: every call goes through the org's router.
 **Redact `variables` and integration tokens when you echo `config.json`.**
 
 **"Move my agent to another machine."**
-Sign in there. The org holds the record; the workspace restores itself (WhatsApp
-needs a fresh QR link, the phone needs re-pairing — those keys are device-bound).
+Sign in there. The org holds the record; the workspace restores itself (the phone
+needs re-pairing — its keys are device-bound).
 
 **"Start over."**
 `rm -rf ~/.wfc/` clears this machine only — signing in restores everything. To erase
@@ -734,9 +725,11 @@ run from spinning.
   pause for confirmation — be deliberate about what you put in `heartbeat.md`.
 - **No artificial timeouts.** Tools run until they finish (except OOM protection);
   long-running commands are normal. Use `background:true` for servers/watchers.
-- **Secrets live in `config.json`** (provider keys) and in OAuth/token state for
-  `.google`, `.github`, `.notion`. Treat all of it as sensitive: never print,
-  commit, or transmit it.
+- **Secrets live in `config.json`** (the user's own variables, MCP
+  credentials) — there are no model
+  provider keys on this machine; models and web search come from the org.
+  `config.json` syncs to the org as one row, sealed at rest there. Treat all
+  of it as sensitive: never print, commit, or transmit it.
 
 ---
 

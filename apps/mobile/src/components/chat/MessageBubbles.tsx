@@ -39,7 +39,6 @@ import { FileBlock } from '@/components/chat/FileBlock'
 import { MarkdownView, markdownHasTable } from '@/components/chat/MarkdownView'
 import { NEEDS_SELECT_SHEET, openSelectMarkdown } from '@/components/chat/SelectTextSheet'
 import { QuestionCard } from '@/components/chat/QuestionCard'
-import { TaskCard } from '@/components/chat/TaskCard'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { ToolCard } from '@/components/chat/ToolCard'
 
@@ -424,10 +423,6 @@ function renderBlock(
       return <PathCard path={block.path} kind={block.kind} />
     case 'workflow':
       return <WorkflowCard snapshot={block.snapshot} />
-    case 'task':
-      // Generic async-generation card (video). Deliberately outside the
-      // verbose gate above — like workflow, it is output FOR the user.
-      return <TaskCard snapshot={block.snapshot} conversationId={conversationId} />
     case 'compaction':
       return <CompactionCard block={block} />
     case 'reasoning':

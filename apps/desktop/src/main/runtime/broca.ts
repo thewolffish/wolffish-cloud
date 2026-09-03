@@ -102,50 +102,6 @@ export type WorkflowSnapshot = {
   }
 }
 
-export type TaskStatus = 'submitted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-
-/**
- * The deterministic state of one async generation task (MiniMax H3 video
- * today; `kind` leaves room for future generators to reuse the same card).
- * Built by VideoTaskManager from its own observations — submit time, poll
- * transitions, download results — never from model claims. Carried whole on
- * every `task` segment: each snapshot REPLACES the previous one for the
- * same taskId (see upsertTaskSegment), so exactly one card persists per
- * task and live/reload render identically.
- */
-export type TaskSnapshot = {
-  taskId: string
-  kind: 'video'
-  conversationId: string | null
-  /** Short human label for the card header (model-provided or derived). */
-  title: string
-  status: TaskStatus
-  /** One-line current detail: last transition, error summary, or artifact note. */
-  detail?: string
-  createdAt: number
-  updatedAt: number
-  endedAt?: number
-  /**
-   * Wall-clock estimate for the progress bar, measured from live runs. The
-   * card clamps at 95% until a terminal state arrives — the API reports no
-   * true progress.
-   */
-  estimateSeconds: number
-  /** Workspace-relative artifact path once downloaded. */
-  outputPath?: string
-  outputBytes?: number
-  error?: string
-  /** Kind-specific display facts. */
-  video?: {
-    model: string
-    resolution: string
-    durationSeconds: number
-    ratio?: string
-    /** e.g. "text + first frame + 2 reference images". */
-    inputSummary: string
-  }
-}
-
 /**
  * The master's workflow-management tools. Their tool_call/tool_result
  * segments persist and replay into model context like any tool (the master's
@@ -175,26 +131,6 @@ export function upsertWorkflowSegment(
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i]
     if (s.kind === 'workflow' && s.snapshot.workflowId === segment.snapshot.workflowId) {
-      segments[i] = segment
-      return
-    }
-  }
-  segments.push(segment)
-}
-
-/**
- * Replace-by-id upsert for async-task snapshot segments — same contract as
- * upsertWorkflowSegment, keyed by snapshot.taskId. Shared by every surface
- * that accumulates segments so persisted conversations hold exactly ONE
- * card per generation task.
- */
-export function upsertTaskSegment(
-  segments: Segment[],
-  segment: Extract<Segment, { kind: 'task' }>
-): void {
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const s = segments[i]
-    if (s.kind === 'task' && s.snapshot.taskId === segment.snapshot.taskId) {
       segments[i] = segment
       return
     }
@@ -305,17 +241,6 @@ export type Segment =
       turnId: string
       segmentId: string
       snapshot: WorkflowSnapshot
-    }
-  | {
-      /**
-       * Full-state snapshot of an async generation task (see TaskSnapshot).
-       * Replace-by-taskId semantics — NOT append — on every surface.
-       * Display-only: both model-context rebuild paths ignore it.
-       */
-      kind: 'task'
-      turnId: string
-      segmentId: string
-      snapshot: TaskSnapshot
     }
   | {
       kind: 'compaction_started'
@@ -593,16 +518,6 @@ export class Broca {
   emitWorkflow(turnId: string, snapshot: WorkflowSnapshot): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'workflow', turnId, segmentId: this.nextId(), snapshot })
-  }
-
-  /**
-   * Emit an async-task snapshot into the active turn. VideoTaskManager is
-   * the only caller, via the turn emitter Agent registers for live turns.
-   * Consumers upsert by snapshot.taskId — see upsertTaskSegment.
-   */
-  emitTask(turnId: string, snapshot: TaskSnapshot): void {
-    if (this.turnId !== turnId || !this.sink) return
-    this.emit({ kind: 'task', turnId, segmentId: this.nextId(), snapshot })
   }
 
   emitCompactionStarted(

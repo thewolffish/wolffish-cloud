@@ -146,10 +146,7 @@ export async function editText(content, fileName, { label = null } = {}) {
     out(c.gray(`  opening ${editor.name} — set $WOLFFISH_EDITOR to use a different one`))
   }
 
-  const scratch = path.join(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'wfc-')),
-    fileName || 'edit.md'
-  )
+  const scratch = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'wfc-')), fileName || 'edit.md')
   await fs.writeFile(scratch, content ?? '', 'utf8')
 
   // The editor takes the whole terminal, so readline stands down first and

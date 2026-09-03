@@ -12,8 +12,8 @@
 
 const mockRpc = jest.fn()
 const link = { connected: true }
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return link.connected
     },
@@ -35,7 +35,7 @@ import {
   seedOverlays,
   useOverlayStore
 } from '@/lib/sync/overlays'
-import type { AutomationRun, AutomationRuns } from '@/lib/tunnel/protocol'
+import type { AutomationRun, AutomationRuns } from '@/lib/bridge/protocol'
 
 function run(id: string, over: Partial<AutomationRun> = {}): AutomationRun {
   return {

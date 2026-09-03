@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/db/database'
-import { fetchDesktopFileInto } from '@/lib/sync/files'
+import { fetchCloudFileInto } from '@/lib/sync/files'
 import { useAppStore } from '@/state/appStore'
 import { Directory, File, Paths } from 'expo-file-system'
 
@@ -13,9 +13,9 @@ import { Directory, File, Paths } from 'expo-file-system'
  * time its conversation is opened.
  *
  * The fetch source follows the app's mode. Paired, a path's real bytes come
- * from the desktop's workspace over the tunnel — and only from there: falling
- * back to a CDN sample would cache demo bytes under a real path, which is
- * exactly the lie this branch exists to prevent. Unpaired (demo mode), each
+ * from the org (which holds the desktop's workspace) — and only from there:
+ * falling back to a CDN sample would cache demo bytes under a real path,
+ * which is exactly the lie this branch exists to prevent. Unpaired (demo mode), each
  * path is served the published sample for its file type (see sampleFiles.ts)
  * — nothing is bundled or pushed, and that behavior is unchanged.
  */
@@ -142,7 +142,8 @@ const inFlight = new Map<string, Promise<ResolvedWorkspaceFile>>()
  */
 async function fetchIntoCache(
   relPath: string,
-  conversationId?: string
+  conversationId?: string,
+  sha256?: string
 ): Promise<ResolvedWorkspaceFile> {
   beginDownload(relPath)
   try {
@@ -150,11 +151,12 @@ async function fetchIntoCache(
     const scratch = scratchFile(relPath)
 
     if (useAppStore.getState().paired) {
-      // Paired: the desktop is the only honest source for this path.
+      // Paired: the org holds the desktop's workspace, so the org is the
+      // only honest source for this path.
       const received = (bytes: number, total: number): void => reportDownload(relPath, bytes, total)
-      const outcome = await fetchDesktopFileInto(relPath, scratch, received)
+      const outcome = await fetchCloudFileInto({ relPath, sha256 }, scratch, received)
       if (outcome === 'absent') return ABSENT_AT_SOURCE
-      if (outcome === 'failed') throw new Error('desktop fetch failed')
+      if (outcome === 'failed') throw new Error('org fetch failed')
     } else {
       // Demo: the published sample for this path's file type. No sample for
       // the type is this mode's authoritative absence.
@@ -180,19 +182,13 @@ async function fetchIntoCache(
     // the viewer keeps its loading card and retries, and only a source that
     // ANSWERS "not here" may ever render as deleted.
     //
-    // Paired, the partial in scratch is deliberately KEPT: the desktop fetch
-    // resumes from it on the next attempt (see fetchDesktopFileInto), which
-    // is what lets a big file finish over a link too slow to land it in one
-    // go. The demo CDN download cannot resume, so its leftover is deleted —
-    // a fresh handle, because move() repoints the one it was given at the
-    // destination.
-    if (!useAppStore.getState().paired) {
-      try {
-        const leftover = scratchFile(relPath)
-        if (leftover.exists) leftover.delete()
-      } catch {
-        // Nothing to clean up.
-      }
+    // A leftover partial is deleted — a fresh handle, because move() repoints
+    // the one it was given at the destination.
+    try {
+      const leftover = scratchFile(relPath)
+      if (leftover.exists) leftover.delete()
+    } catch {
+      // Nothing to clean up.
     }
     return TRANSIENT
   } finally {
@@ -235,7 +231,8 @@ export function statCachedFile(relPath: string): { uri: string; sizeBytes: numbe
  */
 export async function resolveWorkspaceFile(
   relPath: string,
-  conversationId?: string
+  conversationId?: string,
+  sha256?: string
 ): Promise<ResolvedWorkspaceFile> {
   try {
     const cached = fileAt(workspaceRoot(), relPath)
@@ -251,7 +248,7 @@ export async function resolveWorkspaceFile(
     const running = inFlight.get(relPath)
     if (running) return await running
 
-    const fetching = fetchIntoCache(relPath, conversationId).finally(() => {
+    const fetching = fetchIntoCache(relPath, conversationId, sha256).finally(() => {
       inFlight.delete(relPath)
     })
     inFlight.set(relPath, fetching)

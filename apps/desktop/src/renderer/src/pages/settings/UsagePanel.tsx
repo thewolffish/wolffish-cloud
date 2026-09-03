@@ -62,7 +62,7 @@ type RangeData = { summary: UsageSummary; stats: UsageStats }
  * the cache, so a warm paint is never stale for long. A missing key means
  * "not loaded yet".
  *
- * Mirrors McpPanel / GitHubPanel, with one difference those panels don't have:
+ * Mirrors McpPanel, with one difference that panel doesn't have:
  * this data is parameterized, so the caches are KEYED. One shared slot would
  * hit on "today" numbers while the "All time" pill is lit and never correct
  * itself, because a hit is a hit. Keyed, every range converges on its own

@@ -1,5 +1,5 @@
 import type { UsageDay } from '@/lib/usage/stats'
-import type { AutomationJob, SyncProcedure } from '@/lib/tunnel/protocol'
+import type { AutomationJob, SyncProcedure } from '@/lib/bridge/protocol'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
@@ -12,8 +12,9 @@ import {
   pushVariables,
   settleOutboxKey
 } from '@/lib/sync/outbox'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Rpc } from '@/lib/bridge/protocol'
+import { fetchConfigSnapshot } from '@/lib/sync/snapshot'
 import { useAppStore } from '@/state/appStore'
 
 /**
@@ -32,21 +33,6 @@ export type ChatMode = 'single' | 'workflow'
 export type ThinkingLevel = 'off' | 'on' | 'high' | 'max'
 
 export type DemoVariable = { name: string; value: string; sensitive: boolean }
-
-/** A cloud provider's surface state — key presence, chosen model, catalog. */
-export type DemoProvider = {
-  id: string
-  model: string | null
-  hasKey: boolean
-  /**
-   * The key the Model panel renders. Always synthetic — the snapshot builder
-   * throws the workspace's real key away and mints a same-shaped fake
-   * (scripts/demo/provider-keys.mjs). Null when the provider has no key, and
-   * absent in bundles published before keys shipped.
-   */
-  apiKey?: string | null
-  models: string[]
-}
 
 export type ServiceConnection = { label: string; detail: string }
 
@@ -130,11 +116,7 @@ const MODEL_PREFIXES: Array<[string, string]> = [
   ['qwen', 'qwen'],
   ['step', 'stepfun'],
   ['minimax', 'minimax'],
-  ['mimo', 'mimo'],
-  ['gemma', 'ollama'],
-  ['llama', 'ollama'],
-  ['mistral', 'ollama'],
-  ['phi', 'ollama']
+  ['mimo', 'mimo']
 ]
 
 /**
@@ -145,36 +127,21 @@ const MODEL_PREFIXES: Array<[string, string]> = [
 export function providerForModel(model: string | null | undefined): string | null {
   if (!model) return null
   const known = DEMO_MODELS.find((entry) => entry.model === model)
-  if (known) return known.provider === 'local' ? 'ollama' : known.provider
+  if (known) return known.provider
   const lower = model.toLowerCase()
   return MODEL_PREFIXES.find(([prefix]) => lower.startsWith(prefix))?.[1] ?? null
 }
 
 const READ_ONLY_SERVICES: ServiceStatus[] = [
   {
-    key: 'google',
+    key: 'computerUse',
     connected: true,
-    connections: [{ label: 'alturkeyy@gmail.com', detail: 'Gmail · Calendar · Drive' }]
-  },
-  {
-    key: 'github',
-    connected: true,
-    connections: [{ label: 'younes-alturkey', detail: 'Younes Alturkey' }]
-  },
-  {
-    key: 'notion',
-    connected: true,
-    connections: [{ label: 'Wolffish HQ', detail: 'younes@wolffi.sh' }]
+    connections: [{ label: 'macOS', detail: 'screen + input' }]
   },
   {
     key: 'browserExtension',
     connected: false,
     connections: [{ label: 'Chrome extension', detail: 'port 23151' }]
-  },
-  {
-    key: 'computerUse',
-    connected: true,
-    connections: [{ label: 'macOS', detail: 'screen + input' }]
   }
 ]
 
@@ -183,8 +150,8 @@ const DEFAULT_CAPABILITIES: Record<string, boolean> = {
   'web-search': true,
   'browser-automation': true,
   'document-builder': true,
-  'meme-forge': true,
-  'voice-notes': true,
+  'chart-forge': true,
+  'daily-notes': true,
   'news-butler': true,
   'email-digest': true,
   'screen-watch': false
@@ -200,34 +167,21 @@ const DEFAULT_MCP_SERVERS: Record<string, boolean> = {
 /** The editable config surface — flat keys for single-field subscriptions. */
 export type DemoConfigValues = {
   // --- llm / brain ---
+  /**
+   * The org lane's current model, as the desktop reports it. One lane in the
+   * cloud edition — no local engine, no per-provider keys — so these two are
+   * the whole model surface. The provider id is whatever the desktop stamps:
+   * display only, it never travels back.
+   */
   brainProvider: string
   brainModel: string
   chatMode: ChatMode
-  localOnly: boolean
-  localEnabled: boolean
-  localModel: string
-  /**
-   * Every model pulled on the desktop, from its own /api/tags at snapshot
-   * time — the options `localModel` may be set to. Pulling a new one is the
-   * desktop's act (it holds the blobs), so this device picks from the list
-   * and never adds to it.
-   */
-  localModels: string[]
-  /**
-   * Where Ollama keeps its blobs — the desktop's top-level field. Display
-   * only: the folder is the desktop's to pick, so this device reports the
-   * path it scans and never edits it.
-   */
-  ollamaModelsFolder: string
-  providers: DemoProvider[]
   thinkingMode: ThinkingLevel
   // --- preferences ---
   launchAtStartup: boolean
-  restrictPowerfulModels: boolean
   bypassPermissions: boolean
   blockCredentials: boolean
   weekStartsOn: 0 | 1
-  updatesEnabled: boolean
   // --- channels ---
   /** inapp.verbose — what the DESKTOP feed displays, not this device's. */
   inappVerbose: boolean
@@ -262,34 +216,14 @@ export type DemoConfigValues = {
    * reports for the same reason it reports `launchAtStartup` (see CliStatus).
    */
   cliVerbose: boolean
-  telegramEnabled: boolean
-  telegramAllowedUserIds: string
-  telegramVerbose: boolean
-  telegramAutoRefresh: boolean
-  telegramStaleHours: string
-  telegramHideAutomations: boolean
-  whatsappEnabled: boolean
-  whatsappAllowedNumbers: string
-  whatsappVerbose: boolean
-  whatsappAutoRefresh: boolean
-  whatsappStaleHours: string
-  whatsappHideAutomations: boolean
   // --- services (remotely controllable values) ---
+  /**
+   * Web search is the organization's lane — one key at the API edge, none on
+   * any device. Status only: the desktop reports whether the lane is ready
+   * and refuses a phone write to it, so the row renders as state, never as a
+   * switch or a key field.
+   */
   braveEnabled: boolean
-  /** The Brave Search key — editable here, saved to the desktop's config. */
-  braveApiKey: string
-  /** Video generation (MiniMax H3) — the capability switch + its OWN key
-   *  (deliberately not the MiniMax chat provider's; the desktop keeps the
-   *  two independent so switching brains never kills video generation). */
-  videoEnabled: boolean
-  videoApiKey: string
-  /** Director mode: the model expands video prompts (on) or forwards them
-   *  verbatim (off). A model directive — synced, never enforced. */
-  videoDirector: boolean
-  memesEnabled: boolean
-  imgflipUsername: string
-  imgflipPassword: string
-  giphyApiKey: string
   sttModel: string
   /** Pinned transcription language — a Whisper code, or 'auto' for detection. */
   sttLanguage: string
@@ -341,29 +275,14 @@ export type DemoConfigValues = {
 }
 
 /**
- * Keys for the pre-snapshot fallback providers, minted by
- * scripts/demo/provider-keys.mjs so they match the bundle's own values byte
- * for byte. Fake keys for a fake workspace — they authenticate nothing.
- */
-const FALLBACK_API_KEYS: Record<string, string> = {
-  anthropic: 'sk-ant-api03-0oxuf8dlc1MWVMZUn1in',
-  openai: 'sk-proj-eEQ9Qy-tUHqdly572C7wmxwbAq',
-  deepseek: 'sk-qwir4ejiom8tcj0inl7rp88vi9xmb1ib',
-  kimi: 'sk-oNFw9yjIg8hiBbrEjFvr0ODfLNCnCp',
-  zai: '7e701db771ed41f7919b.qLDZdestBoEj',
-  xai: 'xai-zyThW2ITW8goiJ8sQhDuCfdA0jXk1p',
-  qwen: 'sk-53409f3702e74ff16b4cce5d2eba8bc3'
-}
-
-/**
  * The demo workspace's three customization documents.
  *
  * Fallbacks, not fixtures: a paired phone replaces all three from the desktop's
  * snapshot, and a demo bundle that carries a `customization` section replaces
  * them too. They exist so demo mode — and a bundle published before this
  * section shipped — shows the Customization screen doing its job on real-shaped
- * markdown instead of three empty cards. Same posture as FALLBACK_API_KEYS: a
- * fake workspace's real-looking content, written for the demo persona
+ * markdown instead of three empty cards. A fake workspace's real-looking
+ * content, written for the demo persona
  * (Younes Alharbi, Riyadh, Sadeem) so nothing here contradicts the bundled
  * conversations.
  */
@@ -419,54 +338,18 @@ const DEFAULTS: DemoConfigValues = {
   brainProvider: 'anthropic',
   brainModel: 'claude-opus-4-8',
   chatMode: 'single',
-  localOnly: false,
-  localEnabled: true,
-  localModel: 'gemma4:e2b',
-  localModels: ['gemma4:e2b'],
-  ollamaModelsFolder: '',
-  providers: DEMO_MODELS.filter((entry) => entry.provider !== 'local').map((entry) => ({
-    id: entry.provider,
-    model: entry.model,
-    hasKey: true,
-    apiKey: FALLBACK_API_KEYS[entry.provider] ?? null,
-    models: [entry.model]
-  })),
   thinkingMode: 'high',
   launchAtStartup: false,
-  restrictPowerfulModels: true,
   bypassPermissions: true,
   blockCredentials: false,
   weekStartsOn: 1,
-  updatesEnabled: true,
   inappVerbose: false,
   inappRunCards: false,
   mobileNotifications: true,
   mobileVerbose: false,
   mobileRunCards: false,
   cliVerbose: false,
-  telegramEnabled: true,
-  telegramAllowedUserIds: '429753549',
-  telegramVerbose: false,
-  telegramAutoRefresh: true,
-  telegramStaleHours: '12',
-  telegramHideAutomations: true,
-  whatsappEnabled: true,
-  whatsappAllowedNumbers: '+966501234567',
-  whatsappVerbose: false,
-  whatsappAutoRefresh: true,
-  whatsappStaleHours: '12',
-  whatsappHideAutomations: true,
   braveEnabled: true,
-  // Demo credentials: fake keys for a fake workspace, same posture as
-  // FALLBACK_API_KEYS — they authenticate nothing, they populate fields.
-  braveApiKey: 'BSAhxqNe83jP2nQvWwRt5KbAzYdMf',
-  videoEnabled: true,
-  videoApiKey: 'sk-api-wLf8QzKm3nRt5vXy2bJd7cPh4g',
-  videoDirector: true,
-  memesEnabled: true,
-  imgflipUsername: 'youneswolf',
-  imgflipPassword: 'imgflp-wlf-2861-pass',
-  giphyApiKey: 'gYq8HxTkP2nWvR5bZmA7c3DfLj9S',
   sttModel: 'large-v3-turbo',
   sttLanguage: 'en',
   ttsVoice: 'af_heart',
@@ -594,28 +477,12 @@ export type ConfigSnapshot = {
     stamps?: Record<string, number>
   }
   services: {
-    google: { status: string; projectId: string }
-    github: ServiceConnection[]
-    notion: ServiceConnection[]
-    braveEnabled: boolean
     /**
-     * The Brave key itself, editable on the phone. Absent in bundles and
-     * desktops from before credentials synced — those show the demo default.
-     * Real values ride only the end-to-end sealed tunnel.
+     * Whether the organization's web-search lane is ready. Status only: the
+     * key lives at the API edge, and the desktop refuses a phone write to
+     * either field. Older bundles also carry a `braveApiKey` — not read.
      */
-    braveApiKey?: string
-    /** Video generation: capability switch + its own key. Optional like
-     *  braveApiKey — desktops from before the feature omit both. */
-    videoEnabled?: boolean
-    videoApiKey?: string
-    videoDirector?: boolean
-    memesEnabled: boolean
-    /** Same contract as braveApiKey, for the Memes providers. */
-    memes?: {
-      imgflipUsername?: string
-      imgflipPassword?: string
-      giphyApiKey?: string
-    }
+    braveEnabled: boolean
     sttModel: string
     /** Absent on desktops from before the language pin shipped. */
     sttLanguage?: string
@@ -678,61 +545,31 @@ export type ConfigSnapshot = {
      *  before these two settings reached the snapshot; notifications then
      *  falls back to ON and the feed to clean, as the desktop defaults them. */
     mobile?: { notifications?: boolean; verbose?: boolean; runCards?: boolean }
-    telegram: {
-      enabled: boolean
-      allowedUserIds: string
-      autoRefresh: boolean
-      staleHours: string
-      verbose: boolean
-      hideAutomations: boolean
-    }
-    whatsapp: {
-      enabled: boolean
-      allowedNumbers: string
-      autoRefresh: boolean
-      staleHours: string
-      verbose: boolean
-      hideAutomations: boolean
-    }
   }
+  /**
+   * The org lane: the current model and the two behavior knobs, nothing else.
+   * The personal edition's `localOnly`, `restrictPowerfulModels`, `local` and
+   * `providers` are gone from the cloud desktop's snapshot; a bundle or an
+   * older desktop still carrying them is read without them.
+   */
   llm: {
     brainProvider: string
     brainModel: string
     chatMode: ChatMode
-    localOnly: boolean
-    restrictPowerfulModels: boolean
     /**
      * The Brain model's thinking level, when one has been chosen on the
      * desktop. Absent in bundles published before thinking synced — those
      * keep the device's last value rather than inventing a choice.
      */
     thinkingMode?: string
-    local: {
-      enabled: boolean
-      model: string | null
-      /**
-       * Did Ollama answer when the desktop took this snapshot? Absent in
-       * bundles published before the local card showed engine state — those
-       * fall back to "not running" rather than claiming a link nobody probed.
-       */
-      running?: boolean
-      /**
-       * The engine's installed models. Absent in bundles published before the
-       * local picker shipped — those fall back to the chosen model alone,
-       * never to an empty sheet.
-       */
-      models?: string[]
-    }
-    providers: DemoProvider[]
   }
+  /** Same tolerance as `llm`: `updatesEnabled` and `ollamaModelsFolder` no
+   *  longer ride here and are not read when they do. */
   preferences: {
     launchAtStartup: boolean
     bypassPermissions: boolean
     blockCredentials: boolean
     weekStartsOn: 0 | 1
-    updatesEnabled: boolean
-    /** Absent in bundles published before the advanced controls shipped. */
-    ollamaModelsFolder?: string
   }
   /**
    * The desktop app on the other end. Absent in bundles published before the
@@ -916,12 +753,6 @@ export type DemoConfigState = DemoConfigValues & {
    */
   desktopData: DesktopData
   /**
-   * Was Ollama answering on the desktop at last sync? Desktop-managed like
-   * `desktop`: this device cannot reach that machine's localhost, so the
-   * engine's state travels in the snapshot instead of being probed here.
-   */
-  ollamaRunning: boolean
-  /**
    * Months the desktop's own release notes cover, newest first — the What's
    * new screen's desktop tab. Display-only like `desktop`: the notes belong
    * to that app's build, so the list travels in the snapshot and the bodies
@@ -949,6 +780,10 @@ export type DemoConfigState = DemoConfigValues & {
   setMapEntry: (key: 'capabilities' | 'mcpServers', name: string, enabled: boolean) => void
   /** Ingest the real-workspace snapshot — the demo's "sync" moment. */
   applySnapshot: (snapshot: ConfigSnapshot, opts?: ApplySnapshotOptions) => void
+  /** The org's usage ledger, folded per day (lib/usage/ledger) — the paired
+   *  source of the Usage screen's rows; demo bundles carry theirs in the
+   *  snapshot. */
+  setUsageDays: (days: UsageDay[]) => void
   /**
    * Back to factory defaults, including this device's own edits. Used when a
    * republished bundle replaces the dataset (lib/demo/reset): applySnapshot
@@ -1100,6 +935,44 @@ function mergeVariablesFromDesktop(
   ]
 }
 
+/**
+ * Keys a v2 (personal edition) persisted state may carry that this store no
+ * longer has — see the persist `migrate` below.
+ */
+/** Keys the cloud edition retired with the desktop's service integrations. */
+const DROPPED_IN_V4 = [
+  'telegramEnabled',
+  'telegramAllowedUserIds',
+  'telegramVerbose',
+  'telegramAutoRefresh',
+  'telegramStaleHours',
+  'telegramHideAutomations',
+  'whatsappEnabled',
+  'whatsappAllowedNumbers',
+  'whatsappVerbose',
+  'whatsappAutoRefresh',
+  'whatsappStaleHours',
+  'whatsappHideAutomations',
+  'memesEnabled',
+  'imgflipUsername',
+  'imgflipPassword',
+  'giphyApiKey'
+] as const
+
+const DROPPED_IN_V3 = [
+  'localOnly',
+  'localEnabled',
+  'localModel',
+  'localModels',
+  'ollamaModelsFolder',
+  'ollamaRunning',
+  'providers',
+  'restrictPowerfulModels',
+  'updatesEnabled',
+  'braveApiKey',
+  'videoApiKey'
+] as const
+
 /** The store's initial, pre-snapshot shape — DEFAULTS plus what a snapshot fills. */
 const INITIAL_STATE = {
   ...DEFAULTS,
@@ -1125,8 +998,7 @@ const INITIAL_STATE = {
     markdown: '',
     jobs: [] as AutomationJob[],
     stamps: {} as Record<string, number>
-  },
-  ollamaRunning: false
+  }
 }
 
 export const useDemoConfig = create<DemoConfigState>()(
@@ -1137,6 +1009,7 @@ export const useDemoConfig = create<DemoConfigState>()(
       setValue: (key, value) => set({ [key]: value } as Partial<DemoConfigState>),
       setMapEntry: (key, name, enabled) =>
         set((state) => ({ [key]: { ...state[key], [name]: enabled } }) as Partial<DemoConfigState>),
+      setUsageDays: (days) => set({ usage: sanitizeUsageDays(days) }),
       applySnapshot: (snapshot, opts) =>
         set((state) => {
           const capabilities: Record<string, boolean> = {}
@@ -1159,15 +1032,6 @@ export const useDemoConfig = create<DemoConfigState>()(
           for (const server of snapshot.mcpServers) mcpServers[server.name] = server.enabled
           const { services } = snapshot
           const compaction = snapshot.compaction
-          // The picker's options. A bundle from before the tag list shipped
-          // has only the chosen model to offer, and one option beats a sheet
-          // that opens on nothing.
-          const localModel = snapshot.llm.local?.model ?? ''
-          const localModels = snapshot.llm.local?.models?.length
-            ? snapshot.llm.local.models
-            : localModel
-              ? [localModel]
-              : []
           const applied: Partial<DemoConfigState> = {
             capabilities,
             capabilityInfo,
@@ -1185,7 +1049,13 @@ export const useDemoConfig = create<DemoConfigState>()(
               reflection: compaction?.runs?.reflection ?? null,
               deepClean: compaction?.runs?.deepClean ?? null
             },
-            usage: sanitizeUsageDays(snapshot.usage?.days),
+            // The paired snapshot carries no usage (the org's ledger is read
+            // separately — setUsageDays); a bundle carries its own. Absent
+            // keeps what is here rather than blanking the Usage screen.
+            usage:
+              snapshot.usage?.days === undefined
+                ? state.usage
+                : sanitizeUsageDays(snapshot.usage.days),
             desktop: {
               version: snapshot.desktop?.version ?? null,
               platform: snapshot.desktop?.platform ?? null,
@@ -1217,34 +1087,16 @@ export const useDemoConfig = create<DemoConfigState>()(
                   ? snapshot.automations.stamps
                   : {}
             },
+            // The org lane: the desktop's current model and mode. Tolerant by
+            // omission — the personal edition's `localOnly`, `local` and
+            // `providers` are simply not read, so a bundle still carrying
+            // them lands exactly as a desktop that dropped them does.
             brainProvider: snapshot.llm.brainProvider,
             brainModel: snapshot.llm.brainModel,
             chatMode: snapshot.llm.chatMode,
-            localOnly: snapshot.llm.localOnly,
             ...(THINKING_LEVELS.includes(snapshot.llm.thinkingMode as ThinkingLevel)
               ? { thinkingMode: snapshot.llm.thinkingMode as ThinkingLevel }
               : {}),
-            localEnabled: snapshot.llm.local?.enabled ?? false,
-            localModel,
-            localModels,
-            ollamaRunning: snapshot.llm.local?.running === true,
-            ollamaModelsFolder:
-              snapshot.preferences.ollamaModelsFolder ?? DEFAULTS.ollamaModelsFolder,
-            // Same tolerance for providers: an older desktop sent
-            // `{id, model, connected}` — surface it as key presence with the
-            // chosen model as the whole catalog, never a broken card.
-            providers: (snapshot.llm.providers ?? []).map((provider) => ({
-              id: provider.id,
-              model: provider.model ?? null,
-              hasKey: provider.hasKey ?? (provider as { connected?: boolean }).connected === true,
-              apiKey: provider.apiKey ?? null,
-              models: provider.models?.length
-                ? provider.models
-                : provider.model
-                  ? [provider.model]
-                  : []
-            })),
-            restrictPowerfulModels: snapshot.llm.restrictPowerfulModels,
             inappVerbose: snapshot.channels.inapp?.verbose ?? DEFAULTS.inappVerbose,
             inappRunCards: snapshot.channels.inapp?.runCards ?? DEFAULTS.inappRunCards,
             mobileNotifications:
@@ -1276,31 +1128,7 @@ export const useDemoConfig = create<DemoConfigState>()(
             bypassPermissions: snapshot.preferences.bypassPermissions,
             blockCredentials: snapshot.preferences.blockCredentials,
             weekStartsOn: snapshot.preferences.weekStartsOn,
-            updatesEnabled: snapshot.preferences.updatesEnabled,
-            telegramEnabled: snapshot.channels.telegram.enabled,
-            telegramAllowedUserIds: snapshot.channels.telegram.allowedUserIds,
-            telegramAutoRefresh: snapshot.channels.telegram.autoRefresh,
-            telegramStaleHours: snapshot.channels.telegram.staleHours,
-            telegramVerbose: snapshot.channels.telegram.verbose,
-            telegramHideAutomations: snapshot.channels.telegram.hideAutomations,
-            whatsappEnabled: snapshot.channels.whatsapp.enabled,
-            whatsappAllowedNumbers: snapshot.channels.whatsapp.allowedNumbers,
-            whatsappAutoRefresh: snapshot.channels.whatsapp.autoRefresh,
-            whatsappStaleHours: snapshot.channels.whatsapp.staleHours,
-            whatsappVerbose: snapshot.channels.whatsapp.verbose,
-            whatsappHideAutomations: snapshot.channels.whatsapp.hideAutomations,
             braveEnabled: services.braveEnabled,
-            // `?? DEFAULTS`: a desktop that HAS no key sends '' (kept); only a
-            // source from before credentials synced omits the field entirely,
-            // and those get the demo fakes exactly as before.
-            braveApiKey: services.braveApiKey ?? DEFAULTS.braveApiKey,
-            videoEnabled: services.videoEnabled ?? DEFAULTS.videoEnabled,
-            videoApiKey: services.videoApiKey ?? DEFAULTS.videoApiKey,
-            videoDirector: services.videoDirector ?? DEFAULTS.videoDirector,
-            memesEnabled: services.memesEnabled,
-            imgflipUsername: services.memes?.imgflipUsername ?? DEFAULTS.imgflipUsername,
-            imgflipPassword: services.memes?.imgflipPassword ?? DEFAULTS.imgflipPassword,
-            giphyApiKey: services.memes?.giphyApiKey ?? DEFAULTS.giphyApiKey,
             sttModel: services.sttModel,
             sttLanguage: services.sttLanguage ?? DEFAULTS.sttLanguage,
             ttsVoice: services.ttsVoice,
@@ -1325,23 +1153,6 @@ export const useDemoConfig = create<DemoConfigState>()(
               connectedAt: typeof browser.connectedAt === 'number' ? browser.connectedAt : null
             })),
             services: [
-              {
-                key: 'google',
-                connected: services.google.status === 'active',
-                connections: services.google.projectId
-                  ? [{ label: services.google.projectId, detail: 'Gmail · Calendar · Drive' }]
-                  : []
-              },
-              {
-                key: 'github',
-                connected: services.github.length > 0,
-                connections: services.github
-              },
-              {
-                key: 'notion',
-                connected: services.notion.length > 0,
-                connections: services.notion
-              },
               {
                 key: 'browserExtension',
                 connected:
@@ -1391,8 +1202,20 @@ export const useDemoConfig = create<DemoConfigState>()(
     {
       name: 'wolffish.demo-config',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 2,
-      migrate: (persisted) => persisted as DemoConfigState,
+      version: 4,
+      // v3 is the cloud edition: the personal edition's local-engine,
+      // provider-key, Brave-key and desktop-updates fields left the store. v4
+      // retired the desktop's service integrations (the messaging bridges,
+      // memes, the speech engines, computer use). An older state persisted by
+      // an earlier build still carries those keys — the demo's fake
+      // credentials included — and persist would merge them straight back
+      // into memory on rehydrate, so they are dropped here instead.
+      migrate: (persisted) => {
+        const state = { ...(persisted as Record<string, unknown>) }
+        for (const key of DROPPED_IN_V3) delete state[key]
+        for (const key of DROPPED_IN_V4) delete state[key]
+        return state as DemoConfigState
+      },
       // Editable values + snapshot-derived metadata persist; functions and
       // the rebuilt-on-apply services array do not.
       partialize: (state) => {
@@ -1407,8 +1230,7 @@ export const useDemoConfig = create<DemoConfigState>()(
           desktopChangelogMonths: state.desktopChangelogMonths,
           customizationOversized: state.customizationOversized,
           snapshotProcedures: state.snapshotProcedures,
-          snapshotAutomations: state.snapshotAutomations,
-          ollamaRunning: state.ollamaRunning
+          snapshotAutomations: state.snapshotAutomations
         }
         for (const key of Object.keys(DEFAULTS) as Array<keyof DemoConfigValues>) {
           persisted[key] = state[key]
@@ -1454,10 +1276,8 @@ export function setConfigValue<K extends keyof DemoConfigValues>(
  * are desktop-owned mirrors a snapshot refresh will overwrite.
  */
 const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof DemoConfigValues>([
-  'restrictPowerfulModels',
   'bypassPermissions',
   'blockCredentials',
-  'updatesEnabled',
   'weekStartsOn',
   // This phone's own two channel settings. The desktop routes them through
   // the mobile channel's setters, not a bare config write — notifications
@@ -1474,18 +1294,10 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   // that card is deliberately absent: `runMode` and the autostart switch are
   // the OS registration `launchAtStartup` is, which this device reports.
   'cliVerbose',
-  // Services — the whole editable surface of that screen, credentials
-  // included. The extension PORT is deliberately absent on both sides:
-  // moving it restarts the desktop's local pairing server.
-  'braveEnabled',
-  'braveApiKey',
-  'videoEnabled',
-  'videoApiKey',
-  'videoDirector',
-  'memesEnabled',
-  'imgflipUsername',
-  'imgflipPassword',
-  'giphyApiKey',
+  // Services — the editable surface of that screen. Two absences are
+  // deliberate on both sides: the extension PORT (moving it restarts the
+  // desktop's local pairing server) and web search (`braveEnabled` is the
+  // organization's lane, and the desktop refuses a phone write to it).
   'sttModel',
   'sttLanguage',
   'ttsVoice',
@@ -1501,41 +1313,19 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   'soulMarkdown',
   'userMarkdown',
   'agentsMarkdown',
-  // The Model screen and the composer's control cluster. Each maps onto the
-  // exact handler its desktop control calls (provider:setMode,
-  // runtime:setThinkingMode, runtime:setLocalOnly, model:select,
-  // provider:setBrain), so a pick on either screen is the same act.
-  // `localModel` only ever names a model the desktop has already pulled —
-  // the picker lists its /api/tags — and the desktop refuses anything else
-  // rather than starting a download.
+  // The composer's control cluster and the model. Each maps onto the exact
+  // handler its desktop control calls (provider:setMode,
+  // runtime:setThinkingMode, model:select), so a pick on either screen is
+  // the same act. `brainModel` is the org lane's one choice — the API is the
+  // authority on validity — and the provider id is display-only, never sent.
   'chatMode',
   'thinkingMode',
-  'localOnly',
-  'localModel',
-  'brainProvider',
   'brainModel',
-  // The provider cards, as one array. The desktop applies per-entry diffs
-  // and ignores its own masked key previews, so only a newly typed key (or
-  // a model choice) actually lands — pushing the array is safe even though
-  // most of it is mirror.
-  'providers',
-  // Channels — every editable row. The Telegram/WhatsApp power switches are
-  // deliberately absent on both sides: starting a bridge process is the
-  // desktop's own act, and those rows render as status here.
+  // Channels — every editable row.
   'inappVerbose',
   // The desktop's floating automation cards — that machine's setting, edited
   // from here exactly as the feed switch above it is.
   'inappRunCards',
-  'telegramAllowedUserIds',
-  'telegramAutoRefresh',
-  'telegramStaleHours',
-  'telegramVerbose',
-  'telegramHideAutomations',
-  'whatsappAllowedNumbers',
-  'whatsappAutoRefresh',
-  'whatsappStaleHours',
-  'whatsappVerbose',
-  'whatsappHideAutomations',
   // The MCP switches, as one name→enabled map — the desktop diffs it against
   // its server list and toggles through the same path its own panel uses.
   // Adding servers, headers and OAuth remain desktop tasks.
@@ -1569,7 +1359,7 @@ async function pushToDesktop<K extends keyof DemoConfigValues>(
   value: DemoConfigValues[K]
 ): Promise<void> {
   if (!DESKTOP_EDITABLE.has(key)) return
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return
   // Dirty from this very tick: a snapshot request already in the air was
   // answered before the desktop saw this write, and without the epoch moving
@@ -1614,8 +1404,8 @@ export async function saveDesktopSetting<K extends keyof DemoConfigValues>(
   const { paired } = useAppStore.getState()
   if (!paired) return true
   if (!DESKTOP_EDITABLE.has(key)) return false
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return false
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return false
   // Same in-flight guard as pushToDesktop: dirty for the round trip, so a
   // racing snapshot cannot undo the row while the desktop's answer is due.
   markOutboxEdited(key)
@@ -1667,10 +1457,23 @@ export async function saveCustomizationDoc(
  * only this module sits below the two of them in the import graph.
  */
 export async function refreshConfigSnapshot(): Promise<void> {
-  const tunnel = tunnelClient.active
-  if (!tunnel) return
   const before = captureOutboxState()
-  const snapshot = (await tunnel.rpc(Rpc.configSnapshot)) as ConfigSnapshot
+  // The desktop itself while it is on the bridge, the org's synced copy
+  // otherwise (lib/sync/snapshot) — either way the same object.
+  const snapshot = (await fetchConfigSnapshot()) as ConfigSnapshot | null
+  if (!snapshot) return
+  const keepLocal = outboxKeysToKeepLocal(before) as Array<keyof DemoConfigValues>
+  useDemoConfig.getState().applySnapshot(snapshot, keepLocal.length ? { keepLocal } : undefined)
+}
+
+/**
+ * A snapshot that arrived WITH its change push — no fetch window to
+ * bracket, so the instantaneous dirty set is the whole guard: a push
+ * landing mid-edit loses to the edit, and the ack that settles it is what
+ * lets the next push land desktop truth.
+ */
+export function applyPushedSnapshot(snapshot: ConfigSnapshot): void {
+  const before = captureOutboxState()
   const keepLocal = outboxKeysToKeepLocal(before) as Array<keyof DemoConfigValues>
   useDemoConfig.getState().applySnapshot(snapshot, keepLocal.length ? { keepLocal } : undefined)
 }
@@ -1699,14 +1502,14 @@ export function applyVariablesPush(rows: unknown): void {
  */
 export function settingsAreReadOnly(): boolean {
   const { paired } = useAppStore.getState()
-  return paired && !tunnelClient.connected
+  return paired && !bridgeClient.connected
 }
 
 /** Reactive form of the above, for screens that need to disable their controls. */
 export function useSettingsReadOnly(): boolean {
   const paired = useAppStore((state) => state.paired)
-  const [connected, setConnected] = useState(tunnelClient.connected)
-  useEffect(() => tunnelClient.subscribe((state) => setConnected(state.status === 'connected')), [])
+  const [connected, setConnected] = useState(bridgeClient.connected)
+  useEffect(() => bridgeClient.subscribe((state) => setConnected(state.status === 'connected')), [])
   return paired && !connected
 }
 

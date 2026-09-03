@@ -149,7 +149,7 @@ describe('buildConversationRows', () => {
       metas: [
         meta('bound', NOW - 1, { projectId: 'p1', icon: '🤖' }),
         meta('stamped', NOW - 2, { icon: '🫀' }),
-        meta('plain', NOW - 3, { channel: 'telegram' })
+        meta('plain', NOW - 3, { channel: 'cli' })
       ],
       projects: [{ id: 'p1', icon: '📕' }],
       untitled: UNTITLED,
@@ -158,7 +158,7 @@ describe('buildConversationRows', () => {
     // The project's own icon beats the conversation's stamp — an icon renamed
     // on the desktop has to propagate rather than sit frozen on the row.
     expect(rows.map((row) => row.icon)).toEqual(['📕', '🫀', null])
-    expect(rows[2].channel).toBe('telegram')
+    expect(rows[2].channel).toBe('cli')
   })
 
   it('falls back to the untitled label rather than showing the sentinel', () => {

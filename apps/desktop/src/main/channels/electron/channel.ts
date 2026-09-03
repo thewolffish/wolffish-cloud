@@ -8,7 +8,7 @@ import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import { mintMessageId, type ConversationMessage } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import { appendTextSegment, upsertTaskSegment, upsertWorkflowSegment } from '@main/runtime/broca'
+import { appendTextSegment, upsertWorkflowSegment } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -16,7 +16,7 @@ import type { WebContents } from 'electron'
 
 /**
  * Min gap between live mirror snapshots of an in-flight in-app turn — same
- * budget as the Telegram/WhatsApp mirrors, for the same reason: a fast text
+ * budget as the phone and terminal mirrors, for the same reason: a fast text
  * stream must not emit (and make the phone re-render) per token.
  */
 const MIRROR_THROTTLE_MS = 500
@@ -97,7 +97,7 @@ export class ElectronChannel {
 
   /**
    * Live out-of-window mirror for in-app turns — the missing quarter of the
-   * mirror matrix. Telegram/WhatsApp turns mirror INTO the renderer (and the
+   * mirror matrix. Terminal turns mirror INTO the renderer (and the
    * phone); phone turns stream through the mobile channel's own sink; but an
    * in-app turn only ever streamed to its renderer, so a paired phone showed
    * nothing until the end-of-turn save landed. index.ts points this at the
@@ -345,13 +345,12 @@ export class ElectronChannel {
         if (!this.mirrorListener || !conversationId) return
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
-        else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
-        scheduleMirror(segment.kind === 'task')
+        scheduleMirror(false)
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {

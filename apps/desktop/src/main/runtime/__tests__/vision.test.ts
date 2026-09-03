@@ -1,8 +1,8 @@
 /**
- * Vision capability gate tests — the well-known-family check that keeps
- * image blocks away from text-only model APIs (the DeepSeek HTTP 400
- * `unknown variant image_url` class of failure), plus the strip helpers
- * that replace visual content with an explanatory note.
+ * Vision capability gate tests — the name-marker fallback that keeps image
+ * blocks away from text-only model APIs when the org catalog cannot answer
+ * (the DeepSeek HTTP 400 `unknown variant image_url` class of failure), plus
+ * the strip helpers that replace visual content with an explanatory note.
  *
  * Run: npx tsx src/main/runtime/__tests__/vision.test.ts
  */
@@ -36,93 +36,19 @@ function check(label: string, actual: unknown, expected: unknown): void {
 // ---------------------------------------------------------------------------
 
 const CASES: Array<[provider: string, model: string, vision: boolean]> = [
-  // deepseek — text-only chat lineup (the original bug); the vision-exp
-  // drop of 2026-08-21 rides the `vision` name marker
-  ['deepseek', 'deepseek-v4-pro', false],
-  ['deepseek', 'deepseek-v4-flash', false],
-  ['deepseek', 'deepseek-chat', false],
-  ['deepseek', 'deepseek-reasoner', false],
-  ['deepseek', 'deepseek-v4-flash-vision-exp', true],
-  // anthropic — every Claude chat model accepts images
-  ['anthropic', 'claude-sonnet-4-5', true],
-  ['anthropic', 'claude-fable-5', true],
-  ['anthropic', 'claude-haiku-4-5-20251001', true],
-  // openai — vision families with text-only exceptions
-  ['openai', 'gpt-4o', true],
-  ['openai', 'gpt-4o-mini', true],
-  ['openai', 'gpt-4.1', true],
-  ['openai', 'gpt-4-turbo', true],
-  ['openai', 'gpt-5', true],
-  ['openai', 'chatgpt-4o-latest', true],
-  ['openai', 'o3', true],
-  ['openai', 'o4-mini', true],
-  ['openai', 'o3-mini', false],
-  ['openai', 'o1-mini', false],
-  ['openai', 'o1-preview', false],
-  ['openai', 'gpt-3.5-turbo', false],
-  ['openai', 'gpt-4', false],
-  ['openai', 'gpt-4-0613', false],
-  ['openai', 'gpt-4-32k', false],
-  // xai — grok-4 onward is multimodal; older lines need the vision marker
-  ['xai', 'grok-4.6', true],
-  ['xai', 'grok-4.5', true],
-  ['xai', 'grok-4', true],
-  ['xai', 'grok-4-fast-non-reasoning', true],
-  ['xai', 'grok-2-vision-1212', true],
-  ['xai', 'grok-3-mini', false],
-  // kimi / moonshot — k2.5+/k3 natively multimodal (verified live);
-  // pre-k2.5 and bare moonshot-v1 are text-only
-  ['kimi', 'kimi-k3', true],
-  ['kimi', 'kimi-k2.7-code', true],
-  ['kimi', 'kimi-k2.7-code-highspeed', true],
-  ['kimi', 'kimi-k2.6', true],
-  ['kimi', 'kimi-k2.5', true],
-  ['kimi', 'kimi-k2-0905-preview', false],
-  ['kimi', 'moonshot-v1-auto', false],
-  ['kimi', 'moonshot-v1-8k-vision-preview', true],
-  ['kimi', 'kimi-vl-a3b-thinking', true],
-  // qwen — qwen3.8-max natively multimodal (verified live 2026-08-03);
-  // earlier bare qwen3.x lines stay text-only.
-  ['qwen', 'qwen3.8-max', true],
-  ['qwen', 'qwen3.7-max', false],
-  ['qwen', 'qwen-max', false],
-  ['qwen', 'qwen-plus', false],
-  ['qwen', 'qwen2.5-vl-72b-instruct', true],
-  ['qwen', 'qwen-omni-turbo', true],
-  ['qwen', 'qvq-max', true],
-  // minimax
-  ['minimax', 'minimax-m2', false],
-  ['minimax', 'minimax-vl-01', true],
-  // mimo
-  ['mimo', 'mimo-7b-rl', false],
-  ['mimo', 'mimo-vl-7b', true],
-  // stepfun
-  ['stepfun', 'step-2-16k', false],
-  ['stepfun', 'step-1v-32k', true],
-  ['stepfun', 'step-1.5v-mini', true],
-  ['stepfun', 'step-1o-turbo-vision', true],
-  // zai / GLM — bare chat models are text-only (verified live: glm-5.2
-  // rejects image parts); only the glm-*v variants are multimodal
-  ['zai', 'glm-4.5', false],
-  ['zai', 'glm-4.5-air', false],
-  ['zai', 'glm-4.6', false],
-  ['zai', 'glm-5.2', false],
-  ['zai', 'glm-5-turbo', false],
-  ['zai', 'glm-4.5v', true],
-  ['zai', 'glm-4.6v', true],
-  ['zai', 'glm-5v-turbo', true],
-  // openrouter — namespaced ids route to family rules
-  ['openrouter', 'anthropic/claude-opus-4.1', true],
-  ['openrouter', 'google/gemini-2.5-flash', true],
-  ['openrouter', 'openai/gpt-4o', true],
-  ['openrouter', 'openai/o3-mini', false],
-  ['openrouter', 'x-ai/grok-4', true],
-  ['openrouter', 'meta-llama/llama-3.2-90b-vision-instruct', true],
-  ['openrouter', 'mistralai/pixtral-large-2411', true],
-  ['openrouter', 'deepseek/deepseek-chat-v3.1', false],
-  ['openrouter', 'moonshotai/kimi-k2', false],
-  ['openrouter', 'moonshotai/kimi-k3', true],
-  ['openrouter', 'moonshotai/kimi-k2.6', true],
+  // The one lane: the org catalog decides for a model it describes; these
+  // exercise the cold-cache fallback — the vendor-agnostic name markers.
+  ['cloud', 'deepseek-ai/DeepSeek-V4-Flash-0731', false],
+  ['cloud', 'deepseek-ai/DeepSeek-V4-Pro-0813', false],
+  ['cloud', 'deepseek-ai/deepseek-v4-flash-vision-exp', true],
+  ['cloud', 'some-vendor/model-vl-9b', true],
+  ['cloud', 'some-vendor/model-vision-preview', true],
+  ['cloud', 'some-vendor/omni-1', true],
+  ['cloud', 'some-vendor/llava-13b', true],
+  ['cloud', 'some-vendor/pixtral-large-2411', true],
+  ['cloud', 'some-vendor/qvq-max', true],
+  ['cloud', 'some-vendor/qwen3-8b', false],
+  ['cloud', 'some-vendor/glm-5.2', false],
   // unknown providers default to text-only unless the name says otherwise
   ['someprovider', 'shiny-new-model', false],
   ['someprovider', 'shiny-vl-9000', true],

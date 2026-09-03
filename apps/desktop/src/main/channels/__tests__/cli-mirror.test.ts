@@ -146,26 +146,8 @@ async function main(): Promise<void> {
     assert.equal(mirrors.length, 1, 'mirrored per token — the app would thrash')
   })
 
-  // A task card flushes immediately: those represent minutes of work, and
-  // waiting out a text throttle to show one would defeat the purpose.
-  sink.onSegment({
-    kind: 'task',
-    turnId: 'turn_test_1',
-    segmentId: 's3',
-    snapshot: {
-      kind: 'video',
-      taskId: 'task1',
-      conversationId: started.conversationId,
-      title: 'Render video',
-      status: 'running',
-      createdAt: 1,
-      updatedAt: 2,
-      estimateSeconds: 90
-    }
-  })
-  check('a task card flushes immediately, past the throttle', () => {
-    assert.equal(mirrors.length, 2, 'task card waited for the text throttle')
-  })
+  // The throttled delta lands on the trailing tick, once the window elapses.
+  await new Promise((r) => setTimeout(r, 650))
 
   check('every tick keeps the SAME message id, so the app upserts one bubble', () => {
     const ids = new Set(mirrors.map((m) => (m.message as { id: string }).id))

@@ -43,7 +43,6 @@ jest.mock('@/components/chat/ChatControls', () => {
 jest.mock('@/components/chat/ModelSwitch', () => {
   const { Text } = require('react-native')
   return {
-    ModelSelector: () => <Text>model-selector</Text>,
     ModelSwitch: () => <Text>model-switch</Text>
   }
 })
@@ -55,8 +54,8 @@ jest.mock('@/lib/sync/prompt', () => ({
 }))
 
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: jest.fn(), connected: true } : null
     },
@@ -73,7 +72,7 @@ import { ProjectDialog } from '@/components/workspace/ProjectDialog'
 import { Composer } from '@/components/chat/Composer'
 import { queryClient } from '@/lib/query/queryClient'
 import { projectKeys } from '@/lib/sync/projects'
-import type { SyncProject } from '@/lib/tunnel/protocol'
+import type { SyncProject } from '@/lib/bridge/protocol'
 import { ThemeContext } from '@/providers/theme/useTheme'
 import { ToastProvider } from '@/providers/toast/ToastProvider'
 import { useChatRuntime } from '@/state/chatRuntime'

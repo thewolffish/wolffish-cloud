@@ -12,7 +12,7 @@ export default defineConfig(
       '**/dist',
       '**/out',
       // Bundled workspace defaults are user-facing assets copied into
-      // ~/.wolffish on first launch. Plugin code there is JavaScript the
+      // ~/.wfc on first launch. Plugin code there is JavaScript the
       // user can edit — not part of the app's TypeScript source.
       'src/defaults/workspace/**',
       'scripts/**'

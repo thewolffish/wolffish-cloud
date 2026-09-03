@@ -7,23 +7,23 @@ import {
 } from '@/lib/files/fileCache'
 import { classifyFile } from '@/lib/files/fileKinds'
 import type { PickedFile } from '@/lib/files/pickAttachments'
-import { uploadFileToDesktop } from '@/lib/sync/files'
+import { chooseUploadPath, uploadFileToCloud } from '@/lib/sync/files'
+import { mintConversationId } from '@/lib/conversations/types'
 
 /**
  * Getting the composer's staged files onto the desktop, in the order that keeps
  * the chat honest at every step.
  *
- * The desktop owns the workspace, so it also owns the path: a file dropped on
- * its composer lands in `uploads/conv-…/` under a name IT picks (collisions
- * rename Finder-style), and a file sent from here has to land in exactly the
- * same place — that is the whole point. But the desktop can only answer with
- * that name once the last byte has arrived, and over the relay that is seconds
- * for a photo and a minute for a video. The message is on screen from the tap.
+ * The file lands in the org first — content-addressed, under the workspace
+ * path this phone chooses the way the desktop would (`uploads/conv-…/`,
+ * renamed Finder-style on a collision) — and the desktop fetches it from
+ * there when the message that names it arrives. Uploading a photo is a
+ * second or two; the message is on screen from the tap.
  *
  * So the bytes move twice:
  *
  *   pick   → staged path in the workspace   (bubble renders from the cache)
- *   commit → the desktop's chosen path      (bubble re-renders, same bytes)
+ *   upload → the chosen workspace path      (bubble re-renders, same bytes)
  *
  * Both are cache hits, so neither transition costs a download or a frame — the
  * second one is invisible. And because the phone keeps a copy under the real
@@ -41,8 +41,9 @@ export type DeliveryResult = {
   attachments: MessageAttachment[]
   /** Names of files whose transfer broke. The rest of the message still sends. */
   failed: string[]
-  /** The conversation the files landed in — minted by the desktop when the
-   *  message that carries them is the first one. */
+  /** The conversation the files landed in — minted HERE when the message
+   *  that carries them is the first one; the desktop creates it under this
+   *  id when the send arrives. */
   conversationId: string | null
 }
 
@@ -78,20 +79,20 @@ export function stagedAttachment(entry: StagedAttachment): MessageAttachment {
 }
 
 /**
- * Upload every staged file and answer with the attachments the message should
- * carry — the desktop's own metadata, with the phone's measurements added back
- * (it records width/height/duration for its own uploads; the phone is the only
- * side that knows them for a library asset).
+ * Upload every staged file to the org and answer with the attachments the
+ * message should carry — the workspace path each landed under, its content
+ * hash (how the desktop fetches it from the org before the turn runs), and
+ * the phone's measurements (width/height/duration for a library asset).
  *
- * Sequential on purpose. Each upload is a run of ordered chunk RPCs and the
- * desktop refuses anything out of order, so interleaving two of them buys
- * nothing and risks the file. A batch does not fail fast: one broken transfer
- * costs its own file, exactly as a bad file costs only itself on the desktop.
+ * The path is the phone's to choose now, so it is chosen the way the
+ * desktop would: `uploads/conv-<id>/<name>`, renamed Finder-style when the
+ * org already holds a live blob there. A message without a conversation yet
+ * MINTS one here — the desktop creates it under this id when the send
+ * arrives — so the files have a home before the prompt is even sent.
  *
- * Only call this with a live connection — the send path checks once, for the
- * whole message, and files everything locally when there is no desktop to
- * reach. A tunnel that drops PART WAY through is a different thing and is
- * reported as what it is: those files failed, and the user is told which.
+ * Sequential on purpose: one upload at a time keeps the progress honest and
+ * a broken transfer costs its own file only. Only call this signed in; a
+ * transfer that breaks mid-batch is reported as what it is.
  */
 export async function uploadForSend(
   entries: StagedAttachment[],
@@ -99,31 +100,32 @@ export async function uploadForSend(
 ): Promise<DeliveryResult> {
   const attachments: MessageAttachment[] = []
   const failed: string[] = []
-  let target = conversationId
+  const target = conversationId ?? mintConversationId()
 
   for (const entry of entries) {
     try {
-      const result = await uploadFileToDesktop(
-        entry.staged.uri,
-        entry.picked.name,
-        entry.picked.mimeType,
-        target
-      )
-      // Null is uploadFileToDesktop's "nothing is connected". Reaching it here
-      // means the link died mid-batch — this file did not go.
-      if (!result) throw new Error('tunnel went away mid-upload')
-
-      target = result.conversationId
-      // The staged bytes ARE the file the desktop now holds: move them to the
-      // path it chose, so the bubble's re-render is a cache hit rather than a
-      // download of what this phone just finished uploading.
-      await importLocalFile(entry.staged.uri, result.attachment.filePath, target)
+      const filePath = await chooseUploadPath(`uploads/conv-${target}`, entry.picked.name)
+      const uploaded = await uploadFileToCloud(entry.staged.uri, filePath, entry.picked.mimeType)
+      // The staged bytes ARE the file the org now holds: move them to the
+      // path they were uploaded under, so the bubble's re-render is a cache
+      // hit rather than a download of what this phone just sent.
+      await importLocalFile(entry.staged.uri, filePath, target)
       discardStagedFile(entry.staged.relPath)
-      attachments.push({ ...result.attachment, ...media(entry.picked) })
-    } catch {
+      attachments.push({
+        type: attachmentTypeFor(entry.picked.name),
+        filePath,
+        originalName: entry.picked.name,
+        mimeType: uploaded.mimeType,
+        sizeBytes: uploaded.sizeBytes,
+        sha256: uploaded.sha256,
+        ...media(entry.picked)
+      })
+    } catch (error) {
       // The transfer broke. Say so rather than sending a message that claims a
-      // file the desktop has no bytes for — it would drop the attachment on
-      // arrival and the model would never learn there was one.
+      // file the org has no bytes for — the desktop would drop the attachment
+      // on arrival and the model would never learn there was one. The reason
+      // goes to the console: the toast names the file, not the cause.
+      console.warn(`[attachments] upload of ${entry.picked.name} failed:`, error)
       discardStagedFile(entry.staged.relPath)
       failed.push(entry.picked.name)
     }

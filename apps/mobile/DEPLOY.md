@@ -1,18 +1,22 @@
-# DEPLOY.md — Wolffish Mobile Deployment Procedure
+# DEPLOY.md — Wolffish Cloud Mobile Deployment Procedure
 
-Instructions for an agent **deploying the next version** of `wolffish-mobile`: check the work, write the app's own release notes, commit it, then decide which of the two ship paths this batch belongs on and run **exactly one** of them.
+Instructions for an agent **deploying the next version** of `wfc-mobile`: check the work, write the app's own release notes, commit it, then decide which of the two ship paths this batch belongs on and run **exactly one** of them.
+
+> **Status in wolffish-cloud**
+>
+> The phone is a signed-in device of the organization: it pairs by claiming an org session and reads the record from `api.wolffi.sh`, reaching the desktop over the API's per-user bridge for live turns. Where this document names the desktop, it means [`apps/desktop`](../desktop) in this monorepo.
 
 There are two, and the whole procedure exists to pick correctly between them:
 
-| | **`npm run ota`** | **`npm run provision`** |
-|---|---|---|
-| Carries | JS, assets, locales | Everything, including native |
-| Publishes | **Yes** — every installed phone, in minutes | **No** — a version in git and nowhere else |
-| Bumps | `APP_VERSION` | `APP_VERSION` **and** `CODE_VERSION` |
-| Tags | `vX.Y.Z` — fires the Release workflow | Nothing |
-| Undo | `npm run rollback` (the user's lever) | Nothing to undo |
-| Notes you author | In-app changelog only | In-app changelog **+ store notes** (App Store “What's New” · Play release notes) |
-| Left for the user | Nothing | EAS build → submit → `npm run release` |
+|                   | **`npm run ota`**                           | **`npm run provision`**                                                          |
+| ----------------- | ------------------------------------------- | -------------------------------------------------------------------------------- |
+| Carries           | JS, assets, locales                         | Everything, including native                                                     |
+| Publishes         | **Yes** — every installed phone, in minutes | **No** — a version in git and nowhere else                                       |
+| Bumps             | `APP_VERSION`                               | `APP_VERSION` **and** `CODE_VERSION`                                             |
+| Tags              | `vX.Y.Z` — fires the Release workflow       | Nothing                                                                          |
+| Undo              | `npm run rollback` (the user's lever)       | Nothing to undo                                                                  |
+| Notes you author  | In-app changelog only                       | In-app changelog **+ store notes** (App Store “What's New” · Play release notes) |
+| Left for the user | Nothing                                     | EAS build → submit → `npm run release`                                           |
 
 **`ota` is a publish.** It reaches users before anyone can look at it again. `provision` reaches no one. That asymmetry drives every rule below.
 
@@ -34,6 +38,9 @@ Follow the steps **in order**. If anything looks wrong, **stop and report** (see
 - **A `provision` also needs store notes; an `ota` never does.** A provisioned version is going through App Store review and a Play rollout, and both submission forms have a notes field the user fills in by hand — so `store/v<X.Y.Z>/` gets two plain-text files (step 5). An OTA is submitted to no one: writing store notes on that path invents a submission that will never happen. This is the only asymmetry in what you author between the two paths.
 - **A new month needs a code change too.** `src/lib/changelog/index.ts` holds a `PAGES` registry of **static** imports — Metro cannot glob a folder, so a new `src/changelog/<YYYY-MM>/` directory that isn't registered there ships as a month the app cannot read.
 - **Commit everything before you ship.** Both scripts refuse a dirty working tree, and their own commit deliberately carries nothing but the bump — so your work has to already be a commit of its own.
+- **This is not the personal edition's app, and it must never publish as one.** `sh.wolffi.cloud.mobile` / scheme `wolffishcloud` / Expo slug `wolffish-cloud-mobile` are a different app from the personal `sh.wolffi.mobile` / `wolffish` / `wolffish-mobile`, and the two are expected to sit side by side on one device. Publishing this tree under the personal project would push these binaries and OTA updates onto the personal app's installs, which no rollback undoes. Before any ship command, confirm `app.config.ts` still reads `sh.wolffi.cloud.mobile` and that the EAS project the CLI reports is the cloud one.
+- **The EAS project is unlinked until someone links it.** `EXPO_PROJECT_ID` is `null` on purpose (see the comment in `app.config.ts`), so `extra.eas` and `updates` are omitted, OTA is off, and `eas build` stops to ask. **Neither ship path can run in this state**, and the fix is the account owner's: `npx eas init` under the cloud account, which writes the new id back. Do not paste an id you found somewhere.
+- **Android push is dark until Firebase knows this package.** `googleServicesFile` is commented out in `app.config.ts` because the committed `google-services.json` registers `sh.wolffi.mobile`; feeding it to the plugin under this package fails the prebuild outright. Register `sh.wolffi.cloud.mobile` in the Firebase console, replace the file, restore the line. iOS push is unaffected. Say so in the report if you ship before it is done.
 - **Stay on `main`.** No branches.
 - **When in doubt, stop.** A halted deploy costs nothing. Stopping before step 7 costs nothing at all.
 
@@ -67,16 +74,16 @@ npx jest --silent
 
 ### 3. The sync gate
 
-The phone is a mirror of a desktop it reaches over an end-to-end encrypted tunnel, and **the connection is the product**. If the diff touches `src/lib/tunnel/`, `src/lib/sync/`, or `src/state/demoConfig.ts`, these checks run before anything else happens. A deploy that splits the protocol from the desktop is the one failure this app cannot recover from on its own: paired phones stop syncing, and the fix has to travel through the same broken channel.
+The phone is a mirror of the organization's record and a remote for the desktop it reaches over the API's bridge, and **the connection is the product**. If the diff touches `src/lib/cloud/`, `src/lib/bridge/`, `src/lib/sync/`, or `src/state/demoConfig.ts`, these checks run before anything else happens. A deploy that splits the wire from the desktop is the one failure this app cannot recover from on its own: paired phones stop running turns, and the fix has to travel through the same broken channel.
 
-1. **Wire files are shared with `wolffish-app`.** `noise.ts` is **byte-identical** with `wolffish-app/src/main/tunnel/`; `protocol.ts` is **code-identical** — its doc comments are allowed to differ, because each repo's copy narrates the contract from its own seat (a mobile-only relay frame reads "the desktop never sends or receives it" over there); `pairing.ts` and `tunnel.ts` are identical **except for import specifiers** (`@/lib/tunnel/…` here, `./` there) plus two handler generics in `tunnel.ts`. Verify with:
+1. **The wire file is shared with the desktop app (`apps/desktop`).** `src/lib/bridge/protocol.ts` is **byte-identical** with `apps/desktop/src/main/cloud/bridge-protocol.ts`. Verify with:
    ```bash
-   diff -r src/lib/tunnel ../wolffish-app/src/main/tunnel
+   diff src/lib/bridge/protocol.ts ../desktop/src/main/cloud/bridge-protocol.ts
    ```
-   Beyond those known deltas, any diff line outside a `/** … */` comment is a protocol split. **Stop and report it.**
-2. **A new `Rpc` method or `Event` topic is a two-repo change.** The mobile half alone compiles fine and does nothing — the desktop must serve the method or emit the topic, and a `configSet` key must be on the desktop's whitelist. If the desktop half isn't in place, the batch is half-finished: stop.
-3. **Both directions still work.** Confirm against a real paired desktop, not by typecheck: pair, background and foreground the app (the socket dies on suspend by design and must re-handshake), and check that an edit made on the phone lands on the desktop and an edit made on the desktop lands on the phone.
-4. **Reconnect is idempotent.** `attachLiveUpdates` / `attachTurnStream` re-run on every connection and must replace handlers, not stack them. New push-only state also needs a seed on connect — see `seedOverlays`.
+   Any output is a protocol split. **Stop and report it.**
+2. **A new `Rpc` method or `Event` topic is a two-app change, and a new route is an `apps/api` change first.** The mobile half alone compiles fine and does nothing — the desktop must serve the method or emit the topic, the API must answer the route, and a `configSet` key must be on the desktop's whitelist. If the other half isn't deployed, the batch is half-finished: stop.
+3. **Both directions still work.** Confirm against a real paired desktop, not by typecheck: pair, background and foreground the app (the socket dies on suspend by design and must re-dial), check that an edit made on the phone lands on the desktop and an edit made on the desktop lands on the phone — then quit the desktop and confirm the phone still reads and reports the desktop as away.
+4. **Reconnect is idempotent.** `attachLiveUpdates` / `attachTurnStream` re-run on every socket and must replace handlers, not stack them. New push-only state also needs a seed on the desktop's appearance — see `seedOverlays`.
 
 If any of these can't be confirmed, the deploy isn't ready. Report and stop.
 
@@ -100,11 +107,11 @@ done
 
 - **Every platform's pair matches** → gate A passes. Record the hashes; they go in the report.
 - **Any pair differs** → **store build.** Something moved the native surface. Do not argue with it, do not look for a way around it: `provision`.
-- **A platform reports `none`** → no shipped store build there yet, so nothing on that platform can receive an update. If *no* platform has one, OTA is impossible: `provision`.
+- **A platform reports `none`** → no shipped store build there yet, so nothing on that platform can receive an update. If _no_ platform has one, OTA is impossible: `provision`.
 
-What the fingerprint covers, and therefore what silently forks the runtime: autolinked native modules (so any dependency change), config plugins including `plugins/withQuietIosBuild.js`, the evaluated `app.config.ts`, `eas.json`, `.gitignore`, and the config's external assets — **the app icon, the splash image and the bundled fonts are in the fingerprint**, which is the one people get wrong. What it does *not* cover: everything under `src/`. Pure JS and TS never move the hash. That is the point, and it is also why gate A alone is not enough.
+What the fingerprint covers, and therefore what silently forks the runtime: autolinked native modules (so any dependency change), config plugins including `plugins/withQuietIosBuild.js`, the evaluated `app.config.ts`, `eas.json`, `.gitignore`, and the config's external assets — **the app icon, the splash image and the bundled fonts are in the fingerprint**, which is the one people get wrong. What it does _not_ cover: everything under `src/`. Pure JS and TS never move the hash. That is the point, and it is also why gate A alone is not enough.
 
-The `fix:fingerprint` line is not ceremony, and it is the one false mismatch this gate can produce. `@react-native-masked-view/masked-view` rewrites its own `AndroidManifest.xml` **inside `node_modules`** from its `build.gradle`, at Gradle configuration time — so any local `npm run android` strips an attribute from an installed dependency, and that directory is hashed as an autolinked native source on **both** platforms. EAS installs fresh and fingerprints before Gradle runs, so it never sees the edit: local and EAS then disagree, `eas build` fails with *"Runtime version calculated on local machine not equal to runtime version calculated during build"*, and this gate reports a mismatch for a batch that never touched the native surface. `scripts/fix-fingerprint-drift.js` puts the attribute back (idempotent, and inert for the build itself — Gradle re-strips it next time). `ota`, `ios:prod`, `android:prod` and `android:preview` all run it for you; the snippet above needs it because it calls `fingerprint:generate` directly. A mismatch that survives it is real: obey the bullet above.
+The `fix:fingerprint` line is not ceremony, and it is the one false mismatch this gate can produce. `@react-native-masked-view/masked-view` rewrites its own `AndroidManifest.xml` **inside `node_modules`** from its `build.gradle`, at Gradle configuration time — so any local `npm run android` strips an attribute from an installed dependency, and that directory is hashed as an autolinked native source on **both** platforms. EAS installs fresh and fingerprints before Gradle runs, so it never sees the edit: local and EAS then disagree, `eas build` fails with _"Runtime version calculated on local machine not equal to runtime version calculated during build"_, and this gate reports a mismatch for a batch that never touched the native surface. `scripts/fix-fingerprint-drift.js` puts the attribute back (idempotent, and inert for the build itself — Gradle re-strips it next time). `ota`, `ios:prod`, `android:prod` and `android:preview` all run it for you; the snippet above needs it because it calls `fingerprint:generate` directly. A mismatch that survives it is real: obey the bullet above.
 
 `ota` re-runs this exact comparison itself and exits before writing, committing or publishing anything if it fails — so a wrong answer here fails safe rather than shipping. That is a backstop, **not** a substitute for deciding: "run it and see if it stops me" is not a decision, and it is not what gate B checks at all.
 
@@ -112,13 +119,13 @@ The `fix:fingerprint` line is not ceremony, and it is the one false mismatch thi
 
 Gate A is blind to `src/`, and that is where the batch's actual risk lives. Any **yes** here means `provision`, regardless of how cleanly gate A passed:
 
-- **Does it touch the tunnel, sync or protocol, without step 3's live two-way check having actually been run against a real paired desktop?** An OTA that splits the protocol lands on every phone at once and breaks the only channel the fix can travel through. A green typecheck is not evidence here.
+- **Does it touch the cloud client, the bridge, sync or the protocol, without step 3's live two-way check having actually been run against a real paired desktop?** An OTA that splits the protocol lands on every phone at once and breaks the only channel the fix can travel through. A green typecheck is not evidence here.
 - **Does it bump `SCHEMA_VERSION` in `src/lib/db/database.ts`, or otherwise rewrite on-device data?** Migrations are forward-only — `rollback` restores the JS, never the database. An additive column survives a rollback; a destructive migration leaves the restored JS reading a database it no longer understands.
 - **Is any `EXPO_PUBLIC_*` variable set in your shell?** Check before you publish:
   ```bash
   env | grep EXPO_PUBLIC
   ```
-  Expo inlines these **at bundle time**, and `ota` bundles from wherever it is run. There is no `.env` file in this repo, so a live shell is the only way one can reach a bundle — but the demo workflow sets `EXPO_PUBLIC_DEMO_BASE_URL` to a local bundle server, and a shell that has it lives as long as its terminal tab. Inlined into an OTA it points every phone's demo mode at a machine that isn't theirs, and nothing catches it: not the fingerprint, not `tsc`, not jest. Production wants them **unset** so the code takes its own defaults (`src/lib/demo/importer.ts:39`, `src/lib/api/client.ts:9`). Anything set → clear it and publish from a clean shell.
+  Expo inlines these **at bundle time**, and `ota` bundles from wherever it is run. There is no `.env` file in this repo, so a live shell is the only way one can reach a bundle — but the demo workflow sets `EXPO_PUBLIC_DEMO_BASE_URL` to a local bundle server, and a shell that has it lives as long as its terminal tab. Inlined into an OTA it points every phone's demo mode at a machine that isn't theirs, and nothing catches it: not the fingerprint, not `tsc`, not jest. Production wants them **unset** so the code takes its own defaults (`src/lib/demo/importer.ts:39`). Anything set → clear it and publish from a clean shell.
 - **Is there a UI or behavior change nobody exercised on a device?** Then no one has seen this run. Go do the device check, or `provision`.
 - **Is `CODE_VERSION` in `app.config.ts` ahead of the build gate A matched against?** Then a provisioned build was never shipped. Users are still on the older binary, so the update reaches them fine — but someone provisioned that build for a reason, and `ota` will label the commit `over build <CODE_VERSION>` rather than the build it actually verified against. Find out why before publishing over it.
 - **Is anything half-finished, feature-flagged off, or waiting on a desktop half that isn't live yet?** Store review is a useful delay; OTA removes it.
@@ -137,19 +144,19 @@ Only reach this step if steps 2 and 3 came back clean and the batch has user-fac
 
 Two audiences, and step 4 decides how many of them you write for:
 
-| | Who reads it | Which path |
-|---|---|---|
-| **In-app changelog** — `src/changelog/<YYYY-MM>/{en,ar}.md` | Someone already using the app, on the Changelog screen | **Both** |
-| **Store notes** — `store/v<X.Y.Z>/*.txt` | Someone looking at the App Store or Play listing, deciding whether to update | **`provision` only** |
+|                                                             | Who reads it                                                                 | Which path           |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------- |
+| **In-app changelog** — `src/changelog/<YYYY-MM>/{en,ar}.md` | Someone already using the app, on the Changelog screen                       | **Both**             |
+| **Store notes** — `store/v<X.Y.Z>/*.txt`                    | Someone looking at the App Store or Play listing, deciding whether to update | **`provision` only** |
 
-The changelog is the same entry on either path — step 4 chose *which* command runs, not *whether* one does, and the version is a patch bump regardless. The store notes exist only because a provisioned build gets submitted; write them second, from the changelog you just wrote.
+The changelog is the same entry on either path — step 4 chose _which_ command runs, not _whether_ one does, and the version is a patch bump regardless. The store notes exist only because a provisioned build gets submitted; write them second, from the changelog you just wrote.
 
 #### 5a. The in-app changelog (EN + AR) — both paths
 
-1. **Compute the next version:** a patch bump of `APP_VERSION` in `app.config.ts`. If it says `1.0.20`, the release is **`1.0.21`**. You are writing the notes *ahead* of a bump the script will make — that is why the version isn't in the file yet.
+1. **Compute the next version:** a patch bump of `APP_VERSION` in `app.config.ts`. If it says `1.0.20`, the release is **`1.0.21`**. You are writing the notes _ahead_ of a bump the script will make — that is why the version isn't in the file yet.
 2. **Pick the changelog folder** by today's date: `src/changelog/<YYYY-MM>/`. New month → create `en.md` and `ar.md`, **and** add the static imports plus a `PAGES` entry in `src/lib/changelog/index.ts`.
 3. **Read the last 2–3 existing entries in both files first** and match their house style exactly:
-   - Version header — EN: `## v1.0.21 — <YYYY-MM-DD> \`Latest\`` · AR: `## الإصدار 1.0.21 — <YYYY-MM-DD> \`الأحدث\``
+   - Version header — EN: `## v1.0.21 — <YYYY-MM-DD> \`Latest\``· AR:`## الإصدار 1.0.21 — <YYYY-MM-DD> \`الأحدث\``
    - **Move the `` `Latest` `` / `` `الأحدث` `` marker off the previous top entry** — only the newest carries it.
    - One `### Headline` per notable change, followed by a paragraph of **flowing, benefit-first prose** (not a bullet list of commits), key phrases in **bold**. Written for a user, not a developer.
    - New entry at the **top** of each file.
@@ -163,14 +170,14 @@ The changelog is the same entry on either path — step 4 chose *which* command 
 
 On the `provision` path, write two files under `store/v<X.Y.Z>/` — same version step 5a used, the one `provision` is about to bump to:
 
-| File | Goes in | Hard limit |
-|---|---|---|
-| `apple-en.txt` | App Store Connect → the new version → **What's New in This Version** | 4,000 characters |
-| `play-en.txt` | Play Console → the release → **Release notes**, inside the `<en-US>` tags | **500 characters** |
+| File           | Goes in                                                                   | Hard limit         |
+| -------------- | ------------------------------------------------------------------------- | ------------------ |
+| `apple-en.txt` | App Store Connect → the new version → **What's New in This Version**      | 4,000 characters   |
+| `play-en.txt`  | Play Console → the release → **Release notes**, inside the `<en-US>` tags | **500 characters** |
 
 **English only — this is the one place the app's two languages don't both apply.** The in-app changelog is EN + AR because the app is; the store listings are English, so there is no Arabic field to fill and no `*-ar.txt` here. If a listing ever gains an Arabic localization, it takes an `apple-ar.txt` / `play-ar.txt` in the same shape, under the same limits.
 
-`.txt`, one block per file, no front matter and no filename header inside the file — the file *is* the paste. The folder is created on the first provision that needs it; nothing in the build reads it, it is a handover artifact for the user at submission time, and it stays in git as the record of what each shipped build actually claimed.
+`.txt`, one block per file, no front matter and no filename header inside the file — the file _is_ the paste. The folder is created on the first provision that needs it; nothing in the build reads it, it is a handover artifact for the user at submission time, and it stays in git as the record of what each shipped build actually claimed.
 
 **Rules both stores share**
 
@@ -183,7 +190,7 @@ On the `provision` path, write two files under `store/v<X.Y.Z>/` — same versio
 
 - Lead with the single change a user would notice, in the **first sentence**: the listing truncates What's New behind a **more** link after a couple of lines, and most readers never open it.
 - Then one short paragraph per further notable change, benefit first, present tense, addressed to the reader — the changelog's voice with the explanation cut out. Two to four paragraphs, roughly 400–800 characters, is the shape that reads well; 4,000 is the ceiling, not the target.
-- **Guideline 2.3.12** — *"Apps must clearly describe new features and product changes in their 'What's New' text. Simple bug fixes, security updates, and performance improvements may rely on a generic description, but more significant changes must be listed in the notes."* A batch with real features that ships "Bug fixes and improvements" is not just a wasted field; it is rejectable metadata.
+- **Guideline 2.3.12** — _"Apps must clearly describe new features and product changes in their 'What's New' text. Simple bug fixes, security updates, and performance improvements may rely on a generic description, but more significant changes must be listed in the notes."_ A batch with real features that ships "Bug fixes and improvements" is not just a wasted field; it is rejectable metadata.
 - **Guideline 2.3.10:** Apple metadata may not name other mobile platforms or app marketplaces. Never let a line about Android or Google Play cross over from `play-en.txt` into this one. The paired **desktop app** is not another mobile platform and is fine to name.
 - Nothing about beta, TestFlight, pricing, or anything "coming soon" — the notes describe this version as submitted.
 
@@ -220,11 +227,11 @@ for f in store/v1.0.38/*.txt; do
 done
 ```
 
-**If a provisioned version never shipped** — it happens; releases are 1:N with provisions — its `store/v<X.Y.Z>/` stays where it is as history, and the notes for the version that *does* get submitted must cover that skipped build's changes too. Users never saw it, so from the store's side those changes are landing now. Say so in the report.
+**If a provisioned version never shipped** — it happens; releases are 1:N with provisions — its `store/v<X.Y.Z>/` stays where it is as history, and the notes for the version that _does_ get submitted must cover that skipped build's changes too. Users never saw it, so from the store's side those changes are landing now. Say so in the report.
 
 ### 6. Commit and push the work
 
-1. **One regular commit** with everything: source changes (including step-2 formatting fixes) + changelog EN/AR + any `PAGES` registration +, on the `provision` path, the two `store/v<X.Y.Z>/*.txt` files. Concise message summarizing the headline change (e.g. `add: turn rating, conversations sheet`). The store notes have to ride *this* commit — `provision` refuses a dirty tree, and its own commit carries nothing but the bump.
+1. **One regular commit** with everything: source changes (including step-2 formatting fixes) + changelog EN/AR + any `PAGES` registration +, on the `provision` path, the two `store/v<X.Y.Z>/*.txt` files. Concise message summarizing the headline change (e.g. `add: turn rating, conversations sheet`). The store notes have to ride _this_ commit — `provision` refuses a dirty tree, and its own commit carries nothing but the bump.
 2. **Do not touch `app.config.ts` / `package.json` / `package-lock.json` / the README badge.** Step 7 writes all four.
 3. Confirm the tree is clean: `git status` shows nothing to commit — both scripts refuse a dirty tree.
 4. Push:
@@ -306,10 +313,10 @@ All four scripts refuse a dirty working tree — which is why step 6 commits bef
 
 ## If issues are found — STOP
 
-Applies to any blocker: a failing typecheck or test, a bad or breaking change spotted in step 2, a formatting error that can't be fixed without changing behavior, a protocol split against `wolffish-app`, an unclear diff — anything that means this should not be shipped as-is. (Plain formatting failures are NOT blockers — step 2 has you fix those yourself and continue. **A failed ship gate is not a blocker either** — it is an answer: `provision`.)
+Applies to any blocker: a failing typecheck or test, a bad or breaking change spotted in step 2, a formatting error that can't be fixed without changing behavior, a protocol split against `apps/desktop`, an unclear diff — anything that means this should not be shipped as-is. (Plain formatting failures are NOT blockers — step 2 has you fix those yourself and continue. **A failed ship gate is not a blocker either** — it is an answer: `provision`.)
 
-1. **Stop immediately.** Do not write the changelog, do not commit, do not push, and above all do not run `npm run ota` or `npm run provision` — a version bumped over a known problem is a version someone has to unpick, and a *published* one is a version every user already has.
-2. **Report the issues minimally** — just *what* they are, briefly. One line each. No fixes applied, no long analysis.
+1. **Stop immediately.** Do not write the changelog, do not commit, do not push, and above all do not run `npm run ota` or `npm run provision` — a version bumped over a known problem is a version someone has to unpick, and a _published_ one is a version every user already has.
+2. **Report the issues minimally** — just _what_ they are, briefly. One line each. No fixes applied, no long analysis.
 3. **Hand the decision to the user.** Wait for them to decide how to address each issue.
 4. Once addressed / approved, **start over from step 1.**
 
@@ -319,24 +326,24 @@ Do not partially ship, do not work around a flagged issue, and do not decide on 
 
 ## Quick reference
 
-| Thing | Where | Edit by hand? |
-|---|---|---|
-| App version | `app.config.ts` → `APP_VERSION` | **No** — `ota` and `provision` bump it |
-| Store build counter | `app.config.ts` → `CODE_VERSION` | **No** — `npm run provision` only |
-| Update date | `app.config.ts` → `UPDATE_DATE` | **No** — the scripts stamp it |
-| npm version mirror | `package.json` → `"version"` | **No** — the scripts write it |
-| Version badge | `README.md` badge line | **No** — the scripts write it |
-| Changelog (English) | `src/changelog/<YYYY-MM>/en.md` | **Yes** — you author it, both paths |
-| Changelog (Arabic) | `src/changelog/<YYYY-MM>/ar.md` | **Yes** — full translation |
-| Month registry | `src/lib/changelog/index.ts` → `PAGES` | **Yes** — only for a new month |
-| App Store “What's New” | `store/v<X.Y.Z>/apple-en.txt` | **Yes** — `provision` only · EN · ≤ 4,000 chars |
-| Play release notes | `store/v<X.Y.Z>/play-en.txt` | **Yes** — `provision` only · EN · **≤ 500 chars** |
+| Thing                  | Where                                  | Edit by hand?                                     |
+| ---------------------- | -------------------------------------- | ------------------------------------------------- |
+| App version            | `app.config.ts` → `APP_VERSION`        | **No** — `ota` and `provision` bump it            |
+| Store build counter    | `app.config.ts` → `CODE_VERSION`       | **No** — `npm run provision` only                 |
+| Update date            | `app.config.ts` → `UPDATE_DATE`        | **No** — the scripts stamp it                     |
+| npm version mirror     | `package.json` → `"version"`           | **No** — the scripts write it                     |
+| Version badge          | `README.md` badge line                 | **No** — the scripts write it                     |
+| Changelog (English)    | `src/changelog/<YYYY-MM>/en.md`        | **Yes** — you author it, both paths               |
+| Changelog (Arabic)     | `src/changelog/<YYYY-MM>/ar.md`        | **Yes** — full translation                        |
+| Month registry         | `src/lib/changelog/index.ts` → `PAGES` | **Yes** — only for a new month                    |
+| App Store “What's New” | `store/v<X.Y.Z>/apple-en.txt`          | **Yes** — `provision` only · EN · ≤ 4,000 chars   |
+| Play release notes     | `store/v<X.Y.Z>/play-en.txt`           | **Yes** — `provision` only · EN · **≤ 500 chars** |
 
 ```bash
 git status && git diff                                                   # 1. see all changes
 npx prettier --check "**/*.{js,jsx,ts,tsx}" --ignore-path .gitignore     # 2. format: self-fix
 npx tsc --noEmit && npx jest --silent                                    #    types/tests/code: STOP
-diff -r src/lib/tunnel ../wolffish-app/src/main/tunnel                   # 3. sync gate, if relevant
+diff src/lib/bridge/protocol.ts ../desktop/src/main/cloud/bridge-protocol.ts  # 3. sync gate, if relevant
 npm run fix:fingerprint                                                  # 4. undo node_modules drift, then …
 #    ship gate: fingerprint local vs shipped store build (both platforms) + the judgment list
 #    both clean -> ota   ·   anything else, or unsure -> provision
@@ -349,4 +356,4 @@ npm run ota          # 7a. JS-only + verified: bumps, publishes to every phone, 
 npm run provision    # 7b. otherwise: bumps version + build + badge, commits, pushes. No tag.
 ```
 
-**One-line summary:** analyze → run the three checks (formatting: fix yourself; types, tests, code: stop) → run the sync gate if the diff touches the tunnel → **run the ship gate: fingerprints match on every shipped platform *and* nothing in the batch is too risky to land on all phones at once → `ota`; anything else, or any doubt → `provision`** → write this app's own EN+AR changelog, plus — on the `provision` path only — the English App Store and Play store notes under `store/v<X.Y.Z>/` → commit and push the work → run the one command the gate chose → report which one and why. `ota` publishes to users and cannot be undone by you; `provision` publishes nothing. `release` and `rollback` stay the user's.
+**One-line summary:** analyze → run the three checks (formatting: fix yourself; types, tests, code: stop) → run the sync gate if the diff touches the tunnel → **run the ship gate: fingerprints match on every shipped platform _and_ nothing in the batch is too risky to land on all phones at once → `ota`; anything else, or any doubt → `provision`** → write this app's own EN+AR changelog, plus — on the `provision` path only — the English App Store and Play store notes under `store/v<X.Y.Z>/` → commit and push the work → run the one command the gate chose → report which one and why. `ota` publishes to users and cannot be undone by you; `provision` publishes nothing. `release` and `rollback` stay the user's.

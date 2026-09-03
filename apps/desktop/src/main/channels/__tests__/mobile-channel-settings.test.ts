@@ -256,53 +256,9 @@ async function run(): Promise<void> {
     ok('an unsupplied probe is simply absent', !('pathInstalled' in headless))
   }
 
-  // ------------------------------------------------ the allow-list round trip
-
-  /**
-   * The Telegram/WhatsApp allow-lists travel to the phone as one comma-joined
-   * line and come back through configSet as the same line. Snapshot join and
-   * apply-side parse live in one file (snapshot.ts) precisely so this holds;
-   * what the test pins is the round trip itself — stored list → snapshot
-   * string → parsed list, byte for byte — plus the parsers' leniency, because
-   * the string arrives straight off a phone keyboard.
-   */
+  // ------------------------------------------------ the thinking-mode set
   {
-    const { parseAllowedNumbers, parseAllowedUserIds, THINKING_MODES } =
-      await import('@main/channels/mobile/snapshot')
-    const { setTelegramConfig, setWhatsAppConfig } = await import('@main/workspace/workspace')
-
-    ok(
-      'user IDs parse back to numbers',
-      JSON.stringify(parseAllowedUserIds('429753549, 1001')) === '[429753549,1001]'
-    )
-    ok(
-      'a junk entry costs itself, not the list',
-      JSON.stringify(parseAllowedUserIds(' 12a, , 7 ')) === '[7]'
-    )
-    ok(
-      'phone numbers keep their plus and inner spacing',
-      JSON.stringify(parseAllowedNumbers('+966501234567, +1 202 5550')) ===
-        '["+966501234567","+1 202 5550"]'
-    )
-
-    await setTelegramConfig({ allowedUserIds: [429753549, 1001] })
-    await setWhatsAppConfig({ allowedPhoneNumbers: ['+966501234567'] })
-    const snapshot = (await buildConfigSnapshot({
-      agent: {},
-      serializeCapabilities: async () => []
-    } as never)) as {
-      channels: { telegram: { allowedUserIds: string }; whatsapp: { allowedNumbers: string } }
-    }
-    ok(
-      'the joined Telegram line parses back to the stored list',
-      JSON.stringify(parseAllowedUserIds(snapshot.channels.telegram.allowedUserIds)) ===
-        '[429753549,1001]'
-    )
-    ok(
-      'the joined WhatsApp line parses back to the stored list',
-      JSON.stringify(parseAllowedNumbers(snapshot.channels.whatsapp.allowedNumbers)) ===
-        '["+966501234567"]'
-    )
+    const { THINKING_MODES } = await import('@main/channels/mobile/snapshot')
     ok(
       'thinking modes are the four the phone renders',
       [...THINKING_MODES].join(',') === 'off,on,high,max'

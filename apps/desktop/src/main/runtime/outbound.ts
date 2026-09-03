@@ -72,23 +72,18 @@ export const VOICE_REPLY_NOTICE =
  * Phone-notification notices — the every-iteration restatement of the
  * agents.core.md doctrine ("Phone notifications — notify_phone, every turn").
  *
- * Same reasoning as VOICE_REPLY_NOTICE, and the same shipped failure behind
- * it: a rule that lives only in a 25k-token system prompt loses to whatever
- * the turn is actually about. The doctrine's whole point is that the last
+ * The shipped failure behind it: a rule that lives only in a 25k-token system
+ * prompt loses to whatever the turn is actually about. The doctrine's whole point is that the last
  * tool call of a turn is easy to forget precisely when the work went well,
  * so the reminder rides at the request's most salient position — after every
  * cache breakpoint, so it costs tail tokens and never a prefix rehash.
  *
- * Three states, chosen once per iteration by the Agent (availability, role
+ * Two states, chosen once per iteration by the Agent (availability, role
  * and channel gates live there):
  *
  *   NOTICE          the default surface (in-app, mobile, CLI, automations) —
  *                   end the turn with one, and interrupt mid-turn for a
  *                   major beat.
- *   CHANNEL_NOTICE  Telegram/WhatsApp, where the reply ITSELF already
- *                   arrived on that same phone with its own notification, so
- *                   a turn-end push would buzz twice for one thing. Major
- *                   beats only.
  *   SENT_NOTICE     something already went out this turn. Flips exactly once
  *                   per turn (one tail transition, like deliveredFiles) and
  *                   guards the one restraint the doctrine kept: never the
@@ -99,10 +94,6 @@ export const PHONE_NOTIFY_NOTICE =
   'END THIS TURN with ONE notify_phone carrying the real outcome (phase completed/failed, deeplink wolffish://chat?id=current) — a turn the user watched you finish still gets one. ' +
   'Send one NOW instead of waiting if you are blocked on them, a step failed, or you found something worth acting on immediately. ' +
   'Stay silent only when there is genuinely nothing to carry (small talk, a one-line acknowledgment) or the user asked for quiet.'
-
-export const PHONE_NOTIFY_CHANNEL_NOTICE =
-  'PHONE: this reply reaches the user as a channel message that already notifies their phone, so do NOT close the turn with a duplicate notify_phone. ' +
-  'Use it only for a major beat they would otherwise miss: you are blocked on them, a step failed, or a finding is worth acting on now.'
 
 export const PHONE_NOTIFY_SENT_NOTICE =
   'PHONE: a notify_phone for this turn has already gone out (an UNCONFIRMED one may be on their lock screen too) — do not repeat it, reworded or otherwise. ' +
@@ -148,21 +139,15 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // No-progress notice rides here — after every cache breakpoint — so its
     // appearance/change never perturbs the cached prompt prefix.
     (runtime.noProgress ? `${runtime.noProgress} ` : '') +
-    // Channel-format notice (a prose block already delivered to the user's
-    // phone carried raw markup) — same vehicle, same cache reason.
-    (runtime.channelFormat ? `${runtime.channelFormat} ` : '') +
     // Control-token notice (the model's previous reply ended in a literal
     // control token the user saw as text) — same vehicle, same cache reason.
     (runtime.controlToken ? `${runtime.controlToken} ` : '') +
-    // Video-task landing notice (an async generation finished while the
-    // model was mid-task) — same vehicle, same cache reason.
-    (runtime.videoTasks ? `${runtime.videoTasks} ` : '') +
-    // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
-    // vehicle; stable across the turn, so it never churns the tail.
-    (runtime.voiceReply ? `${runtime.voiceReply} ` : '') +
     // Phone-notification notice (a phone is paired and notify_phone is
     // registered) — same vehicle. Changes at most once per turn, when the
     // first notification goes out.
+    // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
+    // vehicle; stable across the turn, so it never churns the tail.
+    (runtime.voiceReply ? `${runtime.voiceReply} ` : '') +
     (runtime.phoneNotify ? `${runtime.phoneNotify} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`

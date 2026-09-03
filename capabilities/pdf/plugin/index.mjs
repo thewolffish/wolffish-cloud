@@ -131,17 +131,17 @@ const toolDefinitions = [
   },
   {
     name: 'pdf_secure',
-    description: 'Encrypt or decrypt a PDF with a password.',
+    description:
+      'Password-protect or unlock a PDF. NOT functional with the bundled pdf-lib (no encryption support: it cannot set a password, cannot open a password-protected file, and sets no permission flags) — both actions refuse and return the route that works (pypdf via the python capability, or qpdf via shell_exec). Prefer that route directly.',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Absolute path to the source PDF' },
         output_path: { type: 'string', description: 'Absolute path for the output PDF' },
         action: { type: 'string', enum: ['encrypt', 'decrypt'] },
-        password: { type: 'string', description: 'Password' },
-        permissions: { type: 'string', description: 'Optional JSON array of permissions' }
+        password: { type: 'string', description: 'Not used — the tool cannot apply it; give the password to the pypdf/qpdf route instead.' }
       },
-      required: ['path', 'output_path', 'action', 'password']
+      required: ['path', 'output_path', 'action']
     }
   },
   {
@@ -214,13 +214,25 @@ function parseJsonParam(value, name) {
   throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
 }
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
+function workspaceRoot() {
+  return contextWorkspaceRoot || path.join(os.homedir(), '.wfc', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
+// resolve against the workspace root — where the agent keeps generated files
+// (files/…) and uploads (uploads/…) — never against the process cwd (the repo
+// in dev, "/" in a packaged app). Mirrors the filesystem plugin.
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
   if (input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(os.homedir(), input.slice(2))
   }
-  return path.resolve(input)
+  return path.resolve(workspaceRoot(), input)
 }
 
 function parsePageRanges(rangeStr, totalPages) {
@@ -1226,45 +1238,38 @@ async function pdfForm(args) {
   }
 }
 
+// pdf-lib 1.x has no encryption support at all: `save()` takes no password
+// options (an "encrypted" output would be the plain document under a new
+// name) and `load()` cannot open a password-protected file (it can only skip
+// the encryption, which leaves every stream unreadable). Rather than write a
+// file that is not what was asked for, both actions refuse and name the route
+// that works — pypdf through the python capability, or qpdf via shell_exec.
 async function pdfSecure(args) {
-  const filePath = resolvePath(args.path)
-  const outputPath = resolvePath(args.output_path)
+  const action = args?.action
+  if (action !== 'encrypt' && action !== 'decrypt') {
+    return { success: false, error: `Unknown action: ${action}` }
+  }
 
+  let filePath
+  let outputPath
   try {
+    filePath = resolvePath(args.path)
+    outputPath = resolvePath(args.output_path)
     await checkFileSize(filePath)
-    const bytes = await fs.readFile(filePath)
-
-    if (args.action === 'encrypt') {
-      const pdfDoc = await PDFDocument.load(bytes)
-      const encryptedBytes = await pdfDoc.save({
-        userPassword: args.password,
-        ownerPassword: args.password
-      })
-      await fs.mkdir(path.dirname(outputPath), { recursive: true })
-      await fs.writeFile(outputPath, encryptedBytes)
-      return {
-        success: true,
-        output: JSON.stringify({ path: outputPath, action: 'encrypted', size: encryptedBytes.length })
-      }
-    }
-
-    if (args.action === 'decrypt') {
-      const pdfDoc = await PDFDocument.load(bytes, { password: args.password })
-      const decryptedBytes = await pdfDoc.save()
-      await fs.mkdir(path.dirname(outputPath), { recursive: true })
-      await fs.writeFile(outputPath, decryptedBytes)
-      return {
-        success: true,
-        output: JSON.stringify({ path: outputPath, action: 'decrypted', size: decryptedBytes.length })
-      }
-    }
-
-    return { success: false, error: `Unknown action: ${args.action}` }
   } catch (err) {
-    if (err.message.includes('password')) {
-      return { success: false, error: 'Incorrect password or password-protected PDF' }
-    }
     return { success: false, error: `Security operation failed: ${err.message}` }
+  }
+
+  const src = JSON.stringify(filePath)
+  const dst = JSON.stringify(outputPath)
+  const route =
+    action === 'encrypt'
+      ? `python (pypdf): writer = PdfWriter(clone_from=PdfReader(${src})); writer.encrypt(user_password=PASSWORD, owner_password=PASSWORD); writer.write(${dst}) — or shell_exec: qpdf --encrypt PASSWORD PASSWORD 256 -- ${src} ${dst}`
+      : `python (pypdf): reader = PdfReader(${src}); reader.decrypt(PASSWORD); PdfWriter(clone_from=reader).write(${dst}) — or shell_exec: qpdf --password=PASSWORD --decrypt ${src} ${dst}`
+
+  return {
+    success: false,
+    error: `pdf_secure cannot ${action}: the bundled pdf-lib has no encryption support (no password handling, no permission flags), so it would only have copied the document unchanged. Use ${route}. Never paste the password into your reply.`
   }
 }
 
@@ -1892,6 +1897,9 @@ const plugin = {
   name: 'pdf',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args, signal) {
     switch (toolName) {
       case 'pdf_info': return pdfInfo(args)

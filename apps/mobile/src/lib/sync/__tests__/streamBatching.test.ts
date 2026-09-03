@@ -48,14 +48,19 @@ const mockDb = {
     await fn(mockDb)
   })
 }
-jest.mock('@/lib/db/database', () => ({ getDb: () => Promise.resolve(mockDb) }))
+jest.mock('@/lib/db/database', () => ({
+  getDb: () => Promise.resolve(mockDb),
+  // The real helper only adds a busy-timeout PRAGMA before the task.
+  withExclusiveTransaction: (db: typeof mockDb, task: (tx: unknown) => Promise<void>) =>
+    db.withExclusiveTransactionAsync(task)
+}))
 
 type EventHandler = (payload: unknown) => void
 const mockHandlers = new Map<string, EventHandler>()
 const mockRpc = jest.fn()
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return {
         rpc: mockRpc,

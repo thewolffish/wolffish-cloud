@@ -86,7 +86,7 @@ async function run(): Promise<void> {
     return conv
   }
 
-  /** The channels' dispatch-time persist, byte-for-byte (telegram/whatsapp). */
+  /** The channels' dispatch-time persist, byte-for-byte (phone/terminal). */
   const channelAppend = (conversationId: string, message: ConversationMessage): Promise<void> =>
     updateConversation(conversationId, (disk) => {
       if (!disk) return null

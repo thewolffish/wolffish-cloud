@@ -82,6 +82,18 @@ tools:
         type: array
         required: false
         description: 'Additional files to bundle, as [{ path, content }] (e.g. a Python worker at plugin/worker.py). Relative paths only. Enables complex, multi-language skills.'
+        items:
+          type: object
+          properties:
+            path:
+              type: string
+              description: Path relative to the skill root, e.g. plugin/worker.py. No absolute paths, no "..".
+            content:
+              type: string
+              description: Full text content of the file.
+          required:
+            - path
+            - content
   - name: skill_reload
     description: Re-scan brain/cerebellum/ from disk and reload all skills (after editing one on disk).
     parameters: {}

@@ -22,8 +22,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const mockRpc = jest.fn()
 let mockConnected = true
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: mockRpc, connected: true } : null
     },

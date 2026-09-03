@@ -151,7 +151,6 @@ if (WIPE) {
   lines.push(`DELETE FROM model_policies WHERE user_id LIKE 'usr_demo_%';`)
   lines.push(`DELETE FROM conversation_records WHERE user_id LIKE 'usr_demo_%';`)
   lines.push(`DELETE FROM conversations WHERE user_id LIKE 'usr_demo_%';`)
-  lines.push(`DELETE FROM episodes WHERE user_id LIKE 'usr_demo_%';`)
   lines.push(`DELETE FROM files WHERE user_id LIKE 'usr_demo_%';`)
   lines.push(`DELETE FROM settings WHERE user_id LIKE 'usr_demo_%';`)
   lines.push(`DELETE FROM device_sessions WHERE user_id LIKE 'usr_demo_%';`)

@@ -22,6 +22,20 @@ export async function runNightly(env: Env, now: number): Promise<NightlyReport> 
     const r = await env.DB.prepare('DELETE FROM device_sessions WHERE expires_at < ?1').bind(cutoff).run()
     return { deleted: r.meta.changes ?? 0 }
   })
+  await step(report, 'reset_codes', async () => {
+    const r = await env.DB.prepare('DELETE FROM password_resets WHERE expires_at < ?1')
+      .bind(new Date(now).toISOString())
+      .run()
+    return { deleted: r.meta.changes ?? 0 }
+  })
+  await step(report, 'pairings', async () => {
+    // Claimed and expired offers alike: an offer is a three-minute door, and
+    // a day-old row says nothing the devices table does not.
+    const r = await env.DB.prepare('DELETE FROM pairings WHERE expires_at < ?1')
+      .bind(new Date(now - DAY_MS).toISOString())
+      .run()
+    return { deleted: r.meta.changes ?? 0 }
+  })
   await step(report, 'gc_blobs', () => collectOrphanBlobs(env, now))
   await step(report, 'purge_deleted', () =>
     purgeDeletedConversationRecords(env, now, Date.now() + 2 * MINUTE_MS)

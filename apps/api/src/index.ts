@@ -1,12 +1,14 @@
 /**
  * wfc-api — the Wolffish Cloud master API.
  *
- * One Worker, seven route groups (auth, v1 client API, ai router, search
- * lane, sync, capabilities, admin), one middleware chain: verify token →
- * resolve user → resolve role → policy/quota gates → handler. Plus two
- * Durable Objects, exported here so the runtime can bind them: the
- * SearchGate (the org's single queue in front of its search plans) and the
- * ModelGate (the org's single admission queue in front of its model hosts).
+ * One Worker, nine route groups (auth + pairing, v1 client API, devices,
+ * bridge, ai router, search lane, sync, capabilities, admin), one middleware
+ * chain: verify token → resolve user → resolve role → policy/quota gates →
+ * handler. Plus three Durable Objects, exported here so the runtime can bind
+ * them: the SearchGate (the org's single queue in front of its search
+ * plans), the ModelGate (the org's single admission queue in front of its
+ * model hosts) and the UserBridge (one per user — the live desktop↔phone
+ * link that replaced the external relay).
  */
 import { Hono } from 'hono'
 import pkg from '../package.json'
@@ -18,11 +20,15 @@ import aiRoutes from '@/routes/ai'
 import syncRoutes from '@/routes/sync'
 import capabilityRoutes from '@/routes/capabilities'
 import searchRoutes from '@/routes/search'
+import pairRoutes, { pairClaim } from '@/routes/pair'
+import deviceRoutes from '@/routes/devices'
+import bridgeRoutes from '@/routes/bridge'
 import { SearchGate } from '@/lib/search-gate'
 import { ModelGate } from '@/lib/model-gate'
+import { UserBridge } from '@/lib/bridge'
 import { runNightly } from '@/lib/nightly'
 
-export { SearchGate, ModelGate }
+export { SearchGate, ModelGate, UserBridge }
 
 export type Env = {
   DB: D1Database
@@ -31,8 +37,28 @@ export type Env = {
   BLOBS: R2Bucket
   SEARCH_GATE: DurableObjectNamespace<SearchGate>
   MODEL_GATE: DurableObjectNamespace<ModelGate>
+  /** One per user: the live desktop↔phone link (see lib/bridge.ts). */
+  USER_BRIDGE: DurableObjectNamespace<UserBridge>
+  /**
+   * Optional Expo push access token. Only needed when the Expo project has
+   * "enhanced push security" switched on; the bridge sends pushes without it
+   * otherwise.
+   */
+  EXPO_ACCESS_TOKEN?: string
   RESEND_API_KEY: string
   JWT_SECRET: string
+  /**
+   * 32 random bytes, base64 — seals every user's synced config row (their
+   * integration credentials ride in it) at rest in D1. Absent: rows are
+   * stored as plain JSON, exactly as before (see lib/config-crypto.ts).
+   */
+  CONFIG_ENC_KEY?: string
+  /**
+   * "1" lets an admin read a user's pending password-reset code
+   * (GET /admin/users/:id/reset-code) — the release gate needs it to prove
+   * the e-mail flow. A fork leaves it unset and the route answers 404.
+   */
+  ADMIN_RESET_CODE_READ?: string
   /**
    * The org's model hosts as a JSON list (see lib/upstreams.ts). Absent:
    * the single DeepInfra host below is the pool.
@@ -73,7 +99,16 @@ app.get('/health', (c) =>
 )
 
 app.route('/auth', authRoutes)
+app.route('/auth', pairClaim)
+// The bridge mounts FIRST under /v1: its WebSocket door authenticates
+// itself (a browser-style socket can only carry the token as a query
+// parameter), and every other /v1 router installs the header-only
+// requireAuth on '*' — which would answer the upgrade with a 401 before
+// the door ever saw it.
+app.route('/v1', bridgeRoutes)
 app.route('/v1', meRoutes)
+app.route('/v1', pairRoutes)
+app.route('/v1', deviceRoutes)
 app.route('/admin', adminRoutes)
 app.route('/ai', aiRoutes)
 app.route('/v1', syncRoutes)

@@ -1,3 +1,4 @@
+import { Checkbox } from '@components/core/Checkbox'
 import { cn } from '@lib/utils/cn'
 import type { Variable } from '@preload/index'
 import { useEffect, useRef, useState } from 'react'
@@ -262,11 +263,9 @@ export function VariablesPanel(): React.JSX.Element {
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={editSensitive}
                       onChange={(e) => setEditSensitive(e.target.checked)}
-                      className="accent-primary h-3.5 w-3.5 rounded"
                     />
                     <span className="text-muted text-xs">
                       {t('settings.variables.markSensitive')}

@@ -3,7 +3,6 @@ import { Button } from '@/components/core/Button'
 import { ConfirmDialog } from '@/components/core/ConfirmDialog'
 import { ComputerIcon, SmartPhone01Icon } from '@/components/core/icons'
 import { ProgressBar } from '@/components/core/ProgressBar'
-import { ConfigSwitchRow } from '@/components/settings/ConfigRows'
 import {
   CodeChip,
   InfoRow,
@@ -46,10 +45,10 @@ function shortId(value: string): string {
  * One card per app, each shaped the same way: what it is (version, and the
  * facts identifying exactly which bundle is running) above what you can change
  * about it. THIS app's card governs OTA delivery for real — device-local
- * appStore.otaEnabled, read by lib/updates/useOtaUpdates. The DESKTOP card's
- * switch is config the desktop owns and this device only mirrors. Those two
- * were one switch until they weren't: the toggle here used to write the
- * desktop's preference under a label about this phone.
+ * appStore.otaEnabled, read by lib/updates/useOtaUpdates. The DESKTOP card
+ * has no switch: the desktop's auto-update preference left the snapshot with
+ * the cloud edition, so the card reports that app and drives its updater
+ * without pretending to configure it.
  *
  * The desktop card also DRIVES that app's updater now — check, watch the
  * download, install-and-restart — through the same registered handlers a
@@ -164,11 +163,6 @@ export default function UpdatesScreen(): React.JSX.Element {
         />
         <InfoRow label={t('settings.updates.platform')} value={desktop.platform ?? '—'} code mono />
         <InfoRow label={t('settings.updates.syncedAt')} value={syncedAt} code />
-        <ConfigSwitchRow
-          field="updatesEnabled"
-          label={t('settings.updates.desktopAutoLabel')}
-          description={t('settings.updates.desktopAutoDescription')}
-        />
         <DesktopUpdateControls />
       </Section>
     </PanelScreen>

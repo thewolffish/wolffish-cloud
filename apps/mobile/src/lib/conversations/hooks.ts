@@ -2,7 +2,7 @@ import { conversationKeys, invalidateConversation } from '@/lib/conversations/ca
 import { queryClient } from '@/lib/query/queryClient'
 import { isConversationDirty } from '@/lib/sync/dirty'
 import { fetchConversationBody, isBodyStale, refreshSync } from '@/lib/sync/sync'
-import { tunnelClient } from '@/lib/tunnel/client'
+import { bridgeClient } from '@/lib/cloud/bridge'
 import { useAppStore } from '@/state/appStore'
 import { clearConversationBadges } from '@/lib/notifications/push'
 import { useRunStatus } from '@/state/runStatus'
@@ -42,7 +42,7 @@ const CONNECT_GRACE_MS = 6_000
 /** Resolve when the tunnel is up, or when the grace runs out — whichever
  *  comes first. Never rejects; the caller carries on either way. */
 function whenConnected(withinMs: number): Promise<void> {
-  if (tunnelClient.connected) return Promise.resolve()
+  if (bridgeClient.connected) return Promise.resolve()
   return new Promise((resolve) => {
     let settled = false
     let unsubscribe: (() => void) | null = null
@@ -56,7 +56,7 @@ function whenConnected(withinMs: number): Promise<void> {
     const timer = setTimeout(settle, withinMs)
     // subscribe() replays the current state to a new listener synchronously,
     // so this can settle before it has returned anything to unsubscribe with.
-    unsubscribe = tunnelClient.subscribe((state) => {
+    unsubscribe = bridgeClient.subscribe((state) => {
       if (state.status === 'connected') settle()
     })
     if (settled) unsubscribe()
@@ -80,18 +80,18 @@ export function useConversation(id: string | null): UseQueryResult<ConversationF
       // mode never waits — nothing is coming — and neither does a conversation
       // already cached, which is the ordinary case.
       if (
-        !tunnelClient.connected &&
+        !bridgeClient.connected &&
         useAppStore.getState().paired &&
         (!local || local.messages.length === 0)
       ) {
         await whenConnected(CONNECT_GRACE_MS)
-        if (tunnelClient.connected) local = await getConversation(id)
+        if (bridgeClient.connected) local = await getConversation(id)
       }
 
       // Not in this phone's index yet — reachable from a notification, a
       // deep link, or simply a conversation created since the last catch-up.
       // Pull the index and look again rather than rendering nothing forever.
-      if (!local && tunnelClient.connected) {
+      if (!local && bridgeClient.connected) {
         await refreshSync().catch(() => undefined)
         local = await getConversation(id)
       }
@@ -107,7 +107,7 @@ export function useConversation(id: string | null): UseQueryResult<ConversationF
       // land on the fresh transcript, not on whatever the timestamps
       // believed. The flag clears when a fetch succeeds, so it costs one
       // download, once.
-      if (tunnelClient.connected) {
+      if (bridgeClient.connected) {
         const needsBody =
           local.messages.length === 0 || isConversationDirty(id) || (await isBodyStale(id))
         if (needsBody) {
@@ -133,7 +133,7 @@ export function useConversation(id: string | null): UseQueryResult<ConversationF
   useEffect(() => {
     if (id === null) return
     let lastStatus: string | null = null
-    return tunnelClient.subscribe((state) => {
+    return bridgeClient.subscribe((state) => {
       if (state.status === 'connected' && lastStatus !== 'connected') {
         void queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) })
       }

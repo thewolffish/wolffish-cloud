@@ -69,7 +69,7 @@ async function run(): Promise<void> {
   check('slugify arabic-only falls back', naming.slugify('تفسير'), 'server')
   check('slugify collapses dashes', naming.slugify('a -- b'), 'a-b')
   check('deconflict appends suffix', naming.deconflictSlug('shell', new Set(['shell'])), 'shell-2')
-  check('deconflict avoids reserved', naming.deconflictSlug('telegram', new Set()), 'telegram-2')
+  check('deconflict avoids reserved', naming.deconflictSlug('phone', new Set()), 'phone-2')
   check(
     'deconflict avoids mcp- capability form',
     naming.deconflictSlug('tafsir', new Set(['mcp-tafsir'])),

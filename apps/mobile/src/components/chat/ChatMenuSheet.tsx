@@ -11,7 +11,7 @@ import {
   ModeAndThinkingControls,
   PermissionsSwitch
 } from '@/components/chat/ChatControls'
-import { ModelSelector, ModelSwitch } from '@/components/chat/ModelSwitch'
+import { ModelSwitch } from '@/components/chat/ModelSwitch'
 
 /** The unfiled chip's value — the row keys on strings, so null needs one. */
 const NO_PROJECT = ''
@@ -122,7 +122,7 @@ function ProjectChips({
               onPress={() => onChange(chip.value)}
               className={cn(
                 'h-9 shrink-0 flex-row items-center gap-2 rounded-lg border px-3',
-                active ? 'bg-primary border-primary' : 'bg-bg border-border active:bg-border/40'
+                active ? 'bg-primary border-primary' : 'bg-bg border-border active:bg-border-soft'
               )}
             >
               <Text className="text-sm">{chip.icon}</Text>
@@ -192,7 +192,6 @@ export function ChatControlsPanel({
       showsVerticalScrollIndicator={false}
     >
       <ModelSwitch />
-      <ModelSelector />
       <PermissionsSwitch />
       <ModeAndThinkingControls />
       {showProject && <ProjectChips conversation={conversation} onPicked={onProjectPicked} />}

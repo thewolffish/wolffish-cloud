@@ -73,7 +73,7 @@ export async function runTurn(client, payload, { verbose = false, fileOffset = 0
   const done = new Promise((resolve) => {
     resolveDone = resolve
     const offTurn = client.onTurn(async (event) => {
-      // Frames for another conversation (a Telegram run, an automation) share
+      // Frames for another conversation (a phone run, an automation) share
       // this socket — the terminal must only render its own turn.
       if (turnId && event.turnId && event.turnId !== turnId) return
 

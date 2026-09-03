@@ -2,7 +2,7 @@
  * The notify_phone pipeline, model side down: what the TOOL refuses or
  * repairs before anything is built (untrusted model input), what the CHANNEL
  * stamps that the model must never control (phoneId, a fresh ULID, ttl from
- * phase), and how the relay's notify_result answers the tool call.
+ * phase), and how the bridge's notify_result answers the tool call.
  *
  * These pins are the security posture of the feature: the model chooses
  * words; the harness chooses identity, routing and rate. If one of these
@@ -55,7 +55,7 @@ async function run(): Promise<void> {
     await import('@main/channels/mobile/tools')
   const { MobileChannel } = await import('@main/channels/mobile/channel')
   const { turnScope } = await import('@main/runtime/corpus')
-  type NotifyResultFrame = import('@main/tunnel/protocol').NotifyResultFrame
+  type NotifyResultFrame = import('@main/cloud/bridge-protocol').NotifyResultFrame
   type NotifyPhoneRequest = import('@main/channels/mobile/tools').NotifyPhoneRequest
 
   // ---------------------------------------------------------------- tool layer
@@ -334,8 +334,8 @@ async function run(): Promise<void> {
     ok('no pairing → notify_phone not exposed', !registered.includes('phone'))
 
     type ChannelInternals = {
-      pairing: Record<string, unknown> | null
-      tunnel: { sendControl: (frame: Record<string, unknown>) => void } | null
+      phones: Array<Record<string, unknown>>
+      bridge: { connected: boolean; notify: (frame: Record<string, unknown>) => void } | null
       onNotifyResult: (raw: Record<string, unknown>) => void
       syncPhoneCapability: () => void
     }
@@ -350,34 +350,38 @@ async function run(): Promise<void> {
       runId: 'turn_abc'
     }
 
-    // No pairing at all → a clear refusal (defense in depth below the gate).
+    // No phone paired → a clear refusal (defense in depth below the gate).
     const unpaired = await channel.notifyPhone(request).catch((error: Error) => error)
     ok('unpaired refusal', unpaired instanceof Error && unpaired.message.includes('no phone'))
 
-    // Paired, but the phone predates deviceId → still hidden, still refused.
-    internals.pairing = {
-      secret: 'AAAA',
-      peerPublicKey: 'ab'.repeat(32),
-      method: 'qr',
-      pairedAt: Date.now(),
-      lastSeenAt: null,
-      deviceName: 'Test phone'
-    }
+    // The org lists a paired phone → the tool appears, whether or not the
+    // phone is on screen (push reaches an away phone; that is the feature).
+    internals.phones = [
+      {
+        id: 'dev_phone_1',
+        platform: 'mobile',
+        name: 'Test phone',
+        app_version: '1.0.48',
+        created_at: new Date().toISOString(),
+        last_seen_at: null,
+        paired: true,
+        current: false
+      }
+    ]
     internals.syncPhoneCapability()
-    ok('paired without phoneId → still not exposed', !registered.includes('phone'))
-    const noId = await channel.notifyPhone(request).catch((error: Error) => error)
-    ok('missing phoneId refusal', noId instanceof Error && noId.message.includes('identified'))
+    ok('paired phone → notify_phone exposed', registered.includes('phone'))
 
-    // The phone identifies itself (hello carries deviceId) → the tool appears.
-    internals.pairing.phoneId = 'phone-device-123456'
-    internals.syncPhoneCapability()
-    ok('phoneId learned → notify_phone exposed', registered.includes('phone'))
+    // Paired but this desktop is off the bridge → refused, not queued.
+    internals.bridge = { connected: false, notify: () => undefined }
+    const offBridge = await channel.notifyPhone(request).catch((error: Error) => error)
+    ok('off-bridge refusal', offBridge instanceof Error && offBridge.message.includes('bridge'))
 
     const wire: Record<string, unknown>[] = []
-    internals.tunnel = {
-      sendControl: (frame) => {
+    internals.bridge = {
+      connected: true,
+      notify: (frame) => {
         wire.push(frame)
-        // The relay answers immediately; simulate its result arriving back.
+        // The bridge answers once the phone acks; simulate its result arriving.
         setTimeout(
           () =>
             internals.onNotifyResult({
@@ -391,11 +395,14 @@ async function run(): Promise<void> {
       }
     }
     const result = await channel.notifyPhone(request)
-    ok('result resolves with the relay route', result.route === 'inband')
+    ok('result resolves with the bridge route', result.route === 'inband')
     const sentFrame = wire[0]
     ok('frame is a v1 notify', sentFrame.v === 1 && sentFrame.type === 'notify')
     ok('notificationId is a ULID', ULID_SHAPE.test(String(sentFrame.notificationId)))
-    ok('phoneId comes from the pairing record', sentFrame.phoneId === 'phone-device-123456')
+    ok(
+      'no phone identity rides the frame — the bridge addresses every phone',
+      !('phoneId' in sentFrame)
+    )
     ok('ttl derived from phase (needs_input=300)', sentFrame.ttl === TTL_BY_PHASE.needs_input)
     ok('runId travels with the frame', sentFrame.runId === 'turn_abc')
     ok('result id matches the frame id', result.notificationId === sentFrame.notificationId)

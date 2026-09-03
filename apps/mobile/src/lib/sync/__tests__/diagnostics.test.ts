@@ -15,8 +15,8 @@
 
 const mockRpc = jest.fn()
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return mockConnected ? { rpc: mockRpc, onEvent: jest.fn(), connected: true } : null
     },
@@ -29,7 +29,7 @@ jest.mock('@/lib/tunnel/client', () => ({
 
 const mockFetchInto = jest.fn()
 jest.mock('@/lib/sync/files', () => ({
-  fetchDesktopFileInto: (...args: unknown[]) => mockFetchInto(...args)
+  fetchCloudFileInto: (...args: unknown[]) => mockFetchInto(...args)
 }))
 
 jest.mock('expo-file-system', () => ({
@@ -44,7 +44,7 @@ jest.mock('expo-file-system', () => ({
 }))
 
 import { exportDiagnostics, type DiagnosticPhase } from '@/lib/sync/diagnostics'
-import type { DiagnosticResult } from '@/lib/tunnel/protocol'
+import type { DiagnosticResult } from '@/lib/bridge/protocol'
 
 function ready(over: Partial<DiagnosticResult> = {}): DiagnosticResult {
   return {
@@ -82,7 +82,7 @@ describe('exportDiagnostics', () => {
     })
     // The archive is pulled by its WORKSPACE-relative path — the desktop's
     // absolute one means nothing on a phone.
-    expect(mockFetchInto.mock.calls[0][0]).toBe('diagnostics/bundle.zip')
+    expect(mockFetchInto.mock.calls[0][0]).toMatchObject({ relPath: 'diagnostics/bundle.zip' })
     expect(phases).toEqual(['collecting', 'downloading'])
     expect(done.result.ok).toBe(true)
     expect(done.uri).toBe('file:///cache/diagnostics/bundle.zip')

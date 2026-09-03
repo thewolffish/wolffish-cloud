@@ -25,7 +25,7 @@ Wolffish Mobile is the companion phone app — pair it to your desktop once by s
   </tr>
 </table>
 
-Source: [thewolffish/wolffish-mobile](https://github.com/thewolffish/wolffish-mobile)
+Source: [`apps/mobile`](../../apps/mobile) in this repository
 
 ---
 
@@ -79,11 +79,19 @@ Wolffish App ←→ WebSocket (localhost:23152) ←→ Extension Service Worker 
 
 ---
 
-## Where It Goes with wolffish-app
+## Where It Goes in wolffish-cloud
 
-The extension is bundled inside wolffish-app at `src/defaults/workspace/extension/`. On every app launch, it's copied to `~/.wolffish/workspace/extension/`. Users load it from there into Chrome.
+The extension is bundled inside the desktop app at `apps/desktop/src/defaults/workspace/extension/`. On every app launch, it's copied to `~/.wfc/workspace/extension/`. Users load it from there into Chrome.
 
-### Core Code (wolffish-app, not editable)
+To refresh the bundled copy from a build, run the desktop's sync script (Node, no dependencies). It stages the build beside the bundle, checks the cloud identity — name "Wolffish Cloud", gecko id `wolffish-cloud@wolffi.sh`, default port 23152, `[Wolffish Cloud]` log prefix — and swaps it in atomically, so a stale or personal-edition build can never half-replace the bundle:
+
+```bash
+pnpm build                                                   # in packages/extension → dist/
+node ../../apps/desktop/scripts/extension/sync.mjs           # dist/ → apps/desktop/src/defaults/workspace/extension
+node ../../apps/desktop/scripts/extension/sync.mjs --check   # verify the bundle already in place
+```
+
+### Core Code (`apps/desktop`, not editable)
 
 | File | Purpose |
 | --- | --- |
@@ -123,7 +131,7 @@ pnpm dev
 # Production build
 pnpm build
 
-# Build + copy to wolffish-app + bump version
+# Bump version + build + copy into apps/desktop
 pnpm release
 ```
 
@@ -176,11 +184,11 @@ pnpm release
 1. **Extension side** — Add a handler in the service worker (`chrome-extension/src/background/index.ts`) or content script (`pages/content/src/matches/all/index.ts`)
 2. **Register it** — Add to `SERVICE_WORKER_COMMANDS` or `CONTENT_SCRIPT_COMMANDS` in `packages/shared/lib/wolffish/commands.ts`
 3. **Plugin side** — Add the tool to `SKILL.md` frontmatter and the execute switch in `plugin/index.mjs`
-4. **Release** — Run `pnpm release` to build and copy to wolffish-app
+4. **Release** — Run `pnpm release` to build and copy into `apps/desktop` (or `sync.mjs` above to refresh the bundle without a release)
 
 ### Customizing Agent Behavior
 
-Edit `~/.wolffish/workspace/brain/cerebellum/.browser-extension/SKILL.md`:
+Edit `~/.wfc/workspace/brain/cerebellum/.browser-extension/SKILL.md`:
 - Change tool descriptions to guide the agent differently
 - Add trigger keywords
 - Add or modify safety patterns (danger_patterns, confirm_patterns)
@@ -188,7 +196,7 @@ Edit `~/.wolffish/workspace/brain/cerebellum/.browser-extension/SKILL.md`:
 
 ### Building a Custom Extension
 
-The core WebSocket server in wolffish-app is command-agnostic. It pipes `{ id, type, params }` to the extension and resolves when a `{ id, success, data }` response comes back. You can:
+The core WebSocket server in `apps/desktop` is command-agnostic. It pipes `{ id, type, params }` to the extension and resolves when a `{ id, success, data }` response comes back. You can:
 
 1. Fork this extension
 2. Add entirely new commands
@@ -238,7 +246,7 @@ The core WebSocket server in wolffish-app is command-agnostic. It pipes `{ id, t
 ## Project Structure
 
 ```
-wolffish-extension/
+packages/extension/
 ├── chrome-extension/          Manifest, service worker, public assets
 │   ├── manifest.ts            Manifest V3 config
 │   └── src/background/        Service worker — WebSocket, command dispatch
@@ -258,7 +266,7 @@ wolffish-extension/
 
 ## Links
 
-- **Wolffish App** — [github.com/thewolffish](https://github.com/thewolffish)
+- **Desktop app** — [`apps/desktop`](../../apps/desktop) in this repository
 - **App Store** — [Wolffish for iOS](https://apps.apple.com/us/app/wolffish/id6792797989)
 - **Google Play** — [Wolffish for Android](https://play.google.com/store/apps/details?id=sh.wolffi.mobile)
 - **Website** — [wolffi.sh](https://wolffi.sh)

@@ -224,59 +224,10 @@ export type CorpusEvents = {
     cost: number
   }
 
-  'voice.generating': { voice: string; textLength: number }
-  'voice.generated': { filePath: string; sizeBytes: number; textLength: number }
-  'voice.failed': { error: string }
-
   'upload.started': { originalName: string; type: string; sizeBytes: number }
   'upload.completed': { filePath: string; type: string; sizeBytes: number }
   'upload.failed': { error: string }
   'upload.deleted': { filePath: string }
-
-  'stt.dep.checking': { dependency: string }
-  'stt.dep.installing': { dependency: string; note?: string }
-  'stt.dep.ready': { dependency: string }
-  'stt.dep.failed': { dependency: string; error: string }
-  'stt.transcribing': { filePath: string; model: string }
-  'stt.transcribed': { language: string; segmentCount: number; textLength: number }
-  'stt.failed': { error: string }
-  'stt.detecting': { filePath: string }
-  'stt.detected': { language: string; confidence: number }
-
-  'telegram.started': { allowedUserCount: number }
-  'telegram.stopped': { reason?: string }
-  'telegram.statusChanged': Record<string, never>
-  'telegram.error': {
-    kind: 'token' | 'network' | 'rate_limit' | 'send' | 'unknown'
-    message: string
-  }
-  'telegram.media.received': {
-    chatId: number
-    userId: number
-    type: string
-    filePath: string
-    sizeBytes: number
-  }
-
-  'whatsapp.started': Record<string, never>
-  'whatsapp.stopped': { reason?: string }
-  'whatsapp.statusChanged': Record<string, never>
-  'whatsapp.qr': { qr: string }
-  /** Linking by phone number produced its eight-character code. */
-  'whatsapp.pairingCode': { code: string }
-  'whatsapp.loggedOut': Record<string, never>
-  'whatsapp.error': {
-    kind: 'auth' | 'network' | 'crypto' | 'stream' | 'unknown'
-    message: string
-  }
-  'whatsapp.message.received': { remoteJid: string; body: string }
-  'whatsapp.media.received': {
-    remoteJid: string
-    type: string
-    filePath: string
-    sizeBytes: number
-  }
-  'whatsapp.message.sent': { remoteJid: string }
 
   'conversation.changed': { conversationId: string | null; title?: string | null }
   /**

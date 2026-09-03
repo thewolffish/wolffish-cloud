@@ -7,7 +7,7 @@
  * may well be set. A row whose LABEL collides with another on the same card is
  * indistinguishable from it — which is exactly what shipped: four rows reading
  * "Verbose task results" in one flat list, one per channel, with nothing to
- * say which was WhatsApp's. None of the three throws, none is visible without
+ * say which was the phone's. None of the three throws, none is visible without
  * checking, and all are one edit away at all times — so all three are checked
  * against the real sources rather than trusted.
  *
@@ -90,27 +90,19 @@ async function snapshotPaths(): Promise<Set<string>> {
     JSON.stringify({
       version: 1,
       launchAtStartup: true,
-      llm: { local: {}, providers: [], brain: {}, restrictPowerfulModels: true },
+      llm: { model: 'deepseek-ai/DeepSeek-V4-Flash-0731', mode: 'single' },
       safety: {},
       updates: {},
       inapp: {},
       cli: {},
       mobile: {},
-      telegram: {},
-      whatsapp: {},
-      brave: {},
-      video: {},
-      memes: { imgflip: {}, giphy: {} },
       stt: {},
       tts: {},
       computerUse: {},
       browserExtension: {},
       reflection: {},
       compaction: {},
-      mcp: { servers: [] },
-      notion: { connections: [] },
-      github: { connections: [] },
-      google: {}
+      mcp: { servers: [] }
     })
   )
   const realHome = os.homedir
@@ -262,10 +254,10 @@ async function main(): Promise<void> {
     }
     /**
      * Names a flow only LISTENS for are not handlers and must not be required
-     * to be one. `google:authUrl` is the case: the consent URL arrives as a
-     * broadcast while `google:authAdd` is still pending, so the flow compares
-     * it inside an onEvent listener. Recognised by that comparison rather than
-     * by an allowlist, so a genuine typo in an invoke is still caught.
+     * to be one: a broadcast a flow waits on (the phone pairing's status
+     * events) is compared inside an onEvent listener. Recognised by that
+     * comparison rather than by an allowlist, so a genuine typo in an invoke
+     * is still caught.
      */
     for (const match of source.matchAll(
       /channel\s*(?:!==|===)\s*'([a-z][a-zA-Z]*:[a-zA-Z][a-zA-Z0-9]*)'/g
@@ -280,7 +272,7 @@ async function main(): Promise<void> {
    * The reported bug, as an assertion.
    *
    * Labels are CARD-SCOPED in this app: "Status" and "Verbose task results"
-   * are unambiguous inside a Telegram card and meaningless in a flat list of
+   * are unambiguous inside a Mobile card and meaningless in a flat list of
    * every setting. Two rows on ONE card that render identically cannot be told
    * apart at all.
    */
@@ -302,8 +294,8 @@ async function main(): Promise<void> {
   })
 
   /**
-   * A label that prefixes its own card ("Telegram · Status" inside the
-   * Telegram card) is the flat-list habit surviving the move to cards. It is
+   * A label that prefixes its own card ("Mobile · Task results" inside the
+   * Mobile card) is the flat-list habit surviving the move to cards. It is
    * not wrong, only redundant, and redundancy in a 46-column label costs the
    * value its room.
    *
@@ -341,20 +333,19 @@ async function main(): Promise<void> {
     assert.deepEqual(bare, [], 'a row must read as words, never as a key')
   })
 
-  // A dotted wrap is how a nested partial (`{ giphy: { apiKey: 'k' } }`)
-  // reaches a handler. Getting it wrong writes a top-level key the handler
-  // ignores — a save that reports success and changes nothing.
+  // A dotted wrap is how a nested partial (`{ a: { b: 'k' } }`) reaches a
+  // handler. Getting it wrong writes a top-level key the handler ignores — a
+  // save that reports success and changes nothing. No shipped row nests any
+  // more, so the shape is pinned on a synthetic one.
   check('a dotted wrap builds the nested partial the handler expects', () => {
-    const giphy = CLI_SETTINGS.find((s) => s.id === 'services.memes.giphyApiKey')
-    assert.ok(giphy)
-    assert.deepEqual(settingArgs(giphy, 'k'), [{ giphy: { apiKey: 'k' } }])
-    const bare = CLI_SETTINGS.find((s) => s.id === 'wolffish.blockCredentials')
+    const bare = CLI_SETTINGS.find((s) => s.id === 'wfc.blockCredentials')
     assert.ok(bare)
+    assert.deepEqual(settingArgs({ ...bare, wrap: 'a.b' }, 'k'), [{ a: { b: 'k' } }])
     assert.deepEqual(settingArgs(bare, true), [true])
   })
 
   check('booleans refuse anything that is not clearly a yes or a no', () => {
-    const setting = CLI_SETTINGS.find((s) => s.id === 'wolffish.bypassPermissions')
+    const setting = CLI_SETTINGS.find((s) => s.id === 'wfc.bypassPermissions')
     assert.ok(setting)
     for (const yes of ['on', 'true', 'YES', '1']) {
       assert.deepEqual(coerceSettingValue(setting, yes), { ok: true, value: true }, yes)

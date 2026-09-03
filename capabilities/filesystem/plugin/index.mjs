@@ -90,8 +90,12 @@ const toolDefinitions = [
   }
 ]
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
 function workspaceRoot() {
-  return path.join(homedir(), '.wfc', 'workspace')
+  return contextWorkspaceRoot || path.join(homedir(), '.wfc', 'workspace')
 }
 
 // Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
@@ -496,6 +500,9 @@ const plugin = {
   name: 'filesystem',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args) {
     switch (toolName) {
       case 'file_read':

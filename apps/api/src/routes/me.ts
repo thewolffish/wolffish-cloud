@@ -11,6 +11,7 @@ import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
 import { modelMeta } from '@/lib/models'
 import { DevicePinSchema, ProfilePatchSchema } from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
+import { closeBridgeDevice, notifyBridge } from '@/routes/bridge'
 import type { Env } from '@/index'
 
 const me = new Hono<{ Bindings: Env; Variables: AuthVars }>()
@@ -209,6 +210,12 @@ me.post('/logout', async (c) => {
     .bind(new Date().toISOString(), auth.sub, auth.sid)
     .run()
   await c.env.AUTH_KV.put(killKey(auth.sid), '1', { expirationTtl: REFRESH_IDLE_DAYS * 86_400 })
+  // The device's live link and push registration go with the session: a
+  // signed-out phone must stop receiving the moment it signs out — and the
+  // desktop is told, so its paired-phone list does not keep a phone that
+  // signed itself out until the next claim or unpair happens to re-list.
+  await closeBridgeDevice(c.env, auth.sub, auth.dev)
+  await notifyBridge(c.env, auth.sub, 'desktop', 'device.revoked', { deviceId: auth.dev })
   return c.json({ ok: true })
 })
 

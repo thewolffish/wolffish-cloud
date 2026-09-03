@@ -2,8 +2,9 @@
  * Sync — what makes the local folder a mere cache.
  *
  * The client drains a local outbox after each turn: conversations and
- * records and episodes come through /sync/batch (idempotent — every item
- * carries a client-generated id, replays are no-ops), files go through
+ * records come through /sync/batch (idempotent — every item carries a
+ * client-generated id, replays are no-ops; the response names every item it
+ * refused so the client can quarantine it), files go through
  * content-addressed upload (dedupe by sha256). Restore is /sync/bootstrap
  * (one call: config + conversation index + file manifest) plus lazy pulls
  * of record pages and blobs. Config is last-write-wins on the one row.
@@ -12,8 +13,9 @@ import { Hono } from 'hono'
 import type { z } from 'zod'
 import { newId, toHex } from '@/lib/crypto'
 import { readArchive, type ArchiveBlob, type ArchivedRecord } from '@/lib/archive'
+import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { BatchItemSchema, BatchSchema, ConfigPutSchema, FilesDeleteSchema } from '@/lib/schemas'
-import { issuesOf, parseJson } from '@/lib/validate'
+import { issuesOf, parseJson, parseValue } from '@/lib/validate'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
 import type { Env } from '@/index'
 
@@ -29,10 +31,9 @@ sync.get('/config', async (c) => {
   const row = await c.env.DB.prepare('SELECT config, updated_at FROM settings WHERE user_id = ?1')
     .bind(auth.sub)
     .first<{ config: string; updated_at: string }>()
-  return c.json({
-    config: row ? JSON.parse(row.config) : {},
-    updated_at: row?.updated_at ?? null
-  })
+  const config = await openConfig(c.env, row?.config)
+  if (config === null) return c.json({ error: 'config_unreadable' }, 500)
+  return c.json({ config, updated_at: row?.updated_at ?? null })
 })
 
 sync.put('/config', async (c) => {
@@ -44,7 +45,7 @@ sync.put('/config', async (c) => {
     `INSERT INTO settings (user_id, config, updated_at) VALUES (?1, ?2, ?3)
      ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at`
   )
-    .bind(auth.sub, JSON.stringify(body.config), now)
+    .bind(auth.sub, await sealConfig(c.env, body.config), now)
     .run()
   return c.json({ ok: true, updated_at: now })
 })
@@ -54,7 +55,6 @@ sync.put('/config', async (c) => {
 type BatchItem = z.infer<typeof BatchItemSchema>
 type ConversationItem = Extract<BatchItem, { type: 'conversation' }>
 type RecordItem = Extract<BatchItem, { type: 'record' }>
-type EpisodeItem = Extract<BatchItem, { type: 'episode' }>
 
 /** Statements per D1 batch() call and bound content bytes per call: a
  *  400-item drain becomes a handful of round trips instead of 800, without
@@ -63,8 +63,13 @@ const D1_BATCH_STATEMENTS = 50
 const D1_BATCH_CONTENT_BYTES = 4 * 1024 * 1024
 /** D1 caps bound parameters per statement at 100. */
 const SQL_IN_CHUNK = 90
+/** A batch body above this is refused outright: the client chunks at 8 MB,
+ *  and the Worker parses the whole body in memory. */
+const MAX_BATCH_BYTES = 32 * 1024 * 1024
+/** Refused item ids named in the response, at most. */
+const MAX_REJECTED_IDS = 200
 
-type Planned = { stmt: D1PreparedStatement; bytes: number; silent?: boolean }
+type Planned = { stmt: D1PreparedStatement; bytes: number; silent?: boolean; id?: string }
 
 /**
  * Run planned statements through D1 batches — one round trip per chunk,
@@ -114,8 +119,8 @@ async function runPlanned(db: D1Database, planned: Planned[]): Promise<Array<num
  *      reference conversations it just created;
  *   2. ONE ownership lookup per distinct conversation the records name —
  *      a record for someone else's conversation is rejected, never inserted;
- *   3. records + episodes. Message records are INSERT OR IGNORE (replays are
- *      no-ops). A `snapshot` record is the conversation's envelope: the
+ *   3. records. Message records are INSERT OR IGNORE (replays are no-ops).
+ *      A `snapshot` record is the conversation's envelope: the
  *      client sends it under a stable id, the server keeps exactly ONE per
  *      conversation (upsert, newer seq wins) and retires every other snapshot
  *      row it supersedes — including the legacy hash-id rows — so the
@@ -123,7 +128,22 @@ async function runPlanned(db: D1Database, planned: Planned[]): Promise<Array<num
  */
 sync.post('/sync/batch', async (c) => {
   const auth = c.get('auth')
-  const parsed = await parseJson(c, BatchSchema)
+  // The whole body is parsed in memory: bound here, chunked by the client.
+  const declared = Number(c.req.header('content-length') ?? 0)
+  if (declared > MAX_BATCH_BYTES) {
+    return c.json({ error: 'payload_too_large', max_bytes: MAX_BATCH_BYTES }, 413)
+  }
+  const text = await c.req.text()
+  if (text.length > MAX_BATCH_BYTES) {
+    return c.json({ error: 'payload_too_large', max_bytes: MAX_BATCH_BYTES }, 413)
+  }
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    raw = undefined
+  }
+  const parsed = parseValue(c, BatchSchema, raw)
   if (parsed instanceof Response) return parsed
   const db = c.env.DB
 
@@ -131,29 +151,34 @@ sync.post('/sync/batch', async (c) => {
   let ignored = 0
   let rejected = 0
   // Per-item tolerance, loudly: a malformed item never sinks the batch
-  // (the outbox must keep draining), but its reasons come back in `issues`.
+  // (the outbox must keep draining), but its reasons come back in `issues`
+  // and its id in `rejected_ids` — so the client can quarantine that item
+  // instead of re-sending the whole conversation forever.
   const issues: { path: string; message: string }[] = []
+  const rejectedIds: string[] = []
+  const refuse = (id: unknown): void => {
+    rejected++
+    if (typeof id === 'string' && id && rejectedIds.length < MAX_REJECTED_IDS) rejectedIds.push(id)
+  }
   const conversations: ConversationItem[] = []
   const records: RecordItem[] = []
-  const episodes: EpisodeItem[] = []
-  for (const [index, raw] of parsed.items.entries()) {
-    const itemIssues = issuesOf(BatchItemSchema, raw)
+  for (const [index, item] of parsed.items.entries()) {
+    const itemIssues = issuesOf(BatchItemSchema, item)
     if (itemIssues) {
-      rejected++
+      refuse((item as { id?: unknown } | null)?.id)
       if (issues.length < 10) {
         issues.push(...itemIssues.map((i) => ({ ...i, path: `items.${index}.${i.path}` })))
       }
       continue
     }
-    const item = raw as BatchItem
-    if (item.type === 'conversation') conversations.push(item)
-    else if (item.type === 'record') records.push(item)
-    else episodes.push(item)
+    const typed = item as BatchItem
+    if (typed.type === 'conversation') conversations.push(typed)
+    else records.push(typed)
   }
   const tally = (planned: Planned[], changes: Array<number | null>): void => {
     changes.forEach((ch, i) => {
       if (planned[i]!.silent) return
-      if (ch === null) rejected++
+      if (ch === null) refuse(planned[i]!.id)
       else if (ch > 0) accepted++
       else ignored++
     })
@@ -163,12 +188,14 @@ sync.post('/sync/batch', async (c) => {
   if (conversations.length) {
     const planned: Planned[] = conversations.map((item) => ({
       bytes: 0,
+      id: item.id,
       stmt: db
         .prepare(
-          `INSERT INTO conversations (id, user_id, device_id, title, created_at, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+          `INSERT INTO conversations (id, user_id, device_id, title, created_at, updated_at, synced_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
            ON CONFLICT(id) DO UPDATE SET
-             title = excluded.title, updated_at = excluded.updated_at
+             title = excluded.title, updated_at = excluded.updated_at,
+             synced_at = excluded.synced_at
            WHERE conversations.user_id = excluded.user_id
              AND excluded.updated_at > conversations.updated_at`
         )
@@ -178,7 +205,9 @@ sync.post('/sync/batch', async (c) => {
           item.device_id ?? auth.dev,
           item.title ?? '',
           item.created_at,
-          item.updated_at
+          item.updated_at,
+          // The SERVER's stamp — the phone's "what changed since" cursor.
+          nowIso()
         )
     }))
     tally(planned, await runPlanned(db, planned))
@@ -201,9 +230,9 @@ sync.post('/sync/batch', async (c) => {
     }
   }
 
-  // 3 · Records and episodes. Several snapshots for one conversation in a
-  // single batch collapse to the newest here (the others are superseded
-  // before they are ever written), so compaction is order-independent.
+  // 3 · Records. Several snapshots for one conversation in a single batch
+  // collapse to the newest here (the others are superseded before they are
+  // ever written), so compaction is order-independent.
   const planned: Planned[] = []
   const newestSnapshot = new Map<string, RecordItem>()
   for (const item of records) {
@@ -213,7 +242,7 @@ sync.post('/sync/batch', async (c) => {
   }
   for (const item of records) {
     if (!owned.has(item.conversation_id)) {
-      rejected++
+      refuse(item.id)
       continue
     }
     const content = JSON.stringify(item.content ?? null)
@@ -225,6 +254,7 @@ sync.post('/sync/batch', async (c) => {
       }
       planned.push({
         bytes: content.length,
+        id: item.id,
         stmt: db
           .prepare(
             `INSERT INTO conversation_records
@@ -250,6 +280,7 @@ sync.post('/sync/batch', async (c) => {
     } else {
       planned.push({
         bytes: content.length,
+        id: item.id,
         stmt: db
           .prepare(
             `INSERT OR IGNORE INTO conversation_records
@@ -260,21 +291,16 @@ sync.post('/sync/batch', async (c) => {
       })
     }
   }
-  for (const item of episodes) {
-    const content = JSON.stringify(item.content ?? null)
-    planned.push({
-      bytes: content.length,
-      stmt: db
-        .prepare(
-          `INSERT OR IGNORE INTO episodes (id, user_id, content, occurred_at)
-           VALUES (?1, ?2, ?3, ?4)`
-        )
-        .bind(item.id, auth.sub, content, item.occurred_at)
-    })
-  }
   if (planned.length) tally(planned, await runPlanned(db, planned))
 
-  return c.json({ ok: true, accepted, ignored, rejected, ...(issues.length ? { issues } : {}) })
+  return c.json({
+    ok: true,
+    accepted,
+    ignored,
+    rejected,
+    ...(rejectedIds.length ? { rejected_ids: rejectedIds } : {}),
+    ...(issues.length ? { issues } : {})
+  })
 })
 
 // ── Lazy reads (restore path) ────────────────────────────────────────────
@@ -283,18 +309,85 @@ sync.post('/sync/batch', async (c) => {
 const CONV_PAGE = 500
 
 /**
- * The full conversation index, paged — no cap. Keyset on rowid ascending
- * (`after` = last rowid seen, echoed back as `next`; `next: null` means
- * done), so restore walks EVERY conversation no matter how many automations
- * have piled up. Order is irrelevant to restore — completeness is the
- * contract.
+ * The conversation index, two ways.
+ *
+ * `after` (rowid keyset, the desktop's restore): every live conversation,
+ * completeness the contract — see the original notes below.
+ *
+ * `since` (the phone's catch-up): rows whose SERVER stamp moved past the
+ * cursor — `synced_at` for writes, `deleted_at` for tombstones, which is
+ * how a deletion the phone slept through reaches it without a full id
+ * sweep. `include=meta` joins the envelope record so one page carries what
+ * the phone's list draws (model, channel, icon, project, stats, summary)
+ * and a message count, all without a body fetch. The cursor is
+ * `<stamp>~~<rowid>` (echoed as `next`; null = done), so rows sharing a
+ * stamp can never straddle a page boundary.
  */
+const CURSOR_AT = `CASE WHEN c.deleted_at IS NOT NULL AND c.deleted_at > COALESCE(c.synced_at, '')
+                        THEN c.deleted_at ELSE COALESCE(c.synced_at, c.updated_at) END`
+
+function parseSinceCursor(raw: string | undefined): { at: string; rid: number } {
+  if (!raw) return { at: '', rid: 0 }
+  const idx = raw.lastIndexOf('~~')
+  if (idx <= 0) return { at: raw, rid: 0 }
+  const rid = parseInt(raw.slice(idx + 2), 10)
+  return { at: raw.slice(0, idx), rid: Number.isFinite(rid) ? rid : 0 }
+}
+
 sync.get('/conversations', async (c) => {
   const auth = c.get('auth')
-  const after = parseInt(c.req.query('after') ?? '0', 10)
-  const cursor = Number.isFinite(after) && after > 0 ? after : 0
   const limitRaw = parseInt(c.req.query('limit') ?? String(CONV_PAGE), 10)
   const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : CONV_PAGE, 1), CONV_PAGE)
+
+  if (c.req.query('since') !== undefined) {
+    const cur = parseSinceCursor(c.req.query('since'))
+    const meta = c.req.query('include') === 'meta'
+    const metaColumns = meta
+      ? `, json_extract(s.content, '$.model') AS model,
+           json_extract(s.content, '$.channel') AS channel,
+           json_extract(s.content, '$.icon') AS icon,
+           json_extract(s.content, '$.projectId') AS project_id,
+           json_extract(s.content, '$.sealed') AS sealed,
+           json_extract(s.content, '$.summary') AS summary,
+           json_extract(s.content, '$.stats') AS stats,
+           COALESCE(json_extract(s.content, '$.messageCount'),
+             (SELECT COUNT(DISTINCT substr(r.id, 1, length(r.id) - 9)) FROM conversation_records r
+               WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count`
+      : ''
+    const joinSnapshot = meta
+      ? `LEFT JOIN conversation_records s ON s.conversation_id = c.id AND s.kind = 'snapshot'`
+      : ''
+    const rows = await c.env.DB.prepare(
+      `SELECT c.rowid AS rid, c.id, c.title, c.device_id, c.created_at, c.updated_at, c.deleted_at,
+         ${CURSOR_AT} AS cursor_at${metaColumns}
+       FROM conversations c ${joinSnapshot}
+       WHERE c.user_id = ?1
+         AND (${CURSOR_AT} > ?2 OR (${CURSOR_AT} = ?2 AND c.rowid > ?3))
+       ORDER BY cursor_at, c.rowid LIMIT ?4`
+    )
+      .bind(auth.sub, cur.at, cur.rid, limit)
+      .all<{ rid: number; cursor_at: string; deleted_at: string | null } & Record<string, unknown>>()
+    const results = rows.results ?? []
+    const conversations = results.map(({ rid: _rid, cursor_at: _c, stats, ...rest }) => ({
+      ...rest,
+      ...(meta
+        ? {
+            stats: typeof stats === 'string' ? safeJson(stats) : (stats ?? null)
+          }
+        : {})
+    }))
+    const last = results[results.length - 1]
+    return c.json({
+      conversations,
+      next: results.length === limit && last ? `${last.cursor_at}~~${last.rid}` : null,
+      // The cursor to store even when the page was short: the newest stamp
+      // seen, so the next catch-up starts exactly where this one ended.
+      cursor: last ? `${last.cursor_at}~~${last.rid}` : c.req.query('since') || null
+    })
+  }
+
+  const after = parseInt(c.req.query('after') ?? '0', 10)
+  const cursor = Number.isFinite(after) && after > 0 ? after : 0
   const rows = await c.env.DB.prepare(
     `SELECT rowid AS rid, id, title, device_id, created_at, updated_at FROM conversations
      WHERE user_id = ?1 AND deleted_at IS NULL AND rowid > ?2 ORDER BY rowid LIMIT ?3`
@@ -308,6 +401,14 @@ sync.get('/conversations', async (c) => {
     next: results.length === limit ? results[results.length - 1]!.rid : null
   })
 })
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
 
 /**
  * Parsed archive blobs, per isolate: a restore pages one conversation 200
@@ -591,6 +692,45 @@ sync.post('/files/delete', async (c) => {
   return c.json({ ok: true, deleted: res.meta.changes })
 })
 
+/**
+ * A workspace path's newest live blob — the phone's file cache resolves the
+ * desktop's own relative paths (`files/report.pdf`, `screenshots/conv-…`)
+ * without holding the manifest, and the HEAD form is the collision check a
+ * phone upload runs before choosing a name.
+ */
+sync.on(['GET', 'HEAD'], '/files/path', async (c) => {
+  const auth = c.get('auth')
+  const name = (c.req.query('name') ?? '').slice(0, 500)
+  if (!name) return c.json({ error: 'invalid_request', detail: 'name query param required' }, 400)
+  const row = await c.env.DB.prepare(
+    `SELECT sha256, mime, size FROM files WHERE user_id = ?1 AND name = ?2 AND deleted_at IS NULL
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`
+  )
+    .bind(auth.sub, name)
+    .first<{ sha256: string; mime: string; size: number }>()
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  if (c.req.method === 'HEAD') {
+    return new Response(null, {
+      status: 200,
+      headers: { etag: row.sha256, 'content-type': row.mime, 'content-length': String(row.size) }
+    })
+  }
+  const inm = c.req.header('if-none-match')
+  if (inm && inm.split(',').some((t) => t.trim().replace(/^W\//, '').replace(/^"(.*)"$/, '$1') === row.sha256)) {
+    return new Response(null, { status: 304, headers: { etag: row.sha256 } })
+  }
+  const obj = await c.env.BLOBS.get(`files/${row.sha256}`)
+  if (!obj) return c.json({ error: 'blob_missing' }, 404)
+  return new Response(obj.body, {
+    headers: {
+      'content-type': row.mime,
+      'content-length': String(obj.size),
+      etag: row.sha256,
+      'x-wfc-sha256': row.sha256
+    }
+  })
+})
+
 sync.get('/files/:sha256', async (c) => {
   const auth = c.get('auth')
   const sha256 = c.req.param('sha256').toLowerCase()
@@ -642,6 +782,40 @@ sync.get('/usage', async (c) => {
   })
 })
 
+/**
+ * The same ledger folded per (day × model × lane) — what the phone's Usage
+ * screen draws, computed here once instead of the phone holding every raw
+ * row. `tz` is the caller's UTC offset in minutes (JS `-getTimezoneOffset()`
+ * sign: Riyadh = 180) so days fold on the caller's midnight, the way the
+ * desktop's own ledger does. Denials are excluded: spend is what was served.
+ */
+sync.get('/usage/days', async (c) => {
+  const auth = c.get('auth')
+  const tzRaw = parseInt(c.req.query('tz') ?? '0', 10)
+  const tz = Number.isFinite(tzRaw) ? Math.max(-840, Math.min(840, tzRaw)) : 0
+  const shift = `${tz >= 0 ? '+' : '-'}${Math.abs(tz)} minutes`
+  const rows = await c.env.DB.prepare(
+    `SELECT substr(datetime(created_at, ?2), 1, 10) AS day, model, kind,
+       SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+       SUM(tokens_cached) AS tokens_cached, SUM(cost_microusd) AS cost_microusd,
+       COUNT(*) AS entries
+     FROM usage WHERE user_id = ?1 AND decision = 'allowed'
+     GROUP BY day, model, kind ORDER BY day`
+  )
+    .bind(auth.sub, shift)
+    .all<{
+      day: string
+      model: string
+      kind: string
+      tokens_in: number
+      tokens_out: number
+      tokens_cached: number
+      cost_microusd: number
+      entries: number
+    }>()
+  return c.json({ days: rows.results ?? [], tz })
+})
+
 // ── Restore: one call to rehydrate a fresh install ───────────────────────
 
 /**
@@ -673,8 +847,10 @@ sync.get('/sync/bootstrap', async (c) => {
   ])
   const convRows = conversations.results ?? []
   const fileRows = files.results ?? []
+  const config = await openConfig(c.env, settings?.config)
+  if (config === null) return c.json({ error: 'config_unreadable' }, 500)
   return c.json({
-    config: settings ? JSON.parse(settings.config) : {},
+    config,
     config_updated_at: settings?.updated_at ?? null,
     conversations: convRows.map(({ rid: _rid, ...rest }) => rest),
     conversations_next:

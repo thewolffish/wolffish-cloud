@@ -18,7 +18,7 @@ import path from 'node:path'
  *    interleave across concurrent writers.
  *
  * Out of scope BY DESIGN: files owned by third-party libraries or native
- * modules (e.g. Baileys' `whatsapp/auth/`) and large binary streams — we don't
+ * modules and large binary streams — we don't
  * control how those write, so we don't pretend to.
  */
 

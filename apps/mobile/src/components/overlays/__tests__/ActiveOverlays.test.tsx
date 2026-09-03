@@ -19,7 +19,7 @@ import { ActiveOverlays } from '@/components/overlays/ActiveOverlays'
 import { applyOverlayReindex, applyOverlayRuns, clearOverlays } from '@/lib/sync/overlays'
 import { useDemoConfig } from '@/state/demoConfig'
 import { ThemeContext } from '@/providers/theme/useTheme'
-import type { AutomationRun } from '@/lib/tunnel/protocol'
+import type { AutomationRun } from '@/lib/bridge/protocol'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 
 // The pulse and the enter/exit transitions need the native runtime and have no

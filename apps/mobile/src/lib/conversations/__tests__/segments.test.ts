@@ -493,59 +493,6 @@ describe('messageFilePaths', () => {
   })
 })
 
-describe('task segments', () => {
-  const taskSeg = (id: string, status: string, segId: string, outputPath?: string): Segment =>
-    ({
-      kind: 'task',
-      turnId: 't1',
-      segmentId: segId,
-      snapshot: {
-        taskId: id,
-        kind: 'video',
-        conversationId: 'c1',
-        title: 'Sunset waves',
-        status,
-        createdAt: 1,
-        updatedAt: 2,
-        estimateSeconds: 220,
-        ...(outputPath ? { outputPath } : {})
-      }
-    }) as Segment
-
-  it('folds snapshots by taskId — one card per task, latest state wins', () => {
-    const blocks = buildRenderBlocks(
-      message([
-        taskSeg('427', 'submitted', 's1'),
-        textSeg('Waiting for the clip…', 's2'),
-        taskSeg('427', 'running', 's3'),
-        taskSeg('427', 'succeeded', 's4', 'generations/video/conv-c1/video-427.mp4')
-      ])
-    )
-    const tasks = blocks.filter((b) => b.type === 'task')
-    expect(tasks).toHaveLength(1)
-    expect(tasks[0]).toMatchObject({
-      key: 'tk:427',
-      snapshot: { status: 'succeeded', outputPath: 'generations/video/conv-c1/video-427.mp4' }
-    })
-    // The card keeps its original position (where the task was announced).
-    expect(blocks[0].type).toBe('task')
-  })
-
-  it('prefetches the finished artifact with the conversation', () => {
-    const paths = messageFilePaths(
-      message([taskSeg('427', 'succeeded', 's1', 'generations/video/conv-c1/video-427.mp4')])
-    )
-    expect(paths).toContain('generations/video/conv-c1/video-427.mp4')
-  })
-
-  it('renders two independent tasks as two cards', () => {
-    const blocks = buildRenderBlocks(
-      message([taskSeg('a1', 'running', 's1'), taskSeg('b2', 'queued', 's2')])
-    )
-    expect(blocks.filter((b) => b.type === 'task')).toHaveLength(2)
-  })
-})
-
 describe('failedTurnEnd', () => {
   const end = (
     stopReason: 'end_turn' | 'error' | 'no_provider_available',

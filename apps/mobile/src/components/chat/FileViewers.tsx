@@ -207,7 +207,7 @@ export function SourceBody({
           desktop does the same with `sticky left-0`). Both columns share the
           vertical scroller and the same line metrics, so rows stay aligned. */}
       <View className="flex-row" style={{ direction: 'ltr' }}>
-        <View className="bg-bg/50 border-border border-e px-2 py-2">
+        <View className="bg-bg-soft border-border border-e px-2 py-2">
           {/* text-muted, not muted/70: the alpha would drop (same var() rule
               as the CSV borders below) and default-black numbers vanish on
               a dark background. */}
@@ -492,7 +492,7 @@ function SheetGrid({ table, flex }: { table: SheetTable; flex?: boolean }): Reac
       <ScrollView nestedScrollEnabled style={flex ? undefined : { maxHeight: INLINE_BODY_HEIGHT }}>
         <View style={{ direction: 'ltr' }}>
           {header ? (
-            <View className="bg-bg/60 border-border flex-row border-b">
+            <View className="bg-bg-soft border-border flex-row border-b">
               {header.map((cell, index) => (
                 <Text
                   key={index}
@@ -790,7 +790,7 @@ export function GenericFileCard({
         // w-[85%], not max-w — a card sized to its filename would sit short of
         // every other card in the feed.
         'bg-surface border-border w-[85%] flex-row items-center gap-3 rounded-xl border px-4 py-3',
-        'active:bg-border/40',
+        'active:bg-border-soft',
         align === 'end' ? 'self-end' : 'self-start'
       )}
     >

@@ -14,14 +14,14 @@ The Wolffish Cloud desktop app — a fork of the personal [wolffish-app](https:/
 
 | Phase | Scope | State |
 | --- | --- | --- |
-| Prune | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity | ✅ done |
+| Prune | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity; the CLI's provider/Ollama verbs and cards, the bundled provider config keys and the vendor code paths swept out (2026-09) | ✅ done |
 | Auth | Sign-in screen (email + password, forced first-login reset), PIN quick-lock, keychain-sealed session storage + refresh loop, admin PIN clear / revoke | ✅ done |
 | API integration | Server-driven model catalog, streaming through `/ai/v1/chat/completions`, config LWW row, conversations + workspace files as the outbox, restore on sign-in, usage from the metering table, capabilities from the registry | ✅ done |
 
 ### The cloud-first contract
 
 - **One model lane.** No provider list, no API keys on the device, no local models. `src/main/runtime/providers/cloud.ts` speaks the org router with the session token; `GET /v1/models` drives every model surface, and the org's allowlist/quota decide what runs.
-- **`~/.wfc` is a cache.** `src/main/cloud/sync.ts` pushes every conversation turn (incrementally), every workspace file (content-addressed blobs) and the config row seconds after they change, tombstones deletions durably, and restores a fresh install from the org before the chat screen opens — conversation media hydrates on open. The usage ledger is rebuilt from `GET /v1/usage`. The full per-path map is in `src/defaults/AGENTS.md` (§3, "What syncs").
+- **`~/.wfc` is a cache.** `src/main/cloud/sync.ts` pushes every conversation turn (incrementally), every workspace file (content-addressed blobs) and the config row seconds after they change, tombstones deletions durably, and restores a fresh install from the org before the chat screen opens — conversation media hydrates on open. The usage ledger is rebuilt from `GET /v1/usage`. Signing out drains the outbox, revokes the session and purges the cache; the next sign-in restores it. The full per-path map is in `src/defaults/AGENTS.md` (§3, "What syncs").
 - **Proof lives in the sims.** `src/main/cloud/__tests__/purge-cycle*.test.ts` purge a lived-in workspace and restore it — against an in-process fake, the real Worker (`wrangler dev`), and at 700 conversations with per-conversation media — through the real engine and the real fresh-install boot.
 - **Chat carries the knobs.** Reasoning effort, chat mode, and the ask/bypass permissions switch live as chip rows in the composer's model card.
 - **The agent core is untouched.** Brain regions, skills, services, channels, workspace — carried over from upstream, minus what only made sense standalone.

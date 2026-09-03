@@ -59,8 +59,8 @@ const toolDefinitions = [
     }
   },
   {
-    name: 'spreadsheet_chart',
-    description: 'Add a chart to a spreadsheet.',
+    name: 'spreadsheet_chart_data',
+    description: 'Record a chart definition (type, data range, title, axes) on a `<title>_data` sheet of the workbook. Does NOT draw a chart — exceljs cannot write Excel-native chart objects.',
     parameters: {
       type: 'object',
       properties: {
@@ -153,13 +153,25 @@ function parseJsonParam(value, name) {
   throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
 }
 
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
+function workspaceRoot() {
+  return contextWorkspaceRoot || path.join(os.homedir(), '.wfc', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
+// resolve against the workspace root — where the agent keeps generated files
+// (files/…) and uploads (uploads/…) — never against the process cwd (the repo
+// in dev, "/" in a packaged app). Mirrors the filesystem plugin.
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
   if (input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(os.homedir(), input.slice(2))
   }
-  return path.resolve(input)
+  return path.resolve(workspaceRoot(), input)
 }
 
 /** Existence probe (throws ENOENT early with a clean message); never a size gate. */
@@ -521,7 +533,7 @@ async function spreadsheetFormula(args) {
   }
 }
 
-async function spreadsheetChart(args) {
+async function spreadsheetChartData(args) {
   const filePath = resolvePath(args.path)
   const outputPath = resolvePath(args.output_path)
   let chartDef
@@ -539,16 +551,16 @@ async function spreadsheetChart(args) {
     const ws = chartDef.sheet ? workbook.getWorksheet(chartDef.sheet) : workbook.worksheets[0]
     if (!ws) throw new Error('Worksheet not found')
 
-    // ExcelJS doesn't have native chart support via the streaming/JS API.
-    // We add chart data as a note on the output for now.
-    // The chart definition is stored as a worksheet property that Excel can interpret.
+    // exceljs cannot write Excel-native chart objects (no DrawingML/chart
+    // parts), so the only honest thing this tool can do is record the chart
+    // definition on its own sheet — and say so, everywhere.
     const chartSheet = workbook.addWorksheet(`${chartDef.title || 'Chart'}_data`)
     chartSheet.getCell('A1').value = `Chart Type: ${chartDef.type || 'bar'}`
     chartSheet.getCell('A2').value = `Data Range: ${chartDef.data_range || ''}`
     chartSheet.getCell('A3').value = `Title: ${chartDef.title || ''}`
     chartSheet.getCell('A4').value = `X Axis: ${chartDef.x_axis || ''}`
     chartSheet.getCell('A5').value = `Y Axis: ${chartDef.y_axis || ''}`
-    chartSheet.getCell('A6').value = 'Note: Chart metadata stored. Open in Excel/LibreOffice to render.'
+    chartSheet.getCell('A6').value = 'Note: this sheet only records the chart definition — no Excel-native chart object exists in this file.'
 
     await fs.mkdir(path.dirname(outputPath), { recursive: true })
     await workbook.xlsx.writeFile(outputPath)
@@ -558,7 +570,7 @@ async function spreadsheetChart(args) {
       output: JSON.stringify({
         path: outputPath,
         chart: chartDef,
-        note: 'Chart definition stored. ExcelJS does not render charts directly — open the file in Excel or LibreOffice to see the chart.'
+        note: 'Chart definition recorded on a data sheet; no native chart was drawn (exceljs cannot write Excel chart objects). For a rendered chart, build it with python (openpyxl.chart) or dataviz, and tell the user which you did.'
       })
     }
   } catch (err) {
@@ -1047,7 +1059,7 @@ function describeAction(toolName, args) {
     case 'spreadsheet_create': return { title: 'Create Spreadsheet', description: `Create ${basename}`, command: targetPath, risk: 'medium' }
     case 'spreadsheet_modify': return { title: 'Modify Spreadsheet', description: `Edit ${basename}`, command: targetPath, risk: 'medium' }
     case 'spreadsheet_formula': return { title: 'Set Formulas', description: `Add formulas to ${basename}`, command: targetPath, risk: 'medium' }
-    case 'spreadsheet_chart': return { title: 'Add Chart', description: `Add chart to ${basename}`, command: targetPath, risk: 'medium' }
+    case 'spreadsheet_chart_data': return { title: 'Record Chart Data', description: `Record a chart definition in ${basename}`, command: targetPath, risk: 'medium' }
     case 'spreadsheet_style': return { title: 'Apply Styles', description: `Style ${basename}`, command: targetPath, risk: 'medium' }
     case 'spreadsheet_convert': return { title: 'Convert Spreadsheet', description: `Convert ${basename}`, command: targetPath, risk: 'medium' }
     case 'spreadsheet_analyze': return { title: 'Analyze Data', description: `Analyze ${basename}`, risk: 'low' }
@@ -1061,13 +1073,16 @@ const plugin = {
   name: 'spreadsheet',
   tools: toolDefinitions,
   describeAction,
+  async init(context) {
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+  },
   async execute(toolName, args) {
     switch (toolName) {
       case 'spreadsheet_read': return spreadsheetRead(args)
       case 'spreadsheet_create': return spreadsheetCreate(args)
       case 'spreadsheet_modify': return spreadsheetModify(args)
       case 'spreadsheet_formula': return spreadsheetFormula(args)
-      case 'spreadsheet_chart': return spreadsheetChart(args)
+      case 'spreadsheet_chart_data': return spreadsheetChartData(args)
       case 'spreadsheet_style': return spreadsheetStyle(args)
       case 'spreadsheet_convert': return spreadsheetConvert(args)
       case 'spreadsheet_analyze': return spreadsheetAnalyze(args)

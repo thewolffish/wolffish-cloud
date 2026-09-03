@@ -74,7 +74,7 @@ export type CliPathStatus = {
 
 /**
  * Where the shim goes: `~/.wfc/bin`, the app's own managed bin directory
- * — the same one that already holds `gog`, `ffmpeg` and the voice engines.
+ * — the same one that already holds `ffmpeg` and the voice engines.
  *
  * It used to be `~/.local/bin` on POSIX, chosen because that is the XDG
  * convention and is usually already on PATH. Two things were wrong with that.
@@ -327,10 +327,8 @@ function onPath(dir: string, callerPath?: string | null): boolean {
  * actually in. `$HOME`-relative rather than expanded: this gets pasted into a
  * profile that may be synced between machines with different usernames.
  *
- * The same directory carries `gog`, `ffmpeg` and the voice engines, so adding
- * it once covers every wfc-managed binary — and google.ts already writes
- * this exact export when it installs gogcli, which is why the hint matches its
- * wording instead of inventing a second convention.
+ * The same directory carries `ffmpeg` and the voice engines, so adding it
+ * once covers every wfc-managed binary.
  */
 function profileHintFor(dir: string): string {
   const home = os.homedir()

@@ -1,5 +1,5 @@
 import type { Segment } from '@preload/index'
-import { WORKFLOW_TOOL_NAMES, type TaskSnapshot, type WorkflowSnapshot } from '@main/runtime/broca'
+import { WORKFLOW_TOOL_NAMES, type WorkflowSnapshot } from '@main/runtime/broca'
 import { MARKDOWN_SANITIZE_SCHEMA } from '@lib/markdown/sanitize'
 import type { ChatMessage } from '@providers/flow/useFlow'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -218,26 +218,6 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
 }
 
 /**
- * Static print block for an async-task card (video generation). The
- * interactive chrome (progress bar, inline player) can't print; status,
- * facts, and the artifact path can.
- */
-function taskBlock(snapshot: TaskSnapshot): string {
-  const video = snapshot.video
-  const facts = video
-    ? `${video.resolution} · ${video.durationSeconds}s${video.ratio ? ` · ${video.ratio}` : ''} · ${video.inputSummary}`
-    : ''
-  const error =
-    snapshot.status === 'failed' && snapshot.error
-      ? `<div class="wf-note" dir="auto">${escapeHtml(snapshot.error)}</div>`
-      : ''
-  const file = snapshot.outputPath
-    ? `<div class="wf-note" dir="ltr">${escapeHtml(snapshot.outputPath)}</div>`
-    : ''
-  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">video task · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.title)}${facts ? ` — ${escapeHtml(facts)}` : ''}</div>${error}${file}</div>`
-}
-
-/**
  * Walk one assistant message's segments in feed order and emit its printed
  * parts. Mirrors renderSegments' rules: master text buffers and flushes at
  * tool calls / separators / turn end; LEGACY worker-tagged segments (removed
@@ -270,9 +250,6 @@ function assistantParts(
     } else if (seg.kind === 'workflow') {
       flushText()
       parts.push(workflowBlock(seg.snapshot))
-    } else if (seg.kind === 'task') {
-      flushText()
-      parts.push(taskBlock(seg.snapshot))
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
       flushText()

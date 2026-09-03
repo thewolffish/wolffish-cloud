@@ -28,7 +28,7 @@ jest.mock('expo-router', () => ({
 jest.mock('@/components/conversations/DiagnosticExportOverlay', () => ({
   DiagnosticExportOverlay: () => null
 }))
-jest.mock('@/lib/tunnel/useTunnelStatus', () => ({ useDesktopReachable: () => false }))
+jest.mock('@/lib/cloud/useBridgeStatus', () => ({ useDesktopReachable: () => false }))
 
 const mockList: { data: unknown; isLoading: boolean } = { data: [], isLoading: false }
 const mockRemove = jest.fn(async (_id: string) => undefined)

@@ -121,9 +121,8 @@ function RowShell({
 /**
  * Read-only state of one boolean config key — a dot and On/Off where a
  * switch would be. For settings this device can display but must not drive:
- * starting or stopping a channel bridge is the desktop's own act (it owns
- * the grammY / Baileys process), so mobile reports the state instead of
- * pretending to flip it.
+ * registering the desktop's autostart is the desktop's own act, so mobile
+ * reports the state instead of pretending to flip it.
  */
 export const ConfigStatusRow = memo(function ConfigStatusRow({
   field,
@@ -218,9 +217,8 @@ export const ConfigTextRow = memo(function ConfigTextRow({
   keyboardType?: KeyboardTypeOptions
   /**
    * Commit once, when editing ends, instead of per keystroke. For fields
-   * whose write is heavyweight on the desktop — a Telegram allow-list change
-   * restarts the bridge — so a nine-digit ID arrives as one write, not nine
-   * restarts. The field is uncontrolled either way, so a snapshot landing
+   * whose write is heavyweight on the desktop, so a nine-digit value arrives
+   * as one write, not nine. The field is uncontrolled either way, so a snapshot landing
    * mid-edit never yanks text out from under the keyboard; the store simply
    * learns the value at the same moment the desktop does.
    */

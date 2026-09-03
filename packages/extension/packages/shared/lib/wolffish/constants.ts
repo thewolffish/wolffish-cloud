@@ -1,5 +1,5 @@
 export const DEFAULT_PORT = 23152;
-export const LOG_PREFIX = '[Wolffish]';
+export const LOG_PREFIX = '[Wolffish Cloud]';
 
 export const RECONNECT = {
   INITIAL_DELAY_MS: 1000,

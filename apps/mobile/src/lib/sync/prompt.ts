@@ -9,8 +9,8 @@ import {
 import { mintMessageId } from '@/lib/conversations/types'
 import { attachCardStream, seedTurnCards } from '@/lib/sync/cards'
 import { fetchConversationBody, setConversationSettleHook } from '@/lib/sync/sync'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Event, Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Event, Rpc } from '@/lib/bridge/protocol'
 import { useChatRuntime, type LiveStream } from '@/state/chatRuntime'
 import { markRun, useRunStatus } from '@/state/runStatus'
 import type {
@@ -273,8 +273,8 @@ export function beginTurn(
  * was, learning about the run when the desktop next mirrors it.
  */
 export async function seedActiveRuns(): Promise<void> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return
   // Anything the push stream reports as FINISHED from here on is newer than
   // this answer, which is a snapshot taken before the round trip. Without the
   // stamp, a run ending inside that window gets re-opened by its own stale
@@ -337,8 +337,8 @@ export async function seedActiveRuns(): Promise<void> {
  *    exactly where it was: the placeholder row, as before this existed.
  */
 async function recoverTurnSoFar(conversationId: string, issuedAt: number): Promise<void> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) return
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) return
   let answer: unknown
   try {
     answer = await tunnel.rpc(Rpc.turnMirror, { conversationId })
@@ -419,14 +419,14 @@ function scheduleSettleRetry(conversationId: string): void {
   if (attempt >= SETTLE_RETRY_DELAYS_MS.length) return
   // A phone with no tunnel has nothing to retry against; the reconnect
   // re-settles every open turn anyway (see attachTurnStream).
-  if (!tunnelClient.connected) return
+  if (!bridgeClient.connected) return
   clearSettleRetry(conversationId)
   const timer = setTimeout(() => {
     settleRetries.set(conversationId, { attempt: attempt + 1, timer: null })
     // A NEW turn owns the conversation now — a fetch would be the forbidden
     // mid-turn body read, and beginTurn cleared this turn's debt anyway.
     if (liveFor(conversationId)?.status === 'streaming') return
-    if (!tunnelClient.connected) return
+    if (!bridgeClient.connected) return
     if (liveFor(conversationId)) {
       // Overlay still up: the settle owns the fetch, the id match and the
       // scheduling of the next attempt.
@@ -618,7 +618,7 @@ function dropPendingStreams(): void {
  * conversation is on screen, whereas list updates always matter.
  */
 export function attachTurnStream(): void {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return
 
   // Whatever the DEAD socket left pooled dies with it: a flush firing after
@@ -789,7 +789,7 @@ export function attachTurnStream(): void {
  * copy when the body arrives.
  */
 export async function sendPrompt(input: SendPromptInput): Promise<SendPromptResult> {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   const timestamp = Date.now()
   const user: ConversationMessage = {
     id: input.messageId ?? mintMessageId(timestamp),
@@ -810,7 +810,7 @@ export async function sendPrompt(input: SendPromptInput): Promise<SendPromptResu
   // answer to be had here — but throwing turns a normal situation (a phone in
   // a lift) into an error the user has to interpret. Keep what they wrote,
   // say plainly why it is waiting, and let them carry on reading.
-  if (!tunnel || !tunnelClient.connected) return offlineReply(input, user, projectId)
+  if (!tunnel || !bridgeClient.connected) return offlineReply(input, user, projectId)
 
   // The turn is on screen before the wire is touched, for a conversation that
   // has one. A new chat has no id to file it under yet; the chat screen holds
@@ -912,7 +912,7 @@ async function offlineReply(
   })
   // Stored copy first, live row second — settleTurn's contract, kept here for
   // the send paths that publish their bubble on a live turn before finding the
-  // desktop out of reach (files, voice notes). The refetch puts both stored
+  // desktop out of reach (files). The refetch puts both stored
   // rows in the caller's hands, and only then does the overlay come down —
   // dropping it earlier blanks the prompt for a frame, never dropping it
   // leaves thinking words running against a desktop that was never asked.
@@ -948,7 +948,7 @@ async function appendLocalMessage(
 
 /** Ask the desktop to stop the running turn. */
 export async function abortTurn(conversationId: string): Promise<void> {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return
   await tunnel.rpc(Rpc.abortTurn, { conversationId }).catch(() => undefined)
   // Marked complete here rather than waiting for the `canceled` status: the

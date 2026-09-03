@@ -1,16 +1,14 @@
 import { queryClient } from '@/lib/query/queryClient'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { useDesktopReachable } from '@/lib/tunnel/useTunnelStatus'
-import { Rpc, type SyncProject } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
+import { Rpc, type SyncProject } from '@/lib/bridge/protocol'
 import { useAppStore } from '@/state/appStore'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useDemoConfig } from '@/state/demoConfig'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { File, FileMode } from 'expo-file-system'
-import { CHUNK_SIZE } from '@/lib/tunnel/protocol'
-import { toBase64Url } from '@/lib/tunnel/pairing'
 import { importLocalFile } from '@/lib/files/fileCache'
+import { adoptUploadedFile, chooseUploadPath, uploadFileToCloud } from '@/lib/sync/files'
 
 /**
  * Projects — the desktop's `brain/projects.json`, read and WRITTEN from here.
@@ -50,8 +48,8 @@ function normalize(project: SyncProject): SyncProject {
 }
 
 async function fetchProjects(): Promise<SyncProject[]> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) {
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) {
     // Not an error: an unpaired phone has the snapshot's copy, and a paired one
     // that cannot reach its desktop keeps whatever the cache holds. Throwing
     // would empty a list the user is looking at.
@@ -61,7 +59,7 @@ async function fetchProjects(): Promise<SyncProject[]> {
     const answer = (await tunnel.rpc(Rpc.projectsList)) as { projects?: SyncProject[] }
     return Array.isArray(answer?.projects) ? answer.projects.map(normalize) : []
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     throw error
   }
 }
@@ -130,12 +128,12 @@ export function useProjectsWritable(): boolean {
 }
 
 async function call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) throw new Error('not connected')
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) throw new Error('not connected')
   try {
     return (await tunnel.rpc(method, params)) as T
   } catch (error) {
-    tunnelClient.reportRpcFailure(error)
+    bridgeClient.reportRpcFailure(error)
     throw error
   }
 }
@@ -194,17 +192,18 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 /**
- * Upload one file into a project, chunk by chunk — the phone's Add-files.
+ * Add one file to a project — the phone's Add-files.
  *
- * The desktop owns the workspace, so it owns the name: the bytes land in
- * `uploads/project-<id>/` under a name IT picks (collisions rename
- * Finder-style), which is exactly what happens when a file is added from the
- * desktop's own dialog. The staged bytes are then moved to that path locally,
- * so the file the user just sent opens from the cache instead of being
- * downloaded straight back.
+ * The bytes go to the org under `uploads/project-<id>/<name>` (renamed
+ * Finder-style on a collision, as the desktop's own dialog would), and the
+ * desktop is then asked to adopt them: it fetches the blob it does not hold
+ * and attaches it through the exact code its own Add-files runs, answering
+ * the stored project — which is what lands in the cache. The uploaded bytes
+ * are filed locally under the same path, so the file the user just sent
+ * opens from the cache instead of being downloaded straight back.
  *
- * `onProgress` reports bytes sent, which is what lets the dialog draw the same
- * real bar the desktop's copy-progress card draws rather than a spinner.
+ * `onProgress` reports bytes sent, which is what lets the dialog draw the
+ * same real bar the desktop's copy-progress card draws rather than a spinner.
  */
 export async function uploadProjectFile(
   projectId: string,
@@ -213,45 +212,16 @@ export async function uploadProjectFile(
   mimeType: string | null,
   onProgress?: (sentBytes: number, totalBytes: number) => void
 ): Promise<SyncProject> {
-  const source = new File(localUri)
-  if (!source.exists) throw new Error(`no file at ${localUri}`)
-  const sizeBytes = source.size ?? 0
-  if (sizeBytes <= 0) throw new Error(`empty file at ${localUri}`)
-
-  const begin = await call<{ uploadId: string }>(Rpc.uploadBegin, {
-    name,
-    mimeType,
-    sizeBytes,
-    projectId
-  })
-  // Published before the first chunk so the bar is sized from its first frame.
-  onProgress?.(0, sizeBytes)
-
-  const handle = source.open(FileMode.ReadOnly)
-  try {
-    let offset = 0
-    while (offset < sizeBytes) {
-      const bytes = handle.readBytes(Math.min(CHUNK_SIZE, sizeBytes - offset))
-      if (bytes.length === 0) throw new Error('local file truncated mid-upload')
-      await call(Rpc.uploadChunk, {
-        uploadId: begin.uploadId,
-        offset,
-        data: toBase64Url(bytes)
-      })
-      offset += bytes.length
-      onProgress?.(offset, sizeBytes)
-    }
-  } finally {
-    handle.close()
-  }
-
-  const answer = await call<{ project: SyncProject; filePath?: string }>(Rpc.uploadCommit, {
-    uploadId: begin.uploadId
-  })
-  if (answer.filePath) {
-    // A cache hit rather than an immediate re-download of what was just sent.
-    // Best-effort: a failure here costs one download later, never the upload.
-    await importLocalFile(localUri, answer.filePath).catch(() => null)
-  }
+  if (!bridgeClient.connected) throw new Error('not connected')
+  const filePath = await chooseUploadPath(`uploads/project-${projectId}`, name)
+  const uploaded = await uploadFileToCloud(localUri, filePath, mimeType, onProgress)
+  const answer = await adoptUploadedFile<{ project: SyncProject; filePath?: string }>(
+    { kind: 'project', id: projectId },
+    uploaded,
+    name
+  )
+  // A cache hit rather than an immediate re-download of what was just sent.
+  // Best-effort: a failure here costs one download later, never the upload.
+  await importLocalFile(localUri, answer.filePath ?? filePath).catch(() => null)
   return absorb(answer.project)
 }

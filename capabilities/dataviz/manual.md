@@ -2,8 +2,8 @@
 
 You are about to show data. This manual covers the three surfaces where you do it:
 **interactive chart cards in the app chat** (a `.chart.json` file you deliver),
-**static SVG charts inside documents/PDFs**, and **channels** (WhatsApp/Telegram,
-where neither works and you fall back to tables). The choices — form, palette,
+**static SVG charts inside documents/PDFs**, and **the terminal** (where neither
+works and you fall back to tables). The choices — form, palette,
 labels — are yours on every chart; this manual is the system you choose within.
 
 **Precedence:** explicit user or automation instructions about a chart's look always
@@ -220,9 +220,9 @@ after = accent), values labeled beside each dot, item name left.
   elements (never foreignObject).
 - No animation, no scripts, no external images, no filters/shadows.
 
-## 5. Channels (WhatsApp / Telegram)
+## 5. The terminal
 
-Interactive cards can't render there. For data on a channel: state the finding, then
+Interactive cards can't render there. For data in the terminal: state the finding, then
 a compact aligned text table (monospace block) or a short ranked list. If the user
 explicitly wants a picture, build the chart as a small HTML page and screenshot it
 via the browser, sending the PNG — otherwise don't.

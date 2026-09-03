@@ -5,8 +5,8 @@ import type {
   AskUserResponse,
   DangerLevel
 } from '@/lib/conversations/types'
-import { tunnelClient } from '@/lib/tunnel/client'
-import { Event, Rpc } from '@/lib/tunnel/protocol'
+import { bridgeClient } from '@/lib/cloud/bridge'
+import { Event, Rpc } from '@/lib/bridge/protocol'
 import { useChatRuntime, type ApprovalCardState } from '@/state/chatRuntime'
 
 /**
@@ -93,7 +93,7 @@ const DANGER_LEVELS: DangerLevel[] = ['safe', 'warn', 'confirm', 'destructive', 
  * than stacks.
  */
 export function attachCardStream(): void {
-  const tunnel = tunnelClient.active
+  const tunnel = bridgeClient.active
   if (!tunnel) return
 
   tunnel.onEvent(Event.askRequest, (payload) => {
@@ -205,8 +205,8 @@ export async function respondAsk(
     answers: response.kind === 'answered' ? response.answers : undefined
   })
 
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) {
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) {
     useChatRuntime.getState().putAsk(conversationId, { ...ask, answered: false })
     return
   }
@@ -231,8 +231,8 @@ export async function respondApproval(
   if (!current || current.decision !== undefined) return
   store.putApproval(conversationId, { ...current, decision })
 
-  const tunnel = tunnelClient.active
-  if (!tunnel || !tunnelClient.connected) {
+  const tunnel = bridgeClient.active
+  if (!tunnel || !bridgeClient.connected) {
     useChatRuntime.getState().putApproval(conversationId, { ...current, decision: undefined })
     return
   }

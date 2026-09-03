@@ -24,6 +24,7 @@ jest.mock('react-native-reanimated', () => {
   const anim = { duration: () => anim, delay: () => anim, springify: () => anim }
   return { __esModule: true, default: { View }, FadeInDown: anim, FadeInUp: anim, FadeOut: anim }
 })
+
 jest.mock('expo-audio', () => ({
   useAudioRecorder: () => ({ prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn() }),
   useAudioRecorderState: () => ({ durationMillis: 0 }),

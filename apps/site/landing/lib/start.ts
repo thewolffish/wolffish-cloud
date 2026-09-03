@@ -18,13 +18,13 @@ export interface StartCaseConfig {
 }
 
 // Shared step keys: install, key (DeepSeek V4 Pro), keyVision (Grok 4.6),
-// brave (search key), workspace (Google), telegram, whatsapp, mobile (phone app).
+// workspace (Google), telegram, whatsapp, mobile (phone app).
 export const START_CASES: StartCaseConfig[] = [
   {
     id: "morning-briefing",
     icon: "mug",
     channel: "telegram",
-    pre: ["install", "key", "workspace", "brave", "telegram"],
+    pre: ["install", "key", "workspace", "telegram"],
     post: ["mobile"],
     docs: "/configuration/heartbeat",
   },
@@ -56,7 +56,7 @@ export const START_CASES: StartCaseConfig[] = [
     id: "news",
     icon: "newspaper",
     channel: "telegram",
-    pre: ["install", "key", "brave", "telegram"],
+    pre: ["install", "key", "telegram"],
     post: ["mobile"],
     docs: "/configuration/heartbeat",
   },
@@ -64,7 +64,7 @@ export const START_CASES: StartCaseConfig[] = [
     id: "social",
     icon: "hashtag",
     channel: "telegram",
-    pre: ["install", "key", "brave", "telegram"],
+    pre: ["install", "key", "telegram"],
     post: ["mobile"],
     docs: "/configuration/what-to-schedule",
   },
@@ -72,7 +72,7 @@ export const START_CASES: StartCaseConfig[] = [
     id: "research",
     icon: "search",
     channel: "telegram",
-    pre: ["install", "key", "brave", "telegram"],
+    pre: ["install", "key", "telegram"],
     post: ["mobile"],
     docs: "/capabilities/built-in-capabilities",
   },
@@ -104,7 +104,7 @@ export const START_CASES: StartCaseConfig[] = [
     id: "travel",
     icon: "plane",
     channel: "telegram",
-    pre: ["install", "key", "brave", "telegram"],
+    pre: ["install", "key", "telegram"],
     post: ["mobile"],
     docs: "/configuration/heartbeat",
   },

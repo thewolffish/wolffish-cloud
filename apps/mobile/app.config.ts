@@ -1,11 +1,32 @@
 import type { ExpoConfig } from 'expo/config'
 
-export const APP_NAME = 'Wolffish'
-export const APP_SCHEME = 'wolffish'
-const EXPO_PROJECT_ID = '684beeaa-cdb0-48d4-aab0-bf7c0aae92a0'
-const EXPO_PROJECT_SLUG = 'wolffish-mobile'
+// IDENTITY — deliberately distinct from the personal edition's phone app, in
+// every field an OS or a store keys on. The two apps are expected to be
+// installed side by side on the same device (this one pairs with the
+// wolffish-cloud desktop and the org API; the personal one pairs with the
+// personal desktop), so nothing here may collide with `sh.wolffi.mobile`,
+// scheme `wolffish`, or the `wolffish-mobile` Expo project. Changing any of
+// these makes a DIFFERENT app to iOS/Android — see DEPLOY.md before touching.
+export const APP_NAME = 'Wolffish Cloud'
+export const APP_SCHEME = 'wolffishcloud'
+const EXPO_PROJECT_SLUG = 'wolffish-cloud-mobile'
 const EXPO_PROJECT_OWNER = 'younes-alturkey'
-const PACKAGE_IDENTIFIER = 'sh.wolffi.mobile'
+const PACKAGE_IDENTIFIER = 'sh.wolffi.cloud.mobile'
+/**
+ * EAS project — UNLINKED on purpose.
+ *
+ * The id that used to sit here belonged to the personal edition's project
+ * (`wolffish-mobile`); publishing this app under it would have shipped these
+ * binaries and OTA updates to the personal app's installs. This app needs its
+ * own project, which only the account owner can create:
+ *
+ *     npx eas init            # creates the project, writes the id back here
+ *
+ * Until then: local builds (`npm run ios`) work as normal, `eas build` stops
+ * and asks to link, and OTA is off — `Updates.isEnabled` is false, so
+ * useOtaUpdates no-ops and Settings → Updates reports the app as up to date.
+ */
+const EXPO_PROJECT_ID: string | null = null
 // Deferred: capture of https://wolffi.sh links as native deep links. Off on
 // purpose — the site is an install landing page, so web links must open the
 // browser, not the app. To re-enable, uncomment this constant plus the
@@ -81,7 +102,17 @@ const config: ExpoConfig = {
     //
     // NATIVE CHANGE: forks the fingerprint runtime version. Ships in a store
     // build (npm run provision), never over the air.
-    googleServicesFile: './google-services.json',
+    //
+    // UNSET on purpose. The committed google-services.json registers the
+    // package `sh.wolffi.mobile` (the personal edition); handing it to the
+    // GoogleServices plugin under this app's package fails the prebuild with
+    // "No matching client found". Android push is therefore DARK until a
+    // Firebase Android app is registered for `sh.wolffi.cloud.mobile`:
+    //   Firebase console → project wolffish-f9ac3 → Add app → Android →
+    //   package sh.wolffi.cloud.mobile → download google-services.json (it
+    //   will carry BOTH clients) → replace the file → restore the line below.
+    // iOS push is unaffected: APNs goes through EAS credentials, not this file.
+    // googleServicesFile: './google-services.json',
     adaptiveIcon: {
       // adaptive-icon.png is icon-trans.png shrunk into the adaptive-icon
       // safe zone (artwork ~58% of the 1024 canvas, transparent padding) —
@@ -99,11 +130,11 @@ const config: ExpoConfig = {
     output: 'static',
     favicon: './assets/images/favicon.png'
   },
-  extra: {
-    eas: {
-      projectId: EXPO_PROJECT_ID
-    }
-  },
+  // Both blocks are omitted entirely while EXPO_PROJECT_ID is null: an
+  // `undefined` projectId or a `u.expo.dev/null` update URL is worse than no
+  // key at all — the first makes EAS errors unreadable, the second points
+  // expo-updates at a 404 it retries on every launch.
+  ...(EXPO_PROJECT_ID ? { extra: { eas: { projectId: EXPO_PROJECT_ID } } } : {}),
   // OTA updates (EAS Update). Never blocks launch (fallbackToCacheTimeout 0):
   // an update downloads in the background and applies on the next cold start,
   // and useOtaUpdates adds the launch check, foreground checks and the restart
@@ -121,11 +152,15 @@ const config: ExpoConfig = {
   // NEVER keeps expo-updates' anti-brick path: a build that crashes on launch
   // can still pull a fix.
   runtimeVersion: { policy: 'fingerprint' },
-  updates: {
-    url: `https://u.expo.dev/${EXPO_PROJECT_ID}`,
-    fallbackToCacheTimeout: 0,
-    checkAutomatically: 'ON_ERROR_RECOVERY'
-  },
+  ...(EXPO_PROJECT_ID
+    ? {
+        updates: {
+          url: `https://u.expo.dev/${EXPO_PROJECT_ID}`,
+          fallbackToCacheTimeout: 0,
+          checkAutomatically: 'ON_ERROR_RECOVERY' as const
+        }
+      }
+    : {}),
   plugins: [
     'expo-router',
     'expo-localization',
@@ -139,7 +174,7 @@ const config: ExpoConfig = {
       'expo-camera',
       {
         cameraPermission:
-          'Wolffish uses the camera only to scan the pairing code shown by the desktop app.',
+          'Wolffish Cloud uses the camera only to scan the pairing code shown by the desktop app.',
         recordAudioAndroid: false
       }
     ],
@@ -196,7 +231,7 @@ const config: ExpoConfig = {
       // ships only in a store binary.
       'expo-audio',
       {
-        microphonePermission: 'Allow Wolffish to record voice notes you send to your agent.'
+        microphonePermission: 'Allow Wolffish Cloud to record voice notes you send to your agent.'
       }
     ],
     [
@@ -219,7 +254,7 @@ const config: ExpoConfig = {
       // Native change → new fingerprint runtime → ships only in a store binary.
       'expo-image-picker',
       {
-        photosPermission: 'Allow Wolffish to attach photos and videos to your messages.'
+        photosPermission: 'Allow Wolffish Cloud to attach photos and videos to your messages.'
       }
     ],
     [

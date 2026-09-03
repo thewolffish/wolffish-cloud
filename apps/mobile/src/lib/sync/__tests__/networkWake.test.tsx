@@ -37,8 +37,8 @@ jest.mock('@/lib/sync/prompt', () => ({
 // `mock`-prefixed: jest hoists these factories above the file, and only names
 // it can prove are mocks may cross that boundary.
 const mockResume = jest.fn(async () => true)
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     resume: () => mockResume(),
     subscribe: () => () => undefined,
     get connected() {

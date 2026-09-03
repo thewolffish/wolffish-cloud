@@ -6,7 +6,7 @@
  *                       secrets, 13 conversations — one with 6 messages
  *                       and an attachment — deliverables, brain files, a
  *                       voice note, duplicate-content files at two paths,
- *                       an empty marker file, WhatsApp state) syncs up.
+ *                       an empty marker file, channel state) syncs up.
  *                       Then the user deletes a conversation and a file,
  *                       and the tombstones land.
  *   PURGE               rm -rf of the whole ~/.wfc, process dead.
@@ -19,7 +19,7 @@
  *                       session flow completes the restore fully.
  *   disk assertions     every conversation, file, config byte is back —
  *                       and the DELETED conversation and file stayed
- *                       deleted. whatsapp/auth (device keys) did not
+ *                       deleted. brain/cerebellum (device-local) did not
  *                       sync. Pagination was actually exercised (the
  *                       fake serves pages of 5/4/3).
  *   phase foreign       a different user signs in over the restored
@@ -528,7 +528,7 @@ async function phaseMain(): Promise<void> {
         names.includes('brain/notes/dup-b.txt') &&
         names.includes('files/empty.marker') &&
         lazyMediaSeedFiles().every(([rel]) => names.includes(rel)) &&
-        names.includes('whatsapp/chats.json') &&
+        names.includes('brain/channels/chats.json') &&
         (recs[convId(1)] ?? 0) >= 7
       )
     }, 60_000)
@@ -735,8 +735,8 @@ async function orchestrate(): Promise<void> {
     lazyMediaSeedFiles().every(([rel]) => liveNames.has(rel))
   )
   ok(
-    'whatsapp auth NEVER uploaded',
-    ![...state.files.values()].some((f) => f.name.startsWith('whatsapp/auth/'))
+    'cerebellum-local keys NEVER uploaded',
+    ![...state.files.values()].some((f) => f.name.startsWith('brain/cerebellum/'))
   )
   ok(
     'deleted file tombstoned',

@@ -29,8 +29,8 @@ jest.mock('@/lib/db/database', () => ({ getDb: () => Promise.resolve({}) }))
 
 const mockRpc = jest.fn()
 let mockConnected = true
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get active() {
       return { rpc: mockRpc, onEvent: () => undefined }
     },
@@ -41,7 +41,7 @@ jest.mock('@/lib/tunnel/client', () => ({
 }))
 
 import { seedActiveRuns } from '@/lib/sync/prompt'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useRunStatus } from '@/state/runStatus'
 

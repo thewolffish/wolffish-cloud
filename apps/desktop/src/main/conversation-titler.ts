@@ -74,11 +74,10 @@ const TITLE_SYSTEM =
  * can carry an `<attachments>` / `<video_instructions>` block (filename, mime,
  * size, absolute path — load-bearing for the agent's file tools) and a leading
  * `<voice_note …>` opener (carries the reply-language hint). Those are stripped
- * from the TITLE's copy ONLY — never from the history/wire content the model
- * sees, so file tools and reply-language behaviour are untouched. A caption-less
- * attachment strips to '' — on the channels that would otherwise strand it,
- * `mediaTitleSource` then names it from the filenames ALONE, never from the
- * mime/size/path this strips. Anchored to the exact sentinels so ordinary prose
+ * from the TITLE's copy ONLY — never from the history/wire content the
+ * model sees, so file tools are untouched. A caption-less attachment strips to
+ * '' and stays 'Untitled' for one turn; it self-heals on the next message.
+ * Anchored to the exact sentinels so ordinary prose
  * containing `<` or `>` is left intact.
  */
 function titleSource(message: string): string {
@@ -91,84 +90,13 @@ function titleSource(message: string): string {
 }
 
 /**
- * The attached filenames, in order, parsed out of the `<attachments>` block.
- * TWO producers must stay in step with this regex — main's
- * composeAttachmentContext() (uploads/compose-attachments.ts) and the
- * renderer's composeHistoryContent() (pages/Chat.tsx), byte-identical today.
- * If either changes shape, a caption-less turn quietly falls back to 'Untitled'
- * rather than misfiring. Matched against the line shape they emit —
- * `  - name.ext (type=…, mime=…, size=…b, path=…)` — and keyed on the ` (type=`
- * delimiter rather than the parens, so a filename that itself contains
- * parentheses ("report (final).pdf") survives intact.
- */
-function attachmentNames(message: string): string[] {
-  const block = /<attachments>([\s\S]*?)<\/attachments>/i.exec(message)
-  if (!block) return []
-  const names: string[] = []
-  for (const line of block[1].split('\n')) {
-    const m = /^\s*-\s+(.+?)\s+\(type=/.exec(line)
-    if (m) names.push(m[1].trim())
-  }
-  return names
-}
-
-/**
- * A stand-in "message" for a caption-less media turn, so the model can still
- * NAME the conversation off what it was actually given — the filenames.
- *
- * Send someone a photo with no caption and the conversation is still about
- * something; titling it 'Untitled' threw away the one piece of signal present.
- * The filename is genuine user intent (`q3-budget-final.xlsx` says plenty), so
- * it goes to the model as ordinary prose and gets titled like any other
- * message. Deliberately excludes the mime/size/path from the block: those are
- * plumbing, they'd steer the title toward the metadata, and the sanitizer
- * exists precisely to keep them out.
- *
- * Doubles as a decent fallback string — if the provider is unreachable this is
- * what fallbackTitle() slices, and "Shared a file: photo.jpg" reads fine.
- */
-function mediaTitleSource(message: string): string {
-  const names = attachmentNames(message)
-  if (names.length === 0) return ''
-  if (names.length === 1) return `Shared a file: ${names[0]}`
-  return `Shared ${names.length} files: ${names.join(', ')}`
-}
-
-/**
- * Whether a conversation on this channel can be stranded 'Untitled' FOREVER —
- * the only place naming a turn after its filenames is the right trade.
- *
- * These two channels write an 'Untitled' file to disk before the turn and are
- * typically one-shot: the chat rotates to a fresh conversation after
- * staleHours, so the later turn that would re-title never comes. Naming such a
- * conversation "Shared a file: invoice.pdf" beats leaving it nameless.
- *
- * Everywhere else the trade inverts, because the FIRST real title a
- * conversation gets is its last (ensureConversationTitle short-circuits on any
- * non-'Untitled' title). In-app, a caption-less paste is normally followed by
- * the actual question, and its filename is synthetic anyway
- * (`pasted-1752641234567.png`, `recording-…webm`) — so titling from it would
- * bury the real title under a machine name. Leaving those 'Untitled' for one
- * turn is strictly better, and they self-heal.
- *
- * Matches what the runtime shows: telegram and whatsapp stranded 21% and 11% of
- * their conversations; in-app, heartbeat and procedure stranded zero of 627.
- */
-function canStrandUntitled(channel: ConversationChannel | undefined): boolean {
-  return channel === 'telegram' || channel === 'whatsapp'
-}
-
-/**
  * What the model (or the offline slice) actually names the chat from: the
- * user's own words, or — only where 'Untitled' would otherwise be permanent —
- * the media they sent. Empty means nothing nameable was in the message.
+ * user's own words. Empty means nothing nameable was in the message.
  * The single source of truth for both titleFromMessage and offlineTitle, so
  * a live title and a backfilled one can't drift apart.
  */
-function titleInput(userMessage: string, channel: ConversationChannel | undefined): string {
-  return (
-    titleSource(userMessage) || (canStrandUntitled(channel) ? mediaTitleSource(userMessage) : '')
-  )
+function titleInput(userMessage: string): string {
+  return titleSource(userMessage)
 }
 
 /**
@@ -193,10 +121,9 @@ function titleInput(userMessage: string, channel: ConversationChannel | undefine
 export async function titleFromMessage(
   userMessage: string,
   llm: TitlerLLM,
-  signal?: AbortSignal,
-  channel?: ConversationChannel
+  signal?: AbortSignal
 ): Promise<string> {
-  const trimmed = titleInput(userMessage, channel)
+  const trimmed = titleInput(userMessage)
   if (!trimmed) return 'Untitled'
   if (signal?.aborted) return abortOutcome(signal, trimmed)
   try {
@@ -223,8 +150,8 @@ export async function titleFromMessage(
  * stranded as 'Untitled' and cannot afford blocking LLM calls on the startup
  * path. Kept here, beside the rules it mirrors, so the two can't drift.
  */
-export function offlineTitle(userMessage: string, channel?: ConversationChannel): string {
-  const trimmed = titleInput(userMessage, channel)
+export function offlineTitle(userMessage: string): string {
+  const trimmed = titleInput(userMessage)
   return trimmed ? fallbackTitle(trimmed) : 'Untitled'
 }
 
@@ -261,14 +188,14 @@ export async function ensureConversationTitle(
   if (!conversationId) {
     // No persisted conversation (a null-id / subagent turn) — a display title
     // only, no save.
-    return trimmed ? titleFromMessage(trimmed, llm, signal, channel) : undefined
+    return trimmed ? titleFromMessage(trimmed, llm, signal) : undefined
   }
 
   const existing = await loadConversation(conversationId).catch(() => null)
   if (existing?.title && existing.title !== 'Untitled') return existing.title
   if (!trimmed) return existing?.title ?? undefined
 
-  const title = await titleFromMessage(trimmed, llm, signal, channel)
+  const title = await titleFromMessage(trimmed, llm, signal)
   // Aborted (empty) — leave the conversation Untitled and UNwritten so the
   // titledCache isn't poisoned; the next turn on this conversation re-titles.
   if (!title) return existing?.title ?? undefined

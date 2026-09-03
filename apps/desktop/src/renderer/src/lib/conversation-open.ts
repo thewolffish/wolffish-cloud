@@ -23,10 +23,9 @@ export function mapConversationMessage(m: ConversationMessage): ChatMessage {
       content: m.content,
       timestamp: m.timestamp,
       ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {}),
-      // Voice-note provenance has to survive the round-trip: dropping it
-      // here would let a continued Telegram/WhatsApp conversation replay
-      // every voice note's audio back to the LLM, which is exactly what
-      // the flag exists to prevent.
+      // Voice-note provenance has to survive the round-trip: dropping it here
+      // would let a continued voice conversation replay every voice note's
+      // audio back to the LLM, which is exactly what the flag exists to prevent.
       ...(m.voicePrompt ? { voicePrompt: true } : {}),
       ...(m.voiceLang ? { voiceLang: m.voiceLang } : {})
     }

@@ -19,6 +19,11 @@
  *                       one-plan pool; no key at all = the lane reports
  *                       itself unconfigured.
  * - RESEND_API_KEY      transactional email (password reset codes)
+ * - CONFIG_ENC_KEY      32 random bytes, base64: seals every user's synced
+ *                       config row at rest in D1 (lib/config-crypto.ts).
+ *                       Mint one with: openssl rand -base64 32
+ * - EXPO_ACCESS_TOKEN   optional; only when the Expo project enforces
+ *                       enhanced push security (the bridge's push fallback).
  *
  * Keys never reach a device: the gates receive ids and capacities only.
  * Optional vars (`.dev.vars` locally) point the lanes at mocks.
@@ -46,6 +51,11 @@
   // the default 30 s CPU budget is plenty, the ceiling is belt and braces.
   "limits": { "cpu_ms": 60000 },
 
+  // Plain vars. ADMIN_RESET_CODE_READ lets the release gate read a pending
+  // reset code through the admin API to prove the e-mailed flow end to end;
+  // a client fork removes it and the route answers 404.
+  "vars": { "ADMIN_RESET_CODE_READ": "1" },
+
   "triggers": { "crons": ["17 3 * * *"] },
 
   "d1_databases": [
@@ -67,15 +77,19 @@
   // in front of the org's search plans (src/lib/search-gate.ts); ModelGate
   // admits every model call against the hosts' concurrency limits
   // (src/lib/model-gate.ts). Both keep the org's quota counters in their
-  // SQLite-backed storage — exact, atomic, durable.
+  // SQLite-backed storage — exact, atomic, durable. UserBridge is one per
+  // user: the live desktop↔phone WebSocket link, presence, and the phone's
+  // push registration (src/lib/bridge.ts).
   "durable_objects": {
     "bindings": [
       { "name": "SEARCH_GATE", "class_name": "SearchGate" },
-      { "name": "MODEL_GATE", "class_name": "ModelGate" }
+      { "name": "MODEL_GATE", "class_name": "ModelGate" },
+      { "name": "USER_BRIDGE", "class_name": "UserBridge" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SearchGate"] },
-    { "tag": "v2", "new_sqlite_classes": ["ModelGate"] }
+    { "tag": "v2", "new_sqlite_classes": ["ModelGate"] },
+    { "tag": "v3", "new_sqlite_classes": ["UserBridge"] }
   ]
 }

@@ -5,7 +5,7 @@
  * in any way it likes — nothing here ever throws out of the public
  * surface, and no failure touches any other connection or the app.
  *
- * Lifecycle model (mirrors the WhatsApp channel's discipline):
+ * Lifecycle model (mirrors the mobile channel's discipline):
  * - Every mutation bumps `epoch`; every async tail re-checks it, so a
  *   stale heartbeat/list_changed/reconnect can never act on a newer
  *   connection's state.

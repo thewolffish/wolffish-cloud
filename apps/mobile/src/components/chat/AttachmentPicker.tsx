@@ -97,7 +97,7 @@ function AttachOption({
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      className="border-border bg-bg flex-row items-center gap-3 rounded-lg border px-3 py-3 active:bg-border/40"
+      className="border-border bg-bg flex-row items-center gap-3 rounded-lg border px-3 py-3 active:bg-border-soft"
     >
       {icon}
       <View className="flex-1 flex-col">
@@ -150,7 +150,7 @@ function AttachmentChip({
   const { kind } = classifyFile(file.name)
   return (
     <View className="border-border bg-surface h-9 max-w-[220px] flex-row items-center gap-2 self-start rounded-lg border px-2.5">
-      <View className="bg-primary/10 rounded px-1.5 py-0.5">
+      <View className="bg-primary-soft rounded px-1.5 py-0.5">
         <Text className="text-primary font-sans-medium text-[10px] uppercase">{kind}</Text>
       </View>
       <Text numberOfLines={1} className="text-fg shrink font-sans text-left text-xs">

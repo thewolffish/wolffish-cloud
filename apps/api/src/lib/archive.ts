@@ -142,7 +142,8 @@ export async function archiveIdleConversations(
   const candidates = await env.DB.prepare(
     `SELECT c.id, c.user_id, c.archive_key FROM conversations c
      WHERE c.deleted_at IS NULL AND c.updated_at < ?1
-       AND EXISTS (SELECT 1 FROM conversation_records r WHERE r.conversation_id = c.id)
+       AND EXISTS (SELECT 1 FROM conversation_records r
+                   WHERE r.conversation_id = c.id AND r.kind != 'snapshot')
      ORDER BY c.updated_at LIMIT ?2`
   )
     .bind(idleBefore, CONVERSATIONS_PER_RUN)
@@ -153,7 +154,12 @@ export async function archiveIdleConversations(
   for (const row of candidates.results ?? []) {
     if (Date.now() > deadline) break
     const live = await readAllRecords(env, row.id)
-    if (live.length === 0) continue
+    // The envelope stays a live row: the phone's conversation index reads
+    // model/icon/project/stats straight off it (one JOIN per page), and an
+    // archived conversation must keep answering there. The blob carries a
+    // copy too, and the read path prefers the live one.
+    const movable = live.filter((r) => r.kind !== 'snapshot')
+    if (movable.length === 0) continue
     const previous = row.archive_key ? await readArchive(env, row.archive_key) : null
     const key = archiveKey(row.user_id, row.id)
     const blob: ArchiveBlob = {
@@ -166,7 +172,7 @@ export async function archiveIdleConversations(
     await env.BLOBS.put(key, await gzip(JSON.stringify(blob)))
     await deleteRecordsById(
       env,
-      live.map((r) => r.id)
+      movable.map((r) => r.id)
     )
     await env.DB.prepare(
       'UPDATE conversations SET archived_at = ?1, archive_key = ?2 WHERE id = ?3'
@@ -174,7 +180,7 @@ export async function archiveIdleConversations(
       .bind(blob.archived_at, key, row.id)
       .run()
     archived++
-    records += live.length
+    records += movable.length
   }
   return { archived, records }
 }

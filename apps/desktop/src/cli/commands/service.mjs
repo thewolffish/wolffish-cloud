@@ -19,7 +19,7 @@ import { editorSummary } from '../lib/editor.mjs'
  * Every key-shaped value in the status snapshot, replaced.
  *
  * `cli:status` carries the whole workspace config, which includes every
- * provider API key and the Telegram bot token in clear. `--json` is the form
+ * saved secret in clear. `--json` is the form
  * people pipe into a file, paste into an issue, or leave in a CI log, and on a
  * shared VPS that is the entire credential set leaving the box. The rest of
  * the CLI already masks — `settings list` does — so this brings the one
@@ -64,27 +64,20 @@ export async function status(client, { json, raw = false } = {}) {
     ['platform', String(snapshot.platform ?? '')]
   ])
 
-  // The brain lives at workspace.config.llm.brain — `{ providerId, model }`.
-  // Reading `workspace.model` / `workspace.brain`, as this did, found nothing
-  // on every machine there has ever been, so a fully configured install was
-  // told to go and configure itself.
-  const brain = snapshot.workspace?.config?.llm?.brain ?? null
-  const local = snapshot.workspace?.config?.llm?.local ?? null
-  heading('Brain')
+  // One lane: the model is `config.llm.model`, an id from the org's catalog
+  // (GET /v1/models); nothing else model-shaped lives on the device.
+  const model = snapshot.workspace?.config?.llm?.model ?? null
+  heading('Model')
   keyValue([
     [
       'model',
-      brain?.model
-        ? `${c.bold(String(brain.model))}${brain.providerId ? c.gray(`  ${brain.providerId}`) : ''}`
-        : c.yellow('not configured')
+      model
+        ? `${c.bold(String(model))}${c.gray('  provided by your organization')}`
+        : c.yellow('not selected')
     ],
-    ['mode', c.gray(String(snapshot.workspace?.config?.llm?.mode ?? 'single'))],
-    ...(local?.enabled
-      ? [['local', c.gray(`${local.model ?? '?'} · ${local.provider ?? ''}`)]]
-      : [])
+    ['mode', c.gray(String(snapshot.workspace?.config?.llm?.mode ?? 'single'))]
   ])
-  if (!brain?.model)
-    out(c.gray('    wfc keys set anthropic && wfc brain anthropic <model>'))
+  if (!model) out(c.gray('    pick one: wfc settings model'))
 
   heading('Autostart')
   const auto = snapshot.autostart ?? {}
@@ -315,9 +308,7 @@ export async function pathCommand(client, args) {
     ])
     if (state.shadowedBy) {
       out()
-      out(
-        `  ${icon.warn()} ${c.yellow(`"wfc" currently runs ${shortPath(state.shadowedBy)}`)}`
-      )
+      out(`  ${icon.warn()} ${c.yellow(`"wfc" currently runs ${shortPath(state.shadowedBy)}`)}`)
       out(
         wrapText(
           c.gray(

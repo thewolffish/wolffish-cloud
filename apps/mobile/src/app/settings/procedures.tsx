@@ -22,7 +22,7 @@ import {
   useProcedures
 } from '@/lib/sync/procedures'
 import { useProjects, useProjectsWritable } from '@/lib/sync/projects'
-import type { SyncProcedure, SyncProjectFile } from '@/lib/tunnel/protocol'
+import type { SyncProcedure, SyncProjectFile } from '@/lib/bridge/protocol'
 import { cn } from '@/lib/utils/cn'
 import { formatSignedRelative } from '@/lib/utils/relativeTime'
 import { useToast } from '@/providers/toast/useToast'
@@ -218,7 +218,7 @@ export default function ProceduresScreen(): React.JSX.Element {
                       onPress={() => handlePlay(procedure)}
                       className={cn(
                         'h-8 w-8 items-center justify-center rounded-lg',
-                        runnable ? 'active:bg-border/40' : 'opacity-40'
+                        runnable ? 'active:bg-border-soft' : 'opacity-40'
                       )}
                     >
                       <PlayIcon size={17} className="text-muted" />
@@ -228,7 +228,7 @@ export default function ProceduresScreen(): React.JSX.Element {
                       accessibilityLabel={t('procedures.edit')}
                       hitSlop={6}
                       onPress={() => setEditing(procedure)}
-                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border/40"
+                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border-soft"
                     >
                       <Edit02Icon size={15} className="text-muted" />
                     </Pressable>
@@ -240,7 +240,7 @@ export default function ProceduresScreen(): React.JSX.Element {
                       onPress={() => setDeleteTarget(procedure)}
                       className={cn(
                         'h-8 w-8 items-center justify-center rounded-lg',
-                        writable ? 'active:bg-border/40' : 'opacity-40'
+                        writable ? 'active:bg-border-soft' : 'opacity-40'
                       )}
                     >
                       <Delete02Icon size={15} className="text-muted" />
@@ -615,7 +615,7 @@ function ProcedureEditorBody({
           onPress={() => setEmojiOpen(true)}
           className={cn(
             'bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
-            readOnly ? 'opacity-50' : 'active:bg-border/40'
+            readOnly ? 'opacity-50' : 'active:bg-border-soft'
           )}
         >
           <Text className="text-lg">
@@ -744,7 +744,7 @@ function ProcedureEditorBody({
                 onPress={() => persistFiles(files.filter((f) => f.path !== file.path))}
                 className={cn(
                   'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                  locked ? 'opacity-40' : 'active:bg-border/40'
+                  locked ? 'opacity-40' : 'active:bg-border-soft'
                 )}
               >
                 <Delete02Icon size={13} className="text-muted" />
@@ -810,7 +810,7 @@ function ProcedureEditorBody({
                 onPress={() => removeFolder(dir)}
                 className={cn(
                   'h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                  readOnly ? 'opacity-40' : 'active:bg-border/40'
+                  readOnly ? 'opacity-40' : 'active:bg-border-soft'
                 )}
               >
                 <Delete02Icon size={13} className="text-muted" />

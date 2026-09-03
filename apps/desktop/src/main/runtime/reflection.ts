@@ -159,7 +159,7 @@ Rules for replacements: complete file content, starting with the file's "# Heade
   # People
   <!-- scope comment -->
   ## Sana (wife)
-  - WhatsApp \`+9665…\`. Daily funny-romantic meme; formats tracked to avoid repeats.
+  - Birthday March 3. Weekly plan for Friday outings; formats tracked to avoid repeats.
 - playbook.md: EXACTLY these five section headings, in this order, nothing else — "# Playbook" then "## Do", "## Avoid", "## User likes", "## User dislikes", "## Recipes" — and its ${PLAYBOOK_MAX_CHARS}-character limit. Re-home any content into the closest of the five.
 Preserve facts that are true and load-bearing — this is an audit, not an amnesia pass. No fences, no commentary outside the blocks, no secrets.`
 

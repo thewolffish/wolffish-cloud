@@ -1,9 +1,7 @@
 import { Button } from '@components/core/Button'
-import { Input } from '@components/core/Input'
-import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { MobileStatus } from '@preload/index'
+import type { MobilePairedPhone, MobileStatus } from '@preload/index'
 import {
   AndroidIcon,
   AppleIcon,
@@ -15,7 +13,7 @@ import {
   PlugSocketIcon,
   QrCode01Icon,
   RefreshIcon,
-  SquareLock01Icon,
+  SmartPhone01Icon,
   Tick02Icon,
   Unlink01Icon
 } from 'hugeicons-react'
@@ -26,16 +24,17 @@ import { useTranslation } from 'react-i18next'
 /**
  * Mobile — the phone as a companion surface, managed like any other channel.
  *
- * Two differences from Telegram/WhatsApp shape the panel. There is no token to
- * paste: the desktop *offers* a pairing and the phone claims it, so the top of
- * the panel is either an offer or a live connection, never a form. And the
- * phone renders this whole app rather than a chat, so what is worth monitoring
- * is the tunnel itself — which keys are in play, whether the link is up, how
- * much has crossed it.
+ * There is no token to paste: this desktop OFFERS a pairing (a QR or a short
+ * code the org mints) and the phone claims it, becoming a signed-in device
+ * of the same org account. From then on the phone reads everything — the
+ * conversations, settings, files and usage — straight from the org, and only
+ * live turns travel through this desktop, over the org bridge. So the panel
+ * is a list of paired phones, the way to add one, and the bridge's own
+ * health: never a form, never a key.
  *
- * Module-level snapshot cache mirrors TelegramPanel/GitHubPanel: the panel is
- * eagerly imported by Settings.tsx, so the status is already in memory by the
- * time the user opens it and paints on the first frame.
+ * Module-level snapshot cache: the panel is eagerly imported by Settings, so
+ * the status is already in memory by the time the user opens it and paints
+ * on the first frame.
  */
 let cachedStatus: MobileStatus | null = null
 let loadPromise: Promise<MobileStatus | null> | null = null
@@ -68,9 +67,7 @@ window.api?.mobile?.onStatusChange((status) => {
 
 const STATUS_DOT: Record<string, string> = {
   connected: 'bg-emerald-500',
-  handshaking: 'bg-amber-500',
   connecting: 'bg-amber-500',
-  'waiting-for-peer': 'bg-amber-500',
   reconnecting: 'bg-amber-500',
   error: 'bg-rose-500',
   idle: 'bg-border'
@@ -80,13 +77,12 @@ export function MobilePanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
   const [status, setStatus] = useState<MobileStatus | null>(cachedStatus)
-  const [qr, setQr] = useState<string | null>(null)
+  // The rendered QR, remembered with the payload it was drawn from — so the
+  // image can only ever show the CURRENT offer (a stale one reads as absent)
+  // without resetting state inside the effect that draws it.
+  const [qrFor, setQrFor] = useState<{ payload: string; url: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
-  // Relay editing: the draft tracks the input; pending is what the confirm
-  // dialog will apply — a URL string, or null for "back to the default".
-  const [relayDraft, setRelayDraft] = useState('')
-  const [pendingRelay, setPendingRelay] = useState<{ url: string | null } | null>(null)
   const loaded = status !== null
 
   useEffect(() => {
@@ -104,82 +100,39 @@ export function MobilePanel(): React.JSX.Element {
   }, [])
 
   // Render the pairing payload as a QR whenever an offer is open. Encoded
-  // locally — the payload carries a pairing secret and never leaves the app.
+  // with error-correction M — the phone's camera reads it off this screen.
   const payload = status?.offer?.payload ?? null
   useEffect(() => {
+    if (!payload) return
     let alive = true
-    if (!payload) {
-      void Promise.resolve().then(() => {
-        if (alive) setQr(null)
-      })
-      return () => {
-        alive = false
-      }
-    }
-    void QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
+    void QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 1, width: 240 })
       .then((url) => {
-        if (alive) setQr(url)
+        if (alive) setQrFor({ payload, url })
       })
-      .catch(() => {
-        if (alive) setQr(null)
-      })
+      .catch(() => undefined)
     return () => {
       alive = false
     }
   }, [payload])
+  const qr = payload && qrFor?.payload === payload ? qrFor.url : null
 
-  const tunnel = status?.tunnel ?? null
   const offer = status?.offer ?? null
-  const verbose = status?.verbose ?? null
-  const runCards = status?.runCards ?? null
-  // Known before pairing: the endpoint the tunnel dials. The relay serves an
-  // explanation page over plain HTTPS at the same host, so the link swaps
-  // schemes rather than pointing anywhere new.
-  const relayUrl = tunnel?.relayUrl ?? status?.relayUrl ?? null
-  const relayPageUrl = relayUrl?.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') ?? null
-  const defaultRelayUrl = status?.defaultRelayUrl ?? null
-  const relayIsDefault = defaultRelayUrl === null || relayUrl === defaultRelayUrl
+  const bridge = status?.bridge ?? null
+  const phones = status?.phones ?? []
 
-  // "iPhone 15 Pro · iOS 18.2" from whatever parts the phone actually sent.
-  const deviceLine =
-    [status?.pairing?.model, osLabel(status?.pairing?.platform, status?.pairing?.osVersion)]
-      .filter(Boolean)
-      .join(' · ') || '—'
-  const methodLine = status?.pairing?.method
-    ? t(`settings.mobile.methodValue.${status.pairing.method}`)
-    : '—'
-
-  // The draft follows the applied value — which only changes on apply/reset —
-  // reconciled during render (not an effect) so unrelated status updates
-  // (frame counters) never clobber keystrokes.
-  const [draftBase, setDraftBase] = useState<string | null>(null)
-  if (draftBase !== relayUrl) {
-    setDraftBase(relayUrl)
-    setRelayDraft(relayUrl ?? '')
-  }
-  const relayDraftChanged = loaded && relayDraft.trim() !== (relayUrl ?? '')
-
-  // A countdown the panel can render purely: the deadline is fixed, this ticks.
+  // Ticks once a second while an offer is open so its countdown reads true.
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!offer) return
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [offer])
 
-  const toggleOptions = useMemo(
-    () => [
-      { value: false, label: t('settings.mobile.toggle.off') },
-      { value: true, label: t('settings.mobile.toggle.on') }
-    ],
-    [t]
-  )
-
   const act = useCallback(
-    async (run: () => Promise<MobileStatus>): Promise<void> => {
+    async (fn: () => Promise<MobileStatus>): Promise<void> => {
       setBusy(true)
       try {
-        setStatus(await run())
+        setStatus(await fn())
       } catch {
         toast.show({ tone: 'error', message: t('settings.mobile.offerFailed') })
       } finally {
@@ -196,20 +149,15 @@ export function MobilePanel(): React.JSX.Element {
     setTimeout(() => setCopied(false), 1500)
   }
 
-  // Applies a confirmed relay change (null = reset). The main process
-  // normalizes and validates; a rejection here is a malformed URL.
-  const changeRelay = async (url: string | null): Promise<void> => {
-    setBusy(true)
-    try {
-      setStatus(await window.api.mobile.setRelayUrl(url))
-      setPendingRelay(null)
-    } catch {
-      setPendingRelay(null)
-      toast.show({ tone: 'error', message: t('settings.mobile.relayConfig.invalid') })
-    } finally {
-      setBusy(false)
-    }
-  }
+  const toggleOptions = useMemo(
+    () => [
+      { value: false, label: t('settings.mobile.toggle.off') },
+      { value: true, label: t('settings.mobile.toggle.on') }
+    ],
+    [t]
+  )
+  const verbose = status?.verbose ?? null
+  const runCards = status?.runCards ?? null
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -221,257 +169,183 @@ export function MobilePanel(): React.JSX.Element {
           <p className="text-muted text-sm leading-relaxed">{t('settings.mobile.description')}</p>
         </header>
 
-        {/* Paired: the live link. Unpaired: the way to make one. */}
-        {status?.paired ? (
-          <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    'size-2 shrink-0 rounded-full',
-                    STATUS_DOT[tunnel?.status ?? 'idle'] ?? 'bg-border'
-                  )}
+        {/* Paired phones, each its own row; below them the way to add one. */}
+        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+          {status?.paired ? (
+            <div className="flex flex-col gap-5">
+              <span className="text-fg text-sm font-medium">{t('settings.mobile.phones')}</span>
+              {phones.map((phone) => (
+                <PhoneRow
+                  key={phone.id}
+                  phone={phone}
+                  busy={busy || !loaded}
+                  onUnpair={() => void act(() => window.api.mobile.unpair(phone.id))}
                 />
-                <span className="text-fg text-sm font-medium">
-                  {t(`settings.mobile.status.${tunnel?.status ?? 'idle'}`)}
-                </span>
-              </div>
-              {/* The phone itself, named and badged — a paired device the
-                  user cannot identify at a glance is one they cannot decide
-                  about. Icon only when the phone said what it is. */}
-              <div className="flex min-w-0 items-center gap-2">
-                {status.pairing?.platform === 'ios' && (
-                  <AppleIcon size={14} className="text-muted shrink-0" />
-                )}
-                {status.pairing?.platform === 'android' && (
-                  <AndroidIcon size={14} className="text-muted shrink-0" />
-                )}
-                <span className="text-fg truncate text-xs font-medium">
-                  {status.pairing?.deviceName ?? t('settings.mobile.unknownDevice')}
-                </span>
+              ))}
+            </div>
+          ) : (
+            !offer && (
+              <p className="text-muted text-sm leading-relaxed">{t('settings.mobile.notPaired')}</p>
+            )
+          )}
+
+          {status?.paired && <div className="border-border/60 border-t" />}
+
+          {offer ? (
+            <div className="flex flex-col items-center gap-4">
+              {offer.mode === 'qr' ? (
+                qr ? (
+                  <img
+                    src={qr}
+                    alt={t('settings.mobile.qrAlt')}
+                    width={240}
+                    height={240}
+                    className="rounded-xl bg-white p-3"
+                  />
+                ) : (
+                  <div className="bg-border/30 size-60 animate-pulse rounded-xl" />
+                )
+              ) : (
+                <button
+                  type="button"
+                  onClick={copyCode}
+                  title={t('common.copy')}
+                  className={cn(
+                    'text-fg flex items-center gap-3 rounded-xl px-6 py-4 font-mono text-3xl tracking-[0.2em]',
+                    'bg-bg border-border hover:border-fg/30 border',
+                    'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2'
+                  )}
+                >
+                  <span dir="ltr">{offer.code}</span>
+                  {copied ? (
+                    <Tick02Icon size={18} className="text-emerald-500" />
+                  ) : (
+                    <Copy01Icon size={18} className="text-muted" />
+                  )}
+                </button>
+              )}
+              <p className="text-muted max-w-sm text-center text-xs leading-relaxed">
+                {offer.mode === 'qr'
+                  ? t('settings.mobile.scanHint')
+                  : t('settings.mobile.codeHint')}
+              </p>
+              <p className="text-muted text-xs">
+                {t('settings.mobile.expires', {
+                  minutes: Math.max(1, Math.round((offer.expiresAt - now) / 60000))
+                })}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() =>
+                      offer.mode === 'qr'
+                        ? window.api.mobile.offerQr()
+                        : window.api.mobile.offerCode()
+                    )
+                  }
+                >
+                  <RefreshIcon size={14} />
+                  {t('settings.mobile.newCode')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void act(() => window.api.mobile.cancelOffer())}
+                >
+                  {t('common.cancel')}
+                </Button>
               </div>
             </div>
-
-            <div className="border-border/60 border-t" />
-
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
-              <Row label={t('settings.mobile.device')} value={deviceLine} />
-              <Row
-                label={t('settings.mobile.pairedAt')}
-                value={
-                  status.pairing?.pairedAt
-                    ? new Date(status.pairing.pairedAt).toLocaleString()
-                    : '—'
-                }
-              />
-              <Row
-                label={t('settings.mobile.appVersion')}
-                value={status.pairing?.appVersion ?? '—'}
-              />
-              <Row label={t('settings.mobile.method')} value={methodLine} />
-              <Row label={t('settings.mobile.relay')} value={tunnel?.relayUrl ?? '—'} />
-              <Row label={t('settings.mobile.rendezvous')} value={tunnel?.rendezvous ?? '—'} mono />
-              <Row label={t('settings.mobile.keyDesktop')} value={tunnel?.ownKey ?? '—'} mono />
-              <Row label={t('settings.mobile.keyPhone')} value={tunnel?.peerKey ?? '—'} mono />
-              <Row label={t('settings.mobile.session')} value={tunnel?.session ?? '—'} mono />
-              <Row label={t('settings.mobile.cipher')} value="ChaCha20-Poly1305 · X25519" mono />
-              <Row
-                label={t('settings.mobile.frames')}
-                value={`${tunnel?.framesSent ?? 0} ↑ · ${tunnel?.framesReceived ?? 0} ↓`}
-              />
-              <Row
-                label={t('settings.mobile.lastSeen')}
-                value={
-                  status.pairing?.lastSeenAt
-                    ? new Date(status.pairing.lastSeenAt).toLocaleString()
-                    : '—'
-                }
-              />
-            </dl>
-
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.mobile.fingerprintHint')}
-            </p>
-
-            <div className="border-border/60 border-t" />
-
-            {/* Both ways out live with the connection they end, each saying
-                what it does — at the foot of the panel they read as a pair of
-                unlabelled buttons, and the difference between them is the
-                whole point. */}
-            <ActionRow
-              icon={<PlugSocketIcon size={18} className="text-muted mt-0.5 shrink-0" />}
-              title={t('settings.mobile.disconnect')}
-              body={t('settings.mobile.disconnectHint')}
-              action={
-                <Button
-                  variant="outline"
-                  disabled={busy || tunnel === null}
-                  onClick={() => void act(() => window.api.mobile.disconnect())}
-                >
-                  {t('settings.mobile.disconnect')}
-                </Button>
-              }
-            />
-            <ActionRow
-              icon={<Unlink01Icon size={18} className="mt-0.5 shrink-0 text-rose-500" />}
-              title={t('settings.mobile.unpair')}
-              body={t('settings.mobile.unpairHint')}
-              action={
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void act(() => window.api.mobile.unpair())}
-                >
-                  {t('settings.mobile.unpairAction')}
-                </Button>
-              }
-            />
-          </section>
-        ) : (
-          <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-            {offer ? (
-              <div className="flex flex-col items-center gap-4">
-                {offer.mode === 'qr' ? (
-                  <>
-                    {qr ? (
-                      <img
-                        src={qr}
-                        alt={t('settings.mobile.qrAlt')}
-                        width={240}
-                        height={240}
-                        className="border-border rounded-xl border bg-white p-2"
-                      />
-                    ) : (
-                      <div
-                        aria-hidden="true"
-                        className="bg-border/30 size-[240px] animate-pulse rounded-xl"
-                      />
-                    )}
-                    <p className="text-muted max-w-sm text-center text-sm leading-relaxed">
-                      {t('settings.mobile.scanHint')}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={copyCode}
-                      className={cn(
-                        'border-border hover:bg-border/30 flex cursor-pointer items-center gap-3 rounded-xl border px-6 py-4',
-                        'focus-visible:ring-accent focus-visible:ring-offset-bg font-mono text-2xl tracking-[0.2em] focus-visible:ring-2 focus-visible:ring-offset-2'
-                      )}
-                    >
-                      {offer.code}
-                      {copied ? (
-                        <Tick02Icon size={18} className="text-emerald-500" />
-                      ) : (
-                        <Copy01Icon size={18} className="text-muted" />
-                      )}
-                    </button>
-                    <p className="text-muted max-w-sm text-center text-sm leading-relaxed">
-                      {t('settings.mobile.codeHint')}
-                    </p>
-                    {/* The code carries only the secret; on a custom relay
-                        the phone must be told the address by hand. */}
-                    {!relayIsDefault && relayUrl && (
-                      <div className="flex flex-col items-center gap-1">
-                        <p className="text-muted max-w-sm text-center text-sm leading-relaxed">
-                          {t('settings.mobile.codeRelayHint')}
-                        </p>
-                        <span dir="ltr" className="text-fg break-all text-center font-mono text-xs">
-                          {relayUrl}
-                        </span>
-                      </div>
-                    )}
-                  </>
-                )}
-                <p className="text-muted text-xs">
-                  {t('settings.mobile.expires', {
-                    minutes: Math.max(1, Math.round((offer.expiresAt - now) / 60000))
-                  })}
-                </p>
-                <div className="flex gap-2">
+          ) : (
+            <div className="flex flex-col gap-5">
+              {status?.paired && (
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.mobile.pairAnother')}
+                </span>
+              )}
+              <ActionRow
+                icon={<QrCode01Icon size={18} className="text-muted mt-0.5 shrink-0" />}
+                title={t('settings.mobile.qrTitle')}
+                body={t('settings.mobile.qrDesc')}
+                action={
                   <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(() =>
-                        offer.mode === 'qr'
-                          ? window.api.mobile.offerQr()
-                          : window.api.mobile.offerCode()
-                      )
-                    }
-                  >
-                    <RefreshIcon size={16} />
-                    {t('settings.mobile.newCode')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => void act(() => window.api.mobile.unpair())}
-                  >
-                    {t('common.cancel')}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-5">
-                <p className="text-muted text-sm leading-relaxed">
-                  {t('settings.mobile.notPaired')}
-                </p>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <QrCode01Icon size={18} className="text-muted mt-0.5 shrink-0" />
-                    <div className="flex flex-col gap-1">
-                      <span className="text-fg text-sm font-medium">
-                        {t('settings.mobile.qrTitle')}
-                      </span>
-                      <p className="text-muted text-xs leading-relaxed">
-                        {t('settings.mobile.qrDesc')}
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    disabled={busy}
+                    disabled={busy || !loaded}
                     className="shrink-0"
                     onClick={() => void act(() => window.api.mobile.offerQr())}
                   >
                     {t('settings.mobile.generate')}
                   </Button>
-                </div>
-                <div className="border-border/60 border-t" />
-                {/* The typed code carries only the secret, so on a custom
-                    relay the description tells the user the phone needs the
-                    relay address too — it has a field for it, and the offer
-                    screen shows the address to type. */}
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <KeyboardIcon size={18} className="text-muted mt-0.5 shrink-0" />
-                    <div className="flex flex-col gap-1">
-                      <span className="text-fg text-sm font-medium">
-                        {t('settings.mobile.codeTitle')}
-                      </span>
-                      <p className="text-muted text-xs leading-relaxed">
-                        {relayIsDefault
-                          ? t('settings.mobile.codeDesc')
-                          : t('settings.mobile.codeDescCustomRelay')}
-                      </p>
-                    </div>
-                  </div>
+                }
+              />
+              <div className="border-border/60 border-t" />
+              <ActionRow
+                icon={<KeyboardIcon size={18} className="text-muted mt-0.5 shrink-0" />}
+                title={t('settings.mobile.codeTitle')}
+                body={t('settings.mobile.codeDesc')}
+                action={
                   <Button
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || !loaded}
                     className="shrink-0"
                     onClick={() => void act(() => window.api.mobile.offerCode())}
                   >
                     {t('settings.mobile.generate')}
                   </Button>
-                </div>
-              </div>
-            )}
-          </section>
-        )}
+                }
+              />
+            </div>
+          )}
+        </section>
+
+        {/* The org bridge — this desktop's own end of the live link. Phones
+            read their data from the org; only turns and answers come through
+            here, and only while this desktop is on the bridge. */}
+        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  STATUS_DOT[bridge?.status ?? 'idle'] ?? 'bg-border'
+                )}
+              />
+              <span className="text-fg text-sm font-medium">
+                {t('settings.mobile.bridge')}
+                {' · '}
+                {t(`settings.mobile.status.${bridge?.status ?? 'idle'}`)}
+              </span>
+            </div>
+            <span dir="ltr" className="text-muted truncate font-mono text-xs">
+              {status?.apiBase ?? '—'}
+            </span>
+          </div>
+          <p className="text-muted text-sm leading-relaxed">{t('settings.mobile.bridgeHint')}</p>
+          {bridge?.lastError && bridge.status === 'error' && (
+            <p dir="ltr" className="text-left font-mono text-xs text-rose-500">
+              {bridge.lastError}
+            </p>
+          )}
+          <div className="border-border/60 border-t" />
+          <HowRow
+            icon={<Key01Icon size={18} className="text-muted mt-0.5 shrink-0" />}
+            title={t('settings.mobile.how.pairTitle')}
+            body={t('settings.mobile.how.pairBody')}
+          />
+          <HowRow
+            icon={<Globe02Icon size={18} className="text-muted mt-0.5 shrink-0" />}
+            title={t('settings.mobile.how.orgTitle')}
+            body={t('settings.mobile.how.orgBody')}
+          />
+          <HowRow
+            icon={<PlugSocketIcon size={18} className="text-muted mt-0.5 shrink-0" />}
+            title={t('settings.mobile.how.liveTitle')}
+            body={t('settings.mobile.how.liveBody')}
+          />
+        </section>
 
         {/* The stores' permanent links — installing the app is step zero of
             pairing, so the panel hands them over instead of sending the user
@@ -506,285 +380,91 @@ export function MobilePanel(): React.JSX.Element {
           </div>
         </section>
 
-        {/* The relay, a card of its own — nothing about it hides in code.
-            Power users point this at a self-hosted deployment; the next
-            pairing carries the new address to the phone. */}
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-fg text-sm font-medium">{t('settings.mobile.relay')}</span>
-            {relayPageUrl && (
-              <ExternalLink href={relayPageUrl} label={t('settings.mobile.openRelay')} />
-            )}
-          </div>
-
-          <p className="text-muted text-sm leading-relaxed">
-            {t('settings.mobile.relayConfig.body')}
-          </p>
-
-          <Input
-            label={t('settings.mobile.relayConfig.inputLabel')}
-            dir="ltr"
-            value={relayDraft}
-            onChange={(e) => setRelayDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && relayDraftChanged && !busy)
-                setPendingRelay({ url: relayDraft.trim() || null })
-            }}
-            placeholder={defaultRelayUrl ?? 'wss://…'}
+          <Toggle
+            title={t('settings.mobile.notifications')}
+            hint={t('settings.mobile.notificationsHint')}
+            value={status?.notificationsEnabled ?? null}
+            options={toggleOptions}
             disabled={busy || !loaded}
-            spellCheck={false}
-            className="text-left font-mono text-xs"
+            onChange={(value) => void act(() => window.api.mobile.setNotifications(value))}
           />
-
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex gap-2">
-              <Button
-                disabled={busy || !relayDraftChanged}
-                onClick={() => setPendingRelay({ url: relayDraft.trim() || null })}
-              >
-                {t('settings.mobile.relayConfig.apply')}
-              </Button>
-              {!relayIsDefault && (
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => setPendingRelay({ url: null })}
-                >
-                  {t('settings.mobile.relayConfig.reset')}
-                </Button>
-              )}
-            </div>
-            <ExternalLink
-              href="https://github.com/thewolffish/wolffish-relay"
-              label={t('settings.mobile.relayConfig.repo')}
-            />
-          </div>
+          <Toggle
+            title={t('settings.mobile.verbose')}
+            hint={t('settings.mobile.verboseHint')}
+            value={verbose}
+            options={toggleOptions}
+            disabled={busy || !loaded}
+            onChange={(value) => void act(() => window.api.mobile.setVerbose(value))}
+          />
+          <Toggle
+            title={t('settings.mobile.runCards')}
+            hint={t('settings.mobile.runCardsHint')}
+            value={runCards}
+            options={toggleOptions}
+            disabled={busy || !loaded}
+            onChange={(value) => void act(() => window.api.mobile.setRunCards(value))}
+          />
         </section>
-
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          {/* Model-initiated push notifications — the notify_phone tool's
-              master switch. Off means the tool refuses before anything is
-              built or sent; nothing about this is automatic either way, the
-              model has to deliberately call the tool. */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.mobile.notifications')}
-              </span>
-              <p className="text-muted text-xs">{t('settings.mobile.notificationsHint')}</p>
-            </div>
-            {status === null ? (
-              <div
-                aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
-              />
-            ) : (
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-              >
-                {toggleOptions.map((opt) => {
-                  const active = opt.value === status.notificationsEnabled
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      role="tab"
-                      type="button"
-                      aria-selected={active}
-                      disabled={busy || !loaded}
-                      onClick={() => {
-                        if (opt.value !== status.notificationsEnabled)
-                          void act(() => window.api.mobile.setNotifications(opt.value))
-                      }}
-                      className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium',
-                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          {/* Verbose tunnel logging — off (default) keeps the app log quiet.
-              On records every connection event, which is what you want while
-              diagnosing a link and noise otherwise. Uses the same segmented
-              control every other channel uses. */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">{t('settings.mobile.verbose')}</span>
-              <p className="text-muted text-xs">{t('settings.mobile.verboseHint')}</p>
-            </div>
-            {verbose === null ? (
-              <div
-                aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
-              />
-            ) : (
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-              >
-                {toggleOptions.map((opt) => {
-                  const active = opt.value === verbose
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      role="tab"
-                      type="button"
-                      aria-selected={active}
-                      disabled={busy || !loaded}
-                      onClick={() => {
-                        if (opt.value !== verbose)
-                          void act(() => window.api.mobile.setVerbose(opt.value))
-                      }}
-                      className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium',
-                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          {/* The phone's floating automation cards — its own copy of the
-              in-app switch, off by default. Off means a background run never
-              interrupts the phone; nothing about the run itself changes, and
-              the Automations screen there still shows what ran. */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">{t('settings.mobile.runCards')}</span>
-              <p className="text-muted text-xs">{t('settings.mobile.runCardsHint')}</p>
-            </div>
-            {runCards === null ? (
-              <div
-                aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
-              />
-            ) : (
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-              >
-                {toggleOptions.map((opt) => {
-                  const active = opt.value === runCards
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      role="tab"
-                      type="button"
-                      aria-selected={active}
-                      disabled={busy || !loaded}
-                      onClick={() => {
-                        if (opt.value !== runCards)
-                          void act(() => window.api.mobile.setRunCards(opt.value))
-                      }}
-                      className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium',
-                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* How it works — the same assurance the phone's Relay screen carries,
-            so the two devices tell one story: pinned keys, sealed frames, and
-            a relay that can forward but never read. */}
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <span className="text-fg text-sm font-medium">{t('settings.mobile.how.title')}</span>
-
-          <HowRow
-            icon={<Key01Icon size={18} className="text-muted mt-0.5 shrink-0" />}
-            title={t('settings.mobile.how.pairTitle')}
-            body={t('settings.mobile.how.pairBody')}
-          />
-          <HowRow
-            icon={<SquareLock01Icon size={18} className="text-muted mt-0.5 shrink-0" />}
-            title={t('settings.mobile.how.e2eTitle')}
-            body={t('settings.mobile.how.e2eBody')}
-          />
-          <HowRow
-            icon={<Globe02Icon size={18} className="text-muted mt-0.5 shrink-0" />}
-            title={t('settings.mobile.how.relayTitle')}
-            body={t('settings.mobile.how.relayBody')}
-          />
-
-          <p className="text-muted text-xs leading-relaxed">
-            {t('settings.mobile.keyStorage', { backend: status?.storage.backend ?? '—' })}
-          </p>
-        </section>
-
-        {/* Confirm before a relay change: both the offer payload and a paired
-            phone name the old relay, so this is never a silent switch. */}
-        <Modal
-          open={pendingRelay !== null}
-          onClose={() => setPendingRelay(null)}
-          title={t('settings.mobile.relayConfig.confirmTitle')}
-          footer={
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1"
-                onClick={() => setPendingRelay(null)}
-              >
-                {t('common.cancel')}
-              </Button>
-              <Button
-                size="sm"
-                className="flex-1"
-                disabled={busy}
-                onClick={() => {
-                  if (pendingRelay) void changeRelay(pendingRelay.url)
-                }}
-              >
-                {t('settings.mobile.relayConfig.confirmApply')}
-              </Button>
-            </div>
-          }
-        >
-          <p className="text-muted">{t('settings.mobile.relayConfig.confirmBody')}</p>
-          <p dir="ltr" className="text-fg break-all text-left font-mono text-xs">
-            {pendingRelay?.url ?? defaultRelayUrl ?? ''}
-          </p>
-          {pendingRelay !== null && pendingRelay.url !== null && (
-            <p className="text-muted">
-              {t('settings.mobile.relayConfig.confirmCompat')}{' '}
-              <a
-                href="https://github.com/thewolffish/wolffish-relay"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-fg underline underline-offset-2"
-              >
-                {t('settings.mobile.relayConfig.repo')}
-              </a>
-            </p>
-          )}
-          {status?.paired && (
-            <p className="text-muted">{t('settings.mobile.relayConfig.confirmUnpair')}</p>
-          )}
-        </Modal>
       </div>
+    </div>
+  )
+}
+
+/** One paired phone: what it is, when it was here, and the way to forget it. */
+function PhoneRow({
+  phone,
+  busy,
+  onUnpair
+}: {
+  phone: MobilePairedPhone
+  busy: boolean
+  onUnpair: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const os = osLabel(phone.platform, phone.osVersion)
+  const detail = [phone.model, os, phone.appVersion ? `v${phone.appVersion}` : null]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex min-w-0 items-start gap-3">
+        {phone.platform === 'ios' ? (
+          <AppleIcon size={18} className="text-muted mt-0.5 shrink-0" />
+        ) : phone.platform === 'android' ? (
+          <AndroidIcon size={18} className="text-muted mt-0.5 shrink-0" />
+        ) : (
+          <SmartPhone01Icon size={18} className="text-muted mt-0.5 shrink-0" />
+        )}
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-fg truncate text-sm font-medium">
+              {phone.name || t('settings.mobile.unknownDevice')}
+            </span>
+            <span
+              className={cn(
+                'size-2 shrink-0 rounded-full',
+                phone.connected ? 'bg-emerald-500' : 'bg-border'
+              )}
+            />
+            <span className="text-muted text-xs">
+              {phone.connected ? t('settings.mobile.appOpen') : t('settings.mobile.appClosed')}
+            </span>
+          </div>
+          {detail && <p className="text-muted text-xs">{detail}</p>}
+          <p className="text-muted text-xs">
+            {t('settings.mobile.pairedAt')}{' '}
+            {phone.pairedAt ? new Date(phone.pairedAt).toLocaleString() : '—'}
+            {' · '}
+            {t('settings.mobile.lastSeen')}{' '}
+            {phone.lastSeenAt ? new Date(phone.lastSeenAt).toLocaleString() : '—'}
+          </p>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" disabled={busy} className="shrink-0" onClick={onUnpair}>
+        <Unlink01Icon size={14} />
+        {t('settings.mobile.unpairAction')}
+      </Button>
     </div>
   )
 }
@@ -794,6 +474,67 @@ export function MobilePanel(): React.JSX.Element {
 function osLabel(platform: string | null | undefined, version: string | null | undefined): string {
   const name = platform === 'ios' ? 'iOS' : platform === 'android' ? 'Android' : null
   return [name, version].filter(Boolean).join(' ')
+}
+
+function Toggle({
+  title,
+  hint,
+  value,
+  options,
+  disabled,
+  onChange
+}: {
+  title: string
+  hint: string
+  value: boolean | null
+  options: Array<{ value: boolean; label: string }>
+  disabled: boolean
+  onChange: (value: boolean) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-1">
+        <span className="text-fg text-sm font-medium">{title}</span>
+        <p className="text-muted text-xs">{hint}</p>
+      </div>
+      {value === null ? (
+        <div
+          aria-hidden="true"
+          className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+        />
+      ) : (
+        <div
+          role="tablist"
+          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+        >
+          {options.map((opt) => {
+            const active = opt.value === value
+            return (
+              <button
+                key={String(opt.value)}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                disabled={disabled}
+                onClick={() => {
+                  if (opt.value !== value) onChange(opt.value)
+                }}
+                className={cn(
+                  'rounded-md px-3 py-1 text-xs font-medium',
+                  'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
+                  active
+                    ? 'bg-primary text-primary-fg shadow-sm'
+                    : 'text-muted hover:text-fg cursor-pointer'
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ExternalLink({ href, label }: { href: string; label: string }): React.JSX.Element {
@@ -855,25 +596,6 @@ function HowRow({
         <span className="text-fg text-sm font-medium">{title}</span>
         <p className="text-muted text-xs leading-relaxed">{body}</p>
       </div>
-    </div>
-  )
-}
-
-function Row({
-  label,
-  value,
-  mono
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}): React.JSX.Element {
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <dt className="text-muted text-xs">{label}</dt>
-      <dd className={cn('text-fg truncate text-sm', mono && 'font-mono text-xs')} title={value}>
-        {value}
-      </dd>
     </div>
   )
 }

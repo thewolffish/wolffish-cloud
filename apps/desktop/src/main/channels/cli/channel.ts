@@ -6,7 +6,7 @@
  * attached client, and streams the same segments the renderer receives. What
  * it does NOT share with the Electron channel is who persists — the renderer
  * writes its own conversation file at the fold, and a terminal has no such
- * bookkeeping, so this channel persists the way Telegram and WhatsApp do:
+ * bookkeeping, so this channel persists the way the phone channel does:
  * append the user message on dispatch, build the assistant message from the
  * accumulator at end of turn, write once.
  *
@@ -44,12 +44,7 @@ import {
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import {
-  appendTextSegment,
-  upsertTaskSegment,
-  upsertWorkflowSegment,
-  type Segment
-} from '@main/runtime/broca'
+import { appendTextSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
@@ -441,8 +436,8 @@ export class CliChannel {
         /**
          * A heartbeat or procedure run SEALS its conversation as a finished
          * record. Answering in one from the terminal makes it live again, and
-         * saying so is not optional bookkeeping — Telegram and WhatsApp both do
-         * it (see the identical block in their channels) and this one did not,
+         * saying so is not optional bookkeeping — the phone channel does
+         * it (see the identical block there) and this one did not,
          * with two consequences that both look like something else:
          *
          *  - The app treats a sealed file as a closed record, so terminal turns
@@ -458,7 +453,7 @@ export class CliChannel {
       })
         .then(() => {
           /**
-           * Ask for a rolling summary, exactly as Telegram and WhatsApp do at
+           * Ask for a rolling summary, exactly as the phone channel does at
            * this same fold.
            *
            * Missing here, and the omission compounds: without a summary the
@@ -482,13 +477,12 @@ export class CliChannel {
         this.emit({ t: 'segment', conversationId, turnId, segment })
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
-        else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
-        scheduleMirror(segment.kind === 'task')
+        scheduleMirror(false)
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {

@@ -18,7 +18,7 @@
 
 import ar from '@/lib/i18n/locales/ar.json'
 import en from '@/lib/i18n/locales/en.json'
-import { OVERLAY_KINDS } from '@/lib/tunnel/protocol'
+import { OVERLAY_KINDS } from '@/lib/bridge/protocol'
 
 const LOCALES = { en, ar } as Record<string, Record<string, unknown>>
 

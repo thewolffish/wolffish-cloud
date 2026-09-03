@@ -193,7 +193,7 @@ tools:
         description: 'JSON object mapping field names to values (required for fill action)'
         required: false
   - name: pdf_secure
-    description: Encrypt or decrypt a PDF with a password.
+    description: 'Password-protect or unlock a PDF. NOT functional with the bundled pdf-lib: it has no encryption support — it cannot set a password, cannot open a password-protected file, and sets no permission flags — so both actions refuse and return the route that works (pypdf via the python capability, or qpdf via shell_exec). Prefer that route directly, and never paste the password into your reply.'
     parameters:
       path:
         type: string
@@ -209,11 +209,8 @@ tools:
           - decrypt
       password:
         type: string
-        description: Password for encryption or decryption
-      permissions:
-        type: string
-        description: 'Optional JSON array of allowed permissions when encrypting: ["printing","modify","copy","annotate"]'
         required: false
+        description: Not used — the tool cannot apply it; give the password to the pypdf/qpdf route instead.
   - name: pdf_render_pages
     description: Render whole PDF pages to PNG/JPEG images. This is how you SHOW someone a figure, chart, algorithm, table, or scanned page — it captures the page exactly as it looks, including figures drawn as vectors (which pdf_extract_images cannot return). Page-scoped and fast on any file size, including a 250MB book. Then send_file the result.
     parameters:
@@ -382,7 +379,8 @@ tool for the chart kit before authoring.
 ## Interface
 
 - Tools: `pdf_info`, `pdf_read`, `pdf_search`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_render_pages`, `pdf_extract_images`, `pdf_compress`
-- All paths must be absolute. Use `~` prefix for home directory.
+- Paths may be absolute, `~/`-relative, or workspace-relative: `files/report.pdf` resolves inside
+  `~/.wfc/workspace`. A relative path never means the process working directory.
 - Complex parameters (arrays, objects) are passed as JSON strings.
 
 ## Rules
@@ -400,7 +398,8 @@ tool for the chart kit before authoring.
 - If a WRITE op (`pdf_split`/`pdf_merge`/…) fails on a huge or unusual file, don't retry the
   same call — fall back to python (pypdf) or shell, and tell the user what happened.
 - **Every `output_path`/`output_dir` defaults to the workspace `files/` directory** (e.g.
-  `files/pdf/…`) unless the user explicitly named a destination. Never write splits, merges,
+  `files/pdf/…` — the bare relative form is enough, it resolves inside the workspace) unless the
+  user explicitly named a destination. Never write splits, merges,
   or conversions next to the source file or onto the Desktop — the source's location is not
   an output location. The same applies when you improvise via python/shell.
 - Always verify the source file exists before operating on it.

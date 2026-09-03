@@ -150,8 +150,8 @@ tools:
       formulas:
         type: string
         description: 'JSON array of formula operations: [{cell: "A1", sheet?: "Sheet1", formula: "=SUM(B1:B10)"}]'
-  - name: spreadsheet_chart
-    description: Add a chart to a spreadsheet (bar, line, pie, scatter, area).
+  - name: spreadsheet_chart_data
+    description: Record a chart's definition — type (bar, line, pie, scatter, area), data range, title, axes — on a new `<title>_data` sheet of the workbook. It does NOT draw a chart (exceljs cannot write Excel-native chart objects), so the file opens with the data and the definition, not a rendered chart. For an actual chart build it with python (openpyxl.chart) for a native Excel chart, or with dataviz for an image/HTML chart — and tell the user which you did.
     parameters:
       path:
         type: string
@@ -250,7 +250,7 @@ danger_patterns:
     level: destructive
     reason: Writing to system directory
 confirm_patterns:
-  - pattern: 'spreadsheet_(create|modify|formula|chart|style|convert|filter|pivot)'
+  - pattern: 'spreadsheet_(create|modify|formula|chart_data|style|convert|filter|pivot)'
     reason: Writing a spreadsheet file
 ---
 
@@ -258,10 +258,10 @@ confirm_patterns:
 
 ## Interface
 
-- Tools: `spreadsheet_read`, `spreadsheet_create`, `spreadsheet_modify`, `spreadsheet_formula`, `spreadsheet_chart`, `spreadsheet_style`, `spreadsheet_convert`, `spreadsheet_analyze`, `spreadsheet_filter`, `spreadsheet_pivot`
+- Tools: `spreadsheet_read`, `spreadsheet_create`, `spreadsheet_modify`, `spreadsheet_formula`, `spreadsheet_chart_data`, `spreadsheet_style`, `spreadsheet_convert`, `spreadsheet_analyze`, `spreadsheet_filter`, `spreadsheet_pivot`
 - Supported formats: .xlsx, .csv, .tsv
 - All complex parameters are passed as JSON strings.
-- All paths must be absolute.
+- Paths may be absolute, `~/`-relative, or workspace-relative (`files/data.xlsx` resolves inside `~/.wfc/workspace`, never against the process cwd).
 
 ## Rules
 

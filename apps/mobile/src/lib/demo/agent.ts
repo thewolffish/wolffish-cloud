@@ -28,16 +28,12 @@ const DEMO_PROVIDER = 'wolffish'
 const DEMO_MODEL = 'wolffish-demo'
 
 /**
- * The brain the demo turn is attributed to — whichever side of the model
- * switch is active. Nothing is called, but the turn is stamped and priced
- * under it, so switching models moves the context meter's window exactly as
- * it does on the desktop.
+ * The brain the demo turn is attributed to — the org lane's current model.
+ * Nothing is called, but the turn is stamped and priced under it, so a model
+ * change moves the context meter's window exactly as it does on the desktop.
  */
 function activeBrain(): { provider: string; model: string } {
   const config = useDemoConfig.getState()
-  if (config.localOnly && config.localEnabled && config.localModel) {
-    return { provider: 'local', model: config.localModel }
-  }
   if (config.brainModel) return { provider: config.brainProvider, model: config.brainModel }
   return { provider: DEMO_PROVIDER, model: DEMO_MODEL }
 }
@@ -75,8 +71,8 @@ function buildDemoReply(): string {
   return `**${heading}**\n\n${body}\n\n${outro}`
 }
 
-/** Mint + persist an empty conversation up front (voice notes need the id
- * before the recording file can be filed under uploads/conv-<id>/). */
+/** Mint + persist an empty conversation up front (voice notes and file sends
+ * need the id before the bytes can be filed under uploads/conv-<id>/). */
 export async function ensureDemoConversation(title: string): Promise<string> {
   const now = Date.now()
   const id = mintConversationId(new Date(now))

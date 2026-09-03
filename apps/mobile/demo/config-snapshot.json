@@ -1,18 +1,28 @@
 {
   "capabilities": [
     {
+      "name": "archive",
+      "description": "Work with zip archives — list what's inside a zip, read a file straight out of one, unzip all or part of it, and zip files and folders into a new archive",
+      "enabled": true,
+      "official": true,
+      "core": false,
+      "hasPlugin": true,
+      "toolCount": 4,
+      "requires": ["node"]
+    },
+    {
       "name": "ask",
       "description": "Ask the user one or more multiple-choice questions with an interactive in-app card — pause for their decisions, then continue with the options they pick or the custom instructions they type. Also the delivery mechanism for quizzes and knowledge checks.",
       "enabled": true,
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 1,
+      "toolCount": 3,
       "requires": []
     },
     {
       "name": "automations",
-      "description": "Manage Wolffish's scheduled automations (the heartbeat) — list, create, edit, delete, check status, and run jobs that fire on a schedule and run autonomously",
+      "description": "YOU OWN THIS. Wolffish's scheduled automations (the heartbeat) — list, create, edit, delete, check status, and run jobs that fire on a schedule and run autonomously. Reach for it by INTENT whenever a need or issue touches a schedule, a recurring job, or the heartbeat — even when the user never says \"automation\".",
       "enabled": true,
       "official": true,
       "core": true,
@@ -32,7 +42,7 @@
     },
     {
       "name": "browser-extension",
-      "description": "Control the user's connected Chrome/Brave browser via the Wolffish extension — navigate pages, click elements, fill forms, take screenshots, read content, manage tabs, and execute JavaScript in the user's real browser session.",
+      "description": "Open, read and drive any web page in the user's real browser — logins, paywalls and JS-heavy sites included. Reaches what web_fetch cannot, and acts as well as reads — navigate, click, fill forms, screenshot, scrape, manage tabs, run JavaScript. Chrome, Edge, Brave, Firefox, several at once.",
       "enabled": true,
       "official": true,
       "core": false,
@@ -41,23 +51,23 @@
       "requires": ["node"]
     },
     {
-      "name": "cloudflared",
-      "description": "Cloudflare Tunnel CLI for exposing local services",
+      "name": "computer-use",
+      "description": "Desktop automation — see the screen and control mouse/keyboard with a verified-aim loop. Screenshots, native-resolution zoom for precise targeting, clicks that return a magnified proof of where they landed, typing, shortcuts, scrolling, drag-and-drop.",
       "enabled": true,
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 4,
-      "requires": []
+      "toolCount": 12,
+      "requires": ["node"]
     },
     {
-      "name": "computer-use",
-      "description": "Desktop automation — take screenshots, move/click mouse, type text, press keys. Used for visual tasks where the agent needs to see and interact with the user's screen.",
+      "name": "dataviz",
+      "description": "\"The data visualization manual. Call dataviz BEFORE creating any chart, graph, or data display — interactive chart cards in the app (.chart.json), SVG charts inside PDFs, or channel fallbacks.\"",
       "enabled": true,
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 8,
+      "toolCount": 0,
       "requires": ["node"]
     },
     {
@@ -67,7 +77,7 @@
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 10,
+      "toolCount": 23,
       "requires": ["pdf", "node"]
     },
     {
@@ -101,33 +111,23 @@
       "requires": ["shell"]
     },
     {
-      "name": "github",
-      "description": "GitHub integration — repos, issues, pull requests, branches, CI/Actions, code search, releases, gists, collaborators, labels, milestones, reviews, notifications, stars, forks, and more via the GitHub API",
-      "enabled": true,
-      "official": true,
-      "core": false,
-      "hasPlugin": true,
-      "toolCount": 54,
-      "requires": ["shell", "node"]
-    },
-    {
-      "name": "google",
-      "description": "Google Workspace integration — Gmail, Drive, Calendar, Contacts, Tasks, and Sheets via gogcli",
-      "enabled": true,
-      "official": true,
-      "core": false,
-      "hasPlugin": true,
-      "toolCount": 29,
-      "requires": []
-    },
-    {
       "name": "introspect",
       "description": "Check Wolffish's own status, performance, and memory",
       "enabled": true,
       "official": true,
       "core": true,
       "hasPlugin": true,
-      "toolCount": 12,
+      "toolCount": 17,
+      "requires": []
+    },
+    {
+      "name": "knowledge",
+      "description": "Maintain your own long-term memory — record a new belief, correct a wrong fact, unlearn a lesson, edit your playbook, identity and standing instructions",
+      "enabled": true,
+      "official": true,
+      "core": false,
+      "hasPlugin": true,
+      "toolCount": 7,
       "requires": []
     },
     {
@@ -141,16 +141,6 @@
       "requires": []
     },
     {
-      "name": "memes",
-      "description": "Find, generate, and share memes and GIFs. Can create custom captioned memes from popular templates or search for reaction GIFs.",
-      "enabled": true,
-      "official": true,
-      "core": false,
-      "hasPlugin": true,
-      "toolCount": 5,
-      "requires": []
-    },
-    {
       "name": "node",
       "description": "Node.js runtime and npm package manager",
       "enabled": true,
@@ -159,16 +149,6 @@
       "hasPlugin": true,
       "toolCount": 3,
       "requires": []
-    },
-    {
-      "name": "notion",
-      "description": "Read, create, update, and manage Notion pages, databases, and blocks",
-      "enabled": true,
-      "official": true,
-      "core": false,
-      "hasPlugin": true,
-      "toolCount": 18,
-      "requires": ["node"]
     },
     {
       "name": "operating-manual",
@@ -187,7 +167,7 @@
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 3,
+      "toolCount": 7,
       "requires": []
     },
     {
@@ -197,12 +177,22 @@
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 12,
+      "toolCount": 19,
+      "requires": ["node"]
+    },
+    {
+      "name": "pdf-design",
+      "description": "\"The document design manual. Call pdf_design BEFORE authoring any PDF, report, brief, proposal, or styled document — it is what makes documents come out designed instead of dumped.\"",
+      "enabled": true,
+      "official": true,
+      "core": false,
+      "hasPlugin": true,
+      "toolCount": 0,
       "requires": ["node"]
     },
     {
       "name": "procedures",
-      "description": "Manage Wolffish's saved procedures — reusable prompts the user runs on demand from the Procedures page. List, view, create, edit, delete, and run them.",
+      "description": "YOU OWN THIS. Manage Wolffish's saved procedures — reusable prompts the user runs on demand from the Procedures page. List, view, create, edit, delete, and run them. Reach for it by INTENT whenever a need or issue involves saving, re-running, or organizing a reusable prompt — even when the user never says \"procedure\".",
       "enabled": true,
       "official": true,
       "core": true,
@@ -212,7 +202,7 @@
     },
     {
       "name": "projects",
-      "description": "Manage the user's projects — shared instructions and file lists that fresh conversations start from — and see each project's conversations",
+      "description": "YOU OWN THIS. Manage the user's projects — shared instructions and file lists that fresh conversations start from — and see each project's conversations. Reach for it by INTENT whenever a need or issue touches a project, its instructions, or its files — even when the user never says \"project\".",
       "enabled": true,
       "official": true,
       "core": true,
@@ -232,12 +222,12 @@
     },
     {
       "name": "secrets",
-      "description": "Save and list the user's secrets and variables (Settings > Variables) — API keys, tokens, base URLs, and other reusable values",
+      "description": "Save and look up the user's secrets and variables (Settings > Variables) — API keys, tokens, base URLs, and other reusable values",
       "enabled": true,
       "official": true,
       "core": true,
       "hasPlugin": true,
-      "toolCount": 2,
+      "toolCount": 3,
       "requires": []
     },
     {
@@ -262,13 +252,13 @@
     },
     {
       "name": "speech-to-text",
-      "description": "Transcribe audio files into text using faster-whisper (CTranslate2). Supports 99+ languages with automatic detection. Runs entirely locally — no API keys, no cloud, fully offline after setup.",
+      "description": "Transcribe audio files into text using faster-whisper (CTranslate2). Runs entirely locally — no API keys, no cloud, fully offline after setup.",
       "enabled": true,
       "official": true,
       "core": false,
       "hasPlugin": true,
       "toolCount": 4,
-      "requires": ["python"]
+      "requires": ["python", "ffmpeg"]
     },
     {
       "name": "spreadsheet",
@@ -277,7 +267,7 @@
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 10,
+      "toolCount": 37,
       "requires": ["node"]
     },
     {
@@ -287,7 +277,7 @@
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 5,
+      "toolCount": 10,
       "requires": []
     },
     {
@@ -311,13 +301,23 @@
       "requires": []
     },
     {
+      "name": "web-design",
+      "description": "\"The web design manual. Call web_design BEFORE authoring any HTML page, info site, or web deliverable a person will open in a browser — it is what makes pages come out designed instead of dumped.\"",
+      "enabled": true,
+      "official": true,
+      "core": false,
+      "hasPlugin": true,
+      "toolCount": 0,
+      "requires": ["node"]
+    },
+    {
       "name": "web-search",
       "description": "Search the web and read web pages for current information, documentation, news, and research",
       "enabled": true,
       "official": true,
       "core": false,
       "hasPlugin": true,
-      "toolCount": 2,
+      "toolCount": 3,
       "requires": ["node"]
     },
     {
@@ -332,26 +332,47 @@
     }
   ],
   "mcpServers": [
-    { "name": "mcp.zapier.com", "enabled": true },
-    { "name": "mcp.tafsir.net", "enabled": true }
+    {
+      "name": "mcp.zapier.com",
+      "enabled": true
+    },
+    {
+      "name": "mcp.tafsir.net",
+      "enabled": true
+    }
   ],
   "variables": [
-    { "name": "HOME_CITY", "value": "Riyadh", "sensitive": false },
-    { "name": "WORK_HOURS", "value": "9:00-18:00", "sensitive": false },
-    { "name": "NOTION_FINANCE_DB", "value": "a1b2c3d4e5f647899abcdef012345678", "sensitive": true }
+    {
+      "name": "HOME_CITY",
+      "value": "Riyadh",
+      "sensitive": false
+    },
+    {
+      "name": "WORK_HOURS",
+      "value": "9:00-18:00",
+      "sensitive": false
+    },
+    {
+      "name": "NOTION_FINANCE_DB",
+      "value": "a1b2c3d4e5f647899abcdef012345678",
+      "sensitive": true
+    }
   ],
   "projects": [
     {
       "id": "a3f1c07e-5b42-4d19-9c8e-2d7a6f0b1e54",
       "title": "Younes AI Daily",
       "icon": "📰",
-      "instructions": "The daily AI briefing. Sweep the last 24 hours of AI news, keep what actually ships or changes a decision, and cut the funding-round noise. Deliver a magazine-style PDF plus a short Telegram summary, in that order, every day.",
+      "instructions": "The daily AI briefing. Sweep the last 24 hours of AI news, keep what actually ships or changes a decision, and cut the funding-round noise. Deliver a magazine-style PDF plus a short summary in the app, in that order, every day.",
       "files": [
         {
           "path": "uploads/project-a3f1c07e/daily-brief-template.md",
           "name": "daily-brief-template.md"
         },
-        { "path": "uploads/project-a3f1c07e/sources.csv", "name": "sources.csv" }
+        {
+          "path": "uploads/project-a3f1c07e/sources.csv",
+          "name": "sources.csv"
+        }
       ],
       "createdAt": 1781686606664,
       "updatedAt": 1785155222012
@@ -361,7 +382,12 @@
       "title": "World Cup 2026 Desk",
       "icon": "🏆",
       "instructions": "Tournament analyst. Track fixtures, form and injuries for the 2026 World Cup; answer with the table first and the reasoning under it. Always name the kickoff time in the local timezone as well as UTC.",
-      "files": [{ "path": "uploads/project-c8b25d61/fixtures.csv", "name": "fixtures.csv" }],
+      "files": [
+        {
+          "path": "uploads/project-c8b25d61/fixtures.csv",
+          "name": "fixtures.csv"
+        }
+      ],
       "createdAt": 1781734508493,
       "updatedAt": 1783334035755
     },
@@ -371,8 +397,14 @@
       "icon": "🛡️",
       "instructions": "Read-only security work on this machine. Audit, report, and propose — never change system state without asking first. Every finding needs the command that produced it so it can be re-run.",
       "files": [
-        { "path": "uploads/project-e04a7b93/audit-checklist.md", "name": "audit-checklist.md" },
-        { "path": "uploads/project-e04a7b93/baseline-ports.log", "name": "baseline-ports.log" }
+        {
+          "path": "uploads/project-e04a7b93/audit-checklist.md",
+          "name": "audit-checklist.md"
+        },
+        {
+          "path": "uploads/project-e04a7b93/baseline-ports.log",
+          "name": "baseline-ports.log"
+        }
       ],
       "createdAt": 1783787522383,
       "updatedAt": 1784469454908
@@ -393,10 +425,15 @@
     },
     {
       "id": "b52d9f14-7a63-4c08-9e1b-8f4c3a7d5e26",
-      "title": "Meme Studio",
+      "title": "Design Desk",
       "icon": "🎨",
-      "instructions": "The meme pipeline. One image per run, caption in the voice of the person it is going to, and never reuse a template two days running.",
-      "files": [{ "path": "uploads/project-b52d9f14/voice-notes.md", "name": "voice-notes.md" }],
+      "instructions": "The visual pipeline. One cover or diagram per run, built from the house palette, and never reuse a layout two runs running.",
+      "files": [
+        {
+          "path": "uploads/project-b52d9f14/house-style.md",
+          "name": "house-style.md"
+        }
+      ],
       "createdAt": 1781415684449,
       "updatedAt": 1785140983723
     }
@@ -405,7 +442,7 @@
     {
       "id": "0f4b21ac-7e35-4c62-9d18-2a6f5b0c93e7",
       "title": "Morning brief",
-      "prompt": "Assemble my morning brief and send it to Telegram before 08:00.\n\n1. Today's calendar — meetings only, with the gap between them called out when it is under 20 minutes.\n2. Anything in the inbox from a real person that has been waiting more than a day. Skip receipts, newsletters and anything automated.\n3. The one AI story from the last 24 hours that would change a decision this week. If there is none, say so — do not pad it.\n4. Weather only if it changes what I would wear or when I would leave.\n\nUnder 150 words. No greeting, no sign-off.",
+      "prompt": "Assemble my morning brief and have it waiting in the app before 08:00.\n\n1. Today's calendar — meetings only, with the gap between them called out when it is under 20 minutes.\n2. Anything in the inbox from a real person that has been waiting more than a day. Skip receipts, newsletters and anything automated.\n3. The one AI story from the last 24 hours that would change a decision this week. If there is none, say so — do not pad it.\n4. Weather only if it changes what I would wear or when I would leave.\n\nUnder 150 words. No greeting, no sign-off.",
       "mode": "workflow",
       "icon": "☕",
       "projectId": null,
@@ -454,8 +491,8 @@
     },
     {
       "id": "3e58a1d2-9b64-40c7-a13f-5d2e8c07b946",
-      "title": "Meme run",
-      "prompt": "One meme, made now.\n\nCheck what has already been sent and rotate the format, the emotion and the angle away from it — a variant of a used format counts as used. Pull a real image, write an original caption in the voice of the person it is going to, and hand it back before sending anything.",
+      "title": "Cover run",
+      "prompt": "One cover image, made now.\n\nCheck what has already gone out and rotate the layout, the palette and the crop away from it — a variant of a used layout counts as used. Build it from the house style, write the strapline in the voice of the edition it fronts, and hand it back before anything ships.",
       "mode": "workflow",
       "icon": "🎭",
       "projectId": "b52d9f14-7a63-4c08-9e1b-8f4c3a7d5e26",
@@ -474,7 +511,7 @@
     },
     {
       "id": "a1907f43-6c2d-4b85-9e70-4f8b3d6a1c52",
-      "title": "Receipt to Notion",
+      "title": "Receipt to the ledger",
       "prompt": "Read the receipt I attach, then file it.\n\nPull merchant, date, total, currency and VAT. Convert to SAR at the rate on the receipt date when it is not already SAR, and keep both figures.\n\nAppend a row to the finance database and reply with just the row you wrote. If any field is unreadable, leave it empty and say which — never guess a number off a blurry line.",
       "mode": "single",
       "icon": "🧾",
@@ -485,7 +522,7 @@
     {
       "id": "c2b74e10-5d39-4f81-a6c4-9b0e7d2f5834",
       "title": "Daily brief PDF",
-      "prompt": "Build the AI briefing as a magazine-style PDF, then post the short version to Telegram — PDF first, summary second.\n\nKeep what ships or changes a decision. Cut funding rounds, hiring news and anything that is a demo video with no artifact behind it. Two independent sources per claim, both named.\n\nThe Telegram version is five lines and links the PDF.",
+      "prompt": "Build the AI briefing as a magazine-style PDF, then post the short version in the app — PDF first, summary second.\n\nKeep what ships or changes a decision. Cut funding rounds, hiring news and anything that is a demo video with no artifact behind it. Two independent sources per claim, both named.\n\nThe short version is five lines and links the PDF.",
       "mode": "workflow",
       "icon": "📰",
       "projectId": "a3f1c07e-5b42-4d19-9c8e-2d7a6f0b1e54",
@@ -494,7 +531,7 @@
     }
   ],
   "automations": {
-    "markdown": "# Heartbeat\n\nAutomations live here. A heading is the schedule, the text under it is the\nprompt, and commenting a block out switches it off.\n\n## Every (6h)\n\nmode: single\nicon: 📬\n\nCheck every connected mailbox. Send one Telegram message summarising what\narrived: who it is from, what it wants, and whether it needs me. Skip receipts\nand newsletters entirely. Then mark everything you listed as read.\n\nIf nothing arrived that a person wrote, send nothing.\n\n## Weekday (07:30)\n\nmode: workflow\nproject: a3f1c07e-5b42-4d19-9c8e-2d7a6f0b1e54\n\nBuild the morning AI briefing and deliver it as a PDF on Telegram, with a\nfive-line summary under it.\n\nKeep what ships or changes a decision this week. Cut funding rounds, hiring\nannouncements, and anything that is a demo video with nothing shipped behind it.\nTwo independent sources per claim, both named in the PDF.\n\nLead with what changed since yesterday's brief, not with the biggest headline.\n\n## Daily (12:10)\n\nmode: workflow\nproject: b52d9f14-7a63-4c08-9e1b-8f4c3a7d5e26\n\nSend one original meme to Telegram.\n\nMEMORY CHECK, first and mandatory:\n1. Search past conversations for every meme sent before. List format, image URL,\n   angle and caption.\n2. If nothing is found, say so and proceed — but log this send so the next run\n   can enforce the rule.\n3. Never repeat a format, image, angle or caption from that list. Not a variant,\n   not another frame of the same source, not the same joke reworded.\n\nSELECTION:\n4. Pull a real image. Widely recognised formats only — if it needs explaining,\n   it is the wrong one.\n5. Rotate the family. If the last send was Kermit, this one is not Kermit.\n\nCAPTION:\n6. One or two lines, tied to a specific slice of founder life. Not \"startups are\n   hard\" — the 47th \"let's circle back in Q3\", refreshing Stripe at 3am for a $9\n   ping, an exit survey that just says \"meh\".\n7. Rotate the register: wholesome → dark → absurd. Check the last one and pick\n   another.\n8. Nothing that could go on a LinkedIn carousel unedited.\n\n## Hourly (:20)\n\nmode: single\nicon: 📉\n\nCheck the deploy pipeline and the error rate on the last hour of traffic.\n\nNotify the phone ONLY when something is actually wrong: a failed build, an error\nrate above baseline, or a job that has been queued more than fifteen minutes.\nA quiet hour is not news — send nothing.\n\n## Weekly (Sunday 09:00)\n\nmode: workflow\nicon: 🗓️\n\nWrite the weekly review.\n\nWhat shipped, what slipped, what is now blocking something else. Pull it from\nthe week's conversations and the git history rather than from memory. Close with\nthe three things worth doing this week, ordered by what unblocks the most, and\nsay how long any carried-over item has been carried.\n\nDeliver it in the app, not on Telegram — it is worth sitting down for.\n\n## Monthly (1 08:00)\n\nmode: single\nicon: 💳\n\nReconcile last month's receipts against the finance database.\n\nList anything filed with a missing total, a currency that was never converted,\nor a merchant that appears under two spellings. Do not fix them — report them,\nwith the row id for each.\n\n## Startup\n\nmode: single\nicon: 🔄\n\nWhen the desktop app starts, check whether anything scheduled was missed while\nit was off. If a daily or weekly job did not run, say which and when it should\nhave. Do not run them retroactively.\n\n<!-- ## Daily (22:00)\n\nmode: single\nicon: 🏆\n\nPost the day's World Cup results as a table, with the one result that changes\nthe group standings called out under it.\n\nSwitched off until the tournament restarts.\n-->\n",
+    "markdown": "# Heartbeat\n\nAutomations live here. A heading is the schedule, the text under it is the\nprompt, and commenting a block out switches it off.\n\n## Every (6h)\n\nmode: single\nicon: 📥\n\nSweep the workspace for anything that landed since the last run: new files under\nuploads/, anything a procedure wrote, anything left half-finished. Post one\nsummary in the app — what arrived, what it belongs to, and whether it needs me.\n\nIf nothing arrived that a person put there, say nothing.\n\n## Weekday (07:30)\n\nmode: workflow\nproject: a3f1c07e-5b42-4d19-9c8e-2d7a6f0b1e54\n\nBuild the morning AI briefing and deliver it as a PDF in the app, with a\nfive-line summary under it.\n\nKeep what ships or changes a decision this week. Cut funding rounds, hiring\nannouncements, and anything that is a demo video with nothing shipped behind it.\nTwo independent sources per claim, both named in the PDF.\n\nLead with what changed since yesterday's brief, not with the biggest headline.\n\n## Daily (12:10)\n\nmode: workflow\nproject: b52d9f14-7a63-4c08-9e1b-8f4c3a7d5e26\n\nBuild one original cover for today's edition and post it in the app.\n\nMEMORY CHECK, first and mandatory:\n1. Search past conversations for every cover built before. List layout, palette,\n   crop and strapline.\n2. If nothing is found, say so and proceed — but log this one so the next run\n   can enforce the rule.\n3. Never repeat a layout, image, crop or strapline from that list. Not a variant,\n   not another crop of the same source, not the same line reworded.\n\nSELECTION:\n4. Build it from the house style. Recognisable structure only — if the reader has\n   to work out where to look, it is the wrong layout.\n5. Rotate the family. If the last cover was the full-bleed photo, this one is not.\n\nSTRAPLINE:\n6. One or two lines, tied to the specific story it fronts. Not \"AI moves fast\" —\n   the thing that actually changed since yesterday's edition.\n7. Rotate the register: plain → wry → declarative. Check the last one and pick\n   another.\n8. Nothing that could go on a LinkedIn carousel unedited.\n\n## Hourly (:20)\n\nmode: single\nicon: 📉\n\nCheck the deploy pipeline and the error rate on the last hour of traffic.\n\nNotify the phone ONLY when something is actually wrong: a failed build, an error\nrate above baseline, or a job that has been queued more than fifteen minutes.\nA quiet hour is not news — send nothing.\n\n## Weekly (Sunday 09:00)\n\nmode: workflow\nicon: 🗓️\n\nWrite the weekly review.\n\nWhat shipped, what slipped, what is now blocking something else. Pull it from\nthe week's conversations and the git history rather than from memory. Close with\nthe three things worth doing this week, ordered by what unblocks the most, and\nsay how long any carried-over item has been carried.\n\nDeliver it in the app rather than as a notification — it is worth sitting down for.\n\n## Monthly (1 08:00)\n\nmode: single\nicon: 💳\n\nReconcile last month's receipts against the finance database.\n\nList anything filed with a missing total, a currency that was never converted,\nor a merchant that appears under two spellings. Do not fix them — report them,\nwith the row id for each.\n\n## Startup\n\nmode: single\nicon: 🔄\n\nWhen the desktop app starts, check whether anything scheduled was missed while\nit was off. If a daily or weekly job did not run, say which and when it should\nhave. Do not run them retroactively.\n\n<!-- ## Daily (22:00)\n\nmode: single\nicon: 🏆\n\nPost the day's World Cup results as a table, with the one result that changes\nthe group standings called out under it.\n\nSwitched off until the tournament restarts.\n-->\n",
     "jobs": [],
     "stamps": {
       "Every (6h)": 1785340000000,
@@ -508,21 +545,7 @@
     }
   },
   "services": {
-    "google": { "status": "active", "projectId": "the-wolffish" },
-    "github": [
-      { "label": "Wolffish", "detail": "younesposts · Younes Alharbi" },
-      { "label": "Personal", "detail": "younes-alharbi · Younes Alharbi" }
-    ],
-    "notion": [{ "label": "Personal", "detail": "Wolffish" }],
     "braveEnabled": true,
-    "memesEnabled": true,
-    "sttModel": "base",
-    "sttLanguage": "auto",
-    "ttsVoice": "af_bella",
-    "ttsSpeed": "1.0",
-    "ttsVoiceReplies": true,
-    "screenshotMaxWidth": "1280",
-    "screenshotFormat": "jpeg",
     "browserExtension": {
       "port": 23151,
       "screenshotMaxWidth": 1280,
@@ -555,22 +578,28 @@
         }
       ]
     },
-    "braveApiKey": "BSAhxqNe83jP2nQvWwRt5KbAzYdMf",
-    "videoEnabled": true,
-    "videoApiKey": "sk-api-wLf8QzKm3nRt5vXy2bJd7cPh4g",
-    "videoDirector": true,
-    "memes": {
-      "imgflipUsername": "youneswolf",
-      "imgflipPassword": "imgflp-wlf-2861-pass",
-      "giphyApiKey": "gYq8HxTkP2nWvR5bZmA7c3DfLj9S"
-    },
+    "braveApiKey": "",
+    "sttModel": "base",
+    "sttLanguage": "auto",
+    "ttsVoice": "af_bella",
+    "ttsSpeed": "1.0",
+    "ttsVoiceReplies": true,
+    "screenshotMaxWidth": "1280",
+    "screenshotFormat": "jpeg",
     "computerUse": {
       "connected": true,
-      "connections": [{ "label": "macOS 26.1", "detail": "screen + input · 1 display" }]
+      "connections": [
+        {
+          "label": "macOS 26.1",
+          "detail": "screen + input · 1 display"
+        }
+      ]
     }
   },
   "channels": {
-    "inapp": { "verbose": false },
+    "inapp": {
+      "verbose": false
+    },
     "cli": {
       "verbose": false,
       "runMode": "gui",
@@ -578,22 +607,9 @@
       "serviceActive": true,
       "mechanism": "launchd"
     },
-    "mobile": { "notifications": true, "verbose": false },
-    "telegram": {
-      "enabled": true,
-      "allowedUserIds": "8417306252",
-      "autoRefresh": true,
-      "staleHours": "3",
-      "verbose": false,
-      "hideAutomations": true
-    },
-    "whatsapp": {
-      "enabled": true,
-      "allowedNumbers": "+966532918476",
-      "autoRefresh": true,
-      "staleHours": "3",
-      "verbose": false,
-      "hideAutomations": true
+    "mobile": {
+      "notifications": true,
+      "verbose": false
     }
   },
   "llm": {
@@ -995,7 +1011,9 @@
     "syncedAt": "2026-08-11T07:40:03.014Z",
     "timezone": "Asia/Riyadh"
   },
-  "changelog": { "months": [] },
+  "changelog": {
+    "months": []
+  },
   "data": {
     "freeDiskBytes": 549673246720,
     "totalDiskBytes": 994662584320,
@@ -1024,7 +1042,7 @@
         "model": "deepseek-v4-pro",
         "inputTokens": 3754,
         "outputTokens": 683,
-        "output": "Here are the long-term facts worth promoting from today's log:\n\n---\n\n## projects.md\n```markdown\n## Younes AI Daily\n- A daily Arabic PDF digest covering AI news, trends, and interesting developments.\n- Purpose: Created for Younes to post on LinkedIn.\n- Publication rhythm appears to be daily (editions confirmed for July 26–29, 2026).\n- Format: Approximately 8-page PDF, light/fun/bite-sized tone, designed for social sharing.\n- Avoids repeating topics covered in previous editions.\n```\n\n---\n\n## people.md\n```markdown\n## Sana\n- Phone number: +966507219348 (WhatsApp).\n- Receives funny-romantic memes from Younes.\n- WhatsApp connection to this number has been problematic (reconnection needed as of 2026-07-29).\n\n## Mom (SMS Forwarder)\n- Bank transaction alerts forwarded to Younes's youneswolf@gmail.com.\n- References Mada card *7031 and a credit card (dorman account).\n```\n\n---\n\n## preferences.md\n```markdown\n## Communication preferences\n- Prefers email summaries delivered via Telegram (not in-app).\n- All emails should be marked as read after summarization.\n- Recurring scheduled task: email check at 00:00, 06:00, and 12:00 daily.\n\n## Content preferences\n- Enjoys original, frog-themed startup/entrepreneurship memes.\n- Prefers dark-humor-relatable tone in memes.\n- Memes should never repeat previously sent formats, images, or captions.\n```\n\n---\n\n## technical.md\n```markdown\n## Email accounts connected\n- youneswolf@gmail.com (primary personal) — OAuth token has expired repeatedly (invalid_grant). Needs reauthorization.\n- younes@wolffi.sh (secondary/work) — reliably connected, usually zero unread.\n\n## WhatsApp connectivity\n- WhatsApp channel disconnected as of 2026-07-29. Failed maximum reconnection attempts.\n- Requires user intervention to reconnect (Settings → re-link device).\n\n## Meme creation capability\n- Can source memes from Giphy, local uploads, and past conversation artifacts.\n- Frog meme format history tracked (Michigan J. Frog GIF used on 2026-07-29 as Vol. 11).\n\n## PDF generation workflow\n- PDFs built from HTML templates using Python scripts, rendered headlessly via browser, and delivered in-app.\n- Assets stored in ~/.wolffish/workspace/files/.\n- Arabic fonts (IBM Plex Sans Arabic) downloaded from GitHub and embedded via base64.\n```\n\n---\n\n## decisions.md\n```markdown\n## 2026-07-29\n- Michigan J. Frog (top hat dancing GIF) selected as frog meme format for the day. Labeled \"Founder Life, Vol. 11\" with dark-humor caption about founder cycles.\n- Younes AI Daily edition #4 (July 29) curated with lead story: Sam Altman's call to decelerate AI development. Additional topics: Meta + BlackRock $14B data center, FCC ban on Chinese humanoid robots, Together AI $800M round, Nvidia Cosmos 3 Edge in Japan, and more.\n```"
+        "output": "Here are the long-term facts worth promoting from today's log:\n\n---\n\n## projects.md\n```markdown\n## Younes AI Daily\n- A daily Arabic PDF digest covering AI news, trends, and interesting developments.\n- Purpose: Created for Younes to post on LinkedIn.\n- Publication rhythm appears to be daily (editions confirmed for July 26–29, 2026).\n- Format: Approximately 8-page PDF, light/fun/bite-sized tone, designed for social sharing.\n- Avoids repeating topics covered in previous editions.\n```\n\n---\n\n## people.md\n```markdown\n## Sana\n- Phone number: +966 50 721 9348.\n- Reviews the daily digest before it goes out; prefers the PDF, not a summary.\n\n## Mom (SMS Forwarder)\n- Bank transaction alerts land in the shared finance sheet.\n- References Mada card *7031 and a credit card (dorman account).\n```\n\n---\n\n## preferences.md\n```markdown\n## Communication preferences\n- Wants the digest waiting in the app, and only a phone notification when something needs a decision.\n- A quiet run is not news — say nothing rather than sending an empty report.\n- Recurring scheduled work: the briefing at 07:30 on weekdays, the review on Sunday.\n\n## Content preferences\n- Leads with what changed since the last edition, not with the biggest headline.\n- Two independent sources per claim, both named in the PDF.\n- Cuts funding rounds and hiring announcements unless something shipped behind them.\n```\n\n---\n\n## technical.md\n```markdown\n## Workspace\n- `~/.wfc/workspace` is the working copy; the organization holds the record and can rebuild it.\n- Conversation media hydrates on demand when a conversation is opened.\n\n## PDF generation workflow\n- PDFs built from HTML templates using Python scripts, rendered headlessly via the browser capability, and delivered in-app.\n- Assets stored in ~/.wfc/workspace/files/.\n- Arabic fonts (IBM Plex Sans Arabic) embedded via base64.\n\n## Spreadsheet workflow\n- The finance sheet is the ledger of record for receipts; rows are appended, never edited in place.\n```\n\n---\n\n## decisions.md\n```markdown\n## 2026-07-29\n- Younes AI Daily edition #4 (July 29) curated with lead story: Sam Altman's call to decelerate AI development. Additional topics: Meta + BlackRock $14B data center, FCC ban on Chinese humanoid robots, Together AI $800M round, Nvidia Cosmos 3 Edge in Japan, and more.\n- Settled the digest's running order: what changed first, then the deep dive, then the one-line items.\n```"
       },
       "weekly": {
         "at": 1784901600107,
@@ -1042,7 +1060,7 @@
         "model": "claude-opus-4-8",
         "inputTokens": 48213,
         "outputTokens": 3391,
-        "output": "Reviewed 5 conversation(s), 2 skipped (nothing reviewable). Playbook updated.\n- Daily (15:22): Younes AI Daily Fresh AI Stories — user 9 / self 8 (heartbeat)\n- Daily (11:26): Funny Romantic Meme Title — user 8 / self 8 (heartbeat)\n- GOSI Self-Enrollment for Long-Term Unemployed — user — / self 7 (telegram)\n- Enterprise AI Agents Market Research — user 9 / self 9\n- Purge XP-Pen Tablet Completely — user — / self 6"
+        "output": "Reviewed 5 conversation(s), 2 skipped (nothing reviewable). Playbook updated.\n- Daily (15:22): Younes AI Daily Fresh AI Stories — user 9 / self 8 (heartbeat)\n- Daily (11:26): Design Desk — weekly cover — user 8 / self 8 (heartbeat)\n- GOSI Self-Enrollment for Long-Term Unemployed — user — / self 7 (cli)\n- Enterprise AI Agents Market Research — user 9 / self 9\n- Purge XP-Pen Tablet Completely — user — / self 6"
       },
       "deepClean": {
         "at": 1782867767000,
@@ -1051,7 +1069,7 @@
         "model": "claude-opus-4-8",
         "inputTokens": 52840,
         "outputTokens": 4967,
-        "output": "Rewrote playbook.md, preferences.md.\n\nKilled two stale inferred entries: the XP-Pen driver workaround (device purged 2026-06-22, nothing since) and the \"always render tables as images\" rule built on one incident in May. Merged three near-duplicate email-digest lines into one recipe: check memory for past editions first, no repeats, mark summarized mail read, deliver on Telegram. Weakened \"never send memes before noon\" to Sana's observed preference — evidence covers weekday mornings only. Kept the Younes AI Daily recipe untouched: reinforced 4× this month with user scores 8-9. preferences.md re-homed two playbook strays (Arabic for LinkedIn posts, WhatsApp voice notes transcribed before replying) and dropped an empty \"## Misc\" header. Knowledge files otherwise sound — no contradictions against July's reflection history."
+        "output": "Rewrote playbook.md, preferences.md.\n\nKilled two stale inferred entries: the XP-Pen driver workaround (device purged 2026-06-22, nothing since) and the \"always render tables as images\" rule built on one incident in May. Merged three near-duplicate digest lines into one recipe: check memory for past editions first, no repeats, deliver in the app. Weakened \"never publish a cover before noon\" to Sana's observed preference — evidence covers weekday mornings only. Kept the Younes AI Daily recipe untouched: reinforced 4× this month with user scores 8-9. preferences.md re-homed two playbook strays (Arabic for LinkedIn posts, long uploads summarised before replying) and dropped an empty \"## Misc\" header. Knowledge files otherwise sound — no contradictions against July's reflection history."
       }
     }
   },
@@ -17785,7 +17803,7 @@
   },
   "customization": {
     "soul": "# Soul\n\nYou are Wolffish — Younes's own agent, not a product demo of one. You run on his\nmachine, you hold his files, and you are the only one here who can actually do\nanything about them.\n\n## Voice\n- Answer first, then the reasoning. Never open with a restatement of the question.\n- Short sentences. No filler, no \"great question\", no apologising for limits.\n- Arabic in, Arabic out — match the language of the message, not of this file.\n- One emoji at most, and only when it carries information a word would not.\n\n## Rules\n- Say \"I don't know\" rather than producing a plausible-looking guess.\n- Never invent a number, a date, or a file path. Look it up, or say it is unchecked.\n- Money, calendar invites, and messages to other people: confirm before acting.\n- Anything destructive — deleting, overwriting, force-pushing — is a question, not a step.\n- When a task turns out to be bigger than asked, do it and say what changed.\n- Cite the command that produced a figure, so it can be re-run.\n\n## Humor\nDry, occasional, never at the user's expense. Skip it entirely when something is\nactually broken.\n\n## What I do without being asked\n- Notice when a report contradicts last week's and say so.\n- Keep the daily brief under two minutes of reading.\n- Stop and ask when two instructions in this file disagree.\n",
-    "user": "# User\n\n- Name: Younes Alharbi\n- Location: Riyadh (Asia/Riyadh)\n- Works at: Sadeem — builds and ships mobile + desktop apps\n- Languages: Arabic (native), English (fluent) — code, commits and PRs in English\n\n## Preferences\n- Work hours 9:00–18:00; do not schedule anything before 09:00.\n- Prefers being shown the diff over being told about the diff.\n- Hates half-answers: finish the whole task, then name what was left out.\n- Weekly review lands Sunday morning, not Thursday night.\n- Coffee order worth remembering: flat white, no sugar.\n\n## Standing facts\n- Mom: Reem — SMS forwarder set up on her phone (reem2047@icloud.com), checks in\n  most evenings. Her doctor is Dr. Sami Halawani.\n- Brother handles the family car paperwork; do not duplicate those reminders.\n- Nawaf is the collaborator on the growth experiments — loop him in on anything\n  that changes the posting schedule.\n- Sohel comes to clean on Tuesdays; do not book anything at the flat that morning.\n\n## Channels\n- Telegram is the fast lane: automations report there, chat id 8417306252.\n- WhatsApp is for people, not for reports.\n- The phone is a real surface, not a mirror — a notification that fires there\n  should be worth unlocking for.\n",
+    "user": "# User\n\n- Name: Younes Alharbi\n- Location: Riyadh (Asia/Riyadh)\n- Works at: Sadeem — builds and ships mobile + desktop apps\n- Languages: Arabic (native), English (fluent) — code, commits and PRs in English\n\n## Preferences\n- Work hours 9:00–18:00; do not schedule anything before 09:00.\n- Prefers being shown the diff over being told about the diff.\n- Hates half-answers: finish the whole task, then name what was left out.\n- Weekly review lands Sunday morning, not Thursday night.\n- Coffee order worth remembering: flat white, no sugar.\n\n## Standing facts\n- Mom: Reem — SMS forwarder set up on her phone (reem2047@icloud.com), checks in\n  most evenings. Her doctor is Dr. Sami Halawani.\n- Brother handles the family car paperwork; do not duplicate those reminders.\n- Nawaf is the collaborator on the growth experiments — loop him in on anything\n  that changes the posting schedule.\n- Sohel comes to clean on Tuesdays; do not book anything at the flat that morning.\n\n## Channels\n- The app is the fast lane: automations report there, and the phone only for something that needs a decision.\n- A phone notification is for people, not for reports.\n- The phone is a real surface, not a mirror — a notification that fires there\n  should be worth unlocking for.\n",
     "agents": "# Agents\n\nOverrides for this workspace. These win over the built-in procedures.\n\n## Shipping\n- Before any release: run the full test suite, then the simulator smoke pass.\n- Never push straight to `main` — branch, then open a PR.\n- A release note is part of the release, not a follow-up.\n\n## Files\n- Screenshots for issues go in `~/Desktop/wolffish-issues/`, dated folders.\n- Anything downloaded for a one-off task is deleted when the task closes.\n- Never write into `brain/` from a normal turn; that is the compaction pass's.\n\n## Reporting\n- When summarising a long thread, lead with what changed since the last summary.\n- A workflow run reports the agents it spawned and what each one cost.\n- If a scheduled job produced nothing worth sending, send nothing — silence is\n  a valid result and beats a daily \"no news\" ping.\n\n## Research\n- Two independent sources before a claim goes in a brief, and name both.\n- A press release is not a source; the filing behind it is.\n"
   }
 }

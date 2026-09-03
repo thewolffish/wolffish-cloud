@@ -67,132 +67,6 @@
       "enough": "{{free}} free — enough to continue."
     }
   },
-  "ollamaSetup": {
-    "title": "Install Ollama",
-    "subtitle": "A lightweight runtime for running AI models locally.",
-    "titleDetecting": "Detecting Ollama",
-    "subtitleDetecting": "Checking if Ollama — the local AI runtime Wolffish needs — is installed.",
-    "detectingTitle": "Detecting Ollama",
-    "detecting": "Please wait while we detect Ollama.",
-    "titleNotRunning": "Start Ollama",
-    "subtitleNotRunning": "Ollama is installed but not running. Start it to continue.",
-    "howToInstall": "Click below to download Ollama for your system, then run the installer. Wolffish will detect it automatically.",
-    "notRunningHint": "Open Ollama and Wolffish will pick it up automatically. If the button doesn't work, start Ollama yourself and tap Detect.",
-    "download": "Download Ollama",
-    "openOllama": "Open Ollama",
-    "detectButton": "Detect Ollama",
-    "checking": "Checking",
-    "polling": "Watching for Ollama",
-    "notDetected": "Ollama isn't running yet. Install it and try again.",
-    "detected": "Ollama is running",
-    "detectedHint": "Wolffish can now talk to it.",
-    "continue": "Continue",
-    "skip": "Skip for now",
-    "toast": {
-      "notDetected": "Ollama not detected — install or start it.",
-      "installedNotRunning": "Ollama installed but not running — open it."
-    }
-  },
-  "modelPicker": {
-    "title": "Pick your Ollama model",
-    "tagline": "Ollama model downloads once and is local forever.",
-    "specs": {
-      "os": "OS",
-      "cpu": "Cores",
-      "ram": "RAM",
-      "disk": "Free space"
-    },
-    "family": {
-      "gemma": "Gemma",
-      "qwen": "Qwen",
-      "llama": "Llama",
-      "deepseek": "DeepSeek",
-      "kimi": "Kimi"
-    },
-    "modelSize": {
-      "nano": "Nano",
-      "mini": "Mini",
-      "compact": "Compact",
-      "standard": "Standard",
-      "pro": "Pro",
-      "ultra": "Ultra",
-      "max": "Max",
-      "extreme": "Extreme"
-    },
-    "modelDescription": {
-      "nano": "Tiny and quick — barely uses memory.",
-      "mini": "Light and snappy for everyday questions.",
-      "compact": "A solid all-rounder for most work.",
-      "standard": "Balanced capability with a moderate footprint.",
-      "pro": "Capable enough for complex, multi-step work.",
-      "ultra": "Highly capable — needs plenty of memory.",
-      "max": "Frontier-class — requires serious hardware.",
-      "extreme": "The biggest weights this family ships."
-    },
-    "approxRam": "≈ {{ram}} RAM",
-    "params": "{{value}} params",
-    "tooBig": "Too large for your machine",
-    "loadingCatalog": "Fetching available sizes from Ollama",
-    "catalogUnavailable": "Couldn't reach Ollama's registry. Check your connection and try again.",
-    "current": "Currently selected",
-    "alreadyInstalled": "Downloaded",
-    "latest": "Latest",
-    "recommended": "Recommended",
-    "tags": {
-      "vision": "Vision",
-      "tools": "Tools",
-      "thinking": "Thinking",
-      "code": "Code",
-      "safety": "Safety",
-      "embedding": "Embedding",
-      "medical": "Medical",
-      "translation": "Translation",
-      "math": "Math",
-      "reasoning": "Reasoning",
-      "ocr": "OCR"
-    },
-    "install": "Install",
-    "use": "Use this model",
-    "continue": "Continue to chat",
-    "cancel": "Cancel",
-    "retry": "Try again",
-    "speedLine": "{{speed}} / sec · {{eta}} remaining",
-    "speedLineNoEta": "{{speed}} / sec",
-    "pullStatus": {
-      "lookingUp": "Looking up",
-      "downloading": "Downloading",
-      "processing": "Processing",
-      "verifying": "Verifying"
-    },
-    "pullHints": {
-      "lookingUp": "Finding your model in Ollama's registry.",
-      "downloading": "Streaming the model files to your machine.",
-      "processing": "Setting up the model on your machine.",
-      "verifying": "Making sure everything is intact."
-    },
-    "pullErrors": {
-      "manifestMissing": "Model unavailable — pick another or update Ollama.",
-      "connection": "Connection failed — check internet and Ollama.",
-      "generic": "Something went wrong. Try to restart the app."
-    },
-    "backToChat": "Back to chat",
-    "reinstallOllama": "Need to reinstall Ollama?",
-    "available": "Available",
-    "availableDescription": "Models already downloaded on your machine, ready to use.",
-    "modelsFolder": "Models folder",
-    "modelsFolderDescription": "Scan this folder for downloaded Ollama models.",
-    "chooseFolder": "Choose folder",
-    "noAvailableModels": "No models found in this folder.",
-    "useAvailable": "Use this model",
-    "availableDetail": {
-      "family": "Family",
-      "params": "Parameters",
-      "quantization": "Quantization",
-      "format": "Format",
-      "size": "Size",
-      "unknown": "Unknown"
-    }
-  },
   "settings": {
     "tabs": {
       "appearance": "Appearance",
@@ -230,14 +104,6 @@
         "label": "Bypass permissions mode",
         "description": "When enabled, all tool actions auto-approve without showing the approval dialog. The amygdala still classifies every action and logs everything to the corpus event bus and feedback files exactly as before — only the human approval step is skipped. Use this for trusted environments where you want full agent autonomy. Disable it any time to restore manual approval."
       },
-      "restrictPowerfulModels": {
-        "label": "Restrict powerful local models",
-        "description": "When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive."
-      },
-      "voiceReplies": {
-        "label": "Voice replies",
-        "description": "When you send a voice prompt, Wolffish replies with a spoken voice memo. Files and text still arrive when the work needs them — the reply just ends spoken aloud. This switch alone controls whether the model is instructed to do this. Turn it off to get text replies to voice prompts."
-      },
       "weekStartsOn": {
         "label": "Start of week",
         "sunday": "Sunday",
@@ -248,6 +114,10 @@
         "title": "Account",
         "signOut": "Sign out",
         "signOutDescription": "Ends this device’s session with Wolffish Cloud and returns to the sign-in screen."
+      },
+      "voiceReplies": {
+        "label": "Voice replies",
+        "description": "When you send a voice prompt, Wolffish replies with a spoken voice memo. Files and text still arrive when the work needs them — the reply just ends spoken aloud. This switch alone controls whether the model is instructed to do this. Turn it off to get text replies to voice prompts."
       }
     },
     "knowledge": {
@@ -388,94 +258,6 @@
       }
     },
     "model": {
-      "providers": {
-        "ollama": "Ollama",
-        "anthropic": "Anthropic",
-        "openai": "OpenAI",
-        "deepseek": "DeepSeek",
-        "mimo": "Xiaomi Mimo",
-        "kimi": "Kimi",
-        "minimax": "MiniMax",
-        "xai": "xAI",
-        "qwen": "Qwen",
-        "stepfun": "Stepfun",
-        "zai": "Z.ai",
-        "openrouter": "OpenRouter",
-        "descriptions": {
-          "zai": "Z.ai — Zhipu's GLM models: frontier agentic reasoning and coding with long context",
-          "stepfun": "Step — frontier reasoning models with built-in thinking and vision support",
-          "qwen": "Alibaba's Qwen models — powerful reasoning and coding with long-context support",
-          "xai": "Grok — xAI's frontier reasoning models with vision and live web search",
-          "minimax": "MiniMax's frontier models — strong reasoning and code with competitive pricing",
-          "kimi": "Moonshot AI's flagship models — powerful reasoning with long-context support",
-          "mimo": "Xiaomi's cloud AI — affordable frontier models with strong multilingual support",
-          "deepseek": "Open-weight reasoning powerhouse — frontier performance at a fraction of the cost",
-          "anthropic": "Claude — safety-focused frontier models with exceptional long-context reasoning",
-          "openai": "GPT and o-series — the industry-standard frontier model family",
-          "openrouter": "Unified gateway — OpenAI, Anthropic, Google, Meta, and more from one key",
-          "ollama": "Open-weight models running locally — private, offline, no API key needed"
-        }
-      },
-      "cloudBadge": "Cloud API",
-      "titleWithCount": "Models ({{count}})",
-      "subtitle": "Model providers Wolffish can think with — local through Ollama, or cloud with an API key.",
-      "searchPlaceholder": "Search providers",
-      "noMatches": "No providers match your search.",
-      "ollamaNotAvailable": {
-        "subtitle": "Ollama is not running or not installed.",
-        "description": "Install or start Ollama to browse and download local models.",
-        "setup": "Set up Ollama"
-      },
-      "cloud": {
-        "title": "{{provider}}",
-        "apiKey": "API key",
-        "apiKeyPlaceholder": "Paste your {{provider}} key",
-        "showKey": "Show key",
-        "hideKey": "Hide key",
-        "brainNotice": "Pick the active model and mode from the chat composer.",
-        "modelsBreakdown": "Models",
-        "breakdown": {
-          "model": "Model",
-          "context": "Context",
-          "input": "Input / 1M",
-          "output": "Output / 1M",
-          "cached": "Cached / 1M",
-          "modes": "Modes",
-          "free": "Free",
-          "badges": {
-            "frontier": "Frontier",
-            "vision": "Vision",
-            "reasoning": "Reasoning",
-            "code": "Code",
-            "fast": "Fast",
-            "voice": "Voice"
-          },
-          "disclaimer": "Prices are in USD per 1M tokens. Actual billing may vary.",
-          "moreModels": "more models available at"
-        },
-        "platform": "Platform",
-        "test": "Save",
-        "testConnection": "Test connection",
-        "remove": "Disconnect",
-        "keyWorksToast": "{{provider}} key seems to work correctly",
-        "removedToast": "{{provider}} key removed",
-        "status": {
-          "untested": "Models will become available once the key is verified",
-          "testing": "Testing connection",
-          "ready": "Models are ready",
-          "invalid": "Connection failed"
-        },
-        "alerts": {
-          "invalidKey": "The {{provider}} key seems to be invalid. Update it below."
-        },
-        "errors": {
-          "invalidKey": "The API key was rejected. Check it and try again.",
-          "rateLimited": "Rate limited. Wait a moment and try again.",
-          "invalidModel": "Model not available with this key.",
-          "network": "Can't reach {{provider}} — check connection.",
-          "generic": "Test failed: {{message}}"
-        }
-      },
       "title": "Models",
       "orgSubtitle": "Models available to this account, set by your organization.",
       "orgExplainer": "No provider keys live on this device — every call flows through your organization, which enforces the allowlist and quotas server-side. Admins change the catalog per user or org-wide, and this list follows.",
@@ -591,17 +373,10 @@
       "searchPlaceholder": "Search services",
       "noMatches": "No services match your search.",
       "tabs": {
+        "brave": "Brave Search",
         "tts": "Text-to-Speech",
         "stt": "Speech-to-Text",
-        "brave": "Brave Search",
-        "notion": "Notion",
-        "github": "GitHub",
-        "google": "Google Workspace",
-        "memes": "Memes",
-        "computerUse": "Computer Use",
-        "video": "Video generation",
-        "telegram": "Telegram",
-        "whatsapp": "WhatsApp"
+        "computerUse": "Computer Use"
       },
       "gate": {
         "missingTitle": "Capability not installed",
@@ -626,6 +401,56 @@
         "phaseModel": "Downloading model {{percent}}%",
         "phaseDone": "Finishing up",
         "failed": "Install failed: {{error}}"
+      },
+      "inapp": {
+        "title": "In-App Chat",
+        "subtitle": "Configure the in-app chat on this desktop.",
+        "toggle": {
+          "on": "On",
+          "off": "Off"
+        },
+        "verbose": {
+          "label": "Verbose task results",
+          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends."
+        },
+        "runCards": {
+          "label": "Run cards",
+          "description": "Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge."
+        }
+      },
+      "brave": {
+        "title": "Brave Search",
+        "subtitle": "Web search for your agent, provided by your organization through Brave Search.",
+        "managedTitle": "Provided by your organization",
+        "managedBadge": "org managed",
+        "refresh": "Refresh",
+        "rows": {
+          "provider": "Provider",
+          "status": "Status",
+          "today": "Your searches today",
+          "month": "Organization this month",
+          "price": "Price per search",
+          "rate": "Plan rate limit",
+          "unlimited": "unlimited",
+          "perSecond": "{{count}} per second",
+          "of": "{{used}} of {{cap}}"
+        },
+        "state": {
+          "ready": "Active",
+          "disabled": "Turned off by your organization",
+          "unconfigured": "Not set up yet by your organization",
+          "signed_out": "Sign in to see your allowance",
+          "unreachable": "Can't reach your organization"
+        },
+        "attribution": "Powered by Brave",
+        "howItWorksTitle": "How it works",
+        "howItWorks": {
+          "lane": "Every web search goes through your organization's API, which holds the one Brave Search key — no key on this device, nothing to paste.",
+          "fair": "Searches from everyone in the company are queued fairly behind the plan's rate limit, so a busy colleague never gets you rate-limited.",
+          "caps": "Admins set a daily allowance per person and a monthly budget for the company; when either is reached the agent says so instead of failing silently.",
+          "meter": "Each search is metered to your account at the plan price and shows in Usage, on the phone and in the CLI.",
+          "privacy": "The query is sent to Brave with the company key only. Your organization records that a search happened — never what you searched for."
+        }
       },
       "tts": {
         "title": "Text-to-Speech",
@@ -680,532 +505,6 @@
             "speed": "Very slow",
             "description": "Research-grade accuracy"
           }
-        }
-      },
-      "inapp": {
-        "title": "In-App Chat",
-        "subtitle": "Configure the in-app chat on this desktop.",
-        "toggle": {
-          "on": "On",
-          "off": "Off"
-        },
-        "verbose": {
-          "label": "Verbose task results",
-          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends."
-        },
-        "runCards": {
-          "label": "Run cards",
-          "description": "Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge."
-        }
-      },
-      "telegram": {
-        "title": "Telegram",
-        "subtitle": "Integration with Telegram — reach your agent from the Telegram app. Same agent, same memory, same history.",
-        "enable": "Enable Telegram integration",
-        "enableDescription": "Message Wolffish from Telegram to access it remotely.",
-        "toggle": {
-          "on": "On",
-          "off": "Off"
-        },
-        "botToken": "Bot token",
-        "botTokenPlaceholder": "1234567890:ABCdef…",
-        "botTokenHint": "Get one from @BotFather on Telegram. Treated as a secret — stored in config.json on your machine.",
-        "showToken": "Show",
-        "hideToken": "Hide",
-        "allowedUsers": "Allowed user IDs",
-        "allowedUsersPlaceholder": "123456789, 987654321",
-        "allowedUsersHint": "Send /start to @userinfobot to get your ID.",
-        "test": "Save",
-        "testHint": "Sends a verification message to the first allowed user without taking the bot online.",
-        "save": "Save",
-        "status": {
-          "label": "Status",
-          "running": "Active",
-          "stopped": "Inactive",
-          "starting": "Starting",
-          "error": "Error"
-        },
-        "connectedAs": "Connected bot",
-        "disconnect": "Disconnect",
-        "disconnectSuccess": "Telegram bot disconnected",
-        "disconnectFailed": "Failed to disconnect Telegram",
-        "testSuccess": "Test message sent",
-        "testFailure": "Test failed: {{message}}",
-        "saveSuccess": "Telegram settings saved",
-        "validation": {
-          "tokenRequired": "Bot token is required when enabled.",
-          "userIdRequired": "Add at least one user ID when enabled.",
-          "userIdInvalid": "User IDs must be numeric."
-        },
-        "errors": {
-          "missing_token": "Bot token is required.",
-          "token_format": "Invalid token format.",
-          "invalid_token": "Telegram rejected the token.",
-          "invalid_user_id": "Invalid user ID — see @userinfobot.",
-          "rate_limit": "Rate limited — retry later.",
-          "network": "Can't reach Telegram.",
-          "unknown": "Telegram error: {{message}}"
-        },
-        "autoRefresh": {
-          "label": "Auto-refresh conversations",
-          "description": "Start a fresh conversation after idle time. Previous ones stay accessible via /resume.",
-          "staleLabel": "Idle timeout",
-          "hours_one": "{{count}} hour",
-          "hours_other": "{{count}} hours"
-        },
-        "verbose": {
-          "label": "Verbose task results",
-          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends."
-        },
-        "hideAutomations": {
-          "label": "Hide automations from <cmd>/resume</cmd>",
-          "description": "Keep scheduled automation runs out of the <cmd>/resume</cmd> list so it only offers real conversations. On by default. They stay in <cmd>/delete</cmd> and in the app."
-        },
-        "commandsTitle": "Available commands",
-        "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
-        "commands": {
-          "new": "Start a fresh conversation. Only works when nothing is processing — use /stop first if a task is running. Anything still queued is dropped with the old conversation.",
-          "current": "Current conversation.",
-          "resume": "Pick a past conversation to continue. The chat switches to the one you choose, and anything still queued is dropped.",
-          "delete": "Pick a conversation to delete. If it was the active one, a fresh conversation starts and anything still queued is dropped.",
-          "clear": "Clear all messages.",
-          "stop": "Stop the task currently running in this chat. Anything queued still runs after it.",
-          "cancel": "Drop every message waiting in the queue. Leaves the running task alone.",
-          "approve": "Approve a pending confirmation prompt (e.g. before a destructive action runs).",
-          "deny": "Deny a pending confirmation prompt.",
-          "status": "Wolffish current status.",
-          "mode": "Show or set the chat mode — /mode single or /mode workflow.",
-          "model": "List connected cloud models and switch. Reply with a number, or /model <name> to filter."
-        },
-        "limitationsTitle": "Limitations",
-        "limitations": {
-          "singleConversation": "Only one conversation processes at a time. Messages sent meanwhile are queued and run in order.",
-          "fileSize": "File downloads capped at 20 MB.",
-          "allowList": "Only allowed user IDs receive replies.",
-          "silentIgnore": "Other messages are silently ignored."
-        }
-      },
-      "brave": {
-        "title": "Brave Search",
-        "platform": "Platform",
-        "subtitle": "Web search for your agent, provided by your organization through Brave Search.",
-        "managedTitle": "Provided by your organization",
-        "managedBadge": "org managed",
-        "refresh": "Refresh",
-        "refreshing": "Refreshing…",
-        "rows": {
-          "provider": "Provider",
-          "status": "Status",
-          "today": "Your searches today",
-          "month": "Organization this month",
-          "price": "Price per search",
-          "rate": "Plan rate limit",
-          "unlimited": "unlimited",
-          "perSecond": "{{count}} per second",
-          "of": "{{used}} of {{cap}}"
-        },
-        "state": {
-          "ready": "Active",
-          "disabled": "Turned off by your organization",
-          "unconfigured": "Not set up yet by your organization",
-          "signed_out": "Sign in to see your allowance",
-          "unreachable": "Can't reach your organization"
-        },
-        "attribution": "Powered by Brave",
-        "howItWorksTitle": "How it works",
-        "howItWorks": {
-          "lane": "Every web search goes through your organization's API, which holds the one Brave Search key — no key on this device, nothing to paste.",
-          "fair": "Searches from everyone in the company are queued fairly behind the plan's rate limit, so a busy colleague never gets you rate-limited.",
-          "caps": "Admins set a daily allowance per person and a monthly budget for the company; when either is reached the agent says so instead of failing silently.",
-          "meter": "Each search is metered to your account at the plan price and shows in Usage, on the phone and in the CLI.",
-          "privacy": "The query is sent to Brave with the company key only. Your organization records that a search happened — never what you searched for."
-        }
-      },
-      "notion": {
-        "title": "Notion",
-        "platform": "Platform",
-        "subtitle": "Read and write pages, databases, and blocks via your Notion integration token.",
-        "connections": {
-          "title": "Connections",
-          "subtitle": "Link one or more Notion workspaces; the label tells Wolffish which to use.",
-          "label": "Label",
-          "labelPlaceholder": "e.g. Personal",
-          "labelHint": "A short name Wolffish uses to pick this connection (e.g. Personal).",
-          "add": "Add connection",
-          "remove": "Remove connection",
-          "empty": "No connections yet — add one to link a Notion workspace.",
-          "labelRequired": "Label is required.",
-          "labelDuplicate": "Each connection needs a unique label.",
-          "untitled": "Connection {{index}}"
-        },
-        "token": "Integration token",
-        "tokenPlaceholder": "ntn_…",
-        "tokenHint": "Create an internal integration at notion.so/my-integrations, then share pages/databases with it. Token is stored in config.json on your machine — never sent anywhere except api.notion.com.",
-        "showToken": "Show",
-        "hideToken": "Hide",
-        "test": "Save",
-        "testConnection": "Test connection",
-        "testHint": "Calls Notion’s /v1/users/me endpoint to verify the integration token is valid.",
-        "save": "Save",
-        "status": {
-          "label": "Status",
-          "configured": "Active",
-          "disabled": "Inactive",
-          "error": "Error"
-        },
-        "connectedAs": "Connected as",
-        "testSuccess": "Token valid — connected as {{name}}",
-        "testFailure": "Test failed: {{message}}",
-        "saveSuccess": "Notion settings saved",
-        "validation": {
-          "tokenRequired": "Integration token is required."
-        },
-        "errors": {
-          "missing_token": "Integration token is required.",
-          "invalid_token": "Notion rejected the token.",
-          "rate_limit": "Rate limited — retry later.",
-          "network": "Can’t reach Notion.",
-          "unknown": "Notion error: {{message}}"
-        },
-        "howItWorksTitle": "How it works",
-        "howItWorks": {
-          "integration": "Create an internal integration at notion.so/my-integrations.",
-          "pages": "Share specific pages or databases with the integration to grant access.",
-          "databases": "The agent can search, read, create, and update pages and databases.",
-          "privacy": "Token stays in your config.json — no proxy, no telemetry.",
-          "setup": "Only pages explicitly shared with the integration are accessible."
-        }
-      },
-      "github": {
-        "title": "GitHub",
-        "platform": "Platform",
-        "subtitle": "Manage repos, issues, PRs, branches, CI, releases, and gists via your Personal Access Token.",
-        "connections": {
-          "title": "Connections",
-          "subtitle": "Link one or more GitHub accounts; the label tells Wolffish which to use.",
-          "label": "Label",
-          "labelPlaceholder": "e.g. Personal",
-          "labelHint": "A short name Wolffish uses to pick this account (e.g. Personal).",
-          "add": "Add connection",
-          "remove": "Remove connection",
-          "empty": "No connections yet — add one to link a GitHub account.",
-          "labelRequired": "Label is required.",
-          "labelDuplicate": "Each connection needs a unique label.",
-          "untitled": "Connection {{index}}"
-        },
-        "token": "Personal Access Token",
-        "tokenPlaceholder": "ghp_… or github_pat_…",
-        "tokenHint": "Create a token at <link>github.com/settings/personal-access-tokens</link> with the 'repo' scope (and 'gist' for gists). Token is stored in config.json on your machine — never sent anywhere except api.github.com.",
-        "showToken": "Show",
-        "hideToken": "Hide",
-        "test": "Save",
-        "testConnection": "Test connection",
-        "testHint": "Calls GitHub's <code>/user</code> endpoint to verify the token is valid and shows your username.",
-        "save": "Save",
-        "status": {
-          "label": "Status",
-          "configured": "Active",
-          "disabled": "Inactive",
-          "error": "Error"
-        },
-        "testSuccess": "Token valid — connected as @{{login}} ({{name}})",
-        "testFailure": "Test failed: {{message}}",
-        "saveSuccess": "GitHub settings saved",
-        "connectedAs": "Connected as",
-        "validation": {
-          "tokenRequired": "Personal Access Token is required."
-        },
-        "errors": {
-          "missing_token": "Personal Access Token is required.",
-          "invalid_token": "GitHub rejected the token.",
-          "rate_limit": "Rate limited — retry later.",
-          "insufficient_scope": "Token missing 'repo' scope.",
-          "network": "Can't reach GitHub.",
-          "unknown": "GitHub error: {{message}}"
-        },
-        "howItWorksTitle": "How it works",
-        "howItWorks": {
-          "pat": "Create a Personal Access Token at <link>github.com/settings/personal-access-tokens</link>.",
-          "scopes": "Grant 'repo' scope for full repository access, 'gist' for gists.",
-          "tools": "The agent can list repos, manage issues and PRs, check CI, create releases, and search code.",
-          "privacy": "Token stays in your config.json — no proxy, no telemetry.",
-          "ci": "CI/Actions logs are available for debugging failed workflows."
-        },
-        "capabilitiesTitle": "What you can ask Wolffish to do",
-        "capabilitiesSubtitle": "Destructive actions are confirmed before they run.",
-        "capabilities": {
-          "repos": "Browse your repositories, get repo details, or create new ones.",
-          "issues": "Read, create, and close issues — including comments and labels.",
-          "prs": "Open pull requests, review their status, and merge them (with approval).",
-          "branches": "List branches and clean up merged ones (with approval).",
-          "ci": "Check CI/Actions runs and pull workflow logs to debug failures.",
-          "releases": "Cut a release with tag, notes, draft, and prerelease support (with approval).",
-          "search": "Search code across all of GitHub by keyword, filename, or language.",
-          "files": "Read any file from any accessible repo without cloning it locally.",
-          "gists": "List your gists or create a new one to share a snippet."
-        }
-      },
-      "google": {
-        "title": "Google Workspace",
-        "platform": "Platform",
-        "subtitle": "Gmail, Drive, Calendar, Contacts, Tasks, and Sheets — drop your OAuth JSON to connect.",
-        "toasts": {
-          "installed": "gogcli {{version}} installed",
-          "installFailed": "Install failed",
-          "updated": "Updated to gogcli {{version}}",
-          "latest": "Latest version is installed",
-          "updateFailed": "Update check failed",
-          "credentialsStored": "Credentials stored",
-          "credentialsRejected": "Credentials rejected",
-          "credentialsDeleted": "Credentials and accounts removed",
-          "credentialsDeleteFailed": "Could not delete credentials",
-          "linkCopied": "Authorization link copied",
-          "linkCopyFailed": "Could not copy link",
-          "authorized": "Account authorized",
-          "authFailed": "Authorization failed",
-          "removed": "Account removed",
-          "removeFailed": "Could not remove account"
-        },
-        "setup": {
-          "label": "gogcli: Google Suite CLI",
-          "ready": "<code>{{version}}</code> is installed and ready",
-          "needsInstall": "Click Install — Wolffish will download <code>gogcli</code> for you",
-          "install": "Install",
-          "update": "Update"
-        },
-        "credentials": {
-          "label": "OAuth Credentials",
-          "hint": "OAuth Desktop client JSON from console.cloud.google.com → APIs & Services → Credentials.",
-          "dropzone": "Drop OAuth client JSON here or click to browse",
-          "dropzoneActive": "Release to upload",
-          "validating": "Validating credentials…",
-          "stored": "Credentials stored",
-          "rotate": "Drop a new JSON to replace credentials",
-          "delete": "Delete credentials and all accounts",
-          "project": "Project",
-          "client": "Client",
-          "guideTitle": "Create an OAuth Client",
-          "guidePrereq": "You need a Google account — any free Gmail works.",
-          "step1": "Open ",
-          "step1Link": "Google Cloud Console",
-          "step1Rest": " and create a new project (name it anything)",
-          "step1Confirm": "You see the project dashboard with your project name in the top bar.",
-          "step2": "Go to APIs & Services → Library and search for each API below — click it then hit \"Enable\"",
-          "step2Confirm": "Each enabled API appears in the \"Enabled APIs & services\" dashboard.",
-          "step2Apis": [
-            "Gmail API",
-            "Google Drive API",
-            "Google Calendar API",
-            "Google Sheets API",
-            "Google Docs API",
-            "Google Slides API",
-            "Tasks API",
-            "People API",
-            "Google Forms API",
-            "Google Chat API",
-            "Google Keep API",
-            "Google Classroom API",
-            "Apps Script API",
-            "Admin SDK API"
-          ],
-          "step3": "Go to OAuth consent screen → set User type to \"External\" → fill in your email → add yourself as a Test user",
-          "step3Confirm": "You see the consent screen summary with status \"Testing\".",
-          "step4": "Go to Credentials → Create Credentials → OAuth client ID → choose \"Desktop app\"",
-          "step4Confirm": "The new client appears in the OAuth 2.0 Client IDs list.",
-          "step5": "Click the download icon (⬇) next to the client to get the JSON file",
-          "step5Confirm": "A file starting with \"client_secret_\" downloads.",
-          "step6": "Drop the JSON file below — Wolffish takes it from here",
-          "step6Confirm": "The credentials section shows a green checkmark after upload.",
-          "guideTip1": "Leave publishing status as \"Testing\" — only test users can authorize, which is fine for personal use.",
-          "guideTip2": "You can always enable more APIs later — just go back to APIs & Services → Library."
-        },
-        "auth": {
-          "label": "Accounts",
-          "hint": "Add multiple accounts — the LLM picks which one to use on every call, and fans out across all of them for identity-agnostic requests.",
-          "placeholder": "you@gmail.com",
-          "authorize": "Authorize",
-          "cancel": "Cancel",
-          "addMore": "Add account",
-          "active": "Active",
-          "inactive": "Inactive",
-          "remove": "Remove",
-          "reconnect": "Reconnect",
-          "reconnecting": "Reconnecting",
-          "reconnectLabel": "Reconnect {{account}}",
-          "accountLabel": "Authorized account {{account}}",
-          "linkNote": "If the browser didn't open,",
-          "linkOpen": "open the authorization link",
-          "copyLink": "Copy authorization link"
-        },
-        "status": {
-          "label": "Status",
-          "active": "Active",
-          "inactive": "Inactive",
-          "error": "Error",
-          "accounts": "Connected accounts",
-          "project": "Project ID",
-          "needsReconnect": "Reconnect needed"
-        },
-        "errors": {
-          "platform_unsupported": "Unsupported OS / architecture",
-          "install_failed": "Install failed",
-          "credentials_invalid": "Credentials rejected",
-          "auth_failed": "Authorization failed",
-          "auth_timeout": "Authorization timed out",
-          "network": "Network error"
-        },
-        "capabilities": {
-          "title": "Available services",
-          "list": [
-            "Gmail — search, send, attachments, labels, drafts, filters, auto-reply, vacation",
-            "Calendar — list/create/update events, invites, OOO, working-location, free/busy",
-            "Drive — list, search, upload, download, convert, permissions, shared drives",
-            "Docs — create, edit by tab, import Markdown, find/replace, export",
-            "Sheets — read/write ranges, rows/cols, tabs, formatting, find/replace",
-            "Slides — create, copy, export, generate from Markdown or templates",
-            "Contacts — search, create, update, directory, custom fields",
-            "Tasks — manage tasklists and tasks with recurring schedules",
-            "Forms — create, manage questions, inspect responses",
-            "Chat — spaces, messages, DMs, emoji reactions (Workspace)",
-            "Classroom — courses, roster, coursework, submissions, announcements",
-            "Apps Script — create projects, inspect content, run functions",
-            "People — profile lookup, directory search",
-            "Keep — list, search, create, delete notes (Workspace)",
-            "Admin — Workspace users/groups directory ops",
-            "Groups — list memberships, view members (Workspace)",
-            "Multiple accounts — switch between Google accounts with aliases",
-            "Encrypted backups — export account data to age-encrypted Git shards",
-            "Email tracking — track opens for sent mail"
-          ]
-        },
-        "reconnect": {
-          "title": "Reconnect Google on this device",
-          "body": "Google Workspace is set up in your synced settings, but this device holds no Google credentials — they never leave a device. Upload your OAuth client and add your account below to reconnect."
-        }
-      },
-      "memes": {
-        "title": "Memes",
-        "subtitle": "Captioned memes and reaction GIFs via Memegen, Giphy, or Imgflip",
-        "save": "Save",
-        "saveSuccess": "Memes settings saved",
-        "testConnection": "Save",
-        "testAndSave": "Test & save",
-        "testFailure": "Test failed: {{message}}",
-        "testGiphySuccess": "Giphy connection successful",
-        "testImgflipSuccess": "Imgflip connection successful",
-        "showKey": "Show",
-        "hideKey": "Hide",
-        "providerStatus": {
-          "available": "Available",
-          "configured": "Active",
-          "disabled": "Not configured",
-          "error": "Error"
-        },
-        "memegen": {
-          "title": "Memegen",
-          "description": "Free, zero-config meme generator. Always available — no account needed."
-        },
-        "giphy": {
-          "title": "Giphy",
-          "description": "Search and download reaction GIFs. Requires a free API key.",
-          "apiKeyLabel": "API Key",
-          "apiKeyPlaceholder": "Giphy API key",
-          "hint": "Sign up at developers.giphy.com, create an app, and copy the API key.",
-          "getKey": "Get API Key"
-        },
-        "imgflip": {
-          "title": "Imgflip",
-          "description": "Premium meme generation with more templates. Requires a free account.",
-          "usernameLabel": "Username",
-          "usernamePlaceholder": "Imgflip username",
-          "passwordLabel": "Password",
-          "passwordPlaceholder": "Imgflip password",
-          "hint": "Create a free account at imgflip.com. Username and password are used to generate memes.",
-          "createAccount": "Create Account"
-        },
-        "validation": {
-          "giphyKeyRequired": "Giphy API key is required.",
-          "imgflipCredsRequired": "Imgflip username and password are required."
-        },
-        "errors": {
-          "missing_key": "Credentials are required.",
-          "invalid_key": "Credentials rejected — check key or password.",
-          "rate_limit": "Rate-limited — wait and retry.",
-          "network": "Can't reach service — check connection.",
-          "unknown": "Error: {{message}}"
-        }
-      },
-      "whatsapp": {
-        "title": "WhatsApp",
-        "subtitle": "Integration with WhatsApp — link your account with a QR scan and reach your agent from WhatsApp.",
-        "enable": "Enable WhatsApp",
-        "enableDescription": "Connect to WhatsApp and listen for messages.",
-        "toggle": {
-          "on": "On",
-          "off": "Off"
-        },
-        "connect": "Connect",
-        "connectDescription": "Link your WhatsApp account to get started.",
-        "scanQr": "Scan this QR code with WhatsApp on your phone.",
-        "scanQrHelp": "Open WhatsApp → Settings → Linked Devices → Link a Device",
-        "status": {
-          "label": "Status",
-          "connected": "Connected",
-          "connecting": "Connecting",
-          "qr": "Waiting for QR scan",
-          "error": "Error",
-          "disconnected": "Disconnected",
-          "inactive": "Inactive"
-        },
-        "connectedAs": "Connected as",
-        "allowedPhones": "Allowed phone numbers",
-        "allowedPhonesPlaceholder": "+966xxxxxxxxx, +1xxxxxxxxxx",
-        "allowedPhonesHint": "Comma-separated phone numbers. Only messages from these numbers will be processed.",
-        "save": "Save",
-        "saveSuccess": "WhatsApp settings saved",
-        "logout": "Disconnect",
-        "logoutSuccess": "WhatsApp session cleared",
-        "logoutFailed": "Failed to disconnect WhatsApp",
-        "autoRefresh": {
-          "label": "Auto-refresh conversations",
-          "description": "Start a fresh conversation after idle time. Previous ones stay accessible via /resume.",
-          "staleLabel": "Idle timeout",
-          "hours_one": "{{count}} hour",
-          "hours_other": "{{count}} hours"
-        },
-        "verbose": {
-          "label": "Verbose task results",
-          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends."
-        },
-        "hideAutomations": {
-          "label": "Hide automations from <cmd>/resume</cmd>",
-          "description": "Keep scheduled automation runs out of the <cmd>/resume</cmd> list so it only offers real conversations. On by default. They stay in <cmd>/delete</cmd> and in the app."
-        },
-        "commandsTitle": "Available commands",
-        "commandsSubtitle": "Send these commands in your WhatsApp chat.",
-        "commands": {
-          "new": "Start a fresh conversation — anything still queued is dropped",
-          "current": "Show the active conversation",
-          "resume": "Continue a previous chat — anything still queued is dropped",
-          "delete": "Delete a saved conversation — deleting the active one also drops anything queued",
-          "stop": "Stop the current task — anything queued still runs after it",
-          "cancel": "Drop every message waiting in the queue",
-          "approve": "Approve a pending tool call",
-          "deny": "Deny a pending tool call",
-          "status": "System status report",
-          "mode": "Single or workflow mode",
-          "model": "Pick the cloud model",
-          "local": "Switch to local model",
-          "cloud": "Switch to cloud model"
-        },
-        "limitationsTitle": "Limitations",
-        "limitations": {
-          "singleConversation": "One active conversation per phone number at a time. Messages sent meanwhile are queued and run in order",
-          "allowList": "Only allowed phone numbers can interact",
-          "silentIgnore": "Messages from non-allowed numbers are silently ignored"
-        },
-        "validation": {
-          "phoneRequired": "At least one phone number is required when enabled"
         }
       },
       "computerUse": {
@@ -1356,68 +655,6 @@
           "tipText": "Create a separate browser shortcut with this flag for Wolffish automation sessions.",
           "notSupportedLabel": "Not supported:",
           "notSupportedText": "Firefox and Safari do not support the debugger extension API. Debugger mode is Chromium-only."
-        }
-      },
-      "video": {
-        "title": "Video generation",
-        "platform": "MiniMax platform",
-        "subtitle": "Generate video with MiniMax H3 from text, images, frames, or reference media.",
-        "apiKey": "MiniMax API key (video)",
-        "apiKeyPlaceholder": "sk-api-…",
-        "apiKeyHint": "The same MiniMax key you use elsewhere works here; it is stored separately on purpose — see below.",
-        "showKey": "Show key",
-        "hideKey": "Hide key",
-        "save": "Save",
-        "test": "Test connection",
-        "saveSuccess": "Video generation key saved",
-        "testSuccess": "Key accepted — video generation is ready",
-        "testFailure": "MiniMax rejected this key",
-        "status": {
-          "label": "Status",
-          "ready": "Ready",
-          "error": "Key rejected",
-          "disabled": "No key set"
-        },
-        "separateKey": {
-          "title": "Why this key is separate from the MiniMax chat provider",
-          "p1": "MiniMax issues one credential that unlocks both its chat models and its video API, so the value you paste here is the same string you may already have under Settings → Providers → MiniMax. The app deliberately does not copy one into the other, and you need to fill in both.",
-          "p2": "They are independent decisions. Video generation is a service — like Brave search or Giphy — not a property of whichever brain you are chatting with. If the keys were shared, switching your chat brain to another provider and clearing the MiniMax entry would silently break video generation, and rotating a key for one use would drag the other along with it."
-        },
-        "howItWorks": {
-          "title": "How it works",
-          "p1": "MiniMax H3 never appears in the model picker, because you never chat with it. It is a tool your current model calls. Generation is asynchronous — the API hands back a task id and renders for a few minutes — so the app manages that lifetime for you.",
-          "s1": "Ask for a video in any conversation. Your current model calls the video tool with a prompt it writes itself.",
-          "s2": "A task card appears in the chat with the task id, live status and a progress estimate. It updates itself; you can cancel from the card.",
-          "s3": "The finished mp4 is downloaded automatically and plays inline in the card.",
-          "s4": "Your model then delivers the file — in the app, or to Telegram / WhatsApp when the conversation came from there (oversized videos are compressed to fit, with the original kept here at full quality).",
-          "footer": "If a generation outlives its turn — the app restarts, or the model moved on — the app finishes the job on its own: it keeps polling, saves the video, updates the card, and sends it to the channel it came from."
-        },
-        "director": {
-          "title": "Your chat model is the director",
-          "p1": "The video model does not read your request. Your selected chat model does, and rewrites it into a full cinematic prompt — subject, camera movement, lighting, mood — then chooses duration, resolution, aspect ratio, and which images act as first frame, last frame or style reference. That rewriting is where most of the quality comes from.",
-          "youAsk": "You ask",
-          "askExample": "a 4 second video of gentle ocean waves rolling onto a beach at sunset",
-          "modelSends": "Your model sends",
-          "promptExample": "Gentle ocean waves rolling onto a sandy beach at sunset. Soft golden-orange light reflecting off the water, calm ripples of foam washing up the shore and receding. Slow, soothing motion, warm pastel sky with hints of pink and amber near the horizon, a few scattered clouds catching the last light. Cinematic, serene, photorealistic, gentle push-in camera barely moving.",
-          "b1": "It adds the creative detail you left out — light, texture, atmosphere, camera language — because sparse prompts produce flat, generic footage.",
-          "b2": "It picks the technical settings from context, and omits the aspect ratio when you supply an image so the video adopts the picture's own shape.",
-          "b3": "It names the task, waits for the render, and decides how to present the result to you.",
-          "footer": "A stronger chat model writes a better prompt and gets a better video from the identical request. If a clip misses what you pictured, telling your model what to change is usually more effective than rewording your original ask.",
-          "currentLabel": "Your current director",
-          "currentHint": "This is whichever model you chat with — switch it from the composer and the next video is directed by the new one.",
-          "noModel": "No model selected yet",
-          "on": "On",
-          "off": "Off",
-          "offHint": "Director mode is off — your request is sent to the video model exactly as you wrote it. The model still picks duration and resolution unless you specify them."
-        },
-        "capabilities": {
-          "title": "What H3 can do",
-          "p1": "One model, four input modes — combine them freely, up to twelve media items in a single request.",
-          "modes": "Text to video · image to video (first frame) · first-and-last frame transition · reference images, clips and audio for consistent subjects, motion and voice.",
-          "output": "H.264 mp4 with a generated soundtrack, 24 fps, 768P or 2K, 4 to 15 seconds. Rendering typically takes one to five minutes.",
-          "limits": "Media you attach is checked and optimized automatically — oversized images are downscaled, unusual video and audio formats are converted — so requests fit the API's limits without you resizing anything.",
-          "storage": "Videos are saved per conversation under generations/video in the workspace, and deleted with the conversation.",
-          "footer": "You can also attach a media URL from the composer's paperclip menu instead of a file; MiniMax fetches it directly, which sidesteps the request size limit for large references."
         }
       }
     },
@@ -1605,74 +842,48 @@
         "errorToast": "Reset failed. Try again."
       }
     },
-    "updates": {
-      "title": "Updates",
-      "subtitle": "Manage app updates and version info.",
-      "version": "Version",
-      "changelog": "Changelog",
-      "autoUpdates": "Auto-updates",
-      "autoUpdatesDescription": "Check for and download updates automatically on launch.",
-      "checkManual": "Check for updates",
-      "checkManualDescription": "Manually check for new versions.",
-      "check": "Check",
-      "retry": "Retry",
-      "checkError": "Update failed. Please try again.",
-      "errorTitle": "Update failed",
-      "errors": {
-        "checksum": "The downloaded update was corrupted and couldn't be verified. Please try again.",
-        "network": "Couldn't reach the update server. Check your connection and try again.",
-        "timeout": "The update timed out before it finished. Please try again.",
-        "filesystem": "Couldn't save the update to your disk. Close other apps and try again.",
-        "unknown": "The update failed to download. Please try again."
-      },
-      "install": "Update",
-      "upToDate": "Up to date",
-      "updateFound": "Update found",
-      "checkFailed": "Could not check for updates",
-      "downloading": "Downloading update {{version}}…",
-      "downloadingTitle": "Downloading update",
-      "downloadingSubtitle": "Your update is downloading",
-      "verifyingTitle": "Verifying update",
-      "verifyingSubtitle": "Almost done — verifying your update",
-      "installReady": "Install downloaded update",
-      "updateAvailable": "Ready to install"
-    },
     "mobile": {
       "title": "Mobile",
-      "description": "Run Wolffish on your phone as a companion to this desktop — the same conversations, settings and usage, over an end-to-end encrypted tunnel.",
+      "description": "Run Wolffish on your phone as a companion to this desktop — the same conversations, settings, files and usage, signed in to your organization from the phone itself.",
+      "phones": "Paired phones",
       "notPaired": "No phone is paired yet. Start a pairing, then open Wolffish on your phone and connect.",
+      "pairAnother": "Pair another phone",
       "qrTitle": "Pairing QR",
-      "qrDesc": "Generate a QR and scan it with your phone's camera. The secret travels screen to camera — it never crosses the network.",
+      "qrDesc": "Generate a QR and scan it with your phone's camera. The one-time code travels screen to camera — nothing to type.",
       "codeTitle": "Pairing code",
       "codeDesc": "Generate a short code and type it on your phone — for when the camera can't see this screen.",
-      "codeDescCustomRelay": "Generate a short code and type it on your phone along with your relay's address — the code alone can't carry it. The QR does this for you.",
       "generate": "Generate",
-      "scanHint": "Open Wolffish on your phone, tap Connect to Desktop, and scan this code.",
+      "scanHint": "Open Wolffish on your phone, tap Connect, and scan this code.",
       "codeHint": "Type this code on your phone — case and dashes don't matter.",
-      "codeRelayHint": "Your phone must use the same relay — enter this address in the Relay card on its pairing screen:",
       "expires": "Expires in about {{minutes}} min",
       "newCode": "New code",
       "qrAlt": "Pairing QR code",
       "offerFailed": "Could not start pairing.",
       "unknownDevice": "Phone",
-      "unpair": "Unpair",
-      "relay": "Relay",
-      "rendezvous": "Rendezvous",
-      "keyDesktop": "This desktop",
-      "keyPhone": "Phone",
-      "session": "Session",
-      "cipher": "Cipher",
-      "frames": "Frames",
+      "appOpen": "app open",
+      "appClosed": "app closed",
+      "pairedAt": "Paired",
       "lastSeen": "Last seen",
-      "fingerprintHint": "Matching values on both devices mean nothing sits in between.",
+      "appVersion": "App version",
+      "unpair": "Unpair",
+      "unpairAction": "Unpair",
+      "unpairHint": "Signs the phone out of your organization. Pairing again needs a new QR or code.",
+      "bridge": "Organization link",
+      "bridgeHint": "Your phone reads its conversations, settings, files and usage from the organization. Live turns and answers travel through this desktop over the organization's bridge, so the desktop app has to be running for the phone to run anything.",
+      "status": {
+        "connected": "Connected",
+        "connecting": "Connecting",
+        "reconnecting": "Reconnecting",
+        "error": "Not connected",
+        "idle": "Off"
+      },
       "how": {
-        "title": "How it works",
         "pairTitle": "Pair once",
-        "pairBody": "The QR or code carries a one-time secret. Each device keeps its own key and pins the other's — no account, no password.",
-        "e2eTitle": "Encrypted end to end",
-        "e2eBody": "Everything is sealed on your devices before it is sent (X25519 · ChaCha20-Poly1305). Only this desktop and your phone hold the keys.",
-        "relayTitle": "Forwarded by a blind relay",
-        "relayBody": "The relay only helps the two devices find each other and passes sealed bytes along. It cannot read, alter or replay them, and it stores nothing — no database, no logs, no accounts, no message history."
+        "pairBody": "The QR or code is a one-time offer the organization mints for this desktop. Claiming it signs the phone in as you — no password on the phone.",
+        "orgTitle": "Signed in as you",
+        "orgBody": "From then on the phone talks to the organization directly: conversations, settings, files and usage sync there, and the phone stays current whether or not this desktop is awake.",
+        "liveTitle": "Live through this desktop",
+        "liveBody": "Turns run here. A message sent from the phone reaches this desktop over the organization's bridge and streams back the same way — questions and approvals included."
       },
       "getApp": {
         "title": "Get the app",
@@ -1682,52 +893,16 @@
         "appStore": "App Store",
         "googlePlay": "Google Play"
       },
-      "openRelay": "Open in browser",
-      "relayConfig": {
-        "body": "Where the two devices meet to exchange sealed frames. Any deployment of the open-source relay works — run your own, point this at it, and the next pairing carries it to your phone.",
-        "inputLabel": "Relay URL",
-        "apply": "Use this relay",
-        "reset": "Reset to default",
-        "repo": "wolffish-relay on GitHub",
-        "confirmTitle": "Change the relay?",
-        "confirmBody": "This desktop and your phone will meet at:",
-        "confirmCompat": "The relay must be compatible with Wolffish — any deployment of the open-source relay works:",
-        "confirmUnpair": "Your phone is paired through the current relay and will be unpaired. Pair it again after the change.",
-        "confirmApply": "Change relay",
-        "invalid": "That doesn't look like a relay URL. Use wss://host, or paste your relay's https:// address."
-      },
-      "keyStorage": "Pairing keys are stored on this machine using {{backend}}.",
       "notifications": "Phone notifications",
       "notificationsHint": "Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.",
       "verbose": "Task results",
       "verboseHint": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
       "runCards": "Run cards",
       "runCardsHint": "Show a live card on the paired phone while one of your automations or procedures runs. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
-      "status": {
-        "connected": "Connected",
-        "connecting": "Connecting",
-        "handshaking": "Securing the link",
-        "waiting-for-peer": "Waiting for the phone",
-        "reconnecting": "Reconnecting",
-        "error": "Not connected",
-        "idle": "Idle"
-      },
       "toggle": {
         "off": "Off",
         "on": "On"
-      },
-      "device": "Device",
-      "pairedAt": "Paired",
-      "appVersion": "App version",
-      "method": "Paired by",
-      "methodValue": {
-        "qr": "QR",
-        "code": "Typed code"
-      },
-      "disconnect": "Disconnect",
-      "disconnectHint": "Cut the link loose. Your phone reconnects the next time it is opened.",
-      "unpairAction": "Unpair",
-      "unpairHint": "Forget this phone and drop its keys. Pairing again needs a new QR or code."
+      }
     }
   },
   "chat": {
@@ -1739,7 +914,7 @@
       "subtitle": "Ask anything. I bite through anything."
     },
     "noModel": {
-      "notice": "No local model or cloud provider configured.",
+      "notice": "No model selected. Pick one from your organization’s catalog.",
       "settingsLink": "Go to Settings → Models"
     },
     "thinking": "Thinking…",
@@ -1876,22 +1051,6 @@
     "spreadsheetViewer": {
       "loading": "Loading spreadsheet"
     },
-    "voice": {
-      "record": "Record voice message",
-      "queue": "Queue voice message",
-      "queued": "Voice message",
-      "noMic": "No microphone available",
-      "permissionDenied": "Mic access denied — allow in system settings.",
-      "recording": "Recording",
-      "stopRecording": "Stop recording",
-      "play": "Play",
-      "pause": "Pause",
-      "send": "Send recording",
-      "delete": "Delete recording",
-      "transcribing": "Transcribing…",
-      "transcribed": "Transcribed",
-      "error": "Recording failed"
-    },
     "changeModel": "Change model",
     "modelLabel": "Model: {{model}}",
     "copy": "Copy",
@@ -1915,20 +1074,6 @@
     "heartbeat": "Automations",
     "procedures": "Procedures",
     "projects": "Projects",
-    "task": {
-      "kind": {
-        "video": "Video"
-      },
-      "status": {
-        "submitted": "Submitted",
-        "queued": "Queued",
-        "running": "Running",
-        "succeeded": "Done",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      },
-      "cancel": "Cancel task"
-    },
     "toolCard": {
       "status": {
         "running": "Running",
@@ -2082,9 +1227,7 @@
     },
     "modelPicker": {
       "search": "Search models",
-      "noProviders": "Connect a provider API key in Settings first.",
       "noResults": "No models match your search.",
-      "noLocalModels": "No Ollama models installed yet.",
       "orgSection": "Your model",
       "orgManaged": "Your organization manages this catalog."
     },
@@ -2132,6 +1275,22 @@
       "askDesc": "Ask before sensitive actions — approvals appear in chat.",
       "bypass": "Bypass",
       "bypassDesc": "Skip permission prompts — the agent acts without asking."
+    },
+    "voice": {
+      "record": "Record voice message",
+      "queue": "Queue voice message",
+      "queued": "Voice message",
+      "noMic": "No microphone available",
+      "permissionDenied": "Mic access denied — allow in system settings.",
+      "recording": "Recording",
+      "stopRecording": "Stop recording",
+      "play": "Play",
+      "pause": "Pause",
+      "send": "Send recording",
+      "delete": "Delete recording",
+      "transcribing": "Transcribing…",
+      "transcribed": "Transcribed",
+      "error": "Recording failed"
     }
   },
   "workspace": {
@@ -2452,8 +1611,8 @@
     "provider": {
       "noProviderTitle": "API provider error",
       "noProviderDescription": "The API provider failed to complete the response — this is not a wolffish issue.",
-      "invalidKeyTitle": "API key invalid",
-      "invalidKey": "API key invalid or expired — update in settings.",
+      "invalidKeyTitle": "Session not accepted",
+      "invalidKey": "Your organization’s API did not accept this session. Sign out and back in.",
       "badRequestTitle": "Request rejected",
       "badRequest": "The provider rejected the request — try a different model or check your configuration.",
       "modelNotFound": "Model not found — may be renamed or retired.",

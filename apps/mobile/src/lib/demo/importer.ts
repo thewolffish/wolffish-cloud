@@ -1,6 +1,6 @@
 import { upsertConversation } from '@/lib/conversations/repo'
 import type { ConversationFile } from '@/lib/conversations/types'
-import { markDemoRelaySync } from '@/lib/demo/relay'
+import { markDemoConnectionSync } from '@/lib/demo/connection'
 import { purgeDemoState } from '@/lib/demo/reset'
 import { seedWorkspaceFile } from '@/lib/files/fileCache'
 import { invalidateAutomations } from '@/lib/sync/automations'
@@ -194,7 +194,7 @@ export async function applyConfigSnapshot(): Promise<boolean> {
     invalidateAutomations()
     // This read IS the demo's catch-up, so it stamps the made-up link's
     // "last catch-up" clock — every entry and every Sync press lands here.
-    markDemoRelaySync()
+    markDemoConnectionSync()
     return true
   } catch {
     return false

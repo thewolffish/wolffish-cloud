@@ -5,8 +5,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const mockRpc = jest.fn()
 const mockConnection = { connected: true }
 
-jest.mock('@/lib/tunnel/client', () => ({
-  tunnelClient: {
+jest.mock('@/lib/cloud/bridge', () => ({
+  bridgeClient: {
     get connected() {
       return mockConnection.connected
     },
@@ -19,7 +19,7 @@ jest.mock('@/lib/tunnel/client', () => ({
 }))
 
 import { resetOutboxForTests } from '@/lib/sync/outbox'
-import { Rpc } from '@/lib/tunnel/protocol'
+import { Rpc } from '@/lib/bridge/protocol'
 import { useAppStore } from '@/state/appStore'
 import {
   applyVariablesPush,
@@ -48,50 +48,24 @@ function snapshotWith(overrides: {
     mcpServers: [],
     variables: overrides.variables ?? [],
     services: {
-      google: { status: 'active', projectId: 'proj' },
-      github: [],
-      notion: [],
       braveEnabled: true,
-      memesEnabled: true,
       sttModel: 'stt',
       ttsVoice: 'voice',
       ttsSpeed: '1.0',
       screenshotMaxWidth: '1280',
       screenshotFormat: 'jpeg'
     },
-    channels: {
-      telegram: {
-        enabled: false,
-        allowedUserIds: '',
-        autoRefresh: true,
-        staleHours: '12',
-        verbose: false,
-        hideAutomations: false
-      },
-      whatsapp: {
-        enabled: false,
-        allowedNumbers: '',
-        autoRefresh: true,
-        staleHours: '12',
-        verbose: false,
-        hideAutomations: false
-      }
-    },
+    channels: {},
     llm: {
       brainProvider: 'anthropic',
       brainModel: overrides.brainModel ?? 'claude-opus-4-8',
-      chatMode: 'single',
-      localOnly: false,
-      restrictPowerfulModels: true,
-      local: { enabled: false, model: null },
-      providers: []
+      chatMode: 'single'
     },
     preferences: {
       launchAtStartup: false,
       bypassPermissions: false,
       blockCredentials: false,
-      weekStartsOn: 1,
-      updatesEnabled: true
+      weekStartsOn: 1
     }
   }
 }

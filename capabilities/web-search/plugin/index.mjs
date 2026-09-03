@@ -8,9 +8,10 @@ import path from 'node:path'
 // the one Brave Search key behind that door, queues everyone's searches
 // fairly behind the plan's rate limit, enforces the per-person and
 // per-month allowances, and meters each query — nothing is configured on
-// this device. The DuckDuckGo scrapers below remain the fallback for when
-// the lane is unavailable (org switched it off, not set up yet, upstream
-// down, offline); an allowance refusal is final and is reported as such.
+// this device, and there is no other road. When the lane is closed (no
+// session, switched off, not set up, upstream down, offline) web_search
+// says so and stops; it never scrapes a public search engine from the
+// device. One metered choke point is the whole point.
 
 const DEFAULT_MAX_RESULTS = 5
 const DEFAULT_MAX_LENGTH = 15_000
@@ -22,19 +23,12 @@ const ORG_SEARCH_TIMEOUT_MS = 150_000
 // Workspace root captured at init() for the local usage ledger line.
 let workspaceRoot = null
 // The org API seam: { apiBase, withAccessToken } — null when the host runs
-// without a cloud session (tests, headless), which means DDG only.
+// without a cloud session (tests, headless, signed out), which means no
+// search at all.
 let cloud = null
 
-// DDG rate-limit guard — enforce a minimum gap between consecutive scrapes.
-const DDG_MIN_GAP_MS = 10_000
-let lastDdgSearchAt = 0
-
-function ddgThrottle() {
-  const wait = DDG_MIN_GAP_MS - (Date.now() - lastDdgSearchAt)
-  if (wait > 0) return new Promise((r) => setTimeout(r, wait))
-}
-
-// Real browser UA — DDG rate-limits requests with bot-looking UAs.
+// Real browser UA for web_fetch — some sites answer a bare fetch UA with a
+// bot page instead of the article.
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
@@ -45,7 +39,7 @@ const toolDefinitions = [
   {
     name: 'web_search',
     description:
-      "Search the web. Returns titles, snippets and URLs — never a page. Fast, and each query is metered against the user's organization allowance, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability.",
+      "Search the web through your organization's search lane. Returns titles, snippets and URLs — never a page. Fast, and each query is metered against the user's organization allowance, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability. There is no other search provider: when the lane is unavailable the tool says so, and you relay that instead of retrying.",
     parameters: {
       type: 'object',
       properties: {
@@ -83,22 +77,6 @@ const toolDefinitions = [
 
 // Helpers
 
-// DDG wraps outbound URLs in /l/?uddg=<encoded>. Unwrap them so callers get
-// the real destination, not the redirector.
-function unwrapDdgUrl(url) {
-  if (!url) return url
-  const m = url.match(/[?&]uddg=([^&]+)/)
-  if (m) {
-    try {
-      return decodeURIComponent(m[1])
-    } catch {
-      return url
-    }
-  }
-  if (url.startsWith('//')) return `https:${url}`
-  return url
-}
-
 // Fetch with an OPTIONAL timeout. We never impose a timeout by default — the
 // request runs to completion unless a caller explicitly passes `timeoutMs`
 // (e.g. the web_fetch tool, when the model asks for one). This keeps timeouts
@@ -130,73 +108,8 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-// Search providers — both scrape DuckDuckGo via different endpoints. They are
-// independent CDNs/hosts, so rate-limiting one rarely affects the other.
-
-const PROVIDERS = [
-  {
-    name: 'duckduckgo-html',
-    url: (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
-    parse: ($, max) => {
-      const results = []
-      $('.result, .web-result').each((_, el) => {
-        if (results.length >= max) return
-        const $el = $(el)
-        const $a = $el.find('.result__title a, h2 a').first()
-        const title = $a.text().trim()
-        const url = unwrapDdgUrl($a.attr('href') || '')
-        const snippet = $el.find('.result__snippet').text().trim()
-        if (title && /^https?:/i.test(url)) results.push({ title, snippet, url })
-      })
-      return results
-    }
-  },
-  {
-    name: 'duckduckgo-lite',
-    url: (q) => `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`,
-    parse: ($, max) => {
-      const results = []
-      $('a.result-link').each((_, el) => {
-        if (results.length >= max) return
-        const $el = $(el)
-        const title = $el.text().trim()
-        const url = unwrapDdgUrl($el.attr('href') || '')
-        const snippet = $el
-          .closest('tr')
-          .nextAll('tr')
-          .find('.result-snippet')
-          .first()
-          .text()
-          .trim()
-        if (title && /^https?:/i.test(url)) results.push({ title, snippet, url })
-      })
-      return results
-    }
-  }
-]
-
-async function runProvider(provider, query, maxResults) {
-  const res = await fetchWithTimeout(
-    provider.url(query),
-    {
-      headers: {
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9'
-      }
-    },
-  )
-  if (!res.ok) throw new Error(`${provider.name} returned HTTP ${res.status}`)
-  const html = await res.text()
-  if (/anomaly|unusual traffic|rate limit/i.test(html)) {
-    throw new Error(`${provider.name} rate-limited (anomaly detected)`)
-  }
-  return provider.parse(cheerio.load(html), maxResults)
-}
-
 // The org lane — POST {apiBase}/v1/search with the session token. The lane
-// answers in exactly the shape this tool returns (provider + results), so
-// the model sees the same thing whichever road the query took.
+// answers in exactly the shape this tool returns (provider + results).
 //
 // Errors carry the wire code (`err.code`: search_quota_exceeded,
 // search_quota_exhausted, search_busy, search_disabled,
@@ -273,6 +186,40 @@ function describeLaneRefusal(err) {
   }
 }
 
+// Everything that is not a refusal means the lane is closed right now. The
+// error names the code and what it means, in a sentence the model can relay
+// as-is — and tells it not to look for another road.
+const LANE_UNAVAILABLE_HINTS = {
+  no_session: 'this device has no organization session — sign in to Wolffish Cloud',
+  search_disabled: 'the organization has switched web search off',
+  search_not_configured: 'the organization has not set up web search yet',
+  upstream_error: "the search provider behind the organization's lane returned an error",
+  unauthorized: "the device's session was not accepted",
+  http_401: "the device's session was not accepted",
+  timeout: 'the organization API did not answer in time',
+  network_error: 'the organization API could not be reached'
+}
+
+function laneErrorCode(err) {
+  if (typeof err?.code === 'string' && err.code) return err.code
+  if (err?.name === 'TimeoutError') return 'timeout'
+  // undici wraps socket failures as TypeError('fetch failed') with the
+  // syscall code on `cause` — keep it, it tells offline from DNS from refused.
+  const cause = typeof err?.cause?.code === 'string' ? err.cause.code : ''
+  return cause ? `network_error:${cause}` : 'network_error'
+}
+
+function laneUnavailable(code) {
+  const hint = LANE_UNAVAILABLE_HINTS[code] ?? LANE_UNAVAILABLE_HINTS[code.split(':')[0]]
+  return {
+    success: false,
+    error:
+      `Web search is provided by your organization and is currently unavailable: ${code}` +
+      (hint ? ` (${hint})` : '') +
+      '. Tell the user in one sentence, then answer from what you already know or open a specific page with web_fetch or the browser extension. Retrying the same query will not help, and there is no other search provider on this device.'
+  }
+}
+
 // Brave usage tracking — appends one line per successful query to the
 // workspace usage directory so the Usage panel can show search cost right
 // away. The org meters the same query authoritatively (kind=search on
@@ -335,61 +282,35 @@ async function executeSearch(args) {
 
   const maxResults = Math.max(1, Math.round(Number(args?.maxResults) || DEFAULT_MAX_RESULTS))
 
+  // No cloud session, no search: there is nothing to fall back to.
+  if (!cloud) return laneUnavailable('no_session')
+
   let results
-  let provider
-  const errors = []
-
-  // The org lane first. An allowance or capacity refusal is the org's
-  // decision and is reported as such; anything that means "the lane is not
-  // available right now" (switched off, not set up, upstream down, offline)
-  // falls through to the DDG scrapers so the tool still answers.
-  if (cloud) {
-    try {
-      results = await searchOrgWithOneRetry(query, maxResults)
-      provider = 'brave'
-      recordBraveUsage(query)
-    } catch (err) {
-      if (FINAL_LANE_CODES.has(err?.code)) {
-        return { success: false, error: describeLaneRefusal(err) }
-      }
-      errors.push(err?.message ?? String(err))
+  try {
+    results = await searchOrgWithOneRetry(query, maxResults)
+  } catch (err) {
+    // A refusal the org meant (allowance, capacity) is relayed as such;
+    // anything else means the lane is closed right now — also relayed,
+    // never scraped around.
+    if (FINAL_LANE_CODES.has(err?.code)) {
+      return { success: false, error: describeLaneRefusal(err) }
     }
+    return laneUnavailable(laneErrorCode(err))
   }
-
-  if (!provider) {
-    for (const p of PROVIDERS) {
-      try {
-        await ddgThrottle()
-        results = await runProvider(p, query, maxResults)
-        lastDdgSearchAt = Date.now()
-        provider = p.name
-        break
-      } catch (err) {
-        lastDdgSearchAt = Date.now()
-        errors.push(`${p.name}: ${err?.message ?? err}`)
-      }
-    }
-  }
-
-  if (!provider) {
-    return {
-      success: false,
-      error: `All search providers failed.\n${errors.join('\n')}\nTry a different query or wait 30 seconds before retrying.`
-    }
-  }
+  recordBraveUsage(query)
 
   if (!results || results.length === 0) {
     return {
       success: true,
       output: JSON.stringify({
-        provider,
+        provider: 'brave',
         results: [],
         message: 'No results found. Try a different or more specific query.'
       })
     }
   }
 
-  return { success: true, output: JSON.stringify({ provider, results }) }
+  return { success: true, output: JSON.stringify({ provider: 'brave', results }) }
 }
 
 // web_fetch

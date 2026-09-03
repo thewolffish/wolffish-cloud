@@ -11,9 +11,9 @@ import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from 
 
 /**
  * A channel is one mouth wolffish can speak through. The Electron renderer
- * is the original channel; Telegram is the second. Both run the same agent
- * pipeline — the only difference is how segments, approvals, and turn
- * events get rendered to the user.
+ * is the original channel; the terminal and the paired phone followed. All
+ * run the same agent pipeline — the only difference is how segments,
+ * approvals, and turn events get rendered to the user.
  *
  * Concretely, a channel receives a user message, calls into the shared
  * turn runner with a TurnSink describing how to render output, and the
@@ -21,12 +21,12 @@ import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from 
  * channel via the singleton TurnRouter so amygdala doesn't need to know
  * which channel a turn belongs to.
  */
-export type ChannelId = 'electron' | 'telegram' | 'whatsapp' | 'cli'
+export type ChannelId = 'electron' | 'cli' | 'mobile'
 
 /**
  * The set of callbacks the agent uses to render an active turn. The
- * channel owns the implementation — IPC sends for Electron, formatted
- * bot messages for Telegram. Methods may be invoked from any pipeline
+ * channel owns the implementation — IPC sends for Electron, tunnel frames
+ * for the phone. Methods may be invoked from any pipeline
  * region; implementations must handle being called after the turn ends
  * (e.g. a stale segment from a slow stream) without throwing.
  */
@@ -123,7 +123,7 @@ export const turnRouter = new TurnRouter()
 
 /**
  * Notified with a live snapshot of a channel turn's in-progress assistant
- * message so the in-app renderer can mirror a Telegram/WhatsApp run as it
+ * message so the in-app renderer can mirror a channel run as it
  * streams — instead of the whole transcript appearing at once only after the
  * end-of-turn disk save. index.ts wires this to a renderer broadcast; the
  * same `message` identity (stable id) lands on disk at end-of-turn, so the
@@ -151,8 +151,8 @@ export type MirrorMessageListener = (
 
 /**
  * The per-turn assistant-message accumulator a channel builds up as segments
- * stream in. TelegramChannel and WhatsAppChannel both hold these fields on
- * their ActiveTurn; buildAssistantMessage turns them into the persisted
+ * stream in. Channels hold these fields on their ActiveTurn;
+ * buildAssistantMessage turns them into the persisted
  * assistant message — reused for BOTH the live mid-turn mirror snapshots and
  * the single end-of-turn save, keyed by the SAME stable id and timestamp so
  * the two are one message, never a duplicate.

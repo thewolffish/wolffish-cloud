@@ -143,71 +143,32 @@ async function run(): Promise<void> {
 
   // ── title-source sanitizer: delivery markup never reaches the title ─────
   {
-    // A caption-less attachment composes to ONLY the <attachments> block, so
-    // there are no user words to title from. The filename is still real intent,
-    // so the model gets it as prose and names the chat from it — the metadata
-    // (path/mime/size) must NOT ride along, or the title describes plumbing.
+    // The composed history content carries an <attachments> block (filename,
+    // mime, size, absolute path — load-bearing for the agent's file tools).
+    // The TITLE is named from the user's words alone: the block, and every
+    // piece of plumbing inside it, must be stripped before the model sees it.
     let seen = ''
     const llm = {
       title: async (userMessage: string): Promise<{ text: string }> => {
         seen = userMessage
-        return { text: 'Q3 Budget Spreadsheet' }
+        return { text: 'Q3 Budget Review' }
       }
     }
     const block =
-      '<attachments>\nThe user attached 1 file to this message:\n' +
+      'review the budget\n\n<attachments>\nThe user attached 1 file to this message:\n' +
       '  - q3-budget-final.xlsx (type=document, mime=application/vnd.ms-excel, size=1234b, path=/Users/x/.wfc/uploads/q3-budget-final.xlsx, ext=.xlsx)\n' +
       '</attachments>'
-    const t = await titleFromMessage(block, llm, undefined, 'telegram')
-    ok('caption-less: titled by the model, not Untitled', t === 'Q3 Budget Spreadsheet', t)
-    ok('caption-less: the model is given the filename', seen.includes('q3-budget-final.xlsx'), seen)
-    ok('caption-less: no absolute path reaches the model', !seen.includes('/Users/x/'), seen)
-    ok('caption-less: no mime/size reaches the model', !/mime=|size=|ext=/.test(seen), seen)
+    const t = await titleFromMessage(block, llm)
+    ok('with caption: titled by the model from the prose', t === 'Q3 Budget Review', t)
+    ok('with caption: the prose reaches the model', seen.includes('review the budget'), seen)
+    ok('with caption: no absolute path reaches the model', !seen.includes('/Users/x/'), seen)
+    ok('with caption: no mime/size reaches the model', !/mime=|size=|ext=/.test(seen), seen)
+    ok('with caption: the attachments block is gone', !seen.includes('<attachments'), seen)
   }
   {
-    // Multiple caption-less files: every name reaches the model.
-    let seen = ''
-    const llm = {
-      title: async (userMessage: string): Promise<{ text: string }> => {
-        seen = userMessage
-        return { text: 'Trip Photos' }
-      }
-    }
-    const block =
-      '<attachments>\nThe user attached 2 files to this message:\n' +
-      '  - beach (sunset).jpg (type=image, mime=image/jpeg, size=1b, path=/tmp/a.jpg)\n' +
-      '  - hotel.png (type=image, mime=image/png, size=2b, path=/tmp/b.png)\n' +
-      '</attachments>'
-    const t = await titleFromMessage(block, llm, undefined, 'whatsapp')
-    ok('caption-less: multi-file titled by the model', t === 'Trip Photos', t)
-    // Parens in a filename must survive — the parser keys on ' (type=', not '('.
-    ok(
-      'caption-less: both filenames reach the model',
-      seen.includes('beach (sunset).jpg') && seen.includes('hotel.png'),
-      seen
-    )
-  }
-  {
-    // Provider unreachable on a caption-less turn: the degraded title still
-    // names the file rather than falling back to 'Untitled'.
-    const llm = {
-      title: async (): Promise<{ text: string }> => {
-        throw new Error('offline')
-      }
-    }
-    const block =
-      '<attachments>\nThe user attached 1 file to this message:\n' +
-      '  - invoice.pdf (type=document, mime=application/pdf, size=9b, path=/tmp/invoice.pdf)\n' +
-      '</attachments>'
-    const t = await titleFromMessage(block, llm, undefined, 'telegram')
-    ok(
-      'caption-less: unreachable provider still names the file',
-      t === 'Shared a file: invoice.pdf',
-      t
-    )
-  }
-  {
-    // A message with neither words nor media is the only truly unnameable one.
+    // A caption-less attachment composes to ONLY the <attachments> block, so
+    // there are no user words to title from. It stays 'Untitled' for one turn
+    // (the next message names it) and the model is never called for it.
     let calls = 0
     const counting = {
       title: async (): Promise<{ text: string }> => {
@@ -215,14 +176,15 @@ async function run(): Promise<void> {
         return { text: 'Should Not Run' }
       }
     }
-    const t = await titleFromMessage(
-      '<attachments>\n</attachments>',
-      counting,
-      undefined,
-      'telegram'
-    )
-    ok('caption-less: no files and no words → Untitled', t === 'Untitled', t)
+    const block =
+      '<attachments>\nThe user attached 1 file to this message:\n' +
+      '  - invoice.pdf (type=document, mime=application/pdf, size=9b, path=/tmp/invoice.pdf)\n' +
+      '</attachments>'
+    const t = await titleFromMessage(block, counting)
+    ok('caption-less: stays Untitled (self-heals next turn)', t === 'Untitled', t)
     ok('caption-less: no LLM call when there is nothing to name', calls === 0, String(calls))
+    const empty = await titleFromMessage('<attachments>\n</attachments>', counting)
+    ok('caption-less: no files and no words → Untitled', empty === 'Untitled', empty)
   }
   {
     // The titler must hand the model the user's words, not the markup. Capture
@@ -259,12 +221,12 @@ async function run(): Promise<void> {
     ok('sanitize: still titles normally', t === 'Compare Two Values', t)
   }
 
-  // ── the media fallback is scoped to channels that strand ───────────────
-  // In-app it must NOT fire. The first real title a conversation gets is its
-  // last (ensureConversationTitle short-circuits on any non-'Untitled' title),
-  // and an in-app paste is normally followed by the actual question — so
-  // naming the chat after a synthetic `pasted-<ts>.png` would bury the real
-  // title under a machine name. Staying 'Untitled' for one turn self-heals.
+  // ── a caption-less media turn is never named from its filename ──────────
+  // The first real title a conversation gets is its last
+  // (ensureConversationTitle short-circuits on any non-'Untitled' title), and
+  // a paste is normally followed by the actual question — so naming the chat
+  // after a synthetic `pasted-<ts>.png` would bury the real title under a
+  // machine name. Staying 'Untitled' for one turn self-heals.
   {
     const block =
       '<attachments>\nThe user attached 1 file to this message:\n' +
@@ -277,49 +239,28 @@ async function run(): Promise<void> {
         return { text: 'Pasted PNG Screenshot' }
       }
     }
-    const inApp = await titleFromMessage(block, llm, undefined, 'electron')
-    ok(
-      'scope: in-app caption-less stays Untitled (self-heals next turn)',
-      inApp === 'Untitled',
-      inApp
-    )
-    ok('scope: in-app caption-less makes no LLM call', calls === 0, String(calls))
-
-    const noChannel = await titleFromMessage(block, llm)
-    ok('scope: channel-less (task titling) stays Untitled', noChannel === 'Untitled', noChannel)
-
-    // …but the same message on a stranding channel IS named.
-    const onChannel = await titleFromMessage(block, llm, undefined, 'telegram')
-    ok('scope: telegram caption-less IS named', onChannel === 'Pasted PNG Screenshot', onChannel)
-    ok('scope: telegram caption-less did call the model', calls === 1, String(calls))
+    const inApp = await titleFromMessage(block, llm)
+    ok('scope: caption-less stays Untitled (self-heals next turn)', inApp === 'Untitled', inApp)
+    ok('scope: caption-less makes no LLM call', calls === 0, String(calls))
   }
   {
-    // offlineTitle (the backfill's namer) carries the same scope.
+    // offlineTitle (the backfill's namer) carries the same rule.
     const { offlineTitle } = await import('@main/conversation-titler')
     const block =
       '<attachments>\nThe user attached 1 file to this message:\n' +
       '  - voice.mp3 (type=audio, mime=audio/mpeg, size=5b, path=/tmp/v.mp3)\n' +
       '</attachments>'
+    ok('scope: offlineTitle leaves caption-less media Untitled', offlineTitle(block) === 'Untitled')
     ok(
-      'scope: offlineTitle names media on a stranding channel',
-      offlineTitle(block, 'whatsapp') === 'Shared a file: voice.mp3',
-      offlineTitle(block, 'whatsapp')
-    )
-    ok(
-      'scope: offlineTitle leaves in-app media Untitled',
-      offlineTitle(block, 'electron') === 'Untitled',
-      offlineTitle(block, 'electron')
-    )
-    ok(
-      'scope: offlineTitle still slices ordinary prose anywhere',
-      offlineTitle('fix the auth bug', 'electron') === 'fix the auth bug'
+      'scope: offlineTitle still slices ordinary prose',
+      offlineTitle('fix the auth bug') === 'fix the auth bug'
     )
   }
 
   // ── abort: a DEADLINE degrades, a CANCEL does not ──────────────────────
   // The two abort sources unwind through the identical throw and want opposite
   // outcomes, so these pin the reason-based split. Regression guard for the
-  // real bug: ~30% of Telegram conversations landed permanently 'Untitled'
+  // real bug: ~30% of channel conversations landed permanently 'Untitled'
   // because a deadline returned '' and the caller then wrote nothing over the
   // 'Untitled' the channel had already persisted before the turn.
   // Deliberately >TITLE_MAX_CHARS (80) and full of collapsible whitespace, so
@@ -353,13 +294,13 @@ async function run(): Promise<void> {
   }
   {
     // The channel path: an 'Untitled' shell is on disk BEFORE the turn (what
-    // telegram's loadOrCreateConversation does), then the deadline fires.
+    // a channel's loadOrCreateConversation does), then the deadline fires.
     const conv = createConversation(null)
-    conv.channel = 'telegram'
+    conv.channel = 'mobile'
     await saveConversation(conv)
     const c = new AbortController()
     setTimeout(() => c.abort(TITLE_DEADLINE_REASON), 5)
-    await ensureConversationTitle(conv.id, PROMPT, 'telegram', hangingLlm, c.signal)
+    await ensureConversationTitle(conv.id, PROMPT, 'mobile', hangingLlm, c.signal)
     const disk = await loadConversation(conv.id)
     ok(
       'deadline: overwrites the pre-persisted Untitled placeholder on disk',
@@ -371,11 +312,11 @@ async function run(): Promise<void> {
     // Same shape, genuine cancel: must stay Untitled and unwritten so the
     // next turn produces the real title instead of inheriting a slice.
     const conv = createConversation(null)
-    conv.channel = 'telegram'
+    conv.channel = 'mobile'
     await saveConversation(conv)
     const c = new AbortController()
     setTimeout(() => c.abort(), 5)
-    await ensureConversationTitle(conv.id, PROMPT, 'telegram', hangingLlm, c.signal)
+    await ensureConversationTitle(conv.id, PROMPT, 'mobile', hangingLlm, c.signal)
     const disk = await loadConversation(conv.id)
     ok(
       'cancel: leaves Untitled on disk for a later turn to re-title',
@@ -418,11 +359,16 @@ async function run(): Promise<void> {
       String(seen[0]?.thinkingMode)
     )
 
-    // Summaries are a judgement call and deliberately keep their reasoning —
-    // only titling is clamped. Pins that the role gate is a gate.
+    // Summaries are utility work: reasoning OFF, normalized to the model's
+    // own modes (thalamus's 'summary' role policy) — never the user's chat
+    // reasoning selection. Pins that the role gate is a gate.
     seen.length = 0
     await th.summarize('some conversation text to compress')
-    ok('thalamus.summarize: reasoning left untouched', seen[0]?.thinkingMode === undefined)
+    ok(
+      'thalamus.summarize: reasoning clamped off',
+      seen[0]?.thinkingMode === 'off',
+      String(seen[0]?.thinkingMode)
+    )
   }
 
   // ── the clamp never sends a mode a model rejects ───────────────────────
@@ -432,21 +378,15 @@ async function run(): Promise<void> {
   // rejected one and 400 every first message.
   {
     const { normalizeReasoningMode, reasoningModesFor } = await import('@main/runtime/reasoning')
+    // The one lane: the V4 pair reasons (off/high/max) and clamps to 'off';
+    // a catalog model without reasoning has no modes and titles at 'off' too.
     const CASES: Array<[string, string, string]> = [
-      ['deepseek', 'deepseek-v4-pro', 'off'],
-      ['anthropic', 'claude-opus-4-8', 'off'],
-      ['openai', 'gpt-5.5', 'off'],
-      ['zai', 'glm-4.6', 'off'],
-      ['minimax', 'minimax-m3', 'off'],
-      ['xai', 'grok-4.6', 'on'], // ['on','high','max'] — rejects 'none'
-      ['xai', 'grok-4.5', 'on'], // ['on','high','max'] — rejects 'none'
-      ['xai', 'grok-4', 'on'], // ['on'] — always-on
-      ['qwen', 'qwq-32b', 'on'], // ['on'] — always-on
-      ['kimi', 'kimi-k2.7-code', 'on'], // ['on'] — always-on
-      ['minimax', 'minimax-m2.5', 'on'] // ['on'] — always-on
+      ['cloud', 'deepseek-ai/DeepSeek-V4-Pro-0813', 'off'],
+      ['cloud', 'deepseek-ai/DeepSeek-V4-Flash-0731', 'off'],
+      ['cloud', 'some-vendor/plain-chat-model', 'off']
     ]
     for (const [provider, model, want] of CASES) {
-      const modes = reasoningModesFor(provider, model, { openrouterReasoning: false })
+      const modes = reasoningModesFor(provider, model)
       const got = normalizeReasoningMode('off', modes)
       ok(`clamp: ${provider}/${model} titles at '${want}'`, got === want, got)
       ok(

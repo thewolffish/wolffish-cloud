@@ -9,7 +9,7 @@ import { PromptPreview } from '@/components/workspace/PromptSheet'
 import { useConversationList } from '@/lib/conversations/hooks'
 import { createProject, deleteProject, useProjects, useProjectsWritable } from '@/lib/sync/projects'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
-import type { SyncProject } from '@/lib/tunnel/protocol'
+import type { SyncProject } from '@/lib/bridge/protocol'
 import { formatSignedRelative } from '@/lib/utils/relativeTime'
 import { cn } from '@/lib/utils/cn'
 import { useToast } from '@/providers/toast/useToast'
@@ -182,7 +182,7 @@ export default function ProjectsScreen(): React.JSX.Element {
                 onPress={() => enterProject(project)}
                 className={cn(
                   'bg-surface border-border flex-col gap-2.5 rounded-2xl border px-4 py-3',
-                  'active:bg-border/20'
+                  'active:bg-border-soft'
                 )}
               >
                 <View className="flex-row items-start justify-between gap-2">
@@ -221,7 +221,7 @@ export default function ProjectsScreen(): React.JSX.Element {
                       accessibilityLabel={t('projects.edit')}
                       hitSlop={6}
                       onPress={() => setEditing(project)}
-                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border/40"
+                      className="h-8 w-8 items-center justify-center rounded-lg active:bg-border-soft"
                     >
                       <Edit02Icon size={15} className="text-muted" />
                     </Pressable>
@@ -233,7 +233,7 @@ export default function ProjectsScreen(): React.JSX.Element {
                       onPress={() => setDeleteTarget(project)}
                       className={cn(
                         'h-8 w-8 items-center justify-center rounded-lg',
-                        writable ? 'active:bg-border/40' : 'opacity-40'
+                        writable ? 'active:bg-border-soft' : 'opacity-40'
                       )}
                     >
                       <Delete02Icon size={15} className="text-muted" />

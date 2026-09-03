@@ -1,17 +1,20 @@
 /**
- * The chat screen across a voice-note send.
+ * A voice take, from the composer's tick to the wire.
  *
- * The 2–3 second gap this pins down: the voice branch used to upload the
- * recording BEFORE anything entered the feed, so the tap produced only the
- * thinking words for the length of a relay round trip, and the transport
- * popped in when the desktop finally answered. The recording is now staged
- * into the workspace at the tap and published like a file send's pictures —
- * so these tests hold the upload open and assert the transport is already on
- * screen, then walk the handover to the desktop's copy without a blank or a
- * doubled row.
+ * The recorder hands the screen `{kind:'voice'}` and nothing else: no text, no
+ * picked file, just a URI and a length. What has to happen after that is the
+ * whole point of this test — the take becomes an ordinary audio attachment and
+ * rides the SAME staging → upload → send pipeline every file takes, with one
+ * extra bit set. Two things would break silently without it:
+ *
+ *  - the flag. Without `voicePrompt: true` the desktop treats the audio as an
+ *    attachment to transcribe-on-demand rather than the prompt itself, and the
+ *    turn runs with an empty message.
+ *  - the attachment. A voice send with no file reaches the desktop as an empty
+ *    prompt, which it refuses — the take would vanish with no error to show.
  */
 
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native'
+import { cleanup, render } from '@testing-library/react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { ThemeContext } from '@/providers/theme/useTheme'
 
@@ -47,115 +50,105 @@ jest.mock('react-native-reanimated', () => {
   return { __esModule: true, default: { View }, FadeOut: fade }
 })
 
-/** The composer's only role here is to hand the screen its submits. */
+/** The composer's only role here: hand the screen one finished take. */
 jest.mock('@/components/chat/Composer', () => {
-  const { Text, View } = require('react-native')
+  const { Text } = require('react-native')
   return {
-    Composer: ({ onSubmit, streaming }: { onSubmit: (p: unknown) => void; streaming: boolean }) => (
-      <View>
-        <Text
-          testID="send-text"
-          onPress={() => onSubmit({ kind: 'text', text: 'hello there', files: [] })}
-        >
-          {streaming ? 'stop' : 'send'}
-        </Text>
-        <Text
-          testID="send-voice"
-          onPress={() =>
-            onSubmit({ kind: 'voice', uri: 'file:///av/recording.m4a', durationSeconds: 3.5 })
-          }
-        >
-          voice
-        </Text>
-      </View>
+    Composer: ({
+      onSubmit
+    }: {
+      onSubmit: (p: { kind: 'voice'; uri: string; durationSeconds: number }) => void
+    }) => (
+      <Text
+        testID="send-voice"
+        onPress={() =>
+          onSubmit({ kind: 'voice', uri: 'file:///cache/take.m4a', durationSeconds: 12 })
+        }
+      >
+        send
+      </Text>
     )
   }
 })
 
-const mockCommits: number[] = []
 jest.mock('@/components/chat/ChatFeed', () => {
   const { View } = require('react-native')
-  const React = require('react')
   return {
     FEED_FADE_MS: 0,
-    ChatFeed: ({ children }: { children: React.ReactNode }) => {
-      mockCommits.push(React.Children.count(children))
-      return <View testID="feed">{children}</View>
-    }
+    ChatFeed: ({ children }: { children: React.ReactNode }) => <View>{children}</View>
   }
 })
-
-const mockConversation: { data: unknown; isFetching: boolean } = {
-  data: undefined,
-  isFetching: true
-}
 jest.mock('@/lib/conversations/hooks', () => ({
-  useConversation: () => mockConversation
+  useConversation: () => ({ data: undefined, isFetching: false })
+}))
+jest.mock('@/lib/cloud/bridge', () => ({ bridgeClient: { connected: true, active: {} } }))
+
+/** The staging pipeline, stubbed at its seams — the test is about what the
+ *  screen asks of it, not about moving bytes. */
+type Picked = {
+  id: string
+  uri: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+  durationSeconds?: number
+}
+const mockUploadForSend = jest.fn(
+  async (entries: { picked: Picked }[], conversationId: string | null) => ({
+    attachments: entries.map((e) => ({
+      type: 'audio' as const,
+      filePath: `uploads/conv-x/${e.picked.name}`,
+      originalName: e.picked.name,
+      mimeType: e.picked.mimeType,
+      sizeBytes: 4096,
+      sha256: 'deadbeef'
+    })),
+    failed: [] as string[],
+    conversationId: conversationId ?? 'conv-voice'
+  })
+)
+jest.mock('@/lib/sync/attachments', () => ({
+  stageForSend: jest.fn(async (files: Picked[]) =>
+    files.map((picked) => ({
+      picked,
+      staged: { uri: 'file:///staged/take.m4a', relPath: 'staged/take.m4a', sizeBytes: 4096 }
+    }))
+  ),
+  stagedAttachment: (entry: { picked: Picked; staged: { relPath: string } }) => ({
+    type: 'audio' as const,
+    filePath: entry.staged.relPath,
+    originalName: entry.picked.name,
+    mimeType: entry.picked.mimeType,
+    sizeBytes: entry.picked.sizeBytes
+  }),
+  uploadForSend: (...args: Parameters<typeof mockUploadForSend>) => mockUploadForSend(...args),
+  fileLocally: jest.fn(async () => []),
+  discardStaged: jest.fn()
 }))
 
-/**
- * The workspace, reduced to what this suite needs: staging always succeeds
- * (the bytes are local), and every path stats as cached — which is the
- * production behavior a staged or imported file has, and what lets the
- * transport mount loaded rather than in its download state.
- */
-jest.mock('@/lib/files/fileCache', () => ({
-  statCachedFile: jest.fn(() => ({ uri: 'file:///workspace/cached.m4a', sizeBytes: 1234 })),
-  resolveWorkspaceFile: jest.fn(async () => ({
-    uri: 'file:///workspace/cached.m4a',
-    missing: false
-  })),
-  stageOutgoingFile: jest.fn(async (_uri: string, id: string, name: string) => ({
-    relPath: `uploads/.staging/${id}/${name}`,
-    uri: `file:///workspace/uploads/.staging/${id}/${name}`,
-    sizeBytes: 1234
-  })),
-  importLocalFile: jest.fn(async (_uri: string, relPath: string) => `file:///workspace/${relPath}`),
-  discardStagedFile: jest.fn(),
-  isStagedPath: jest.fn(() => false),
-  seedWorkspaceFile: jest.fn()
+type SentPrompt = {
+  conversationId: string | null
+  text: string
+  voicePrompt?: boolean
+  attachments?: { type: string }[]
+}
+const mockSendPrompt = jest.fn(async (_input: SentPrompt) => ({ conversationId: 'conv-voice' }))
+jest.mock('@/lib/sync/prompt', () => ({
+  sendPrompt: (input: SentPrompt) => mockSendPrompt(input),
+  abortTurn: jest.fn(),
+  beginTurn: jest.fn()
 }))
-
-/** Every upload is left pending until the test resolves it — the relay round
- *  trip the whole suite is about. */
-let mockResolveUpload: (value: unknown) => void = () => undefined
-jest.mock('@/lib/sync/files', () => ({
-  uploadFileToDesktop: jest.fn(
-    () => new Promise<unknown>((resolve) => (mockResolveUpload = resolve))
-  )
-}))
-
-/** sendPrompt held open like the upload; beginTurn and friends stay REAL so
- *  the voice branch's optimistic publish drives the actual live-turn store. */
-let mockResolveSend: (value: { conversationId: string }) => void = () => undefined
-jest.mock('@/lib/sync/prompt', () => {
-  const actual = jest.requireActual('@/lib/sync/prompt')
-  return {
-    ...actual,
-    sendPrompt: jest.fn(
-      () => new Promise<{ conversationId: string }>((resolve) => (mockResolveSend = resolve))
-    ),
-    abortTurn: jest.fn()
-  }
-})
 
 import ChatScreen from '@/app/chat'
 import { queryClient } from '@/lib/query/queryClient'
-import { sendPrompt } from '@/lib/sync/prompt'
-import { uploadFileToDesktop } from '@/lib/sync/files'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/providers/toast/ToastProvider'
 import { useAppStore } from '@/state/appStore'
 import { useChatRuntime } from '@/state/chatRuntime'
-
-const CONVERSATION = 'conv-1'
-const send = sendPrompt as jest.MockedFunction<typeof sendPrompt>
-const upload = uploadFileToDesktop as jest.Mock
-
-let view: Awaited<ReturnType<typeof render>>
+import { act, fireEvent, screen } from '@testing-library/react-native'
 
 async function mount(): Promise<void> {
-  view = await render(
+  await render(
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider
         initialMetrics={{
@@ -175,129 +168,39 @@ async function mount(): Promise<void> {
   )
 }
 
-const count = (pattern: RegExp): number => view.queryAllByText(pattern).length
-/** The transport's name row — the recording, rendered. */
-const transports = (): number => count(/voice-\d+\.m4a/)
-const thinking = (): boolean => count(/…/) > 0
-
-/** Answer the pending upload the way the desktop does: under its own path,
- *  keeping the name the phone sent. */
-const desktopAccepts = (): void => {
-  const uploadedName = upload.mock.calls[upload.mock.calls.length - 1][1] as string
-  mockResolveUpload({
-    conversationId: CONVERSATION,
-    attachment: {
-      type: 'audio',
-      filePath: `uploads/conv-1/${uploadedName}`,
-      originalName: uploadedName,
-      mimeType: 'audio/mp4',
-      sizeBytes: 4321
-    }
-  })
-}
+beforeEach(() => {
+  useAppStore.setState({ paired: true })
+  useChatRuntime.setState({ streams: {} })
+  mockSendPrompt.mockClear()
+  mockUploadForSend.mockClear()
+})
 
 afterEach(() => {
   cleanup()
   queryClient.clear()
 })
 
-beforeEach(() => {
-  jest.clearAllMocks()
-  useAppStore.setState({ paired: true })
-  useChatRuntime.setState({ streams: {} })
-  mockConversation.data = undefined
-  mockConversation.isFetching = true
-  mockCommits.length = 0
-})
-
-const expectNoBlankCommit = (): void => expect(mockCommits.filter((n) => n === 0)).toEqual([])
-
-describe('sending a voice note', () => {
-  it('puts the transport on screen at the tap, before the desktop answers', async () => {
+describe('sending a voice take', () => {
+  it('uploads the audio and sends it as the prompt itself', async () => {
     await mount()
-    await fireEvent.press(view.getByTestId('send-voice'))
-
-    // The bubble is up while the upload is STILL OPEN — the desktop has not
-    // named the file and sendPrompt has not run. This is the 2–3 seconds that
-    // used to show only the thinking words.
-    await waitFor(() => expect(transports()).toBe(1))
-    expect(upload).toHaveBeenCalledTimes(1)
-    expect(send).not.toHaveBeenCalled()
-    expect(thinking()).toBe(true)
-
-    // The desktop answers; the message goes with the desktop's own metadata
-    // and the id the bubble already renders under.
-    await act(async () => desktopAccepts())
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
-    const input = send.mock.calls[0][0]
-    expect(input.voicePrompt).toBe(true)
-    expect(input.messageId).toMatch(/^m_/)
-    expect(input.attachments?.[0]?.filePath).toMatch(/^uploads\/conv-1\/voice-\d+\.m4a$/)
-    expect(input.attachments?.[0]?.durationSeconds).toBe(3.5)
-    // The transport never left the screen while the paths swapped underneath.
-    expect(transports()).toBe(1)
-
-    // The turn opens under the same id and the send settles: still one row.
     await act(async () => {
-      useChatRuntime.getState().putStream(CONVERSATION, {
-        message: { role: 'assistant', content: '', timestamp: 2 },
-        user: {
-          id: input.messageId as string,
-          role: 'user',
-          content: '',
-          timestamp: 1,
-          voicePrompt: true,
-          attachments: input.attachments
-        },
-        status: 'streaming'
-      })
-      mockResolveSend({ conversationId: CONVERSATION })
+      fireEvent.press(screen.getByTestId('send-voice'))
     })
-    expect(transports()).toBe(1)
-    expect(thinking()).toBe(true)
-    expectNoBlankCommit()
-  })
 
-  it('publishes the bubble on the live turn for a conversation that already exists', async () => {
-    await mount()
-    // Adopt a conversation first: a plain text send, settled with stored rows.
-    await fireEvent.press(view.getByTestId('send-text'))
-    mockConversation.data = {
-      id: CONVERSATION,
-      title: 'A chat',
-      messages: [
-        { id: 'm_1_aaaaaa', role: 'user', content: 'hello there', timestamp: 1 },
-        { id: 'm_2_bbbbbb', role: 'assistant', content: 'Working on it.', timestamp: 2 }
-      ]
-    }
-    mockConversation.isFetching = false
-    await act(async () => {
-      mockResolveSend({ conversationId: CONVERSATION })
-    })
-    expect(count(/hello there/)).toBe(1)
+    // Staged and uploaded like any other attachment — one audio file, named
+    // the way the desktop names a recording.
+    expect(mockUploadForSend).toHaveBeenCalledTimes(1)
+    const [entries] = mockUploadForSend.mock.calls[0]
+    expect(entries).toHaveLength(1)
+    expect(entries[0].picked.name).toMatch(/^voice-\d+\.m4a$/)
+    expect(entries[0].picked.mimeType).toBe('audio/mp4')
+    expect(entries[0].picked.durationSeconds).toBe(12)
 
-    // The voice tap. The bubble rides the conversation's live turn — the real
-    // beginTurn — and is on screen while the upload is still open.
-    await fireEvent.press(view.getByTestId('send-voice'))
-    await waitFor(() => expect(transports()).toBe(1))
-    expect(send).toHaveBeenCalledTimes(1) // the text send only
-    const live = useChatRuntime.getState().streams[CONVERSATION]
-    expect(live?.user?.attachments?.[0]?.filePath).toMatch(/^uploads\/\.staging\//)
-    expect(thinking()).toBe(true)
-
-    // Desktop answers; the prompt goes out under the id the live row holds,
-    // so the desktop-path copy replaces the bubble rather than joining it.
-    await act(async () => desktopAccepts())
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
-    const input = send.mock.calls[1][0]
-    expect(input.messageId).toBe(live?.user?.id)
-    expect(input.conversationId).toBe(CONVERSATION)
-
-    await act(async () => {
-      mockResolveSend({ conversationId: CONVERSATION })
-    })
-    expect(transports()).toBe(1)
-    expect(count(/hello there/)).toBe(1)
-    expectNoBlankCommit()
+    // …and sent as the prompt: no text, the flag on, the attachment attached.
+    expect(mockSendPrompt).toHaveBeenCalledTimes(1)
+    const sent = mockSendPrompt.mock.calls[0][0]
+    expect(sent.text).toBe('')
+    expect(sent.voicePrompt).toBe(true)
+    expect(sent.attachments?.[0]?.type).toBe('audio')
   })
 })

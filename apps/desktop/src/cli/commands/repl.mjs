@@ -94,7 +94,7 @@ const SLASH_HELP = [
 
   ['SETTINGS', null],
   ['/settings', 'browse everything: page, card, setting'],
-  ['/settings <name>', 'jump straight to one, e.g. /settings telegram'],
+  ['/settings <name>', 'jump straight to one, e.g. /settings mobile'],
   ['/settings list', 'print every setting and its value'],
   ['/set <id> <value>', 'change one directly'],
   ['/model', 'show or switch the brain'],
@@ -104,7 +104,7 @@ const SLASH_HELP = [
   ['THIS MACHINE', null],
   ['/status', 'daemon, brain, channels'],
   ['/diagnose', 'zip up everything about this conversation'],
-  ['/pair <phone|whatsapp|telegram>', 'link a channel'],
+  ['/pair phone', 'pair the mobile app'],
   ['/usage [range]', 'tokens and cost'],
   ['/logs', 'the tail of the daemon log'],
   ['/exit', 'leave (the agent keeps running)']
@@ -200,7 +200,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
    * `question(…, { hidden: true })` in ui.mjs used to pause readline and read
    * the raw stream itself. That does not work: `rl.pause()` leaves readline's
    * keypress listener attached, and resuming the stream hands it every
-   * keystroke anyway. Measured, a bot token typed at `/settings → Telegram →
+   * keystroke anyway. Measured, a secret typed at `/settings → Variables →
    * Enter the bot token` appeared in clear in the scrollback.
    *
    * The reader has to stay the reader, so the echo is muted at its source
@@ -370,7 +370,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
   })
 
   /**
-   * Runs started elsewhere (an automation, a Telegram message, the app window)
+   * Runs started elsewhere (an automation, a phone message, the app window)
    * are announced here rather than silently interleaving — the terminal is one
    * view of a shared agent, not the only one.
    *
@@ -743,7 +743,6 @@ function printBanner({ snapshot, state, status, version }) {
   const brainProvider = snapshot?.llm?.brainProvider
   const brainModel = snapshot?.llm?.brainModel
   const mode = snapshot?.llm?.chatMode ?? 'single'
-  const localOnly = snapshot?.llm?.localOnly === true
 
   const rows = []
   rows.push([
@@ -752,12 +751,7 @@ function printBanner({ snapshot, state, status, version }) {
       ? `${c.bold(brainModel)}${brainProvider ? c.gray(` · ${brainProvider}`) : ''}`
       : c.yellow('not configured — wfc settings')
   ])
-  rows.push([
-    'mode',
-    c.gray(mode) +
-      (localOnly ? c.yellow(' · local only') : '') +
-      (state.verbose ? c.gray(' · verbose') : '')
-  ])
+  rows.push(['mode', c.gray(mode) + (state.verbose ? c.gray(' · verbose') : '')])
 
   // Which transcript the next line joins. The single most consequential fact
   // about a chat, and the one a window shows for free in its title bar.

@@ -484,7 +484,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_pdf
-    description: Save the current page as a PDF. Returns the file path.
+    description: Save the current page as a PDF into the workspace at downloads/conv-<conversation id>/page-<timestamp>.pdf (synced with the conversation). Returns the file path.
     parameters:
       tabId:
         type: number
@@ -986,7 +986,7 @@ The tab group's name is yours to write, and it is the only thing the user sees w
 - Pick the emoji and wording yourself; there is no fixed vocabulary. Short is better — tab groups show roughly 24 characters. `📖 Reading docs`, `🛒 Checking out`, `✍️ Writing reply`, `📸 Capturing page`.
 - **Reset when you're done**: `ext_set_activity` with no arguments puts it back to plain `Wolffish`.
 - It's cosmetic — a browser without tab-group support just skips it, and it never fails a task.
-- The label is desktop-only: a user on Telegram, WhatsApp, or the mobile app never sees it. For them, delivered screenshots are how you show what's happening — see **Screenshots** below.
+- The label is desktop-only: a user on the mobile app or in the terminal never sees it. For them, delivered screenshots are how you show what's happening — see **Screenshots** below.
 
 ## When no browser is connected
 

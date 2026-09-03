@@ -8,11 +8,12 @@
  * registry; the reader in this app), so nothing else pins their line format
  * together — and nothing else proves the plugin honours the lane's answers
  * (a session bearer on every call, an allowance refusal relayed rather than
- * scraped around, an unavailable lane falling through to DuckDuckGo).
+ * routed around, an unavailable lane — or no session at all — reported as
+ * such: never scraped around, never billed).
  *
- * Runs the REAL plugin against a temp workspace: cheerio (only the DDG
- * scrapers touch it) is stubbed through a node_modules shim beside a copy of
- * the plugin, and fetch is mocked so no request leaves the process.
+ * Runs the REAL plugin against a temp workspace: cheerio (only web_fetch
+ * touches it) is stubbed through a node_modules shim beside a copy of the
+ * plugin, and fetch is mocked so no request leaves the process.
  *
  * Run: npx tsx --tsconfig tsconfig.node.json src/main/runtime/__tests__/usage-brave.test.ts
  */
@@ -72,8 +73,8 @@ async function loadPlugin(root: string): Promise<Plugin> {
     path.join(cheerio, 'package.json'),
     JSON.stringify({ name: 'cheerio', version: '0.0.0-stub', type: 'module', main: 'index.js' })
   )
-  // A `$` that finds nothing: every DDG parser reduces to "no results", which
-  // is all the fallback path needs here.
+  // A `$` that finds nothing — web_fetch is not exercised here; the stub only
+  // lets the module import without the real dependency.
   await fs.writeFile(
     path.join(cheerio, 'index.js'),
     'export function load() {\n  return () => ({ each() {} })\n}\n'
@@ -87,6 +88,9 @@ async function loadPlugin(root: string): Promise<Plugin> {
 const API_BASE = 'https://api.test'
 let laneMode: 'ok' | 'quota' | 'disabled' = 'ok'
 const laneCalls: Array<{ url: string; auth: string | undefined; body: unknown }> = []
+// Every fetch that is neither the lane nor Brave — a public search engine,
+// say. The doctrine is one metered choke point, so this must stay empty.
+const otherFetches: string[] = []
 
 function installFetchMock(): void {
   const mock = async (
@@ -130,12 +134,7 @@ function installFetchMock(): void {
     if (url.startsWith('https://api.search.brave.com/')) {
       throw new Error('the plugin must never call Brave directly — the org lane holds the key')
     }
-    if (url.includes('duckduckgo.com')) {
-      return new Response('<html><body></body></html>', {
-        status: 200,
-        headers: { 'content-type': 'text/html' }
-      })
-    }
+    otherFetches.push(url)
     throw new Error(`unexpected fetch: ${url}`)
   }
   globalThis.fetch = mock as unknown as typeof fetch
@@ -258,17 +257,25 @@ async function main(): Promise<void> {
   const third = await plugin.execute('web_search', { query: 'over the cap' })
   ok('cap refusal is relayed as a failure', !third.success)
   ok('…naming the allowance', /allowance|search budget/.test(third.error ?? ''))
-  ok('…and the query stayed out of DuckDuckGo', laneCalls.length === 3)
+  check('…after exactly one lane call', laneCalls.length, 3)
+  check('…and no other host was contacted', otherFetches.length, 0)
   await new Promise((resolve) => setTimeout(resolve, 150))
   check('writer: no ledger line for the refused query', (await braveLines(ws)).length, 2)
 
-  // -- an unavailable lane (switched off) falls through to DuckDuckGo, unbilled --
+  // -- an unavailable lane (switched off) is reported as such: no fallback provider, unbilled --
 
   laneMode = 'disabled'
   const fourth = await plugin.execute('web_search', { query: 'lane off' })
-  ok('lane off falls through to DDG', fourth.success && providerOf(fourth) !== 'brave')
+  ok('lane off is a failure, not a fallback', !fourth.success)
+  ok(
+    '…that names the org lane and the wire code',
+    /provided by your organization/.test(fourth.error ?? '') &&
+      /search_disabled/.test(fourth.error ?? '')
+  )
+  check('…after exactly one lane call', laneCalls.length, 4)
+  check('…and no other host was contacted', otherFetches.length, 0)
   await new Promise((resolve) => setTimeout(resolve, 150))
-  check('writer: no ledger line for the fallback', (await braveLines(ws)).length, 2)
+  check('writer: no ledger line for the unavailable lane', (await braveLines(ws)).length, 2)
   laneMode = 'ok'
   await usage.sync()
   check(
@@ -276,6 +283,17 @@ async function main(): Promise<void> {
     (await usage.getSummary('all_time')).brave.totalQueries,
     2
   )
+
+  // -- no session at all: the tool is closed, not a different provider --
+
+  await plugin.init({ workspaceRoot: ws })
+  const fifth = await plugin.execute('web_search', { query: 'signed out' })
+  ok('no cloud host is a failure', !fifth.success)
+  ok('…naming no_session', /unavailable: no_session/.test(fifth.error ?? ''))
+  check('…with no lane call', laneCalls.length, 4)
+  check('…and no other host', otherFetches.length, 0)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  check('writer: no ledger line without a session', (await braveLines(ws)).length, 2)
 
   // -- no ledger, no brave --
 

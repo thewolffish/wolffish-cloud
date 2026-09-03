@@ -142,7 +142,7 @@ export function Projects(): React.JSX.Element {
   // Same for the conversation index, which the mount fetch above would
   // otherwise freeze for the page's whole life: a project conversation can be
   // created, titled or replied to at any moment from ANY channel (in-app,
-  // WhatsApp, Telegram, an automation), and the counts, "last used" stamps and
+  // the phone, the terminal, an automation), and the counts, "last used" stamps and
   // the conversations dialog all read from it. Debounced against a turn's write
   // bursts, and re-run on every turn start/end — that transition is exactly
   // when a new conversation appears.

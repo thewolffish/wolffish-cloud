@@ -47,17 +47,14 @@ const GUI_ONLY: Record<string, string> = {
   'upload:pickFile': 'pass file paths instead: wfc -f <path>, or /attach <path> in the REPL',
   'upload:pickFolder': 'pass the folder path instead',
   'projects:pickFiles': 'use: wfc project files add <id> <path…>',
-  'ollama:pickModelsFolder': 'use: wfc settings local — "Where models are stored"',
   // These name `wfc view`, not `wfc open` — there is no `open`
   // command, and a redirection to a command that does not exist is a dead end
   // wearing the costume of a helpful error.
   'upload:revealInFolder': 'use: wfc view <path>',
   'viewer:revealInFolder': 'use: wfc view <path>',
-  'voice:revealInFolder': 'use: wfc view <path>',
   'diagnostics:reveal': 'the archive path is printed by: wfc conversations diagnose <id>',
   'browserExtension:openExtensionFolder': 'the path is printed by: wfc settings browserExtension',
   'browserExtension:openExtensionsPage': 'open the browser extensions page yourself',
-  'ollama:openInstallPage': 'install Ollama from ollama.com, then run: ollama serve',
   'spellcheck:replace': 'renderer-only',
   'spellcheck:addToDictionary': 'renderer-only',
   'tray-menu:action': 'renderer-only',
@@ -295,11 +292,10 @@ export class CliServer {
        *
        * `null` was chosen on the reasoning that the only handlers reading the
        * event were refused above — and that stopped being true the moment one
-       * wasn't. `google:authAdd` calls `event.sender.send` from a child
-       * process's stdout listener, so a terminal asking to authorize an
-       * account raised an uncaught TypeError in the MAIN PROCESS, with nothing
-       * around it to catch. (That handler now broadcasts, but the class of bug
-       * is one careless `event.sender` away from returning.)
+       * wasn't: a handler that called `event.sender.send` from a child
+       * process's stdout listener raised an uncaught TypeError in the MAIN
+       * PROCESS, with nothing around it to catch. (That handler is gone, but
+       * the class of bug is one careless `event.sender` away from returning.)
        *
        * `send` therefore routes to the same broadcast every attached client is
        * already listening on: a handler that wanted to push something at the

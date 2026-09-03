@@ -549,8 +549,8 @@ const PROGRESS_AFTER_MS = 150
  * notice.
  *
  * The terminal already does this for a running turn; the rest of the CLI did
- * not, so a settings page backed by a slow service (a Google account list, an
- * extension probe, a usage query over a long ledger) printed nothing at all
+ * not, so a settings page backed by a slow service (an extension probe, a
+ * usage query over a long ledger) printed nothing at all
  * and read as a hang. Turns keep their OWN spinner — they get the raw client —
  * because theirs names the tool, which is better than naming the channel.
  */
@@ -601,8 +601,8 @@ export async function question(prompt, { hidden = false } = {}) {
   // the input stream but leaves readline's keypress listener attached, and the
   // raw path then calls `stdin.resume()`, which puts the stream back in flowing
   // mode and hands every keystroke straight back to readline. Measured, typing
-  // a bot token into `/settings → Telegram → Enter the bot token` printed
-  // `bot token (hidden): CANARYTOKEN99` in clear.
+  // a secret into a hidden prompt printed
+  // `token (hidden): CANARYTOKEN99` in clear.
   //
   // The reader owns the echo, so the reader is the only thing that can suppress
   // it: `hidden` is passed through and the REPL mutes its own writer for the

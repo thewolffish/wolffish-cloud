@@ -57,7 +57,7 @@
  * completes; only a fully clean pass marks restore done. Purge the folder,
  * sign in, and the workspace walks back out of the org.
  *
- * Conversation MEDIA (uploads/voice/speech/generated video under conv-*
+ * Conversation MEDIA (uploads/voice/speech/generated media under conv-*
  * directories) is deliberately NOT predownloaded: it hydrates when its
  * conversation is OPENED — hydrateConversationFiles streams each missing
  * blob to disk with throttled byte-level progress (onHydrationProgress →
@@ -79,6 +79,11 @@
  * its steady-state cost is a handful of small reads.
  */
 import { API_BASE } from '@main/cloud/api'
+import {
+  rebuildConversation,
+  type WireConversationMeta,
+  type WireRecord
+} from '@main/cloud/restore'
 import { cloudSession } from '@main/cloud/session'
 import {
   conversationDirName,
@@ -88,7 +93,6 @@ import {
   mergeConversationOnto,
   setConversationSyncHook,
   updateConversation,
-  type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
 import {
@@ -152,6 +156,13 @@ export type CloudSyncDeps = {
   /** Streamed progress of a conversation's on-open media hydration —
    *  throttled; the host relays it to the renderer for the download UI. */
   onHydrationProgress?: (progress: HydrationProgress) => void
+  /**
+   * A conversation's records just landed in the org (a push completed).
+   * The mobile channel forwards it to the phone as `conversation.synced`
+   * — the one moment a phone may fetch that body from the API and expect
+   * the turn it just watched to be in it.
+   */
+  onConversationPushed?: (conversationId: string, updatedAt: number) => void
 }
 
 /** Live progress of one conversation's media hydration. `files` lists only
@@ -232,6 +243,13 @@ const pushedDigests = new Map<string, string>()
 const ackedRecords = new Map<string, Set<string>>()
 /** conversation id → hash of the envelope as last acknowledged. */
 const ackedSnapshots = new Map<string, string>()
+/** conversation id → the file's updatedAt as of its last completed push,
+ *  for the onConversationPushed hook. */
+const lastPushedUpdatedAt = new Map<string, number>()
+/** conversation id → record ids the server REFUSED by id (malformed, or a
+ *  conversation it does not own). Skipped on later pushes of the same
+ *  content; a changed message mints a new record id and gets its retry. */
+const refusedRecords = new Map<string, Set<string>>()
 /** conversation id → message base id → {hash of the raw message, the record
  *  id its wire form produced}: a message that hasn't changed skips
  *  wireMessage entirely (no re-reading and re-hashing its attachments). */
@@ -501,6 +519,7 @@ export function scheduleConversationDelete(id: string): void {
   pushedDigests.delete(id)
   ackedRecords.delete(id)
   ackedSnapshots.delete(id)
+  refusedRecords.delete(id)
   wireMemo.delete(id)
   // Its media goes with it — including media this device never hydrated
   // (absent from synced_paths, so the sweep's deletion propagation would
@@ -645,7 +664,14 @@ async function drain(): Promise<void> {
     pendingConversations.clear()
     for (const id of ids) {
       try {
-        if (await pushConversation(id)) outboxChanged = true
+        if (await pushConversation(id)) {
+          outboxChanged = true
+          try {
+            deps.onConversationPushed?.(id, lastPushedUpdatedAt.get(id) ?? Date.now())
+          } catch (err) {
+            wlog.warn('sync', 'onConversationPushed hook failed:', err)
+          }
+        }
       } catch (err) {
         wlog.warn('sync', `push of ${id} failed — will retry:`, err)
         retryConversations.push(id)
@@ -684,7 +710,7 @@ type BatchItem = Record<string, unknown>
  * already current), or null when the file can't be sent (too large,
  * unreadable).
  */
-async function ensureFileUploaded(relPath: string, mime: string): Promise<string | null> {
+export async function ensureFileUploaded(relPath: string, mime: string): Promise<string | null> {
   try {
     const abs = path.join(workspaceRoot(), relPath)
     const buf = await fs.readFile(abs)
@@ -764,16 +790,12 @@ const fileSweepMemo = new Map<string, { mtimeMs: number; size: number }>()
  *                 agent behavior (prefrontal), reflection state
  *   voice/        recorded voice notes (referenced by transcripts)
  *   speech/       generated TTS replies (referenced by transcripts)
- *   generations/  generated media (video) + their registry
  *   screenshots/  tool screenshots referenced by transcripts
- *   telegram/     chat→conversation maps + dedupe ids (thread continuity)
- *   whatsapp/     same — EXCEPT whatsapp/auth: device-bound session keys
+ *   downloads/    files tools fetched (browser downloads, page PDFs)
  * Excluded on purpose: brain/conversations (record-synced), cortex.db
  * (derived index, rebuilt at boot), brain/corpus (local event diagnostics),
  * brain/cerebellum (capabilities travel as versioned packages through the
- * capability registry — see cloud/capabilitySync.ts), whatsapp/auth
- * (device-bound Signal session — syncing it would corrupt the session, a
- * re-link QR is the correct recovery), every dot-entry, and the brainstem
+ * capability registry — see cloud/capabilitySync.ts), every dot-entry, and the brainstem
  * tick/meta files — pure runtime state rewritten every heartbeat (the same
  * trio the cortex watcher ignores), worthless to restore and a new
  * content-addressed blob per minute if swept.
@@ -784,10 +806,8 @@ const SYNC_ROOTS = [
   'brain',
   'voice',
   'speech',
-  'generations',
   'screenshots',
-  'telegram',
-  'whatsapp',
+  'downloads',
   // usage/: no file under it travels as a blob any more — every ledger
   // (providers/cloud.md + daily/ for model calls, providers/brave.md for web
   // searches) is excluded below because the org meters every call and every
@@ -812,7 +832,6 @@ const SYNC_EXCLUDES = [
   // identical on every device by construction, nothing to restore.
   /^brain\/prefrontal\/agents\.core\.md$/,
   /^brain\/identity\/workflow(-agent)?\.md$/,
-  /^whatsapp\/auth(\/|$)/,
   // The usage ledgers — served by the org (see 'usage' above).
   /^usage\/providers\/cloud\.md$/,
   /^usage\/providers\/brave\.md$/,
@@ -839,10 +858,7 @@ function underSyncRoots(rel: string): boolean {
  * deliverables, channel maps) stays eager — the agent needs it to work.
  */
 function isLazyMediaPath(rel: string): boolean {
-  return (
-    /^(uploads|voice|speech|screenshots)\/conv-[^/]+\//.test(rel) ||
-    /^generations\/video\/conv-[^/]+\//.test(rel)
-  )
+  return /^(uploads|voice|speech|screenshots|downloads)\/conv-[^/]+\//.test(rel)
 }
 
 /** The lazy-media directory prefixes belonging to one conversation
@@ -854,7 +870,7 @@ function lazyMediaPrefixes(conversationDir: string): string[] {
     `voice/${conversationDir}/`,
     `speech/${conversationDir}/`,
     `screenshots/${conversationDir}/`,
-    `generations/video/${conversationDir}/`
+    `downloads/${conversationDir}/`
   ]
 }
 
@@ -935,6 +951,35 @@ function mimeFor(name: string): string {
 /** The stable record id of a conversation's envelope (the server upserts it). */
 const snapshotRecordId = (conversationId: string): string => `snap.${conversationId}`
 
+/** Items per batch request and JSON bytes per request: the server refuses a
+ *  body above 32 MB, and one request should never carry more than a
+ *  fraction of that. */
+const BATCH_MAX_ITEMS = 400
+const BATCH_MAX_BYTES = 8 * 1024 * 1024
+
+/** Split the outbox items into requests bounded by count AND serialized size
+ *  (an item larger than the byte bound travels alone). */
+function chunkItems(items: BatchItem[]): BatchItem[][] {
+  const chunks: BatchItem[][] = []
+  let current: BatchItem[] = []
+  let bytes = 0
+  for (const item of items) {
+    const size = JSON.stringify(item).length
+    if (
+      current.length > 0 &&
+      (current.length >= BATCH_MAX_ITEMS || bytes + size > BATCH_MAX_BYTES)
+    ) {
+      chunks.push(current)
+      current = []
+      bytes = 0
+    }
+    current.push(item)
+    bytes += size
+  }
+  if (current.length > 0) chunks.push(current)
+  return chunks
+}
+
 /**
  * Push one conversation, incrementally. Returns true when the durable push
  * memo changed (the caller persists it with the outbox). Skips outright
@@ -960,6 +1005,9 @@ async function pushConversation(id: string): Promise<boolean> {
 
   const envelope = { ...conv, messages: undefined } as Record<string, unknown>
   delete envelope.messages
+  // The phone's conversation index reads the count off the envelope (one
+  // JOIN per page) instead of counting records per row.
+  envelope.messageCount = conv.messages.length
   const envJson = JSON.stringify(envelope)
   const envHash = sha256(envJson)
   if (ackedSnapshots.get(id) !== envHash) {
@@ -975,28 +1023,39 @@ async function pushConversation(id: string): Promise<boolean> {
   }
 
   const acked = ackedRecords.get(id) ?? new Set<string>()
+  const refused = refusedRecords.get(id) ?? new Set<string>()
   const memo = wireMemo.get(id) ?? new Map<string, { rawHash: string; recordId: string }>()
   const sentRecordIds: string[] = []
   for (const msg of conv.messages) {
-    const baseId = msg.id ?? `m_${msg.timestamp}`
+    // A message without a usable timestamp (a record another writer shaped
+    // differently, a hand-edited file) still gets a finite seq and a real
+    // created_at — the server refuses NaN, and a refused record used to make
+    // this conversation re-send itself on every launch.
+    const ts = Number.isFinite(msg.timestamp) ? msg.timestamp : conv.updatedAt || Date.now()
+    const baseId = msg.id ?? `m_${Math.round(ts)}`
     const rawHash = sha256(JSON.stringify(msg))
     const known = memo.get(baseId)
     // Unchanged since the server acknowledged it: nothing to send, and no
     // attachment re-read either.
-    if (known && known.rawHash === rawHash && acked.has(known.recordId)) continue
+    if (
+      known &&
+      known.rawHash === rawHash &&
+      (acked.has(known.recordId) || refused.has(known.recordId))
+    )
+      continue
     const content = await wireMessage(msg)
     const recordId = `${baseId}.${sha256(JSON.stringify(content)).slice(0, 8)}`
     memo.set(baseId, { rawHash, recordId })
-    if (acked.has(recordId)) continue
+    if (acked.has(recordId) || refused.has(recordId)) continue
     sentRecordIds.push(recordId)
     items.push({
       type: 'record',
       id: recordId,
       conversation_id: conv.id,
-      seq: Math.max(0, Math.round(msg.timestamp)),
+      seq: Math.max(0, Math.round(ts)),
       kind: 'message',
       content,
-      created_at: iso(msg.timestamp || Date.now())
+      created_at: iso(ts)
     })
   }
   wireMemo.set(id, memo)
@@ -1004,26 +1063,41 @@ async function pushConversation(id: string): Promise<boolean> {
   let accepted = 0
   let ignored = 0
   let rejected = 0
-  for (let i = 0; i < items.length; i += 400) {
-    const res = await apiJson<{ accepted: number; ignored: number; rejected: number }>(
-      'POST',
-      '/v1/sync/batch',
-      { items: items.slice(i, i + 400) }
-    )
+  const rejectedIds = new Set<string>()
+  for (const chunk of chunkItems(items)) {
+    const res = await apiJson<{
+      accepted: number
+      ignored: number
+      rejected: number
+      rejected_ids?: string[]
+    }>('POST', '/v1/sync/batch', { items: chunk })
     accepted += res.accepted
     ignored += res.ignored
     rejected += res.rejected
+    for (const rid of res.rejected_ids ?? []) rejectedIds.add(rid)
   }
-  if (rejected > 0) {
-    // Which items were refused is not reported — acknowledge nothing, so
-    // the next change re-sends the whole conversation (idempotent).
+  if (rejected > 0 && rejectedIds.size === 0) {
+    // An older server that does not name what it refused — acknowledge
+    // nothing, so the next change re-sends the whole conversation.
     wlog.error('sync', `${rejected} items rejected for ${id} — will resend on next change`)
     return false
   }
-  for (const recordId of sentRecordIds) acked.add(recordId)
+  if (rejectedIds.size > 0) {
+    // Named refusals are quarantined: their content is wrong for the wire
+    // (the message would need to change to earn a retry), and everything
+    // else in the push stands. Loud, once per process, with the ids.
+    wlog.error(
+      'sync',
+      `${rejectedIds.size} record(s) refused by the org for ${id} — quarantined: ${[...rejectedIds].join(', ')}`
+    )
+    for (const rid of rejectedIds) refused.add(rid)
+    refusedRecords.set(id, refused)
+  }
+  for (const recordId of sentRecordIds) if (!rejectedIds.has(recordId)) acked.add(recordId)
   ackedRecords.set(id, acked)
-  ackedSnapshots.set(id, envHash)
+  if (!rejectedIds.has(snapshotRecordId(conv.id))) ackedSnapshots.set(id, envHash)
   pushedDigests.set(id, digest)
+  lastPushedUpdatedAt.set(id, conv.updatedAt || Date.now())
   wlog.info(
     'sync',
     `pushed ${id}: ${items.length} items (${accepted} new, ${ignored} already there)`
@@ -1033,28 +1107,14 @@ async function pushConversation(id: string): Promise<boolean> {
 
 // ── Pull (restore) ───────────────────────────────────────────────────────
 
-type WireRecord = {
-  id: string
-  seq: number
-  kind: string
-  content: unknown
-  created_at: string
-}
-
-type WireConversationMeta = {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-}
-
 type WireFileRow = { sha256: string; name?: string; size?: number }
 
 async function pullRecords(conversationId: string): Promise<WireRecord[]> {
   // Pages on the server's insert-order cursor (`after`/`next_after`), not on
   // seq: message versions share a seq, and a seq cursor would drop the rows
   // of a tie split across a page boundary. rebuildConversation re-sorts by
-  // seq itself, and its >=-ties dedupe keeps the later-inserted (newer) row.
+  // seq itself and keeps the later-inserted row of every message — which is
+  // why the pages must arrive, and be concatenated, in insert order.
   // No page-count ceiling. The terminator is `next_after: null` from the
   // server — NOT "a short page", so a server paging smaller than requested
   // can never silently truncate a transcript — and the cursor must advance
@@ -1072,36 +1132,6 @@ async function pullRecords(conversationId: string): Promise<WireRecord[]> {
     after = next
   }
   return all
-}
-
-function rebuildConversation(meta: WireConversationMeta, records: WireRecord[]): ConversationFile {
-  let envelope: Record<string, unknown> = {}
-  let envelopeSeq = -1
-  const byMessage = new Map<string, WireRecord>()
-  for (const rec of records) {
-    if (rec.kind === 'snapshot') {
-      if (rec.seq >= envelopeSeq) {
-        envelopeSeq = rec.seq
-        envelope = (rec.content as Record<string, unknown>) ?? {}
-      }
-    } else if (rec.kind === 'message') {
-      const base = rec.id.replace(/\.[0-9a-f]{8}$/, '')
-      const prev = byMessage.get(base)
-      if (!prev || rec.seq >= prev.seq) byMessage.set(base, rec)
-    }
-  }
-  const messages = [...byMessage.values()]
-    .sort((a, b) => a.seq - b.seq)
-    .map((r) => r.content as ConversationMessage)
-  return {
-    ...(envelope as Partial<ConversationFile>),
-    id: meta.id,
-    title: (envelope.title as string) || meta.title || '',
-    model: (envelope.model as string | null) ?? null,
-    messages,
-    createdAt: Date.parse(meta.created_at) || Date.now(),
-    updatedAt: Date.parse(meta.updated_at) || Date.now()
-  }
 }
 
 /**
@@ -1166,6 +1196,30 @@ const HYDRATION_EMIT_MS = 100
 /** True when this path is safe to write inside the workspace. */
 function safeWorkspaceRel(rel: string): boolean {
   return rel.length > 0 && !rel.includes('..') && !path.isAbsolute(rel)
+}
+
+/**
+ * Materialize one org blob at a workspace path — for files the PHONE
+ * uploaded straight to the org (message attachments, project files) that
+ * this machine has never held. The bytes are registered as already-synced
+ * so the next sweep neither re-uploads nor tombstones them. False when the
+ * path is unsafe or the blob cannot be fetched.
+ */
+export async function hydrateBlob(rel: string, sha: string): Promise<boolean> {
+  if (!safeWorkspaceRel(rel) || !/^[0-9a-f]{64}$/.test(sha)) return false
+  const abs = path.join(workspaceRoot(), rel)
+  try {
+    const size = await downloadBlobToFile(sha, abs)
+    serverFiles.set(rel, { sha, size })
+    if (syncablePath(rel) && underSyncRoots(rel)) {
+      syncedPaths.add(rel)
+      void persistOutbox()
+    }
+    return true
+  } catch (err) {
+    wlog.warn('sync', `hydrate of ${rel} from the org failed:`, err)
+    return false
+  }
 }
 
 /**
@@ -1853,6 +1907,31 @@ async function runSessionFlow(): Promise<void> {
   } finally {
     sessionFlowActive = false
   }
+}
+
+// ── Sign-out support ─────────────────────────────────────────────────────
+
+/**
+ * Drain everything the outbox holds, now, and report whether it is empty.
+ * The sign-out path calls this before revoking the session so the purge
+ * that follows can never discard a turn the org has not received; a drain
+ * that cannot finish inside the deadline (offline) answers false and the
+ * caller keeps the cache instead.
+ */
+export async function flushOutbox(timeoutMs = 20_000): Promise<boolean> {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  const pending = (): boolean =>
+    pendingConversations.size + pendingDeletes.size + pendingFileDeletes.size > 0 || configDirty
+  const deadline = Date.now() + timeoutMs
+  while (pending() || draining) {
+    if (Date.now() > deadline) return false
+    if (draining) await new Promise((r) => setTimeout(r, 250))
+    else await drain()
+  }
+  return true
 }
 
 // ── Factory reset & account switch support ───────────────────────────────

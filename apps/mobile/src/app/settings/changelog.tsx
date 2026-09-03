@@ -94,7 +94,7 @@ function Chip({
       onPress={onPress}
       className={cn(
         'border-border rounded-lg border px-3 py-1.5',
-        active ? 'bg-primary border-primary' : 'bg-surface active:bg-border/40'
+        active ? 'bg-primary border-primary' : 'bg-surface active:bg-border-soft'
       )}
     >
       <Text className={cn('font-sans-medium text-xs', active ? 'text-primary-fg' : 'text-muted')}>

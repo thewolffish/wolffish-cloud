@@ -262,7 +262,7 @@ async function run(): Promise<void> {
         brain: { provider: 'anthropic', model: 'claude-opus-5' },
         providers: [{ id: 'anthropic', model: 'claude-opus-5', apiKey: 'sk-ant-SUPERSECRET' }]
       },
-      telegram: { botToken: '12345:AAHsecretTOKEN', enabled: true },
+      mobile: { pairingToken: '12345:AAHsecretTOKEN', notifications: true },
       variables: [{ name: 'STRIPE_SECRET', value: 'sk_live_zzz' }]
     })
   )
@@ -356,7 +356,7 @@ async function run(): Promise<void> {
   // Redaction — the expensive-if-wrong one.
   const cfg = await text('06_settings/config.redacted.json')
   ok('redaction: no anthropic key', !cfg.includes('SUPERSECRET'), cfg)
-  ok('redaction: no telegram token', !cfg.includes('AAHsecretTOKEN'), cfg)
+  ok('redaction: no pairing token', !cfg.includes('AAHsecretTOKEN'), cfg)
   ok('redaction: structure survives', cfg.includes('"model": "claude-opus-5"'), cfg)
   ok('redaction: marker records the length', cfg.includes('[redacted —'), cfg)
   ok(
