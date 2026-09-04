@@ -17,9 +17,9 @@
 // The two sides then disagree and every deploy path breaks:
 //   - eas build fails outright: "Runtime version calculated on local machine
 //     not equal to runtime version calculated during build"
-//   - DEPLOY.md's gate A reports a false mismatch, and the procedure says to
-//     obey it without argument — routing a JS-only change to a needless store
-//     release, every time, for as long as the edit sits there
+//   - the local fingerprint check reports a false mismatch, routing a JS-only
+//     change to a needless store release, every time, for as long as the edit
+//     sits there
 //
 // Putting the attribute back is the whole fix. It is inert on AGP >= 7 (Gradle
 // re-strips it on the next build; this script puts it back before the next

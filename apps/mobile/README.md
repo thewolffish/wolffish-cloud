@@ -74,7 +74,6 @@ Requires the Wolffish Cloud desktop app ([`apps/desktop`](../desktop) in this re
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
 - [Development](#development)
-- [Releasing](#releasing)
 - [Data on the device](#data-on-the-device)
 - [Security model](#security-model)
 - [Links](#links)
@@ -323,26 +322,6 @@ npm run format           # prettier --write
 Never start Metro with `CI=1` — it disables file watching, and every edit then looks like it did nothing.
 
 Read [AGENTS.md](AGENTS.md) before changing anything under `lib/cloud/`, `lib/bridge/` or `lib/sync/`. The connection is the product, and the failure modes there are quiet ones.
-
----
-
-## Releasing
-
-The app ships two ways, and they are not interchangeable:
-
-|               | **OTA update**      | **Store build**                                              |
-| ------------- | ------------------- | ------------------------------------------------------------ |
-| Carries       | JS, assets, locales | Everything, including native                                 |
-| Command       | `npm run ota`       | `npm run provision` → EAS build → submit → `npm run release` |
-| Reaches users | Minutes, no review  | After store review                                           |
-
-A native change — a new dependency, an `app.config.ts` plugin, an SDK bump — forks the fingerprint runtime version and can only reach users in a new binary. `npm run ota` generates the local fingerprint, compares it against the latest shipped store build and refuses to publish an update no installed binary could receive.
-
-A bad update is reversible: `npm run rollback` republishes the previous update group (or the bundle embedded in the store build) and devices converge on the next launch.
-
-Versions live in `app.config.ts` — `APP_VERSION` (user-visible) and `CODE_VERSION` (the store build counter). `ota` and `provision` own them, and bump `package.json` and the version badge at the top of this file in the same commit, so nothing about a version is ever written by hand. Pushing a `v*` tag creates the GitHub Release with a sideload APK, the released `.ipa` and checksums.
-
-**[DEPLOY.md](DEPLOY.md)** is the procedure for shipping the next version — checks, changelog, commit, push, then a gate that picks the path: `npm run ota` for a batch the shipped binaries can actually receive and that is safe to land on every phone at once, `npm run provision` for anything else. Building, submitting and `npm run release` stay manual.
 
 ---
 

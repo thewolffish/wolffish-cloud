@@ -57,7 +57,6 @@ and nothing else.
 
 | Page | What it covers |
 | --- | --- |
-| [`operations/deploy`](operations/deploy.mdx) | Fork per tenant: resources, secrets, migrate, seed, publish, verify, rebrand the phone. |
 | [`operations/operate`](operations/operate.mdx) | The three verification layers, the nightly run, and a troubleshooting index. |
 
 Arabic mirrors every page under [`ar/`](ar/) with the same paths.

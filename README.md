@@ -86,21 +86,6 @@ The Chrome extension that gives the agent eyes and hands in the user's own brows
 
 ---
 
-## Forking this repository for a tenant
-
-The deployment model is fork-per-tenant: fork, brand, deploy under the tenant's own Cloudflare account, keys and domains. The minimum to bring a fork up:
-
-1. **Create the resources** in the tenant's Cloudflare account and put their ids in `apps/api/wrangler.jsonc`: a D1 database (`wfc-master`), two KV namespaces (`wfc-auth`, `wfc-config`), an R2 bucket (`wfc-blobs`), and the custom domain the desktop will use (`API_BASE` in `apps/desktop/src/main/cloud/api.ts`, overridable with `WFC_API_URL`).
-2. **Set the secrets** with `wrangler secret put`: `JWT_SECRET`, `DEEPINFRA_API_KEY` (or a `MODEL_UPSTREAMS` pool), `BRAVE_API_KEY` (or `SEARCH_PROVIDERS`), `RESEND_API_KEY` for reset e-mails, and `CONFIG_ENC_KEY` (32 random bytes, base64) to seal synced configs at rest. Remove the `ADMIN_RESET_CODE_READ` var — it exists for the release gate only.
-3. **Migrate and deploy**: `npm run db:migrate:remote && npm run deploy` in `apps/api`.
-4. **Create the first owner.** Either run the demo seed (`WFC_DEMO_PASSWORD=… npm run seed:remote`, which mints the 50-person Wolffish Inc roster) or replace it with a one-owner seed; then invite everyone else through `POST /admin/users` from the owner's desktop. Rotate the seed password and drop the sign-in form's demo prefill (`apps/desktop/src/renderer/src/pages/auth/AuthGate.tsx`).
-5. **Publish the capabilities**: `node apps/api/scripts/seed-capabilities.mjs` (idempotent; `--check` is the drift guard for CI).
-6. **Verify**: `node apps/api/scripts/verify-live.mjs` against the new edge.
-7. **Rebrand the phone app**, which is a distinct application per tenant rather than a shared one. Every identifier is a constant at the top of `apps/mobile/app.config.ts`: `APP_NAME`, `APP_SCHEME`, `PACKAGE_IDENTIFIER` and `EXPO_PROJECT_SLUG`. Change `APP_SCHEME` and you must change `DEEPLINK_SCHEME` in **both** copies of the wire file (`apps/mobile/src/lib/bridge/protocol.ts` and `apps/desktop/src/main/cloud/bridge-protocol.ts`), which are byte-identical by contract. Then `npx eas init` under the tenant's Expo account to create its own project and write `EXPO_PROJECT_ID` back — it ships `null`, so builds stop and ask rather than publishing under someone else's project. Point the build at the tenant edge with `EXPO_PUBLIC_API_URL`. For Android push, register the new package in the tenant's Firebase project, replace `google-services.json` and uncomment `googleServicesFile`; iOS push needs only EAS credentials. Replace the icon and splash under `apps/mobile/assets/images/` — the stock artwork is shared with the personal edition.
-8. **Decide what to do with demo mode.** It is a tour that runs with no pairing, served from `cdn.wolffi.sh/demo`. Either rebuild and publish it to the tenant's own CDN (`node scripts/demo/build-demo-bundle.mjs` in `apps/mobile`, then set `EXPO_PUBLIC_DEMO_BASE_URL`) or drop the entry from the door. Left alone it points every install at this repository's bundle.
-
-Nothing about the agent's code changes between tenants — only the endpoint, the branding and, for the phone, the identifiers a store keys on.
-
 ## Status
 
 | Phase | Scope | Status |

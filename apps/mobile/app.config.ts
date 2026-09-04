@@ -6,27 +6,33 @@ import type { ExpoConfig } from 'expo/config'
 // wolffish-cloud desktop and the org API; the personal one pairs with the
 // personal desktop), so nothing here may collide with `sh.wolffi.mobile`,
 // scheme `wolffish`, or the `wolffish-mobile` Expo project. Changing any of
-// these makes a DIFFERENT app to iOS/Android — see DEPLOY.md before touching.
+// these makes a DIFFERENT app to iOS/Android — do not touch them casually.
 export const APP_NAME = 'Wolffish Cloud'
 export const APP_SCHEME = 'wolffishcloud'
 const EXPO_PROJECT_SLUG = 'wolffish-cloud-mobile'
 const EXPO_PROJECT_OWNER = 'younes-alturkey'
 const PACKAGE_IDENTIFIER = 'sh.wolffi.cloud.mobile'
 /**
- * EAS project — UNLINKED on purpose.
+ * EAS project — `@younes-alturkey/wolffish-cloud-mobile`, linked 2026-09-04.
  *
- * The id that used to sit here belonged to the personal edition's project
- * (`wolffish-mobile`); publishing this app under it would have shipped these
- * binaries and OTA updates to the personal app's installs. This app needs its
- * own project, which only the account owner can create:
+ * This app's OWN project, deliberately not the personal edition's
+ * (`wolffish-mobile`): publishing this tree under that id would ship these
+ * binaries and OTA updates onto the personal app's installs, and no rollback
+ * undoes that. `eas project:info` must print this exact fullName before any
+ * ship command — a slug that disagrees with EXPO_PROJECT_SLUG fails every eas
+ * command's config check, which is the cheap version of that mistake.
  *
- *     npx eas init            # creates the project, writes the id back here
+ * This id is also what turns PUSH on, on both platforms — not just OTA. The
+ * `extra` and `updates` blocks below are omitted entirely while it is null,
+ * and acquireExpoPushToken() returns null the moment it cannot read
+ * `extra.eas.projectId` (src/lib/notifications/push.ts), so a null here is a
+ * silent no-token registration on iOS as well as Android.
  *
- * Until then: local builds (`npm run ios`) work as normal, `eas build` stops
- * and asks to link, and OTA is off — `Updates.isEnabled` is false, so
- * useOtaUpdates no-ops and Settings → Updates reports the app as up to date.
+ * Edited by hand on purpose: `eas init` cannot write to a dynamic
+ * app.config.ts, so the id and the slug live here as constants and nothing
+ * else may set them.
  */
-const EXPO_PROJECT_ID: string | null = '08278c20-de8a-4285-a378-273a64c21d94'
+const EXPO_PROJECT_ID: string | null = '77373918-d2f5-4e72-b6f2-4b3d984ce560'
 // Deferred: capture of https://wolffi.sh links as native deep links. Off on
 // purpose — the site is an install landing page, so web links must open the
 // browser, not the app. To re-enable, uncomment this constant plus the
@@ -103,16 +109,18 @@ const config: ExpoConfig = {
     // NATIVE CHANGE: forks the fingerprint runtime version. Ships in a store
     // build (npm run provision), never over the air.
     //
-    // UNSET on purpose. The committed google-services.json registers the
-    // package `sh.wolffi.mobile` (the personal edition); handing it to the
-    // GoogleServices plugin under this app's package fails the prebuild with
-    // "No matching client found". Android push is therefore DARK until a
-    // Firebase Android app is registered for `sh.wolffi.cloud.mobile`:
-    //   Firebase console → project wolffish-f9ac3 → Add app → Android →
-    //   package sh.wolffi.cloud.mobile → download google-services.json (it
-    //   will carry BOTH clients) → replace the file → restore the line below.
-    // iOS push is unaffected: APNs goes through EAS credentials, not this file.
-    // googleServicesFile: './google-services.json',
+    // SET 2026-09-04. The committed file now carries BOTH clients — this
+    // app's `sh.wolffi.cloud.mobile` and the personal edition's
+    // `sh.wolffi.mobile` — which is what the Firebase console hands you once
+    // both are registered in project wolffish-f9ac3. The Gradle plugin picks
+    // its client by package name at build time, so the extra one is inert.
+    //
+    // Two ways to break this, and they fail very differently. Replace the
+    // file with one that lacks this package and the prebuild dies loudly on
+    // "No matching client found". Comment this line back out and the build
+    // SUCCEEDS, shipping a binary with no Firebase in it — the silent case
+    // described above.
+    googleServicesFile: './google-services.json',
     adaptiveIcon: {
       // adaptive-icon.png is icon-trans.png shrunk into the adaptive-icon
       // safe zone (artwork ~58% of the 1024 canvas, transparent padding) —

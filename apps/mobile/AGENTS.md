@@ -85,8 +85,6 @@ npm run format         # prettier --write
 
 After structural changes always run `npm run ts:check` **and** `npm run test`. The ship scripts gate on Prettier too, so run `npm run format` before committing.
 
-Deploying a version is [DEPLOY.md](DEPLOY.md) — checks, this app's own changelog, commit, push, then **one** ship command chosen by a gate: `npm run ota` when the fingerprint still matches every shipped store build _and_ nothing in the batch is too risky to land on all phones at once, `npm run provision` otherwise. **`ota` publishes to every installed phone and tags; `provision` publishes nothing.** When the gate is unclear, provision — the costs are not symmetric. Never run `release` or `rollback`, never set `OTA_SKIP_RUNTIME_CHECK=1`, never run `eas` beyond the read-only `build:list` the gate uses, never create or push a tag by hand. Versions and the README badge are written by `scripts/provision.js` and `scripts/ota.js`; never write them by hand.
-
 ---
 
 ## Sync & connection

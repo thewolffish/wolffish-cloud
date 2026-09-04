@@ -78,7 +78,7 @@
               {
                 "group": "Operations",
                 "expanded": true,
-                "pages": ["operations/deploy", "operations/operate"]
+                "pages": ["operations/operate"]
               }
             ]
           }
@@ -123,7 +123,7 @@
               {
                 "group": "التشغيل",
                 "expanded": true,
-                "pages": ["ar/operations/deploy", "ar/operations/operate"]
+                "pages": ["ar/operations/operate"]
               }
             ]
           }

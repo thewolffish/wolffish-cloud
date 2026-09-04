@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:187552782214:android:f61284472732256e58fe07",
+        "android_client_info": {
+          "package_name": "sh.wolffi.cloud.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCK-kdZAMhkCIihodapiWySfXzozGe_oVs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:187552782214:android:1c56c7d1a0ec7a3b58fe07",
         "android_client_info": {
           "package_name": "sh.wolffi.mobile"
