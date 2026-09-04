@@ -1,8 +1,8 @@
 {
   "name": "wfc-api",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
-  "description": "Wolffish Cloud master API — the single choke-point Worker at api.wolffi.sh: auth, sessions, pairing + the desktop↔phone bridge, model routing (DeepInfra), web search (Brave), sync, admin.",
+  "description": "Wolffish Cloud master API \u2014 the single choke-point Worker at api.wolffi.sh: auth, sessions, pairing + the desktop\u2194phone bridge, model routing (DeepInfra), web search (Brave), sync, admin.",
   "type": "module",
   "license": "MIT",
   "scripts": {

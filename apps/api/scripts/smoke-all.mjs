@@ -18,6 +18,7 @@ const SUITES = [
   'smoke-auth.mjs',
   'smoke-admin.mjs',
   'smoke-sync.mjs',
+  'smoke-leaderboard.mjs',
   'smoke-search.mjs',
   { file: 'smoke-ai.mjs', pauseMs: 65_000 },
   'smoke-archive.mjs'

@@ -7,12 +7,22 @@
  * archive pass merges the blob; raw usage rows past retention are exported
  * and deleted; a conversation deleted a month ago loses records and blob.
  *
+ * The snapshot record is the one row archiving LEAVES in D1: it is the
+ * conversation's envelope, and the phone's conversation index reads
+ * model/icon/project/stats straight off it. So the contract after a pass is
+ * "every message moved, the envelope stayed", not "D1 emptied" — and because
+ * live rows sit after the blob in cursor space (N + rowid), the envelope is
+ * read back at the END of the record stream rather than at its original
+ * position. Order is therefore contractual for the MESSAGE run only; the set
+ * as a whole must still come back complete and exactly once.
+ *
  *   sync 451 records (idle 20 days) → read all (paged) → maintenance run →
- *   D1 rows gone + archive_key set → read all again: same ids, same order,
- *   one snapshot → push 3 records + newer snapshot → read: 454, ONE snapshot
- *   (the newest) → re-idle + maintenance → merged blob, D1 rows gone, read
- *   still 454 → 5 usage rows aged 200 days retire → deleted 40 days ago →
- *   purged (records 0, archive_key NULL).
+ *   messages archived + envelope live + archive_key set → read all again:
+ *   every id once, messages in order, one snapshot → push 3 records + newer
+ *   snapshot → read: 454, ONE snapshot (the newest) → re-idle + maintenance →
+ *   merged blob, messages archived again, read still 454 → 5 usage rows aged
+ *   200 days retire → deleted 40 days ago → purged (records 0, archive_key
+ *   NULL).
  */
 import { execSync } from 'node:child_process'
 import { pbkdf2Sync } from 'node:crypto'
@@ -83,6 +93,11 @@ async function pullAll(convId, limit = 200) {
   return { all, cursors }
 }
 
+/** The message run, in read order — the part of the order that is a promise. */
+const msgIds = (recs) => recs.filter((r) => r.kind !== 'snapshot').map((r) => r.id)
+/** Every id, order-independent — proves the set is complete and duplicate-free. */
+const allIds = (recs) => recs.map((r) => r.id).sort()
+
 const convId = `cnv_arch_${stamp}`
 const DAY = 86_400_000
 const idleAt = new Date(Date.now() - 20 * DAY).toISOString()
@@ -116,7 +131,8 @@ for (let i = 0; i < items.length; i += 400) {
 
 const before = await pullAll(convId)
 check(`read before archive: ${N + 1} records`, before.all.length === N + 1, `${before.all.length}`)
-const idsBefore = before.all.map((r) => r.id)
+const msgIdsBefore = msgIds(before.all)
+const allIdsBefore = allIds(before.all)
 
 // ── The archive pass ─────────────────────────────────────────────────────
 // Each nightly pass is bounded (400 conversations, oldest first), and a
@@ -138,17 +154,30 @@ async function archiveUntilReached() {
 const pass1 = await archiveUntilReached()
 check(`maintenance passes ok (${pass1.runs} run(s) to reach this conversation)`, pass1.last?.status === 200 && pass1.last?.json?.report?.archive_idle?.ok === true, JSON.stringify(pass1.last?.json?.report))
 const conv1 = d1rows(`SELECT archived_at, archive_key FROM conversations WHERE id = '${convId}'`)[0]
-const rows1 = d1rows(`SELECT COUNT(*) AS n FROM conversation_records WHERE conversation_id = '${convId}'`)[0].n
-check('D1 rows gone, archive_key set', rows1 === 0 && conv1?.archive_key === `archive/${userId}/${convId}.json.gz`, `rows ${rows1}, key ${conv1?.archive_key}`)
+// Exactly one row survives, and it is the envelope: archiveIdleConversations
+// moves everything whose kind is not 'snapshot' and leaves that one behind.
+const kinds1 = d1rows(`SELECT kind FROM conversation_records WHERE conversation_id = '${convId}'`).map((r) => r.kind)
+check(
+  'messages archived, snapshot envelope left live, archive_key set',
+  kinds1.length === 1 && kinds1[0] === 'snapshot' && conv1?.archive_key === `archive/${userId}/${convId}.json.gz`,
+  `rows ${JSON.stringify(kinds1)}, key ${conv1?.archive_key}`
+)
 
 const after1 = await pullAll(convId)
 check(`read after archive: ${N + 1} records`, after1.all.length === N + 1, `${after1.all.length}`)
-check('…same ids in the same order', JSON.stringify(after1.all.map((r) => r.id)) === JSON.stringify(idsBefore))
+check('…messages in the same order', JSON.stringify(msgIds(after1.all)) === JSON.stringify(msgIdsBefore))
+check('…every id back exactly once', JSON.stringify(allIds(after1.all)) === JSON.stringify(allIdsBefore))
 check('…exactly one snapshot', after1.all.filter((r) => r.kind === 'snapshot').length === 1)
 check('…cursors strictly increase and terminate with null', after1.cursors.slice(0, -1).every((c, i) => typeof c === 'number' && (i === 0 || c > after1.cursors[i - 1])) && after1.cursors[after1.cursors.length - 1] === null, JSON.stringify(after1.cursors))
 check('…content round-trips', after1.all.find((r) => r.id.startsWith('m_7.'))?.content?.text?.startsWith('message 7 '))
 const small = await pullAll(convId, 7)
-check('…any page size pages the same set', small.all.length === N + 1 && JSON.stringify(small.all.map((r) => r.id)) === JSON.stringify(idsBefore), `${small.all.length}`)
+check(
+  '…any page size pages the same set',
+  small.all.length === N + 1 &&
+    JSON.stringify(msgIds(small.all)) === JSON.stringify(msgIdsBefore) &&
+    JSON.stringify(allIds(small.all)) === JSON.stringify(allIdsBefore),
+  `${small.all.length}`
+)
 
 // ── New records after archiving merge in ─────────────────────────────────
 const now = new Date().toISOString()
@@ -176,17 +205,26 @@ check('…new records present', ['m_new0.deadbeef', 'm_new1.deadbeef', 'm_new2.d
 
 // ── A second idle pass merges the blob ───────────────────────────────────
 d1(`UPDATE conversations SET updated_at = '${idleAt}' WHERE id = '${convId}'`)
-// Reached again means: rows gone (the reach test is archive_key, already
-// set — so loop on the row count instead).
-let rows2 = -1
+// Reached again means: the revived MESSAGES are gone and only the envelope
+// is left (the reach test is archive_key, already set — so loop on the
+// surviving kinds instead).
+let kinds2 = []
 for (let i = 0; i < 40; i++) {
   const r = await api('/admin/maintenance/run', { token: O, body: {} })
-  rows2 = d1rows(`SELECT COUNT(*) AS n FROM conversation_records WHERE conversation_id = '${convId}'`)[0].n
-  if (rows2 === 0 || (r.json?.report?.archive_idle?.archived ?? 0) === 0) break
+  kinds2 = d1rows(`SELECT kind FROM conversation_records WHERE conversation_id = '${convId}'`).map((k) => k.kind)
+  if (!kinds2.some((k) => k !== 'snapshot') || (r.json?.report?.archive_idle?.archived ?? 0) === 0) break
 }
-check('maintenance run 2 archived the revived rows', rows2 === 0, `rows ${rows2}`)
+const drained2 = kinds2.length === 1 && kinds2[0] === 'snapshot'
+check('maintenance run 2 archived the revived messages, envelope still live', drained2, `rows ${JSON.stringify(kinds2)}`)
 const merged2 = await pullAll(convId)
-check('after merge: D1 rows gone, read still complete with one snapshot', rows2 === 0 && merged2.all.length === N + 4 && merged2.all.filter((r) => r.kind === 'snapshot').length === 1, `rows ${rows2}, read ${merged2.all.length}`)
+check(
+  'after merge: read still complete, each id once, one snapshot',
+  drained2 &&
+    merged2.all.length === N + 4 &&
+    new Set(merged2.all.map((r) => r.id)).size === N + 4 &&
+    merged2.all.filter((r) => r.kind === 'snapshot').length === 1,
+  `rows ${JSON.stringify(kinds2)}, read ${merged2.all.length}`
+)
 check('…newest snapshot survived the merge', merged2.all.find((r) => r.kind === 'snapshot')?.seq === 2000)
 
 // ── Usage retention ──────────────────────────────────────────────────────

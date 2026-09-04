@@ -23,6 +23,7 @@
 import { Hono } from 'hono'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
 import { getEffectivePolicy, getOrgConfig, modelAllowed } from '@/lib/policy'
+import { normalizeSurface } from '@/lib/plans'
 import { loadUpstreams, poolSummary, type Upstream } from '@/lib/upstreams'
 import { recordUsageSafe, type UsageEvent } from '@/lib/meter'
 import type { AdmitResult, ReleaseReport, ReleaseStatus } from '@/lib/model-gate'
@@ -180,11 +181,15 @@ ai.post('/v1/chat/completions', async (c) => {
   const org = await getOrgConfig(c.env)
   if (!org) return c.json({ error: 'org_not_provisioned' }, 500)
   const policy = await getEffectivePolicy(c.env, auth.sub)
+  // Which surface spent this: the client names it, and an unrecognised or
+  // absent label records as '' rather than failing the call — attribution is
+  // reporting, never a gate.
   const base: Omit<UsageEvent, 'decision'> = {
     userId: auth.sub,
     deviceId: auth.dev,
     kind: 'chat',
-    model
+    model,
+    surface: normalizeSurface(c.req.header('x-wfc-surface'))
   }
 
   if (!modelAllowed(model, policy, org)) {
@@ -207,7 +212,12 @@ ai.post('/v1/chat/completions', async (c) => {
     })
   }
   const summary = poolSummary(pool)
-  const caps = { userDaily: policy.dailyCap, orgMonthly: org.org_monthly_token_cap }
+  const caps = {
+    userDaily: policy.dailyCap,
+    orgMonthly: org.org_monthly_token_cap,
+    userMonthlyIn: policy.ceilings.monthlyIn,
+    userMonthlyOut: policy.ceilings.monthlyOut
+  }
   const gate = gateOf(c.env)
 
   // ── Admission → forward, re-admitting after a transient host failure ──
@@ -238,7 +248,15 @@ ai.post('/v1/chat/completions', async (c) => {
       if (admit.reason === 'quota') {
         await recordUsageSafe(c.env, { ...base, decision: 'denied_quota' })
         return c.json(
-          { error: 'quota_exceeded', scope: admit.scope, used: admit.used, cap: admit.cap },
+          {
+            error: 'quota_exceeded',
+            scope: admit.scope,
+            used: admit.used,
+            cap: admit.cap,
+            // The plan is part of the answer: "you are out" reads very
+            // differently from "you are out, and you are on standard".
+            plan: policy.plan
+          },
           429
         )
       }

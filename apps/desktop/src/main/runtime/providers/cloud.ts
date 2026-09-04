@@ -262,7 +262,10 @@ export class CloudProvider {
       method: 'POST',
       headers: {
         authorization: `Bearer ${token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        // Surface attribution for the org's usage ledger. Absent (or
+        // unrecognised) is recorded as unattributed, never refused.
+        ...(options.surface ? { 'x-wfc-surface': options.surface } : {})
       },
       body: JSON.stringify(body),
       signal: options.signal

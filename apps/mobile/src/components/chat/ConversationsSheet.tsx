@@ -2,6 +2,7 @@ import { ChannelBadge } from '@/components/conversations/ChannelBadge'
 import { chipText, chipTone, Pulse } from '@/components/conversations/ConversationChip'
 import {
   AiBrain01Icon,
+  ChampionIcon,
   Folder01Icon,
   HeartCheckIcon,
   PlayListIcon,
@@ -43,14 +44,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
  *
  * Two halves, in the desktop's own order:
  *
- *  - the five workspace pages that are not settings knobs but things you MAKE
- *    with the app (and Settings itself), each with the icon the desktop's nav
- *    rail gives it;
+ *  - the workspace pages that are not settings knobs but things you MAKE with
+ *    the app (plus Settings itself and the org leaderboard), each with the
+ *    icon the desktop's nav rail gives it;
  *  - every conversation, grouped by the same recency buckets under the same
  *    labels, each row a numbered status chip + origin badge + one line of title.
  *
  * Only the second half scrolls. The pages are a fixed header ABOVE the list
- * rather than the list's own ListHeaderComponent: they are the sheet's five
+ * rather than the list's own ListHeaderComponent: they are the sheet's
  * destinations, and a destination that scrolls off the top of its own navigator
  * is one the user has to scroll back up to find. The list gets the space that
  * is left and scrolls inside it.
@@ -79,9 +80,15 @@ const WIDTH_RATIO = 0.86
 /** Enter/exit duration. Short: this sheet is a menu, not a destination. */
 const SLIDE_MS = 200
 
-/** The five pages the sheet links to, in the desktop nav rail's order. */
+/** The pages the sheet links to, in the desktop nav rail's order. */
 const NAV = [
   { key: 'settings', href: '/settings', Icon: Settings02Icon, labelKey: 'settings.title' },
+  {
+    key: 'leaderboard',
+    href: '/settings/leaderboard',
+    Icon: ChampionIcon,
+    labelKey: 'leaderboard.title'
+  },
   {
     key: 'projects',
     href: '/settings/projects',

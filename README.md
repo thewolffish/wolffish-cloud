@@ -18,6 +18,7 @@ One architectural inversion from the personal edition, and everything else follo
 - **Everything syncs.** Seconds after a turn ends, the desktop pushes the conversation (incrementally), workspace files (content-addressed blobs) and the config row. Delete `~/.wfc`, sign in on any machine, and the workspace walks back out of the org — conversation media hydrates when a conversation is opened. Signing out drains the outbox, revokes the session and purges the cache.
 - **Capabilities are cloud-distributed.** The org's capability registry (versioned zip packages in R2, indexed in D1) is mirrored onto every desktop on session ready; admins publish, update or retire a capability and every device follows on its next pull. Sources live in [`capabilities/`](capabilities/).
 - **Admin is pure API.** Invites, roles, suspend and revoke, PIN clear, per-user model policy, org defaults, usage totals, live gate stats, audit log. The admin UI lives in the admin's own desktop client; every admin endpoint re-verifies the role server-side.
+- **The org can see itself.** `GET /v1/leaderboard` ranks every employee by token spend, conversations and agentic tasks (the runs an automation or a procedure started on its own) — readable by everyone, not just admins, and carrying no money. One cached board for the whole org answers every page, search and rank, so opening it never costs a table scan. Reachable from the side sheet on both the desktop and the phone.
 
 ### Two tiers, one system
 
@@ -37,7 +38,7 @@ wolffish-cloud/
 │   ├── desktop/     · the Electron desktop agent, cloud-first (Tier 1)
 │   ├── mobile/      · the Expo companion phone app — carried over, PARKED (see below)
 │   └── site/
-│       └── docs/    · documentation (Mintlify, EN + AR)
+│       └── docs/    · documentation (Mintlify, EN + AR) — rewritten for the cloud
 ├── packages/
 │   └── extension/   · browser capability, bundled into desktop; local-only, no cloud endpoint
 ├── capabilities/    · official capability sources — published to the org registry, never bundled
@@ -66,7 +67,7 @@ The companion phone app, re-aimed at the API. Pairing (QR or a typed code the de
 
 ### `apps/site` — the tenant-facing web
 
-The bilingual Mintlify documentation (EN + AR), carried over unmodified from the personal edition. The marketing landing page is not part of this package — it is a public-web concern, not a tenant deliverable, and stays in its own repo ([wolffish-landing](https://github.com/thewolffish/wolffish-landing)).
+The bilingual Mintlify documentation (EN + AR), rewritten for this edition: sixteen pages per language covering where the agents run, the API endpoint by endpoint, how the desktop, phone and browser extension sync, how quotas are enforced and what is logged, and how to stand a tenant up. The personal edition's 78-page tree — provider pages, channels, integrations, memory internals — is gone with the features it described. The marketing landing page is not part of this package — it is a public-web concern, not a tenant deliverable, and stays in its own repo ([wolffish-landing](https://github.com/thewolffish/wolffish-landing)).
 
 ### `packages/extension` — the browser capability
 
@@ -127,7 +128,7 @@ Every carried folder is a clean export of the corresponding personal repo (track
 | --- | --- |
 | `apps/desktop` | [wolffish-app](https://github.com/thewolffish/wolffish-app) |
 | `apps/mobile` | [wolffish-mobile](https://github.com/thewolffish/wolffish-mobile) |
-| `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) |
+| `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) — scaffolding only; every page rewritten |
 | `packages/extension` | [wolffish-extension](https://github.com/thewolffish/wolffish-extension) |
 
 ## License

@@ -19,6 +19,7 @@
 import { Hono } from 'hono'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
 import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
+import { normalizeSurface } from '@/lib/plans'
 import { SearchSchema } from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
 import { recordUsageSafe, type UsageEvent } from '@/lib/meter'
@@ -96,7 +97,10 @@ search.post('/search', async (c) => {
     userId: auth.sub,
     deviceId: auth.dev,
     kind: 'search',
-    model: SEARCH_MODEL
+    model: SEARCH_MODEL,
+    // Same attribution as the model lane: search spend splits by surface too,
+    // so "the extension is what burns the search quota" is answerable.
+    surface: normalizeSurface(c.req.header('x-wfc-surface'))
   }
 
   const count = body.count ?? 5

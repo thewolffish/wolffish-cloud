@@ -15,6 +15,7 @@
  * incremented atomically by the call they already admit. The usage table
  * remains the authoritative record.
  */
+import { ceilingsFor, normalizePlan, type PlanCeilings, type TokenPlan } from '@/lib/plans'
 import type { Env } from '@/index'
 
 export type OrgConfig = {
@@ -34,10 +35,23 @@ export type EffectivePolicy = {
   dailyCap: number
   /** Searches per day for this user (0 = unlimited). */
   dailySearchCap: number
+  /** The employee's token plan — 'standard' unless an admin assigned one. */
+  plan: TokenPlan
+  /** The plan's monthly ceilings, resolved here so the router never looks them up. */
+  ceilings: PlanCeilings
 }
 
 /** How long a cached copy lives centrally; misses are rare, refills are cheap. */
 const CACHE_TTL_SECONDS = 3600
+/**
+ * Cache generation. A copy written before the shape changed cannot be
+ * detected field-by-field without a compat branch per field, and those
+ * branches never get deleted; bumping the key retires every stale copy at
+ * once. Admin mutations delete THIS key, so the helper is exported rather
+ * than the string being written out twice.
+ */
+const POLICY_KEY_VERSION = 'policy2'
+export const policyCacheKey = (userId: string): string => `${POLICY_KEY_VERSION}:${userId}`
 /** Edge read cache: the propagation window an admin edit is allowed to take. */
 const EDGE_TTL_SECONDS = 60
 
@@ -102,35 +116,54 @@ function safeArray(json: string | null): string[] {
 }
 
 export async function getEffectivePolicy(env: Env, userId: string): Promise<EffectivePolicy> {
-  const key = `policy:${userId}`
+  const key = policyCacheKey(userId)
   const cached = await cacheGet(env, key)
-  if (cached) {
-    const p = cached as Omit<EffectivePolicy, 'dailySearchCap'> & { dailySearchCap?: number }
-    if (typeof p.dailySearchCap === 'number') return p as EffectivePolicy
-    const org = await getOrgConfig(env)
-    return { ...p, dailySearchCap: org?.user_daily_search_cap ?? 0 }
-  }
+  if (cached) return normalizePolicy(cached)
 
   const org = await getOrgConfig(env)
   const row = await env.DB.prepare(
-    'SELECT allowed_models, daily_token_cap, daily_search_cap FROM model_policies WHERE user_id = ?1'
+    `SELECT allowed_models, daily_token_cap, daily_search_cap, token_plan
+     FROM model_policies WHERE user_id = ?1`
   )
     .bind(userId)
     .first<{
       allowed_models: string | null
       daily_token_cap: number | null
       daily_search_cap: number | null
+      token_plan: string | null
     }>()
 
   const allowed =
     row?.allowed_models != null ? safeArray(row.allowed_models) : (org?.default_allowed_models ?? [])
+  const plan = normalizePlan(row?.token_plan)
   const policy: EffectivePolicy = {
     allowed,
     dailyCap: row?.daily_token_cap ?? org?.user_daily_token_cap ?? 0,
-    dailySearchCap: row?.daily_search_cap ?? org?.user_daily_search_cap ?? 0
+    dailySearchCap: row?.daily_search_cap ?? org?.user_daily_search_cap ?? 0,
+    plan,
+    ceilings: ceilingsFor(plan)
   }
   await cachePut(env, key, policy)
   return policy
+}
+
+/**
+ * A cached copy, coerced back onto the contract. The ceilings are re-derived
+ * from the plan name rather than trusted: a ceiling changed in plans.ts must
+ * take effect at the next deploy, not an hour later when the last cached
+ * copy of the old number expires.
+ */
+function normalizePolicy(cached: Record<string, unknown>): EffectivePolicy {
+  const plan = normalizePlan(cached.plan)
+  return {
+    allowed: Array.isArray(cached.allowed)
+      ? cached.allowed.filter((x): x is string => typeof x === 'string')
+      : [],
+    dailyCap: Number(cached.dailyCap ?? 0),
+    dailySearchCap: Number(cached.dailySearchCap ?? 0),
+    plan,
+    ceilings: ceilingsFor(plan)
+  }
 }
 
 export function modelAllowed(model: string, policy: EffectivePolicy, org: OrgConfig): boolean {

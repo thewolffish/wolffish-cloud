@@ -111,6 +111,15 @@ export type ProviderStreamOptions = {
    */
   cacheKey?: string
   /**
+   * Which SURFACE this call is being made for — the desktop app, the paired
+   * phone, an automation, a procedure run. Sent to the org API as
+   * `x-wfc-surface` and recorded on the usage row, so an admin can see that
+   * (say) the heartbeat is what burns a person's quota rather than their
+   * own chat. Attribution only: the router never gates on it, and a call
+   * that omits it is metered as unattributed rather than refused.
+   */
+  surface?: 'inapp' | 'mobile' | 'heartbeat' | 'procedure'
+  /**
    * Turn role for this call. 'agent' marks a workflow subagent (its effort is
    * clamped to the resolved model's reasoning support and it gets NO retry
    * budget — the master owns retries); 'summary' resolves like the Brain but

@@ -228,5 +228,210 @@ check(
   !(aud.json?.entries ?? []).some((e) => JSON.stringify(e.detail ?? '').includes('sk-test'))
 )
 
+
+
+// ── The admin layer: plans, the roster, and reading someone's work ───────
+//
+// Everything below is what the admin PAGE renders. The roster is one call
+// for the whole company (the card grid), the overview is one call for one
+// person, and the conversation reads are the same records the employee's own
+// client receives — proven here by pushing a conversation as the employee
+// and reading it back as the owner.
+
+// Plans: default is standard, and it is a real answer even with no policy row.
+const plans = await api('/admin/plans', { token: ownerTok })
+check(
+  'plan catalogue serves ceilings',
+  plans.status === 200 &&
+    plans.json?.ceilings?.standard?.monthlyIn === 100_000_000 &&
+    plans.json?.ceilings?.high?.monthlyOut === 25_000_000 &&
+    plans.json?.ceilings?.unmetered?.monthlyIn === 0
+)
+const empDetail = await api(`/admin/users/${empId}`, { token: ownerTok })
+check('employee defaults to standard plan', empDetail.json?.token_plan === 'standard')
+check(
+  'standard ceilings on user detail',
+  empDetail.json?.ceilings?.monthlyIn === 100_000_000 && empDetail.json?.ceilings?.monthlyOut === 8_000_000
+)
+
+check(
+  'plan set to high',
+  (await api(`/admin/users/${empId}/plan`, { token: ownerTok, method: 'PUT', body: { token_plan: 'high' } }))
+    .json?.ceilings?.monthlyIn === 300_000_000
+)
+check(
+  'bogus plan refused',
+  (await api(`/admin/users/${empId}/plan`, { token: ownerTok, method: 'PUT', body: { token_plan: 'infinite' } }))
+    .status === 400
+)
+// A policy edit that does not mention the plan must not reset it — the one
+// interaction between the two controls that could silently downgrade someone.
+await api(`/admin/users/${empId}/policy`, {
+  token: ownerTok,
+  method: 'PUT',
+  body: { daily_search_cap: 25 }
+})
+check(
+  'policy edit preserves plan',
+  (await api(`/admin/users/${empId}`, { token: ownerTok })).json?.token_plan === 'high'
+)
+check(
+  'policy edit can set the plan too',
+  (await api(`/admin/users/${empId}/policy`, {
+    token: ownerTok,
+    method: 'PUT',
+    body: { daily_search_cap: 25, token_plan: 'unmetered' }
+  })).status === 200 &&
+    (await api(`/admin/users/${empId}`, { token: ownerTok })).json?.ceilings?.monthlyIn === 0
+)
+await api(`/admin/users/${empId}/plan`, { token: ownerTok, method: 'PUT', body: { token_plan: 'standard' } })
+
+// The employee does some work: one conversation with a snapshot envelope
+// (the provenance the admin list reads) and two messages.
+const convId = `conv_smoke_${stamp}`
+const batch = await api('/v1/sync/batch', {
+  token: empTok3,
+  body: {
+    items: [
+      {
+        type: 'conversation',
+        id: convId,
+        title: 'Booking the flights',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        type: 'record',
+        id: `${convId}.snapshot`,
+        conversation_id: convId,
+        seq: Date.now(),
+        kind: 'snapshot',
+        content: {
+          id: convId,
+          title: 'Booking the flights',
+          channel: 'mobile',
+          model: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+          messageCount: 2,
+          stats: { allTime: { toolCalls: 3, turns: 1, cost: 0.02 } }
+        },
+        created_at: new Date().toISOString()
+      },
+      {
+        type: 'record',
+        id: `m_${stamp}_1.aaaaaaaa`,
+        conversation_id: convId,
+        seq: 1_700_000_000_001,
+        kind: 'message',
+        content: { id: `m_${stamp}_1`, role: 'user', content: 'book me a flight', timestamp: 1_700_000_000_001 },
+        created_at: new Date().toISOString()
+      },
+      {
+        type: 'record',
+        id: `m_${stamp}_2.bbbbbbbb`,
+        conversation_id: convId,
+        seq: 1_700_000_000_002,
+        kind: 'message',
+        content: { id: `m_${stamp}_2`, role: 'assistant', content: 'Booked.', timestamp: 1_700_000_000_002 },
+        created_at: new Date().toISOString()
+      }
+    ]
+  }
+})
+check('employee pushed a conversation', batch.status === 200 && batch.json?.accepted === 4, JSON.stringify(batch.json))
+
+// Roster: one call, every employee, with the glance numbers on the card.
+const roster = await api('/admin/roster', { token: ownerTok })
+const me = (roster.json?.people ?? []).find((p) => p.id === empId)
+check('roster serves', roster.status === 200 && Array.isArray(roster.json?.people))
+check('roster carries the whole company', (roster.json?.people ?? []).length >= 4)
+check('roster row has plan + ceilings', me?.token_plan === 'standard' && me?.ceilings?.monthlyIn === 100_000_000)
+check(
+  'roster row has the glance numbers',
+  me !== undefined &&
+    typeof me.days_active === 'number' &&
+    typeof me.cost_microusd === 'number' &&
+    typeof me.month_tokens_in === 'number' &&
+    typeof me.searches === 'number'
+)
+check('roster counts conversations', me?.conversations === 1)
+check('roster reports devices', me?.devices >= 1)
+
+// Overview: one call, one person, everything the detail screen shows.
+const ov = await api(`/admin/users/${empId}/overview`, { token: ownerTok })
+check('overview serves', ov.status === 200 && ov.json?.user?.id === empId)
+check('overview carries the plan', ov.json?.policy?.token_plan === 'standard')
+check(
+  'overview shapes present',
+  Array.isArray(ov.json?.lanes) &&
+    Array.isArray(ov.json?.surfaces) &&
+    Array.isArray(ov.json?.daily) &&
+    Array.isArray(ov.json?.devices) &&
+    Array.isArray(ov.json?.sessions) &&
+    Array.isArray(ov.json?.recent)
+)
+check('overview counts the work', ov.json?.counts?.conversations === 1)
+check('overview 404s for a stranger', (await api('/admin/users/usr_nobody/overview', { token: ownerTok })).status === 404)
+
+// The conversation list: provenance without opening anything.
+const convs = await api(`/admin/users/${empId}/conversations`, { token: ownerTok })
+const row = (convs.json?.conversations ?? []).find((x) => x.id === convId)
+check('admin lists a user conversation', convs.status === 200 && row !== undefined)
+check('conversation list carries surface provenance', row?.channel === 'mobile')
+check('conversation list carries message count', row?.message_count === 2)
+check('conversation list carries tool-call stats', row?.stats?.allTime?.toolCalls === 3)
+
+// The transcript itself — the same records the employee's own client gets.
+const recs = await api(`/admin/conversations/${convId}/records`, { token: ownerTok })
+const kinds = (recs.json?.records ?? []).map((r) => r.kind)
+check('admin reads the transcript', recs.status === 200 && recs.json?.records?.length === 3, JSON.stringify((recs.json?.records ?? []).map((r) => [r.id, r.kind])))
+check('transcript has the envelope and the messages', kinds.includes('snapshot') && kinds.filter((k) => k === 'message').length === 2)
+check('transcript names its owner', recs.json?.conversation?.user_id === empId)
+const mine = await api(`/v1/conversations/${convId}/records`, { token: empTok3 })
+check(
+  'admin transcript matches the user\'s own',
+  JSON.stringify((mine.json?.records ?? []).map((r) => r.id)) ===
+    JSON.stringify((recs.json?.records ?? []).map((r) => r.id))
+)
+
+// Reading someone's work is the most sensitive read here, and it is gated
+// exactly like the config read: support never, admin never an owner's.
+check(
+  'support cannot list conversations',
+  (await api(`/admin/users/${empId}/conversations`, { token: sup.json.access_token })).status === 403
+)
+check(
+  'support cannot read a transcript',
+  (await api(`/admin/conversations/${convId}/records`, { token: sup.json.access_token })).status === 403
+)
+check(
+  'admin can read an employee transcript',
+  (await api(`/admin/conversations/${convId}/records`, { token: adm.json.access_token })).status === 200
+)
+check(
+  'admin cannot list an owner\'s conversations',
+  (await api(`/admin/users/${owner.json.user.id}/conversations`, { token: adm.json.access_token })).status === 403
+)
+check(
+  'unknown conversation 404s',
+  (await api('/admin/conversations/conv_nope/records', { token: ownerTok })).status === 404
+)
+
+// Per-user audit: what was done to this person, and by them.
+const userAudit = await api(`/admin/users/${empId}/audit`, { token: ownerTok })
+const userActions = (userAudit.json?.entries ?? []).map((e) => e.action)
+check('per-user audit serves', userAudit.status === 200 && userActions.length > 0)
+check('per-user audit records the plan change', userActions.includes('plan.set'))
+check('per-user audit names the actor', (userAudit.json?.entries ?? [])[0]?.actor_email !== undefined)
+
+const aud2 = await api('/admin/audit', { token: ownerTok })
+check(
+  'opening a transcript is audited',
+  (aud2.json?.entries ?? []).some((e) => e.action === 'conversation.view' && e.target === convId)
+)
+
+// Usage now splits by surface as well as by lane.
+const usage = await api('/admin/usage', { token: ownerTok })
+check('usage exposes the surface split', usage.status === 200 && Array.isArray(usage.json?.surfaces))
+
 console.log(failures === 0 ? '\nADMIN SMOKE: ALL PASS' : `\nADMIN SMOKE: ${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

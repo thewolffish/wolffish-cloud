@@ -19,7 +19,10 @@
       "clear": "Clear",
       "addToDictionary": "Add to dictionary",
       "noSuggestions": "No suggestions"
-    }
+    },
+    "refresh": "Refresh",
+    "copy": "Copy",
+    "done": "Done"
   },
   "closing": {
     "title": "Closing Wolffish",
@@ -80,7 +83,8 @@
       "usage": "Usage",
       "data": "Data",
       "updates": "Updates",
-      "knowledge": "Knowledge"
+      "knowledge": "Knowledge",
+      "admin": "Admin"
     },
     "wolffish": {
       "title": "Wolffish",
@@ -812,6 +816,232 @@
         "off": "Off",
         "on": "On"
       }
+    },
+    "admin": {
+      "title": "Admin",
+      "subtitle": "Everyone in the deployment: what they spend, what they can reach, and how to help them.",
+      "subtitleReadOnly": "Everyone in the deployment: what they spend and what they can reach. Your tier is read-only.",
+      "noAccess": "The admin page is available to owners and admins.",
+      "sections": {
+        "people": "People",
+        "org": "Organization",
+        "audit": "Log"
+      },
+      "summary": {
+        "people": "Active people",
+        "tokens": "Tokens · 30 days",
+        "cost": "Cost · 30 days",
+        "searches": "Searches · 30 days"
+      },
+      "roles": {
+        "owner": "Owner",
+        "admin": "Admin",
+        "support": "Support",
+        "employee": "Employee"
+      },
+      "status": {
+        "active": "Active",
+        "invited": "Invited",
+        "suspended": "Disabled",
+        "removed": "Removed"
+      },
+      "plan": {
+        "standard": "Standard",
+        "high": "High",
+        "unmetered": "Unmetered",
+        "title": "Token plan",
+        "subtitle": "The monthly ceiling this person's model calls are held to. Enforced at the router, not billed afterwards.",
+        "assigned": "Assigned plan",
+        "monthInput": "Input this month",
+        "monthOutput": "Output this month",
+        "noCeiling": "{{used}} · no ceiling",
+        "ceilingHint": "{{in}} in · {{out}} out per month",
+        "unmeteredHint": "No ceiling · alerting only",
+        "unmeteredNote": "Unmetered: calls are never refused for quota. Spend is reported, not capped.",
+        "resetNote": "Counted against the calendar month, which began {{month}}.",
+        "changed": "Plan set to {{plan}}."
+      },
+      "people": {
+        "searchPlaceholder": "Search by name, email or role",
+        "noMatches": "Nobody matches that.",
+        "you": "(you)",
+        "tokens": "Tokens",
+        "cost": "Cost",
+        "daysActive": "Days active",
+        "lastActive": "Last active {{day}}",
+        "neverActive": "No activity yet",
+        "conversations": "{{count}} conversations",
+        "conversations_one": "{{count}} conversation",
+        "searches": "{{count}} searches",
+        "searches_one": "{{count}} search",
+        "backToPeople": "All people",
+        "sort": {
+          "spend": "Spend",
+          "active": "Recent",
+          "name": "Name"
+        }
+      },
+      "user": {
+        "lastLogin": "Last signed in {{when}}",
+        "neverSignedIn": "Has never signed in"
+      },
+      "spend": {
+        "title": "Spend",
+        "subtitle": "The last {{days}} days, from the metering ledger.",
+        "tokensIn": "Input tokens",
+        "tokensOut": "Output tokens",
+        "cost": "Cost",
+        "searches": "Web searches",
+        "conversations": "Conversations",
+        "storage": "Storage",
+        "cached": "{{value}} cached",
+        "requests": "{{count}} requests",
+        "requests_one": "{{count}} request",
+        "monthCost": "{{value}} this month",
+        "searchCost": "{{value}} of it",
+        "denied": "{{count}} refused",
+        "files": "{{count}} files",
+        "files_one": "{{count}} file",
+        "daily": "Daily cost"
+      },
+      "surfaces": {
+        "title": "Where it was spent",
+        "subtitle": "Which surface made the calls — the desktop app, the paired phone, the browser extension, or an automation.",
+        "empty": "No attributed activity in this window.",
+        "searches": "{{count}} searches",
+        "searches_one": "{{count}} search",
+        "names": {
+          "inapp": "Desktop app",
+          "mobile": "Phone",
+          "extension": "Browser extension",
+          "heartbeat": "Automation",
+          "procedure": "Procedure",
+          "api": "API",
+          "unattributed": "Unattributed"
+        }
+      },
+      "controls": {
+        "title": "Controls",
+        "subtitle": "Everything you can do for this person from here.",
+        "role": "Role",
+        "roleHint": "Admins manage people; support can look but not change. Only an owner can set roles.",
+        "access": "Access",
+        "accessHint": "Disabling signs them out everywhere immediately and refuses new sign-ins.",
+        "accessDisabledHint": "Disabled. They are told their access was disabled by an admin.",
+        "disable": "Disable access",
+        "enable": "Restore access",
+        "disabledToast": "Access disabled. Every session was signed out.",
+        "enabledToast": "Access restored.",
+        "password": "Password",
+        "passwordHint": "Issues a one-time password and signs them out everywhere.",
+        "resetPassword": "Reset password",
+        "tempPassword": "One-time password",
+        "tempPasswordHint": "Shown once. Give it to them directly — they must change it at next sign-in.",
+        "pin": "Device PIN",
+        "pinHint": "Clears the local unlock PIN on their devices at next launch.",
+        "clearPin": "Clear PIN",
+        "pinCleared": "PIN clear requested.",
+        "sessions": "Sessions",
+        "sessionsHint": "Signs out every device without changing their password.",
+        "signOutEverywhere": "Sign out everywhere",
+        "sessionsRevoked": "Signed out {{count}} sessions.",
+        "sessionsRevoked_one": "Signed out {{count}} session.",
+        "ownerOnly": "Only an owner can change an owner.",
+        "readOnly": "Your tier can view this page but not change it."
+      },
+      "devices": {
+        "title": "Devices",
+        "subtitle": "What this person signs in from.",
+        "empty": "No devices yet.",
+        "revoked": "revoked",
+        "pinSet": "PIN set",
+        "noPin": "no PIN",
+        "pinClearPending": "clear pending",
+        "clearPin": "Clear PIN"
+      },
+      "conversations": {
+        "title": "Conversations",
+        "subtitle": "Open one to read it exactly as they saw it. Opening a transcript is recorded in the log.",
+        "empty": "No conversations yet.",
+        "untitled": "Untitled",
+        "messages": "{{count}} messages",
+        "messages_one": "{{count}} message",
+        "actions": "{{count}} actions",
+        "actions_one": "{{count}} action",
+        "archived": "archived",
+        "loadMore": "Load more",
+        "backToUser": "Back to this person",
+        "tabs": {
+          "transcript": "Transcript",
+          "log": "Log"
+        },
+        "readFailed": "Could not read this conversation: {{error}}",
+        "truncated": "This conversation is unusually long and only its first pages are shown.",
+        "emptyTranscript": "This conversation has no messages.",
+        "emptyLog": "No tool calls were made in this conversation.",
+        "logSummary": "{{count}} actions, {{browser}} of them in the browser."
+      },
+      "channels": {
+        "electron": "Desktop app",
+        "mobile": "Phone",
+        "heartbeat": "Automation",
+        "procedure": "Procedure",
+        "unknown": "Desktop app"
+      },
+      "audit": {
+        "title": "Audit log",
+        "subtitle": "Every administrative action, newest first.",
+        "userTitle": "History",
+        "userSubtitle": "What was done to this person, and by them.",
+        "empty": "Nothing recorded yet.",
+        "actions": {
+          "user.invite": "Invited a person",
+          "user.update": "Changed a person",
+          "user.reset_password": "Reset a password",
+          "user.revoke_sessions": "Signed out every session",
+          "device.clear_pin": "Cleared a device PIN",
+          "policy.set": "Changed a policy",
+          "plan.set": "Changed a token plan",
+          "config.view": "Viewed synced settings",
+          "config.set": "Wrote synced settings",
+          "conversation.view": "Opened a conversation",
+          "org.update": "Changed org settings",
+          "capability.put": "Published a capability",
+          "capability.delete": "Removed a capability",
+          "maintenance.run": "Ran maintenance"
+        }
+      },
+      "org": {
+        "title": "Organization",
+        "subtitle": "Settings that apply to everybody.",
+        "name": "Name",
+        "defaultModel": "Default model",
+        "search": "Web search",
+        "searchHint": "The org-wide switch for the Brave search lane.",
+        "on": "On",
+        "off": "Off",
+        "saved": "Saved.",
+        "capsTitle": "Org ceilings",
+        "capsSubtitle": "These sit above every individual plan. 0 means unlimited, and whichever ceiling binds first is the one that applies.",
+        "userDailyTokens": "Tokens per person per day",
+        "orgMonthlyTokens": "Tokens for the org per month",
+        "userDailySearches": "Searches per person per day",
+        "orgMonthlySearches": "Searches for the org per month",
+        "unlimited": "Unlimited",
+        "plansTitle": "Token plans",
+        "plansSubtitle": "The three ceilings you can assign. Everyone starts on Standard."
+      },
+      "invite": {
+        "open": "Add person",
+        "title": "Add a person",
+        "name": "Name",
+        "email": "Email",
+        "role": "Role",
+        "submit": "Send invite",
+        "done": "Done",
+        "created": "{{email}} was added.",
+        "tempHint": "Shown once. Give it to them directly — they must change it at first sign-in."
+      }
     }
   },
   "chat": {
@@ -973,6 +1203,7 @@
       "clear": "Clear"
     },
     "settings": "Settings",
+    "leaderboard": "Leaderboard",
     "history": "History",
     "conversations": "Conversations",
     "conversationsUntitled": "Untitled",
@@ -1506,6 +1737,22 @@
       "older": "Older"
     }
   },
+  "leaderboard": {
+    "title": "Leaderboard",
+    "subtitle": "Where everyone stands across the organization — token spend, conversations, and tasks the agent ran on its own.",
+    "search": "Search by name",
+    "person": "Person",
+    "tokens": "Tokens",
+    "conversations": "Chats",
+    "agentic": "Tasks",
+    "you": "(you)",
+    "range": "{{from}}–{{to}} of {{total}}",
+    "previous": "Previous",
+    "next": "Next",
+    "empty": "Nobody is on the board yet.",
+    "noMatches": "No one by that name.",
+    "error": "Couldn't load the leaderboard."
+  },
   "units": {
     "bytes": "{{value}} B",
     "kilobytes": "{{value}} KB",
@@ -1580,7 +1827,7 @@
     "errors": {
       "invalid_credentials": "Wrong email or password.",
       "rate_limited": "Too many attempts — try again soon.",
-      "account_disabled": "This account is disabled. Contact your admin.",
+      "account_disabled": "Your access has been disabled by an admin.",
       "temp_password_expired": "Temp password expired — ask your admin.",
       "weak_password": "Password too weak — use at least 10 characters.",
       "network": "Can’t reach Wolffish Cloud.",

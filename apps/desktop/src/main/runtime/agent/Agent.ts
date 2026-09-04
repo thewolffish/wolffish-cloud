@@ -43,6 +43,28 @@ import { buildAttachedFilesOverlay } from '@main/uploads/owned-copies'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
+
+/**
+ * A conversation's channel, as the usage ledger's surface label. They are
+ * almost the same vocabulary — the one difference is that the app calls
+ * itself 'electron' internally while the ledger (and the admin screen that
+ * reads it) calls it 'inapp'. A turn with no channel is an in-app turn from
+ * before the field existed.
+ */
+function surfaceOf(
+  channel: ConversationChannel | undefined
+): 'inapp' | 'mobile' | 'heartbeat' | 'procedure' {
+  switch (channel) {
+    case 'mobile':
+      return 'mobile'
+    case 'heartbeat':
+      return 'heartbeat'
+    case 'procedure':
+      return 'procedure'
+    default:
+      return 'inapp'
+  }
+}
 import {
   buildAssistantMessage,
   type AssistantAccumulator,
@@ -1210,6 +1232,10 @@ export class Agent {
           modelOverride: turn.modelOverride,
           thinkingMode: turn.thinkingMode,
           cacheKey: turn.conversationId ?? turn.turnId,
+          // The conversation's own channel IS the surface. 'electron' is
+          // the app itself, and a turn with no channel is an in-app turn
+          // that predates the field — both report as 'inapp'.
+          surface: surfaceOf(turn.channel),
           truncateOutbound,
           // The live runtime tail (host clock + loop counters) rides at the
           // very end of the outbound clone — omitted on iteration 1 (unless

@@ -1,3 +1,4 @@
+import { rebuildConversation, type RebuiltConversation } from '@/lib/sync/rebuild'
 import { coalesceTextSegments, messageFilePaths } from '@/lib/conversations/segments'
 import type { ConversationMessage, Segment } from '@/lib/conversations/types'
 import { getDb, withExclusiveTransaction } from '@/lib/db/database'
@@ -628,74 +629,6 @@ export function fetchConversationBody(id: string): Promise<boolean> {
 
 const bodyFetches = new Map<string, { again: boolean; run: Promise<boolean> }>()
 
-type RebuiltConversation = {
-  updatedAt: number | null
-  messages: Array<{
-    id: string
-    role: string
-    content: string
-    timestamp: number
-    payload?: Record<string, unknown>
-  }>
-}
-
-/**
- * The org's record pages → one conversation. The same rules the desktop
- * applies when it rebuilds a transcript after a purge: message versions
- * share a base id (the record id carries a content hash suffix) and the
- * version the org received LAST wins — `records` is in the server's insert
- * order, and the desktop pushes its current truth every time. Not the
- * highest seq: seq is the message's timestamp, and a writer re-stamping a
- * message between pushes leaves a stale copy with the younger seq (seen
- * live: a prompt 1.5 s "younger" than its own reply, rendered under it).
- * The last snapshot is the envelope; messages sort by seq, insert order
- * breaking ties so a prompt and its reply stamped in the same millisecond
- * keep their places.
- */
-function rebuildConversation(records: WireRecord[]): RebuiltConversation {
-  let envelope: Record<string, unknown> = {}
-  const byMessage = new Map<string, WireRecord>()
-  for (const rec of records) {
-    if (rec.kind === 'snapshot') {
-      envelope = (rec.content as Record<string, unknown>) ?? {}
-    } else if (rec.kind === 'message') {
-      const base = rec.id.replace(/\.[0-9a-f]{8}$/, '')
-      // A message keeps the map slot of its first version; the value is the
-      // version seen last.
-      byMessage.set(base, rec)
-    }
-  }
-  const messages = [...byMessage.values()]
-    .sort((a, b) => a.seq - b.seq)
-    .map((rec) => {
-      const raw = (
-        rec.content && typeof rec.content === 'object' && !Array.isArray(rec.content)
-          ? rec.content
-          : {}
-      ) as Record<string, unknown>
-      const rawTs = raw.timestamp
-      const timestamp =
-        typeof rawTs === 'number' && Number.isFinite(rawTs) && rawTs > 0
-          ? rawTs
-          : Number.isFinite(rec.seq) && rec.seq > 1_000_000_000_000
-            ? rec.seq
-            : Date.parse(rec.created_at) || Date.now()
-      const { id: rawId, role: rawRole, content: rawContent, text, timestamp: _ts, ...rest } = raw
-      const id = typeof rawId === 'string' && rawId ? rawId : rec.id.replace(/\.[0-9a-f]{8}$/, '')
-      return {
-        id,
-        role: rawRole === 'assistant' ? 'assistant' : 'user',
-        content: typeof rawContent === 'string' ? rawContent : typeof text === 'string' ? text : '',
-        timestamp,
-        payload: Object.keys(rest).length ? rest : undefined
-      }
-    })
-  const updatedAt =
-    typeof envelope.updatedAt === 'number' && Number.isFinite(envelope.updatedAt)
-      ? envelope.updatedAt
-      : null
-  return { updatedAt, messages }
-}
 
 async function pullRecords(conversationId: string): Promise<WireRecord[] | null> {
   const all: WireRecord[] = []

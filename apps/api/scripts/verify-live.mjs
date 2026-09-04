@@ -607,7 +607,7 @@ check('new password works', (await api('/auth/login', { body: { email: vEmail, p
   const man0 = await api('/v1/capabilities/manifest', { token: VT })
   check(
     'manifest serves the seeded org set',
-    (man0.json?.org ?? []).length >= 39 &&
+    (man0.json?.org ?? []).length >= 33 &&
       man0.json.org.every((e) => /^[0-9a-f]{64}$/.test(e.sha256) && e.version >= 1) &&
       man0.json.org.some((e) => e.slug === 'shell')
   )

@@ -7,15 +7,19 @@
  * Mutations: owner, admin — and only an owner may touch an owner.
  * Every mutation writes an audit_log row.
  */
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { deleteCapability, putCapability } from '@/lib/capabilities'
 import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
+import { ceilingsFor, normalizePlan, PLAN_CEILINGS, TOKEN_PLANS } from '@/lib/plans'
+import { policyCacheKey } from '@/lib/policy'
+import { readRecordsPage, RECORDS_PAGE_MAX } from '@/lib/records'
 import {
   ClearPinSchema,
   ConfigPutSchema,
   InviteSchema,
   OrgPatchSchema,
+  PlanPutSchema,
   PolicyPutSchema,
   UserPatchSchema
 } from '@/lib/schemas'
@@ -151,11 +155,16 @@ admin.get('/users/:id', async (c) => {
       .all(),
     c.env.DB.prepare('SELECT * FROM model_policies WHERE user_id = ?1').bind(id).first()
   ])
+  const plan = normalizePlan((policy as Record<string, unknown> | null)?.token_plan)
   return c.json({
     user,
     devices: devices.results ?? [],
     sessions: sessions.results ?? [],
-    policy: policy ?? null
+    policy: policy ? { ...policy, token_plan: plan } : null,
+    // Always present, even with no policy row: 'standard' is a real answer,
+    // and a client that had to infer it from a null row would guess.
+    token_plan: plan,
+    ceilings: ceilingsFor(plan)
   })
 })
 
@@ -274,13 +283,19 @@ admin.put('/users/:id/policy', async (c) => {
   const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
   if (!user) return c.json({ error: 'not_found' }, 404)
 
+  // `token_plan` absent means "leave it alone" — an admin editing only the
+  // search cap must not silently reset someone off `high` — so the plan
+  // column is written with COALESCE against a sentinel rather than the flat
+  // overwrite the other columns take.
+  const planWrite = body.token_plan === undefined ? undefined : (body.token_plan ?? null)
   await c.env.DB.prepare(
-    `INSERT INTO model_policies (user_id, allowed_models, daily_token_cap, daily_search_cap, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5)
+    `INSERT INTO model_policies (user_id, allowed_models, daily_token_cap, daily_search_cap, token_plan, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT(user_id) DO UPDATE SET
        allowed_models = excluded.allowed_models,
        daily_token_cap = excluded.daily_token_cap,
        daily_search_cap = excluded.daily_search_cap,
+       token_plan = CASE WHEN ?7 = 1 THEN excluded.token_plan ELSE model_policies.token_plan END,
        updated_at = excluded.updated_at`
   )
     .bind(
@@ -290,11 +305,13 @@ admin.put('/users/:id/policy', async (c) => {
         : JSON.stringify(body.allowed_models),
       body.daily_token_cap ?? null,
       body.daily_search_cap ?? null,
-      nowIso()
+      planWrite ?? null,
+      nowIso(),
+      planWrite === undefined ? 0 : 1
     )
     .run()
   // The router reads policy from CONFIG_KV; refresh the cached copy now.
-  await c.env.CONFIG_KV.delete(`policy:${id}`)
+  await c.env.CONFIG_KV.delete(policyCacheKey(id))
   await audit(c.env, auth.sub, 'policy.set', id, body)
   return c.json({ ok: true })
 })
@@ -358,6 +375,407 @@ admin.put('/users/:id/config', async (c) => {
     keys: Object.keys(body.config).length
   })
   return c.json({ ok: true, updated_at: now })
+})
+
+
+/**
+ * The roster — every employee with the numbers a card shows at a glance,
+ * in ONE round trip.
+ *
+ * The admin's people screen renders a card per employee with their spend,
+ * their plan and how active they have been. Fetching that per card would be
+ * five hundred requests to open one screen; every figure here therefore
+ * comes from the per-day rollup joined onto users, never from a scan of raw
+ * rows. Two windows, deliberately: `since` (a rolling 30 days by default)
+ * is the activity glance, and the calendar month-to-date is what the plan
+ * ceiling is measured against — a rolling window would show someone at 90%
+ * of a ceiling that actually reset a week ago.
+ */
+admin.get('/roster', async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query('days') ?? '30', 10) || 30, 1), 365)
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  const monthStart = new Date().toISOString().slice(0, 7) + '-01'
+
+  const rows = await c.env.DB.prepare(
+    `SELECT
+       u.id, u.email, u.name, u.role, u.status, u.must_change_password,
+       u.created_at, u.last_login_at,
+       COALESCE(p.token_plan, 'standard') AS token_plan,
+       p.daily_token_cap, p.daily_search_cap,
+       COALESCE(w.requests, 0) AS requests,
+       COALESCE(w.denied, 0) AS denied,
+       COALESCE(w.tokens_in, 0) AS tokens_in,
+       COALESCE(w.tokens_out, 0) AS tokens_out,
+       COALESCE(w.tokens_cached, 0) AS tokens_cached,
+       COALESCE(w.cost_microusd, 0) AS cost_microusd,
+       COALESCE(w.searches, 0) AS searches,
+       COALESCE(w.days_active, 0) AS days_active,
+       w.last_active_day,
+       COALESCE(m.tokens_in, 0) AS month_tokens_in,
+       COALESCE(m.tokens_out, 0) AS month_tokens_out,
+       COALESCE(m.cost_microusd, 0) AS month_cost_microusd,
+       COALESCE(m.searches, 0) AS month_searches,
+       COALESCE(d.devices, 0) AS devices,
+       COALESCE(d.phones, 0) AS phones,
+       COALESCE(cv.conversations, 0) AS conversations
+     FROM users u
+     LEFT JOIN model_policies p ON p.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id,
+         SUM(requests) AS requests,
+         SUM(denied) AS denied,
+         SUM(tokens_in) AS tokens_in,
+         SUM(tokens_out) AS tokens_out,
+         SUM(tokens_cached) AS tokens_cached,
+         SUM(cost_microusd) AS cost_microusd,
+         SUM(CASE WHEN kind = 'search' THEN requests - denied ELSE 0 END) AS searches,
+         COUNT(DISTINCT day) AS days_active,
+         MAX(day) AS last_active_day
+       FROM usage_daily WHERE day >= ?1 GROUP BY user_id
+     ) w ON w.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id,
+         SUM(CASE WHEN kind = 'chat' THEN tokens_in ELSE 0 END) AS tokens_in,
+         SUM(CASE WHEN kind = 'chat' THEN tokens_out ELSE 0 END) AS tokens_out,
+         SUM(cost_microusd) AS cost_microusd,
+         SUM(CASE WHEN kind = 'search' THEN requests - denied ELSE 0 END) AS searches
+       FROM usage_daily WHERE day >= ?2 GROUP BY user_id
+     ) m ON m.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id, COUNT(*) AS devices,
+         SUM(CASE WHEN platform = 'mobile' THEN 1 ELSE 0 END) AS phones
+       FROM devices WHERE status = 'active' GROUP BY user_id
+     ) d ON d.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id, COUNT(*) AS conversations
+       FROM conversations WHERE deleted_at IS NULL GROUP BY user_id
+     ) cv ON cv.user_id = u.id
+     ORDER BY u.name COLLATE NOCASE, u.email COLLATE NOCASE`
+  )
+    .bind(since, monthStart)
+    .all<Record<string, unknown>>()
+
+  // The ceilings ride along so the client can draw a plan meter without
+  // knowing the pricing model, and so a ceiling changed in plans.ts moves
+  // every client at the next deploy rather than at the next client release.
+  const people = (rows.results ?? []).map((r) => {
+    const plan = normalizePlan(r.token_plan)
+    return { ...r, token_plan: plan, ceilings: ceilingsFor(plan) }
+  })
+  return c.json({
+    since,
+    days,
+    month_start: monthStart,
+    plans: PLAN_CEILINGS,
+    people
+  })
+})
+
+/**
+ * One employee, in full — what an admin opens when they need to help
+ * somebody or explain a bill. Everything is one round trip because the
+ * screen shows it all at once: identity, the plan and what is left of it,
+ * where the spend went (lane AND surface), the shape of the last N days,
+ * their devices and sessions, and the most recent decisions the router
+ * made for them.
+ *
+ * The plan meter reads the GATE, not the rollup: the gate's durable
+ * counters are what the ceiling is actually enforced against, and a rollup
+ * that lags by a write would show someone room they do not have.
+ */
+admin.get('/users/:id/overview', async (c) => {
+  const id = c.req.param('id')
+  const days = Math.min(Math.max(parseInt(c.req.query('days') ?? '30', 10) || 30, 1), 365)
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  const monthStart = new Date().toISOString().slice(0, 7) + '-01'
+
+  const user = await c.env.DB.prepare(
+    `SELECT id, email, name, role, status, must_change_password, phone, position, bio,
+       created_at, updated_at, last_login_at, temp_password_expires_at
+     FROM users WHERE id = ?1`
+  )
+    .bind(id)
+    .first<Record<string, unknown>>()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+
+  const modelGate = c.env.MODEL_GATE.get(c.env.MODEL_GATE.idFromName('org'))
+  const searchGate = c.env.SEARCH_GATE.get(c.env.SEARCH_GATE.idFromName('org'))
+
+  const [policyRow, lanes, surfaces, daily, devices, sessions, recent, counts, standing, searchStanding] =
+    await Promise.all([
+      c.env.DB.prepare('SELECT * FROM model_policies WHERE user_id = ?1').bind(id).first<Record<string, unknown>>(),
+      c.env.DB.prepare(
+        `SELECT kind,
+           SUM(requests) AS requests, SUM(denied) AS denied,
+           SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+           SUM(tokens_cached) AS tokens_cached, SUM(cost_microusd) AS cost_microusd,
+           SUM(CASE WHEN day >= ?3 THEN requests ELSE 0 END) AS month_requests,
+           SUM(CASE WHEN day >= ?3 THEN tokens_in ELSE 0 END) AS month_tokens_in,
+           SUM(CASE WHEN day >= ?3 THEN tokens_out ELSE 0 END) AS month_tokens_out,
+           SUM(CASE WHEN day >= ?3 THEN cost_microusd ELSE 0 END) AS month_cost_microusd
+         FROM usage_daily WHERE user_id = ?1 AND day >= ?2 GROUP BY kind`
+      )
+        .bind(id, since, monthStart)
+        .all<Record<string, unknown>>(),
+      c.env.DB.prepare(
+        `SELECT surface, kind,
+           SUM(requests) AS requests, SUM(denied) AS denied,
+           SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+           SUM(cost_microusd) AS cost_microusd
+         FROM usage_daily WHERE user_id = ?1 AND day >= ?2
+         GROUP BY surface, kind ORDER BY cost_microusd DESC`
+      )
+        .bind(id, since)
+        .all<Record<string, unknown>>(),
+      c.env.DB.prepare(
+        `SELECT day,
+           SUM(requests) AS requests,
+           SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+           SUM(cost_microusd) AS cost_microusd,
+           SUM(CASE WHEN kind = 'search' THEN requests - denied ELSE 0 END) AS searches
+         FROM usage_daily WHERE user_id = ?1 AND day >= ?2 GROUP BY day ORDER BY day`
+      )
+        .bind(id, since)
+        .all<Record<string, unknown>>(),
+      c.env.DB.prepare('SELECT * FROM devices WHERE user_id = ?1 ORDER BY created_at').bind(id).all(),
+      c.env.DB.prepare(
+        `SELECT id, device_id, issued_at, refreshed_at, expires_at, revoked_at, revoked_by
+         FROM device_sessions WHERE user_id = ?1 ORDER BY issued_at DESC LIMIT 20`
+      )
+        .bind(id)
+        .all(),
+      c.env.DB.prepare(
+        `SELECT id, device_id, model, kind, surface, upstream, tokens_in, tokens_out, tokens_cached,
+           cost_microusd, latency_ms, decision, error, created_at
+         FROM usage WHERE user_id = ?1 ORDER BY id DESC LIMIT 50`
+      )
+        .bind(id)
+        .all(),
+      c.env.DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM conversations WHERE user_id = ?1 AND deleted_at IS NULL) AS conversations,
+           (SELECT COUNT(*) FROM files WHERE user_id = ?1 AND deleted_at IS NULL) AS files,
+           (SELECT COALESCE(SUM(size), 0) FROM files WHERE user_id = ?1 AND deleted_at IS NULL) AS bytes`
+      )
+        .bind(id)
+        .first<Record<string, unknown>>(),
+      modelGate.standing(id).catch(() => null),
+      searchGate.standing(id).catch(() => null)
+    ])
+
+  const plan = normalizePlan(policyRow?.token_plan)
+  return c.json({
+    user,
+    window: { since, days, month_start: monthStart },
+    policy: {
+      ...(policyRow ?? {}),
+      token_plan: plan,
+      ceilings: ceilingsFor(plan)
+    },
+    plans: PLAN_CEILINGS,
+    /** Live counters from the gates — what the ceilings are enforced against. */
+    standing: { tokens: standing, searches: searchStanding },
+    lanes: lanes.results ?? [],
+    surfaces: surfaces.results ?? [],
+    daily: daily.results ?? [],
+    devices: devices.results ?? [],
+    sessions: sessions.results ?? [],
+    recent: recent.results ?? [],
+    counts: counts ?? { conversations: 0, files: 0, bytes: 0 }
+  })
+})
+
+/** Set an employee's token plan — the one control this screen exists for. */
+admin.put('/users/:id/plan', async (c) => {
+  const auth = c.get('auth')
+  const id = c.req.param('id')
+  const body = await parseJson(c, PlanPutSchema)
+  if (body instanceof Response) return body
+  if (!(await ownerGuard(c.env, auth.role, id))) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
+  }
+  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+
+  await c.env.DB.prepare(
+    `INSERT INTO model_policies (user_id, token_plan, updated_at) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET token_plan = excluded.token_plan, updated_at = excluded.updated_at`
+  )
+    .bind(id, body.token_plan, nowIso())
+    .run()
+  await c.env.CONFIG_KV.delete(policyCacheKey(id))
+  await audit(c.env, auth.sub, 'plan.set', id, {
+    token_plan: body.token_plan,
+    ceilings: ceilingsFor(body.token_plan)
+  })
+  return c.json({ ok: true, token_plan: body.token_plan, ceilings: ceilingsFor(body.token_plan) })
+})
+
+/** The plan catalogue, so a client never hard-codes a ceiling. */
+admin.get('/plans', (c) => c.json({ plans: TOKEN_PLANS, ceilings: PLAN_CEILINGS }))
+
+/** Audit trail for one employee: what was done TO them and BY them. */
+admin.get('/users/:id/audit', async (c) => {
+  const id = c.req.param('id')
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10) || 100, 500)
+  const rows = await c.env.DB.prepare(
+    `SELECT a.*, u.name AS actor_name, u.email AS actor_email
+     FROM audit_log a LEFT JOIN users u ON u.id = a.actor_user_id
+     WHERE a.target = ?1 OR a.actor_user_id = ?1
+     ORDER BY a.id DESC LIMIT ?2`
+  )
+    .bind(id, limit)
+    .all()
+  return c.json({ entries: rows.results ?? [] })
+})
+
+// ── Reading someone else's work ──────────────────────────────────────────
+//
+// A conversation is the employee's actual words and the actual commands the
+// agent ran on their machine — the most sensitive thing this API holds, and
+// far beyond what the roster's numbers expose. So these two reads carry the
+// same guard the synced-config read does, for the same reason: support is
+// the view-only tier for OPERATIONS, not a licence to read the company's
+// conversations; an admin cannot read an owner's; and opening a transcript
+// is itself audited, because a disclosure that leaves no trace is not a
+// control anyone can point at.
+
+type AdminContext = Context<{ Bindings: Env; Variables: AuthVars }>
+
+async function readableUser(c: AdminContext, userId: string): Promise<Response | null> {
+  const auth = c.get('auth')
+  if (auth.role === 'support') {
+    return c.json({ error: 'forbidden', detail: 'support cannot read conversations' }, 403)
+  }
+  if (!(await ownerGuard(c.env, auth.role, userId))) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can view an owner' }, 403)
+  }
+  return null
+}
+
+/**
+ * One employee's conversations, newest first — the index behind the admin's
+ * transcript list. Meta comes off the synced snapshot record the desktop
+ * pushes with every conversation (its envelope minus the messages), so the
+ * list already knows which SURFACE each conversation came from and how many
+ * tool calls it ran, without opening any of them.
+ */
+admin.get('/users/:id/conversations', async (c) => {
+  const id = c.req.param('id')
+  const denied = await readableUser(c, id)
+  if (denied) return denied
+  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+
+  const limitRaw = parseInt(c.req.query('limit') ?? '30', 10)
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 30, 1), 100)
+  // Newest-first paging on (updated_at, rowid) — a cursor rather than an
+  // offset, so a conversation that updates mid-scroll cannot make the next
+  // page repeat or skip a row.
+  const before = c.req.query('before') ?? ''
+  const [beforeAt, beforeRid] = before.includes('~~')
+    ? [before.slice(0, before.indexOf('~~')), parseInt(before.slice(before.indexOf('~~') + 2), 10) || 0]
+    : ['￿', 0]
+
+  const rows = await c.env.DB.prepare(
+    `SELECT c.rowid AS rid, c.id, c.title, c.device_id, c.created_at, c.updated_at,
+       c.archived_at,
+       json_extract(s.content, '$.model') AS model,
+       json_extract(s.content, '$.channel') AS channel,
+       json_extract(s.content, '$.icon') AS icon,
+       json_extract(s.content, '$.projectId') AS project_id,
+       json_extract(s.content, '$.sealed') AS sealed,
+       json_extract(s.content, '$.summary') AS summary,
+       json_extract(s.content, '$.stats') AS stats,
+       COALESCE(json_extract(s.content, '$.messageCount'),
+         (SELECT COUNT(DISTINCT substr(r.id, 1, length(r.id) - 9)) FROM conversation_records r
+           WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count
+     FROM conversations c
+     LEFT JOIN conversation_records s ON s.conversation_id = c.id AND s.kind = 'snapshot'
+     WHERE c.user_id = ?1 AND c.deleted_at IS NULL
+       AND (c.updated_at < ?2 OR (c.updated_at = ?2 AND c.rowid < ?3))
+     ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ?4`
+  )
+    .bind(id, beforeAt, beforeRid || 2_147_483_647, limit)
+    .all<{ rid: number; updated_at: string; stats: unknown } & Record<string, unknown>>()
+
+  const results = rows.results ?? []
+  const conversations = results.map(({ rid: _rid, stats, ...rest }) => ({
+    ...rest,
+    stats: typeof stats === 'string' ? safeJson(stats) : (stats ?? null)
+  }))
+  const last = results[results.length - 1]
+  return c.json({
+    conversations,
+    next: results.length === limit && last ? `${last.updated_at}~~${last.rid}` : null
+  })
+})
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A conversation's records, exactly as the owner's own client receives them
+ * (same shared reader, same archive merge, same cursor) — so an admin's
+ * transcript is the employee's transcript, not a second rendering of it
+ * that can disagree.
+ *
+ * The first page is audited; later pages are not, or scrolling a long
+ * conversation would write a hundred identical rows and bury the fact that
+ * it was opened at all.
+ */
+admin.get('/conversations/:id/records', async (c) => {
+  const auth = c.get('auth')
+  const id = c.req.param('id')
+  const conv = await c.env.DB.prepare(
+    `SELECT c.user_id, c.title, c.created_at, c.updated_at, c.archive_key, c.archived_at,
+       u.name AS user_name, u.email AS user_email
+     FROM conversations c LEFT JOIN users u ON u.id = c.user_id
+     WHERE c.id = ?1 AND c.deleted_at IS NULL`
+  )
+    .bind(id)
+    .first<{
+      user_id: string
+      title: string
+      created_at: string
+      updated_at: string
+      archive_key: string | null
+      archived_at: string | null
+      user_name: string | null
+      user_email: string | null
+    }>()
+  if (!conv) return c.json({ error: 'not_found' }, 404)
+  const denied = await readableUser(c, conv.user_id)
+  if (denied) return denied
+
+  const after = parseInt(c.req.query('after') ?? '0', 10)
+  const page = await readRecordsPage(c.env, id, conv, {
+    after,
+    limit: parseInt(c.req.query('limit') ?? String(RECORDS_PAGE_MAX), 10)
+  })
+  if (!(after > 0)) {
+    await audit(c.env, auth.sub, 'conversation.view', id, {
+      user_id: conv.user_id,
+      title: conv.title
+    })
+  }
+  return c.json({
+    ...page,
+    conversation: {
+      id,
+      title: conv.title,
+      created_at: conv.created_at,
+      updated_at: conv.updated_at,
+      user_id: conv.user_id,
+      user_name: conv.user_name,
+      user_email: conv.user_email
+    }
+  })
 })
 
 // ── Org settings ─────────────────────────────────────────────────────────
@@ -474,7 +892,7 @@ admin.get('/usage', async (c) => {
   // day and lane), never from a scan of raw rows — a month of a 500-person
   // org is ~30k rollup rows against millions of raw ones, and the totals
   // survive the raw-row retention sweep. The recent list is raw.
-  const [totals, recent] = await Promise.all([
+  const [totals, recent, surfaces] = await Promise.all([
     c.env.DB.prepare(
       `SELECT user_id, SUM(requests) AS requests,
          SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
@@ -492,9 +910,25 @@ admin.get('/usage', async (c) => {
        ORDER BY id DESC LIMIT 100`
     )
       .bind(since, userId)
+      .all(),
+    // Where the spend happened — desktop, phone, extension, heartbeat. Also
+    // from the rollup, so it survives the raw-row retention sweep.
+    c.env.DB.prepare(
+      `SELECT surface, kind, SUM(requests) AS requests, SUM(denied) AS denied,
+         SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+         SUM(cost_microusd) AS cost_microusd
+       FROM usage_daily WHERE day >= ?1 AND (?2 IS NULL OR user_id = ?2)
+       GROUP BY surface, kind ORDER BY cost_microusd DESC`
+    )
+      .bind(since.slice(0, 10), userId)
       .all()
   ])
-  return c.json({ since, totals: totals.results ?? [], recent: recent.results ?? [] })
+  return c.json({
+    since,
+    totals: totals.results ?? [],
+    surfaces: surfaces.results ?? [],
+    recent: recent.results ?? []
+  })
 })
 
 /**

@@ -13,6 +13,7 @@
  * of the call they already handle.
  */
 import { costMicroUsd } from '@/lib/models'
+import type { Surface } from '@/lib/plans'
 import type { Env } from '@/index'
 
 export type UsageDecision = 'allowed' | 'denied_model' | 'denied_quota' | 'error'
@@ -22,6 +23,13 @@ export type UsageEvent = {
   deviceId: string
   kind: 'chat' | 'search'
   model: string
+  /**
+   * Which surface the call came from — the desktop app, the paired phone,
+   * the browser extension, the heartbeat, a procedure. '' when the client
+   * named none (an older build, a script): unattributed, never rejected.
+   */
+  surface?: Surface | ''
+
   upstream?: string
   tokensIn?: number
   tokensOut?: number
@@ -50,17 +58,19 @@ export async function recordUsage(env: Env, e: UsageEvent): Promise<void> {
       : e.upstreamCostUsd !== undefined && Number.isFinite(e.upstreamCostUsd)
         ? Math.round(e.upstreamCostUsd * 1_000_000)
         : costMicroUsd(e.model, tokensIn, tokensOut, tokensCached)
+  const surface = e.surface ?? ''
   const now = new Date().toISOString()
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO usage (user_id, device_id, model, kind, upstream, tokens_in, tokens_out, tokens_cached,
-         cost_microusd, latency_ms, decision, error, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+      `INSERT INTO usage (user_id, device_id, model, kind, surface, upstream, tokens_in, tokens_out,
+         tokens_cached, cost_microusd, latency_ms, decision, error, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
     ).bind(
       e.userId,
       e.deviceId,
       e.model,
       e.kind,
+      surface,
       e.upstream ?? '',
       tokensIn,
       tokensOut,
@@ -72,9 +82,9 @@ export async function recordUsage(env: Env, e: UsageEvent): Promise<void> {
       now
     ),
     env.DB.prepare(
-      `INSERT INTO usage_daily (user_id, day, kind, requests, denied, tokens_in, tokens_out, tokens_cached, cost_microusd)
-       VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8)
-       ON CONFLICT(user_id, day, kind) DO UPDATE SET
+      `INSERT INTO usage_daily (user_id, day, kind, surface, requests, denied, tokens_in, tokens_out, tokens_cached, cost_microusd)
+       VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9)
+       ON CONFLICT(user_id, day, kind, surface) DO UPDATE SET
          requests = requests + 1,
          denied = denied + excluded.denied,
          tokens_in = tokens_in + excluded.tokens_in,
@@ -85,6 +95,7 @@ export async function recordUsage(env: Env, e: UsageEvent): Promise<void> {
       e.userId,
       dayOf(now),
       e.kind,
+      surface,
       allowed ? 0 : 1,
       allowed ? tokensIn : 0,
       allowed ? tokensOut : 0,

@@ -930,11 +930,340 @@ export type UsageDailyEntry = {
   totalTokens: number
 }
 
+/**
+ * One person's standing on the org leaderboard — the wire row verbatim
+ * (dual decl — mirrors LeaderboardRowWire in src/main/cloud/api.ts). `rank`
+ * is the rank in the WHOLE org, so it stays meaningful inside a filtered
+ * page; the client never computes it.
+ */
+export type LeaderboardRow = {
+  rank: number
+  user_id: string
+  name: string
+  role: string
+  tokens: number
+  conversations: number
+  agentic_tasks: number
+}
+
+export type LeaderboardPage = {
+  generated_at: string
+  /** Rows matching the search (the whole board when there is none). */
+  total: number
+  /** People on the board, regardless of the search — the denominator. */
+  board_size: number
+  /** The org outgrew the server's board cap; the tail is not listed. */
+  truncated: boolean
+  limit: number
+  offset: number
+  rows: LeaderboardRow[]
+  /** The signed-in user's own row, on every page and past every filter. */
+  me: LeaderboardRow | null
+}
+
+export type LeaderboardApi = {
+  list: (params?: { limit?: number; offset?: number; q?: string }) => Promise<LeaderboardPage>
+}
+
 export type UsageApi = {
   getSummary: (range: UsageTimeRange) => Promise<UsageSummary>
   getStats: (range: UsageTimeRange) => Promise<UsageStats>
   getDaily: (year: number) => Promise<UsageDailyEntry[]>
   sync: () => Promise<{ ok: true }>
+}
+
+// ── Admin ────────────────────────────────────────────────────────────────
+//
+// The admin layer's wire shapes, mirrored from apps/api/src/routes/admin.ts.
+// Every one of these is read live and held only in renderer memory — none of
+// it is cached to disk, because it is other people's spend and other
+// people's conversations (see src/main/admin-ipc.ts).
+
+export type AdminRole = 'owner' | 'admin' | 'support' | 'employee'
+export type AdminUserStatus = 'invited' | 'active' | 'suspended' | 'removed'
+/** The three ceilings an admin assigns. Everyone starts on `standard`. */
+export type TokenPlan = 'standard' | 'high' | 'unmetered'
+/** Monthly input/output token ceilings; 0 means unlimited. */
+export type PlanCeilings = { monthlyIn: number; monthlyOut: number }
+
+/** What this device's signed-in user may do on the admin screen. */
+export type AdminAccess = {
+  canRead: boolean
+  canWrite: boolean
+  isOwner: boolean
+  role: string | null
+  email: string | null
+}
+
+/** One card in the people grid — every figure from the server-side rollup. */
+export type RosterPerson = {
+  id: string
+  email: string
+  name: string
+  role: AdminRole
+  status: AdminUserStatus
+  must_change_password: number
+  created_at: string
+  last_login_at: string | null
+  token_plan: TokenPlan
+  ceilings: PlanCeilings
+  daily_token_cap: number | null
+  daily_search_cap: number | null
+  requests: number
+  denied: number
+  tokens_in: number
+  tokens_out: number
+  tokens_cached: number
+  cost_microusd: number
+  searches: number
+  days_active: number
+  last_active_day: string | null
+  month_tokens_in: number
+  month_tokens_out: number
+  month_cost_microusd: number
+  month_searches: number
+  devices: number
+  phones: number
+  conversations: number
+}
+
+export type AdminRoster = {
+  since: string
+  days: number
+  month_start: string
+  plans: Record<TokenPlan, PlanCeilings>
+  people: RosterPerson[]
+}
+
+export type AdminLaneTotals = {
+  kind: 'chat' | 'search'
+  requests: number
+  denied: number
+  tokens_in: number
+  tokens_out: number
+  tokens_cached: number
+  cost_microusd: number
+  month_requests: number
+  month_tokens_in: number
+  month_tokens_out: number
+  month_cost_microusd: number
+}
+
+export type AdminSurfaceTotals = {
+  surface: string
+  kind: 'chat' | 'search'
+  requests: number
+  denied: number
+  tokens_in: number
+  tokens_out: number
+  cost_microusd: number
+}
+
+export type AdminDailyPoint = {
+  day: string
+  requests: number
+  tokens_in: number
+  tokens_out: number
+  cost_microusd: number
+  searches: number
+}
+
+export type AdminDevice = {
+  id: string
+  platform: string
+  name: string
+  app_version: string
+  status: string
+  pin_set: number
+  pin_clear_requested: number
+  created_at: string
+  last_seen_at: string | null
+}
+
+export type AdminSession = {
+  id: string
+  device_id: string
+  issued_at: string
+  refreshed_at: string | null
+  expires_at: string
+  revoked_at: string | null
+  revoked_by: string | null
+}
+
+export type AdminUsageRow = {
+  id: number
+  device_id: string | null
+  model: string
+  kind: string
+  surface: string
+  upstream: string
+  tokens_in: number
+  tokens_out: number
+  tokens_cached: number
+  cost_microusd: number
+  latency_ms: number
+  decision: string
+  error: string | null
+  created_at: string
+}
+
+export type AdminUserOverview = {
+  user: {
+    id: string
+    email: string
+    name: string
+    role: AdminRole
+    status: AdminUserStatus
+    must_change_password: number
+    phone: string
+    position: string
+    bio: string
+    created_at: string
+    updated_at: string
+    last_login_at: string | null
+    temp_password_expires_at: string | null
+  }
+  window: { since: string; days: number; month_start: string }
+  policy: {
+    token_plan: TokenPlan
+    ceilings: PlanCeilings
+    allowed_models?: string | null
+    daily_token_cap?: number | null
+    daily_search_cap?: number | null
+    updated_at?: string
+  }
+  plans: Record<TokenPlan, PlanCeilings>
+  /** Live gate counters — what the ceilings are actually enforced against. */
+  standing: {
+    tokens: {
+      userDayUsed: number
+      orgMonthUsed: number
+      userMonthIn: number
+      userMonthOut: number
+    } | null
+    searches: { userDayUsed: number; orgMonthUsed: number } | null
+  }
+  lanes: AdminLaneTotals[]
+  surfaces: AdminSurfaceTotals[]
+  daily: AdminDailyPoint[]
+  devices: AdminDevice[]
+  sessions: AdminSession[]
+  recent: AdminUsageRow[]
+  counts: { conversations: number; files: number; bytes: number }
+}
+
+/** A transcript row — provenance and size without opening anything. */
+export type AdminConversationRow = {
+  id: string
+  title: string
+  device_id: string | null
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+  model: string | null
+  channel: string | null
+  icon: string | null
+  project_id: string | null
+  sealed: number | null
+  summary: string | null
+  stats: Record<string, unknown> | null
+  message_count: number
+}
+
+/**
+ * One conversation rebuilt into the same file the employee's own client
+ * holds — so the admin's transcript is drawn by the same components, from
+ * the same shape, as the one they saw.
+ */
+export type AdminTranscript = {
+  conversation: ConversationFile
+  owner: { userId: string; name: string | null; email: string | null }
+  truncated: boolean
+}
+
+export type AdminAuditEntry = {
+  id: number
+  actor_user_id: string
+  actor_name?: string | null
+  actor_email?: string | null
+  action: string
+  target: string
+  detail: string
+  created_at: string
+}
+
+export type AdminOrgSettings = {
+  id: number
+  name: string
+  default_model: string
+  default_allowed_models: string
+  user_daily_token_cap: number
+  org_monthly_token_cap: number
+  search_enabled: number
+  user_daily_search_cap: number
+  org_monthly_search_cap: number
+  created_at: string
+  updated_at: string
+}
+
+export type AdminInviteResult = {
+  user_id: string
+  email: string
+  role: AdminRole
+  temp_password: string
+  temp_password_expires_at: string
+}
+
+export type AdminResetResult = {
+  user_id: string
+  temp_password: string
+  temp_password_expires_at: string
+}
+
+export type AdminApi = {
+  getAccess: () => Promise<AdminAccess>
+  roster: (days?: number) => Promise<AdminRoster>
+  userOverview: (userId: string, days?: number) => Promise<AdminUserOverview>
+  listConversations: (
+    userId: string,
+    opts?: { before?: string; limit?: number }
+  ) => Promise<{ conversations: AdminConversationRow[]; next: string | null }>
+  readConversation: (conversationId: string) => Promise<AdminTranscript>
+  userAudit: (userId: string, limit?: number) => Promise<{ entries: AdminAuditEntry[] }>
+  audit: (limit?: number) => Promise<{ entries: AdminAuditEntry[] }>
+  getOrg: () => Promise<{ org: AdminOrgSettings | null }>
+  getGates: () => Promise<Record<string, unknown>>
+  invite: (input: { email: string; name: string; role: AdminRole }) => Promise<AdminInviteResult>
+  updateUser: (
+    userId: string,
+    patch: { name?: string; role?: AdminRole; status?: 'active' | 'suspended' }
+  ) => Promise<{ ok: true }>
+  setPlan: (
+    userId: string,
+    plan: TokenPlan
+  ) => Promise<{ ok: true; token_plan: TokenPlan; ceilings: PlanCeilings }>
+  setPolicy: (
+    userId: string,
+    policy: {
+      allowed_models?: string[] | null
+      daily_token_cap?: number | null
+      daily_search_cap?: number | null
+      token_plan?: TokenPlan | null
+    }
+  ) => Promise<{ ok: true }>
+  resetPassword: (userId: string) => Promise<AdminResetResult>
+  clearPin: (userId: string, deviceId?: string) => Promise<{ ok: true }>
+  revokeSessions: (userId: string) => Promise<{ ok: true; revoked: number }>
+  patchOrg: (patch: {
+    name?: string
+    default_model?: string
+    default_allowed_models?: string[]
+    user_daily_token_cap?: number
+    org_monthly_token_cap?: number
+    search_enabled?: boolean
+    user_daily_search_cap?: number
+    org_monthly_search_cap?: number
+  }) => Promise<{ ok: true }>
 }
 
 export type ViewerApi = {
@@ -1747,6 +2076,8 @@ export type WolffishApi = {
   services: ServicesApi
   runtime: RuntimeApi
   usage: UsageApi
+  admin: AdminApi
+  leaderboard: LeaderboardApi
   cerebellum: CerebellumApi
   variables: VariablesApi
   voice: VoiceApi
@@ -1952,6 +2283,30 @@ const api: WolffishApi = {
     getStats: (range) => ipcRenderer.invoke('usage:getStats', range),
     getDaily: (year) => ipcRenderer.invoke('usage:getDaily', year),
     sync: () => ipcRenderer.invoke('usage:sync')
+  },
+  admin: {
+    getAccess: () => ipcRenderer.invoke('admin:getAccess'),
+    roster: (days) => ipcRenderer.invoke('admin:roster', days),
+    userOverview: (userId, days) => ipcRenderer.invoke('admin:userOverview', userId, days),
+    listConversations: (userId, opts) =>
+      ipcRenderer.invoke('admin:listConversations', userId, opts),
+    readConversation: (conversationId) =>
+      ipcRenderer.invoke('admin:readConversation', conversationId),
+    userAudit: (userId, limit) => ipcRenderer.invoke('admin:userAudit', userId, limit),
+    audit: (limit) => ipcRenderer.invoke('admin:audit', limit),
+    getOrg: () => ipcRenderer.invoke('admin:getOrg'),
+    getGates: () => ipcRenderer.invoke('admin:getGates'),
+    invite: (input) => ipcRenderer.invoke('admin:invite', input),
+    updateUser: (userId, patch) => ipcRenderer.invoke('admin:updateUser', userId, patch),
+    setPlan: (userId, plan) => ipcRenderer.invoke('admin:setPlan', userId, plan),
+    setPolicy: (userId, policy) => ipcRenderer.invoke('admin:setPolicy', userId, policy),
+    resetPassword: (userId) => ipcRenderer.invoke('admin:resetPassword', userId),
+    clearPin: (userId, deviceId) => ipcRenderer.invoke('admin:clearPin', userId, deviceId),
+    revokeSessions: (userId) => ipcRenderer.invoke('admin:revokeSessions', userId),
+    patchOrg: (patch) => ipcRenderer.invoke('admin:patchOrg', patch)
+  },
+  leaderboard: {
+    list: (params) => ipcRenderer.invoke('leaderboard:list', params ?? {})
   },
   cerebellum: {
     listCapabilities: () => ipcRenderer.invoke('cerebellum:listCapabilities'),

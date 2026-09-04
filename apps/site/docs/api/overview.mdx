@@ -78,6 +78,13 @@ Check what is live with `GET /health`, which answers the service name and the de
 | `GET` | `/v1/files/:sha256` | Fetch a blob |
 | `GET` | `/v1/usage` | The raw usage ledger for this user |
 | `GET` | `/v1/usage/days` | Usage folded per day |
+| `GET` | `/v1/leaderboard` | The org standing — tokens, conversations, agentic tasks per person |
+
+`/v1/leaderboard` is the one org-wide read open to every signed-in user rather than to admins: it is
+the organization looking at itself. It deliberately carries no money — cost is organization-financial
+and stays behind `/admin/usage`. The whole board is computed as one aggregate and cached, so paging,
+searching and rank all read one snapshot; a rank is the rank in the *whole* org even when the list is
+filtered to one name.
 
 ## Capabilities (`/v1`)
 

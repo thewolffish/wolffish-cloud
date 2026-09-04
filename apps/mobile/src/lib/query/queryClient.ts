@@ -30,9 +30,25 @@ export const queryClient = new QueryClient({
 /** Query families whose source of truth is on-device SQLite. */
 const LOCAL_QUERY_KEYS = new Set(['conversations', 'conversation', 'data-usage'])
 
+/**
+ * The admin screens read OTHER PEOPLE's spend, devices and conversations.
+ * Every other query here is the signed-in person's own work, and persisting
+ * it is a convenience; persisting this would put the company's transcripts
+ * into AsyncStorage — unencrypted, surviving sign-out, and still there long
+ * after someone stopped being an admin. So the admin families live in memory
+ * for as long as the screen is open and are never dehydrated.
+ *
+ * The prefix, not the exact key: `['admin', 'roster']`, `['admin', 'user',
+ * id]` and everything else the screens add are all covered by the one rule,
+ * which is what keeps a later screen from quietly opting itself back in.
+ */
+const ADMIN_QUERY_PREFIX = 'admin'
+
 export function shouldPersistQuery(query: Query): boolean {
-  if (typeof query.queryKey[0] === 'string' && LOCAL_QUERY_KEYS.has(query.queryKey[0])) {
-    return false
+  const family = query.queryKey[0]
+  if (typeof family === 'string') {
+    if (family === ADMIN_QUERY_PREFIX) return false
+    if (LOCAL_QUERY_KEYS.has(family)) return false
   }
   return defaultShouldDehydrateQuery(query)
 }

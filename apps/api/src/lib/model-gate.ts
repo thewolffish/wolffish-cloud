@@ -89,13 +89,29 @@ export type AdmitRequest = {
   /** The conversation's prompt cache key: what keeps a task on one host. */
   cacheKey?: string
   pool: PoolEntry[]
-  /** Token caps: per user per day, org per month. 0 = unlimited. */
-  caps: { userDaily: number; orgMonthly: number }
+  /**
+   * Token caps, all 0 = unlimited: the per-user daily cap and the org's
+   * monthly cap that have always been here, plus the employee's PLAN
+   * ceilings — input and output per UTC month, counted separately because
+   * that is how the plans are sold (see lib/plans.ts).
+   */
+  caps: {
+    userDaily: number
+    orgMonthly: number
+    userMonthlyIn: number
+    userMonthlyOut: number
+  }
   /** Hosts that just failed this call; skipped unless nothing else serves the model. */
   avoid?: string[]
 }
 
-export type Standing = { userDayUsed: number; orgMonthUsed: number }
+export type Standing = {
+  userDayUsed: number
+  orgMonthUsed: number
+  /** Month-to-date input/output for this user — what the plan meter reads. */
+  userMonthIn: number
+  userMonthOut: number
+}
 
 export type AdmitResult =
   | {
@@ -106,7 +122,13 @@ export type AdmitResult =
       waitedMs: number
       queuedAhead: number
     }
-  | { ok: false; reason: 'quota'; scope: 'user_daily' | 'org_monthly'; used: number; cap: number }
+  | {
+      ok: false
+      reason: 'quota'
+      scope: 'user_daily' | 'org_monthly' | 'plan_monthly_in' | 'plan_monthly_out'
+      used: number
+      cap: number
+    }
   | { ok: false; reason: 'no_upstream' }
   | { ok: false; reason: 'overloaded'; retryAfterMs: number }
 
@@ -183,6 +205,10 @@ type Waiter = {
 const dayKey = (userId: string, now: number) =>
   `tok:d:${userId}:${new Date(now).toISOString().slice(0, 10).replace(/-/g, '')}`
 const monthKey = (now: number) => `tok:m:${new Date(now).toISOString().slice(0, 7).replace(/-/g, '')}`
+const monthStamp = (now: number) => new Date(now).toISOString().slice(0, 7).replace(/-/g, '')
+/** Per-user month-to-date input and output — the plan ceilings' counters. */
+const userMonthInKey = (userId: string, now: number) => `tok:mi:${userId}:${monthStamp(now)}`
+const userMonthOutKey = (userId: string, now: number) => `tok:mo:${userId}:${monthStamp(now)}`
 
 /** FNV-1a: cheap, stable, good enough to spread conversations over hosts. */
 function hash32(s: string): number {
@@ -226,15 +252,39 @@ export class ModelGate extends DurableObject<Env> {
     const now = Date.now()
 
     // Governance first: a capped employee is told so at once, never queued.
-    const [userUsed, orgUsed] = await Promise.all([
+    // Plan ceilings are checked alongside the older caps and in the same
+    // breath — whichever bites first decides, and an 'unmetered' plan simply
+    // passes zeros, which is the same "no ceiling" path an org with its caps
+    // switched off already takes.
+    const [userUsed, orgUsed, monthIn, monthOut] = await Promise.all([
       this.counter(dayKey(req.userId, now)),
-      this.counter(monthKey(now))
+      this.counter(monthKey(now)),
+      this.counter(userMonthInKey(req.userId, now)),
+      this.counter(userMonthOutKey(req.userId, now))
     ])
     if (req.caps.userDaily > 0 && userUsed >= req.caps.userDaily) {
       return { ok: false, reason: 'quota', scope: 'user_daily', used: userUsed, cap: req.caps.userDaily }
     }
     if (req.caps.orgMonthly > 0 && orgUsed >= req.caps.orgMonthly) {
       return { ok: false, reason: 'quota', scope: 'org_monthly', used: orgUsed, cap: req.caps.orgMonthly }
+    }
+    if (req.caps.userMonthlyIn > 0 && monthIn >= req.caps.userMonthlyIn) {
+      return {
+        ok: false,
+        reason: 'quota',
+        scope: 'plan_monthly_in',
+        used: monthIn,
+        cap: req.caps.userMonthlyIn
+      }
+    }
+    if (req.caps.userMonthlyOut > 0 && monthOut >= req.caps.userMonthlyOut) {
+      return {
+        ok: false,
+        reason: 'quota',
+        scope: 'plan_monthly_out',
+        used: monthOut,
+        cap: req.caps.userMonthlyOut
+      }
     }
 
     if (!this.anyServes(req.model)) return { ok: false, reason: 'no_upstream' }
@@ -293,13 +343,16 @@ export class ModelGate extends DurableObject<Env> {
       }
     }
 
-    const tokens = Math.max(0, Math.floor(r.tokensIn ?? 0)) + Math.max(0, Math.floor(r.tokensOut ?? 0))
+    const tokensIn = Math.max(0, Math.floor(r.tokensIn ?? 0))
+    const tokensOut = Math.max(0, Math.floor(r.tokensOut ?? 0))
     const now = Date.now()
-    if (tokens > 0) await this.bump(l.userId, tokens, now)
+    if (tokensIn + tokensOut > 0) await this.bump(l.userId, tokensIn, tokensOut, now)
     this.dispatch()
     return {
       userDayUsed: await this.counter(dayKey(l.userId, now)),
-      orgMonthUsed: await this.counter(monthKey(now))
+      orgMonthUsed: await this.counter(monthKey(now)),
+      userMonthIn: await this.counter(userMonthInKey(l.userId, now)),
+      userMonthOut: await this.counter(userMonthOutKey(l.userId, now))
     }
   }
 
@@ -322,7 +375,9 @@ export class ModelGate extends DurableObject<Env> {
     const now = Date.now()
     return {
       userDayUsed: await this.counter(dayKey(userId, now)),
-      orgMonthUsed: await this.counter(monthKey(now))
+      orgMonthUsed: await this.counter(monthKey(now)),
+      userMonthIn: await this.counter(userMonthInKey(userId, now)),
+      userMonthOut: await this.counter(userMonthOutKey(userId, now))
     }
   }
 
@@ -584,14 +639,28 @@ export class ModelGate extends DurableObject<Env> {
     return stored
   }
 
-  private async bump(userId: string, tokens: number, now: number): Promise<void> {
+  private async bump(
+    userId: string,
+    tokensIn: number,
+    tokensOut: number,
+    now: number
+  ): Promise<void> {
+    const tokens = tokensIn + tokensOut
     const dk = dayKey(userId, now)
     const mk = monthKey(now)
+    const mik = userMonthInKey(userId, now)
+    const mok = userMonthOutKey(userId, now)
     const d = (await this.counter(dk)) + tokens
     const m = (await this.counter(mk)) + tokens
+    const mi = (await this.counter(mik)) + tokensIn
+    const mo = (await this.counter(mok)) + tokensOut
     this.counters.set(dk, d)
     this.counters.set(mk, m)
-    await this.ctx.storage.put({ [dk]: d, [mk]: m })
+    this.counters.set(mik, mi)
+    this.counters.set(mok, mo)
+    // One write: the four counters advance together or not at all, so a
+    // ceiling can never be enforced against a half-applied month.
+    await this.ctx.storage.put({ [dk]: d, [mk]: m, [mik]: mi, [mok]: mo })
     await this.tidyCounters(now)
   }
 
@@ -610,6 +679,11 @@ export class ModelGate extends DurableObject<Env> {
         if (day !== today && day !== yesterday) doomed.push(key)
       } else if (key.startsWith('tok:m:')) {
         const month = key.slice(6)
+        if (month !== thisMonth && month !== lastMonth) doomed.push(key)
+      } else if (key.startsWith('tok:mi:') || key.startsWith('tok:mo:')) {
+        // tok:mi:<userId>:<YYYYMM> — the month is the last segment, and a
+        // user id never contains a colon.
+        const month = key.slice(key.lastIndexOf(':') + 1)
         if (month !== thisMonth && month !== lastMonth) doomed.push(key)
       }
     }

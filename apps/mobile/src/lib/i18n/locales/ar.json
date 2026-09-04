@@ -12,7 +12,9 @@
     "close": "إغلاق",
     "showPassword": "إظهار كلمة المرور",
     "hidePassword": "إخفاء كلمة المرور",
-    "done": "تم"
+    "done": "تم",
+    "copy": "نسخ",
+    "copied": "تم النسخ"
   },
   "theme": {
     "label": "المظهر",
@@ -53,7 +55,8 @@
       "projects": "المشاريع",
       "procedures": "الإجراءات",
       "automations": "الأتمتة",
-      "conversations": "المحادثات"
+      "conversations": "المحادثات",
+      "admin": "الإدارة"
     },
     "summary": {
       "compaction": "الضغط",
@@ -418,6 +421,196 @@
     "mcp": {
       "subtitle": "الخوادم المهيأة لبروتوكول سياق النماذج.",
       "desktopNote": "تُضاف الخوادم من الحاسوب."
+    },
+    "admin": {
+      "rowDescription": "الأشخاص والخطط وسجل التدقيق",
+      "title": "الإدارة",
+      "subtitle": "كل من في النشر: ما ينفقونه، وكيف تساعدهم.",
+      "subtitleReadOnly": "كل من في النشر وما ينفقونه. صلاحيتك للاطّلاع فقط.",
+      "noAccess": "صفحة الإدارة متاحة للمالكين والمشرفين.",
+      "summary": {
+        "people": "النشطون",
+        "tokens": "الرموز · 30 يومًا",
+        "cost": "التكلفة · 30 يومًا"
+      },
+      "roles": {
+        "owner": "مالك",
+        "admin": "مشرف",
+        "support": "دعم",
+        "employee": "موظف"
+      },
+      "status": {
+        "active": "نشط",
+        "invited": "مدعو",
+        "suspended": "معطّل",
+        "removed": "محذوف"
+      },
+      "user": {
+        "title": "الشخص"
+      },
+      "plan": {
+        "standard": "قياسية",
+        "high": "مرتفعة",
+        "unmetered": "بلا حد",
+        "title": "خطة الرموز",
+        "monthInput": "المُدخل هذا الشهر",
+        "monthOutput": "المُخرج هذا الشهر",
+        "noCeiling": "{{used}} · بلا سقف",
+        "ceilingHint": "{{in}} مُدخل · {{out}} مُخرج شهريًا",
+        "unmeteredHint": "بلا سقف · تنبيه فقط",
+        "changed": "تم ضبط الخطة على {{plan}}."
+      },
+      "people": {
+        "searchPlaceholder": "ابحث عن شخص",
+        "noMatches": "لا أحد يطابق ذلك.",
+        "loadFailed": "تعذّر تحميل القائمة.",
+        "you": "(أنت)",
+        "activeDays": "{{count}} يوم نشاط",
+        "neverActive": "لا نشاط بعد",
+        "sort": {
+          "spend": "الإنفاق",
+          "active": "الأحدث",
+          "name": "الاسم"
+        }
+      },
+      "spend": {
+        "title": "الإنفاق",
+        "tokensIn": "رموز المُدخل",
+        "tokensOut": "رموز المُخرج",
+        "cost": "التكلفة",
+        "searches": "عمليات بحث الويب",
+        "cached": "{{value}} من الذاكرة المؤقتة",
+        "requests": "{{count}} طلب",
+        "days": "آخر {{days}} يومًا"
+      },
+      "surfaces": {
+        "title": "أين أُنفقت",
+        "subtitle": "أي واجهة أجرت الاستدعاءات — هذا التطبيق، سطح المكتب، أو أتمتة.",
+        "empty": "لا نشاط منسوب بعد.",
+        "names": {
+          "inapp": "تطبيق سطح المكتب",
+          "mobile": "الهاتف",
+          "extension": "إضافة المتصفح",
+          "heartbeat": "الأتمتة",
+          "procedure": "إجراء",
+          "api": "واجهة برمجية",
+          "unattributed": "غير منسوب"
+        }
+      },
+      "controls": {
+        "title": "أدوات التحكم",
+        "role": "الدور",
+        "roleHint": "المشرفون يديرون الأشخاص؛ الدعم يطّلع ولا يغيّر.",
+        "notYourself": "لا يمكنك تغيير دورك أو وصولك.",
+        "access": "الوصول",
+        "accessHint": "التعطيل يسجّل خروجهم من كل مكان ويرفض الدخول الجديد.",
+        "accessDisabledHint": "معطّل. يُبلَّغون بأن وصولهم عُطّل من قِبل المشرف.",
+        "disable": "تعطيل",
+        "enable": "استعادة",
+        "disabledToast": "عُطّل الوصول. سُجّل الخروج من كل الجلسات.",
+        "enabledToast": "أُعيد الوصول.",
+        "password": "كلمة المرور",
+        "passwordHint": "يصدر كلمة مرور لمرة واحدة ويسجّل خروجهم من كل مكان.",
+        "resetPassword": "إعادة تعيين",
+        "tempPassword": "كلمة مرور لمرة واحدة — اضغط للنسخ",
+        "tempPasswordHint": "تظهر مرة واحدة. عليهم تغييرها عند الدخول التالي.",
+        "pin": "رمز الجهاز",
+        "pinHint": "يمسح رمز الفتح على أجهزتهم عند التشغيل التالي.",
+        "clearPin": "مسح",
+        "pinCleared": "طُلب مسح الرمز.",
+        "sessions": "الجلسات",
+        "sessionsHint": "يسجّل الخروج من كل جهاز دون تغيير كلمة المرور.",
+        "signOutEverywhere": "تسجيل الخروج",
+        "sessionsRevoked": "سُجّل الخروج من {{count}} جلسة.",
+        "ownerOnly": "المالك وحده يمكنه تعديل مالك.",
+        "readOnly": "صلاحيتك تتيح الاطّلاع دون التغيير."
+      },
+      "confirm": {
+        "disableTitle": "تعطيل الوصول؟",
+        "disableMessage": "سيُسجَّل خروج {{name}} من كل مكان فورًا ولن يتمكن من الدخول حتى تستعيد وصوله.",
+        "enableTitle": "استعادة الوصول؟",
+        "enableMessage": "سيتمكن {{name}} من تسجيل الدخول مجددًا.",
+        "passwordTitle": "إعادة تعيين كلمة المرور؟",
+        "passwordMessage": "سيُسجَّل خروج {{name}} من كل مكان، وستحصل على كلمة مرور لمرة واحدة لتسليمها.",
+        "sessionsTitle": "تسجيل الخروج من كل مكان؟",
+        "sessionsMessage": "سيُسجَّل الخروج من كل جهاز يستخدمه {{name}}. كلمة المرور لا تتغيّر."
+      },
+      "devices": {
+        "title": "الأجهزة",
+        "empty": "لا أجهزة بعد.",
+        "revoked": "ملغى",
+        "pinSet": "رمز مضبوط",
+        "noPin": "بلا رمز",
+        "pinClearPending": "المسح معلّق"
+      },
+      "conversations": {
+        "title": "المحادثات",
+        "subtitle": "اقرأ محادثة تمامًا كما رآها صاحبها. فتح المحادثة يُسجَّل في السجل.",
+        "count": "{{count}} محادثة",
+        "empty": "لا محادثات بعد.",
+        "loadFailed": "تعذّر التحميل.",
+        "untitled": "بلا عنوان",
+        "messages": "{{count}} رسالة",
+        "actions": "{{count}} إجراء",
+        "loadMore": "تحميل المزيد",
+        "tabs": {
+          "transcript": "النص",
+          "log": "السجل"
+        },
+        "truncated": "هذه المحادثة طويلة بشكل غير معتاد — تظهر صفحاتها الأولى فقط.",
+        "emptyTranscript": "لا رسائل في هذه المحادثة.",
+        "emptyLog": "لم تُجرَ أي استدعاءات أدوات هنا.",
+        "logSummary": "{{count}} إجراء، منها {{browser}} في المتصفح."
+      },
+      "channels": {
+        "electron": "تطبيق سطح المكتب",
+        "mobile": "الهاتف",
+        "heartbeat": "الأتمتة",
+        "procedure": "إجراء",
+        "unknown": "تطبيق سطح المكتب"
+      },
+      "audit": {
+        "title": "سجل التدقيق",
+        "subtitle": "كل إجراء إداري، الأحدث أولًا.",
+        "empty": "لا شيء مسجّل بعد.",
+        "loadFailed": "تعذّر تحميل السجل.",
+        "actions": {
+          "user.invite": "دعا شخصًا",
+          "user.update": "عدّل شخصًا",
+          "user.reset_password": "أعاد تعيين كلمة مرور",
+          "user.revoke_sessions": "سجّل الخروج من كل الجلسات",
+          "device.clear_pin": "مسح رمز جهاز",
+          "policy.set": "غيّر سياسة",
+          "plan.set": "غيّر خطة رموز",
+          "config.view": "اطّلع على الإعدادات المزامنة",
+          "config.set": "كتب الإعدادات المزامنة",
+          "conversation.view": "فتح محادثة",
+          "org.update": "غيّر إعدادات المنشأة",
+          "capability.put": "نشر قدرة",
+          "capability.delete": "أزال قدرة",
+          "maintenance.run": "شغّل الصيانة"
+        }
+      },
+      "org": {
+        "title": "المنشأة",
+        "subtitle": "إعدادات تسري على الجميع.",
+        "identity": "الهوية",
+        "name": "الاسم",
+        "defaultModel": "النموذج الافتراضي",
+        "search": "بحث الويب",
+        "searchEnabled": "مفعّل",
+        "searchHint": "المفتاح العام لمسار بحث Brave.",
+        "saved": "تم الحفظ.",
+        "capsTitle": "سقوف المنشأة",
+        "capsSubtitle": "تعلو كل خطة فردية. القيمة 0 تعني بلا حد، ويُطبَّق السقف الذي يُبلَغ أولًا.",
+        "userDailyTokens": "الرموز لكل شخص يوميًا",
+        "orgMonthlyTokens": "رموز المنشأة شهريًا",
+        "userDailySearches": "عمليات البحث لكل شخص يوميًا",
+        "orgMonthlySearches": "عمليات بحث المنشأة شهريًا",
+        "unlimited": "بلا حد",
+        "plansTitle": "خطط الرموز",
+        "plansSubtitle": "السقوف الثلاثة التي يمكنك تعيينها. يبدأ الجميع على القياسية."
+      }
     }
   },
   "updates": {
@@ -1021,6 +1214,22 @@
       "lastYear": "آخر سنة",
       "older": "أقدم"
     }
+  },
+  "leaderboard": {
+    "title": "لوحة الصدارة",
+    "subtitle": "ترتيب الجميع في المؤسسة — الرموز المستهلكة والمحادثات والمهام التي نفّذها الوكيل تلقائيًا.",
+    "search": "ابحث بالاسم",
+    "you": "(أنت)",
+    "tokensValue": "{{value}} رمز",
+    "conversationsValue": "{{count}} محادثة",
+    "agenticValue": "{{count}} مهمة",
+    "range": "{{from}}–{{to}} من {{total}}",
+    "previous": "السابق",
+    "next": "التالي",
+    "empty": "لا أحد على اللوحة بعد.",
+    "noMatches": "لا يوجد أحد بهذا الاسم.",
+    "notConnected": "اتصل بمؤسستك لعرض لوحة الصدارة.",
+    "error": "تعذّر تحميل لوحة الصدارة."
   },
   "units": {
     "bytes": "{{value}} بايت",

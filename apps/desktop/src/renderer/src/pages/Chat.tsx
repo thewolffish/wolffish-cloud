@@ -3971,7 +3971,15 @@ const ChatItem = memo(
   }
 )
 
-function UserBubble({
+/**
+ * Exported for the admin transcript viewer (pages/settings/admin), which
+ * must render another employee's conversation EXACTLY as that employee saw
+ * it. A second, admin-only renderer would drift from this one message type
+ * at a time, and the drift would be invisible — a transcript that looks
+ * plausible while omitting a card. Same components, same input shape, one
+ * source of truth for what a conversation looks like.
+ */
+export function UserBubble({
   content,
   attachments,
   transcribing,
@@ -4035,7 +4043,7 @@ function UserBubble({
   )
 }
 
-function AssistantBubble({
+export function AssistantBubble({
   message,
   awaitingApproval,
   awaitingAsk,

@@ -17,6 +17,7 @@ import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import {
   AngelIcon,
+  ChampionIcon,
   Clock01Icon,
   FileEditIcon,
   Folder01Icon,
@@ -45,6 +46,12 @@ const NAV: {
   labelKey: string
 }[] = [
   { key: 'settings', screen: 'settings', icon: Settings02Icon, labelKey: 'chat.settings' },
+  {
+    key: 'leaderboard',
+    screen: 'leaderboard',
+    icon: ChampionIcon,
+    labelKey: 'chat.leaderboard'
+  },
   { key: 'heartbeat', screen: 'heartbeat', icon: HeartCheckIcon, labelKey: 'chat.heartbeat' },
   { key: 'projects', screen: 'projects', icon: Folder01Icon, labelKey: 'chat.projects' },
   { key: 'procedures', screen: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' },

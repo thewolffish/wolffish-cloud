@@ -374,3 +374,47 @@ export async function fetchSnapshotFile(
     clearTimeout(timer)
   }
 }
+
+// ── Leaderboard ─────────────────────────────────────────────────────────
+//
+// The org's standing, readable by every signed-in user (no admin tier).
+// Wire shape verbatim from apps/api routes/leaderboard.ts: the server owns
+// the ranking and the paging, so the phone never sorts or renumbers — a rank
+// stays the rank in the whole org even when the page is filtered by name.
+
+export type WireLeaderboardRow = {
+  rank: number
+  user_id: string
+  name: string
+  role: string
+  tokens: number
+  conversations: number
+  agentic_tasks: number
+}
+
+export type WireLeaderboardPage = {
+  generated_at: string
+  /** Rows matching the search (the whole board when there is none). */
+  total: number
+  /** People on the board, regardless of the search — the denominator. */
+  board_size: number
+  /** The org outgrew the server's board cap; the tail is not listed. */
+  truncated: boolean
+  limit: number
+  offset: number
+  rows: WireLeaderboardRow[]
+  /** This phone's own user row, on every page and past every filter. */
+  me: WireLeaderboardRow | null
+}
+
+export async function leaderboard(
+  accessToken: string,
+  params: { limit?: number; offset?: number; q?: string } = {}
+): Promise<WireLeaderboardPage> {
+  const query = new URLSearchParams()
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  if (params.q) query.set('q', params.q)
+  const suffix = query.toString()
+  return request(`/v1/leaderboard${suffix ? `?${suffix}` : ''}`, { token: accessToken })
+}

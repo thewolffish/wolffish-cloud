@@ -20,6 +20,7 @@ export type TabKey =
   | 'knowledge'
   | 'usage'
   | 'data'
+  | 'admin'
 
 let nextTab: TabKey | null = null
 

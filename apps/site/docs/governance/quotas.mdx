@@ -14,11 +14,15 @@ because the ceiling is enforced, not reported.
 | Control | Scope | Enforced by | On breach |
 | --- | --- | --- | --- |
 | Model allowlist | Per user, falling back to org default | The model lane, before admission | `denied_model` |
-| Daily token cap | Per user, per UTC day | `ModelGate` durable counter | `denied_quota` |
-| Monthly token cap | Whole org, per UTC month | `ModelGate` durable counter | `denied_quota` |
+| Daily token cap | Per user, per UTC day | `ModelGate` durable counter | `user_daily` |
+| Plan input ceiling | Per user, per UTC month | `ModelGate` durable counter | `plan_monthly_in` |
+| Plan output ceiling | Per user, per UTC month | `ModelGate` durable counter | `plan_monthly_out` |
+| Monthly token cap | Whole org, per UTC month | `ModelGate` durable counter | `org_monthly` |
 | Daily search cap | Per user, per UTC day | `SearchGate` durable counter | Refused before queueing |
 | Monthly search cap | Whole org, per UTC month | `SearchGate` durable counter | Refused before queueing |
 | Search lane switch | Whole org | `search_enabled` on the org row | Lane reports itself off |
+
+Every model-lane breach meters as `denied_quota`; the scope above says which ceiling bit.
 
 `0` means unlimited on every cap. An organization that wants alerting rather than blocking sets
 them all to zero and watches [usage](/governance/audit) instead.
@@ -37,10 +41,16 @@ GET /v1/models  ─▶  effective policy = the user's model_policies row,
 
 POST /ai/v1/chat/completions
      └─▶ is this model in the effective allowlist?      no  → denied_model
-     └─▶ ModelGate: is the user under their day cap?    no  → denied_quota
-         is the org under its month cap?                no  → denied_quota
+     └─▶ ModelGate, governance first — never queued:
+           under their daily cap?                       no  → denied_quota
+           under the org's monthly cap?                 no  → denied_quota
+           under their plan's monthly input ceiling?    no  → denied_quota
+           under their plan's monthly output ceiling?   no  → denied_quota
      └─▶ admit, forward, meter on release
 ```
+
+Whichever ceiling bites first decides, and all four are read from the gate's durable counters in one
+pass before the call is ever queued.
 
 An empty allowlist means "the org default model only" — not "everything".
 
@@ -56,9 +66,13 @@ ceilings live in code, so changing one is a deploy rather than a backfill of eve
 
 | Plan | Input / month | Output / month | Enforcement |
 | --- | --- | --- | --- |
-| `standard` | 100M | 8M | Hard cap, per user and per org |
-| `high` | 300M | 25M | Hard cap, per user and per org |
+| `standard` | 100M | 8M | Hard cap, per employee, per UTC month |
+| `high` | 300M | 25M | Hard cap, per employee, per UTC month |
 | `unmetered` | no ceiling | no ceiling | Alerting only |
+
+A plan ceiling is **per employee**. The organization-wide ceiling is the separate
+`org_monthly_token_cap`, which counts input and output together. `unmetered` passes zeros to the
+gate — the same "no ceiling" path an organization with its caps switched off already takes.
 
 Input and output are separate ceilings on purpose: they differ by roughly 2× in price and by an
 order of magnitude in volume, so one combined number would either strangle input — which is mostly
@@ -104,6 +118,9 @@ See [The lanes](/api/lanes) for how the queues and cooldowns work.
 
 ## What an admin sets
 
-`PUT /admin/users/:id/policy` for one person, `PATCH /admin/org` for the defaults. Both are audited.
+`PUT /admin/users/:id/policy` for one person — allowlist, daily caps and `token_plan`; omitting
+`token_plan` leaves the plan alone, so editing a cap does not silently reset it. `PATCH /admin/org`
+sets the defaults. `GET /admin/users/:id` returns the resolved plan and its ceilings, so a client can
+draw a plan meter without knowing the numbers. All of it is audited.
 The one thing an admin cannot do is raise a ceiling for a call already in flight — the decision was
 made at admission.

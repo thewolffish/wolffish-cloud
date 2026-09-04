@@ -26,7 +26,7 @@ const PACKAGE_IDENTIFIER = 'sh.wolffi.cloud.mobile'
  * and asks to link, and OTA is off — `Updates.isEnabled` is false, so
  * useOtaUpdates no-ops and Settings → Updates reports the app as up to date.
  */
-const EXPO_PROJECT_ID: string | null = null
+const EXPO_PROJECT_ID: string | null = '08278c20-de8a-4285-a378-273a64c21d94'
 // Deferred: capture of https://wolffi.sh links as native deep links. Off on
 // purpose — the site is an install landing page, so web links must open the
 // browser, not the app. To re-enable, uncomment this constant plus the

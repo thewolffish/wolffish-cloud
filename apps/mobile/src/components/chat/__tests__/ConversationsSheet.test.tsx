@@ -124,9 +124,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('the conversations sheet', () => {
-  it('links to the five core pages, and closes before it navigates', async () => {
+  it('links to the core pages, and closes before it navigates', async () => {
     await draw()
-    for (const label of ['Settings', 'Projects', 'Automations', 'Procedures', 'Customization']) {
+    for (const label of [
+      'Settings',
+      'Leaderboard',
+      'Projects',
+      'Automations',
+      'Procedures',
+      'Customization'
+    ]) {
       expect(screen.getByLabelText(label)).toBeTruthy()
     }
     await fireEvent.press(screen.getByLabelText('Projects'))

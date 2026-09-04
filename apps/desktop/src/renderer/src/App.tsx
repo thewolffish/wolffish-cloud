@@ -26,6 +26,7 @@ import { Projects } from '@pages/Projects'
 import { Soul } from '@pages/Soul'
 import { User } from '@pages/User'
 import { Agents } from '@pages/Agents'
+import { Leaderboard } from '@pages/Leaderboard'
 
 // The one-time cortex reindex (after an app update) blocks every turn, so
 // while it runs the chat screen is swapped for its own overlay. (Background
@@ -72,7 +73,8 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'projects',
   'soul',
   'user',
-  'agents'
+  'agents',
+  'leaderboard'
 ])
 
 function AuthScreen(): React.JSX.Element | null {
@@ -112,6 +114,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <User />
     case 'agents':
       return <Agents />
+    case 'leaderboard':
+      return <Leaderboard />
   }
 }
 

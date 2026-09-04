@@ -57,6 +57,7 @@ import {
   type AutostartStatus
 } from '@main/autostart/autostart'
 import { handle } from '@main/ipc-registry'
+import { registerAdminIpc } from '@main/admin-ipc'
 import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import {
@@ -79,6 +80,7 @@ import {
 } from '@main/projects'
 import {
   API_BASE,
+  fetchLeaderboard,
   offerPairing,
   pairingStatus,
   withdrawPairing,
@@ -2501,6 +2503,10 @@ app.whenReady().then(async () => {
   // workspace is a cache of the org's record, so nothing is lost — provided
   // the outbox is empty. A final bounded drain runs first; if it cannot
   // finish (offline), the cache stays for the next sign-in and says so.
+  // The admin layer's handlers live in their own module: they are the one
+  // group that must never write to disk (see admin-ipc.ts).
+  registerAdminIpc()
+
   handle('auth:signOut', async () => {
     const drained = await flushOutbox(20_000).catch(() => false)
     const state = await cloudSession.signOut()
@@ -4121,6 +4127,15 @@ app.whenReady().then(async () => {
     await agent.usage.sync()
     return { ok: true as const }
   })
+
+  // The org leaderboard. A pass-through, deliberately: the ranking, the
+  // paging and the search all belong to the server (one cached board for
+  // the whole org), so nothing here caches, sorts or filters a second time.
+  handle(
+    'leaderboard:list',
+    async (_e, params: { limit?: number; offset?: number; q?: string } = {}) =>
+      cloudSession.withAccessToken((token) => fetchLeaderboard(token, params))
+  )
 
   // Inline images in transcripts and the browser capability's screenshot
   // links: `wolffish-media://<workspace-relative path>`, served from the

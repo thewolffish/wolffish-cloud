@@ -1,8 +1,9 @@
 /**
  * wfc-api — the Wolffish Cloud master API.
  *
- * One Worker, nine route groups (auth + pairing, v1 client API, devices,
- * bridge, ai router, search lane, sync, capabilities, admin), one middleware
+ * One Worker, ten route groups (auth + pairing, v1 client API, devices,
+ * bridge, ai router, search lane, sync, capabilities, leaderboard, admin),
+ * one middleware
  * chain: verify token → resolve user → resolve role → policy/quota gates →
  * handler. Plus three Durable Objects, exported here so the runtime can bind
  * them: the SearchGate (the org's single queue in front of its search
@@ -20,6 +21,7 @@ import aiRoutes from '@/routes/ai'
 import syncRoutes from '@/routes/sync'
 import capabilityRoutes from '@/routes/capabilities'
 import searchRoutes from '@/routes/search'
+import leaderboardRoutes from '@/routes/leaderboard'
 import pairRoutes, { pairClaim } from '@/routes/pair'
 import deviceRoutes from '@/routes/devices'
 import bridgeRoutes from '@/routes/bridge'
@@ -114,6 +116,7 @@ app.route('/ai', aiRoutes)
 app.route('/v1', syncRoutes)
 app.route('/v1', capabilityRoutes)
 app.route('/v1', searchRoutes)
+app.route('/v1', leaderboardRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 

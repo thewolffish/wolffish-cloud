@@ -9,6 +9,7 @@
  * "unlimited"; free-text fields carry explicit length ceilings.
  */
 import { z } from 'zod'
+import { TOKEN_PLANS } from '@/lib/plans'
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
@@ -113,7 +114,16 @@ export const PolicyPutSchema = z.object({
   allowed_models: modelList.nullable().optional(),
   daily_token_cap: cap.nullable().optional(),
   // Searches per day; null/absent = org default, 0 = unlimited.
-  daily_search_cap: cap.nullable().optional()
+  daily_search_cap: cap.nullable().optional(),
+  // The employee's token plan. null clears it back to the default; absent
+  // leaves whatever is set, so a caller editing only the search cap cannot
+  // silently reset someone's plan.
+  token_plan: z.enum(TOKEN_PLANS).nullable().optional()
+})
+
+/** The plan on its own — the one control the admin UI reaches for most. */
+export const PlanPutSchema = z.object({
+  token_plan: z.enum(TOKEN_PLANS)
 })
 
 export const OrgPatchSchema = z
@@ -189,7 +199,13 @@ export const BatchItemSchema = z.discriminatedUnion('type', [
     title: z.string().max(500).optional(),
     created_at: isoDate,
     updated_at: isoDate,
-    device_id: idStr.optional()
+    device_id: idStr.optional(),
+    // Provenance: which surface started this conversation ('electron',
+    // 'mobile', 'heartbeat', 'procedure'). Open rather than an enum — a
+    // client that grows a channel must not have its whole batch refused by
+    // an older API — and the leaderboard's agentic count simply matches the
+    // two autonomous names. Absent on pre-0014 clients; '' means unknown.
+    channel: z.string().max(32).optional()
   }),
   z.object({
     type: z.literal('record'),
