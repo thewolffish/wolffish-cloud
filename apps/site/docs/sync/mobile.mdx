@@ -1,0 +1,113 @@
+---
+title: "Phone sync"
+description: "A paired device that reads the record and asks the desktop to change it"
+---
+
+The phone is a **device of the same organization account** — not a second agent. It holds a session
+of its own, reads everything durable from the API over REST, and reaches a running desktop for live
+turns over the bridge.
+
+```text
+   iPhone / Android                 api.wolffi.sh                     Desktop
+  ┌──────────────────┐        ┌───────────────────────┐        ┌──────────────────┐
+  │    the phone     │──https─▶│ REST: config, index,  │◀─https─│   the desktop    │
+  │   (signed in)    │        │ records, files, usage │        │   (signed in)    │
+  │                  │──wss──▶│ UserBridge (per user) │◀──wss──│                  │
+  └──────────────────┘        └───────────────────────┘        └──────────────────┘
+                                rpc ▶  ·  ◀ events  ·  presence
+```
+
+## The bridge
+
+Turns run on the desktop, so a message sent from the phone has to reach a *running* desktop and its
+reply has to stream back. That is the `UserBridge`: one Durable Object per user, with the desktop
+parked on one WebSocket for as long as it is signed in and the phone on another while it is on
+screen.
+
+It forwards plain JSON frames — `rpc` / `res` pairs from the phone, `ev` fan-out from the desktop,
+`presence` on every connection change — and it stores nothing except the phone's push token. Wire
+protocol version 2; keepalive every 25 seconds, answered without waking the object.
+
+The bridge stamps the phone's socket tag onto an RPC id on the way to the desktop and strips it on
+the way back, so neither device ever sees the other's ids.
+
+There is **no relay and no end-to-end cipher**. The organization's API is the trusted party on both
+ends — it already holds the record — so there is nothing for a cipher between the devices to
+protect against.
+
+## Two facts, kept apart
+
+A phone whose desktop is asleep is not broken. So the UI tracks two separate things:
+
+| Question | Answered by | If false |
+| --- | --- | --- |
+| Is the **organization** reachable? | The socket is up | Retry with exponential backoff |
+| Is the **desktop** on the bridge? | `presence` / `GET /v1/bridge/status` | Read-only: everything still readable, no turns |
+
+iOS suspends a backgrounded app within seconds, so the socket dies every time you leave the app.
+Returning re-dials in well under a second — a token from the keystore, one TLS handshake, one
+upgrade. Getting connected belongs to the bridge client (backoff, a 15-second dial timeout, a
+liveness timeout that tears down a socket the OS still reports as open). Catching up hangs off the
+*organization* being reachable, not off the desktop being there.
+
+## Down: metadata first, content on demand
+
+A real workspace is hundreds of conversations and close to a gigabyte of message bodies, and a phone
+opens one at a time. The first sync therefore pulls three things and nothing else:
+
+1. **The config snapshot** — everything the settings screens render, in one object. Asked of the
+   desktop itself over the bridge while it is up; otherwise the copy the desktop keeps synced to the
+   organization at `brain/mobile/snapshot.json`.
+2. **The conversation index** — metadata only, paged from `GET /v1/conversations?since=`, with the
+   envelope fields the desktop syncs and a message count.
+3. **Usage** — `GET /v1/usage/days`, folded per day.
+
+A conversation **body** is fetched the moment you open it, from the organization's record pages,
+rebuilt exactly as the desktop rebuilds a transcript after a purge. It is cached in SQLite and
+stamped with the desktop's own `updatedAt` from the envelope, never the phone's clock. Its files
+prefetch right behind it.
+
+Afterwards the phone stays current two ways:
+
+- **Pushes** over the bridge for anything that moves while the desktop is up: conversations created
+  or deleted, config changed (with the fresh snapshot riding along), variables, usage, projects,
+  procedures, automations, memory reindex progress — and `conversation.synced`, which the desktop
+  sends once a conversation's records have actually landed at the organization. That is the one
+  moment a body may be refetched and expected to carry the turn just watched.
+- **Reconcile** every time the socket forms and on every return to the foreground: refetch the
+  snapshot, pull the index since the stored cursor — **tombstones included**, so a deletion during a
+  long absence converges without an id sweep — and refresh usage.
+
+The cursor lives in SQLite beside the rows it describes, so it can never disagree with them. Clear
+the database and the phone resyncs from zero automatically.
+
+## Up: the dirty-key outbox
+
+The config store is a mirror that every refresh overwrites wholesale, which makes a naive optimistic
+write dangerous: a snapshot fetched an instant *before* an edit can land an instant *after* it and
+silently put the old value back.
+
+Two rules prevent that, shared by every phone-editable key:
+
+- A key is **dirty** from its first unsent local edit until the desktop acknowledges the latest one.
+  While dirty, no snapshot may overwrite it.
+- Every key carries an **epoch** that moves on each local edit and each settlement. A refresh
+  captures epochs before fetching and compares after; any movement means the snapshot raced a write,
+  so the local value stays and the next quiet refresh lands desktop truth.
+
+Sends are whole-value, debounced and one-in-flight. They go **to the desktop** over the bridge,
+which applies each through the exact function its own settings panel calls and then syncs the result
+to the organization. There are **no retries** by design: resending a stale value could overwrite a
+newer edit made elsewhere, so a failed send abandons the local claim and asks for a refresh instead.
+
+## Notifications
+
+A notification the desktop's agent sends is delivered in-band over the bridge when the phone is on
+screen. If the phone does not acknowledge within two seconds — it acks the moment it renders — the
+bridge falls back to an Expo push using the token in its push register.
+
+## Unpairing
+
+Unpairing revokes the phone's sessions, deletes the device row, closes its bridge socket and drops
+its push registration. Do it from the desktop's Mobile panel or from the admin layer; the phone's
+next request fails immediately.

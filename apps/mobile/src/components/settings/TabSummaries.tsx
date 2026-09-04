@@ -1,4 +1,4 @@
-import { ComputerIcon, ComputerTerminal01Icon, SmartPhone01Icon } from '@/components/core/icons'
+import { ComputerIcon, SmartPhone01Icon } from '@/components/core/icons'
 import { CodeChip } from '@/components/settings/SettingsUI'
 import { useConversationList } from '@/lib/conversations/hooks'
 import { formatBytes } from '@/lib/files/fileKinds'
@@ -84,36 +84,26 @@ export function ModelSummary(): React.JSX.Element {
 }
 
 /**
- * Channels — this phone and the terminal, as their own marks. A channel the
- * agent can actually reach you on is green; one it cannot stays muted rather
- * than disappearing, so the row says "the terminal is off" instead of leaving
- * you to wonder whether it exists.
+ * Channels — this phone, as its own mark. A channel the agent can actually
+ * reach you on is green; one it cannot stays muted rather than disappearing,
+ * so the row says "notifications are off" instead of leaving you to wonder
+ * whether the channel exists.
  *
- * The phone leads, in the desktop's own channel order, and reads its
- * notifications switch: reachable is the question both answer, and for
- * this device the answer is whether notify_phone is allowed to ring it. Being
- * paired is not the signal — you are looking at the app, so you know.
- *
- * The terminal's mark answers that same question its own way: green when a
- * shell on the desktop can resolve `wolffish`, because a command the shell
- * cannot find is a channel you cannot reach the agent on, whatever config
- * says. Unknown (the desktop never answered) reads muted with the rest —
- * the row is a glance, and a third colour here would be a puzzle, not a fact.
+ * It reads the notifications switch, not the pairing: reachable is the
+ * question, and for this device the answer is whether notify_phone is allowed
+ * to ring it. Being paired is not the signal — you are looking at the app, so
+ * you know.
  */
 export function ChannelsSummary(): React.JSX.Element {
   const { t } = useTranslation()
   const phone = useConfigValue('mobileNotifications')
-  const cli = useDemoConfig((state) => state.cli.pathInstalled === true)
   const state = (on: boolean): string => (on ? t('settings.toggle.on') : t('settings.toggle.off'))
   return (
     <View
       className="shrink-0 flex-row items-center gap-2"
-      accessibilityLabel={`${t('settings.channels.notifications')} ${state(phone)}, ${t(
-        'settings.channels.cli.title'
-      )} ${state(cli)}`}
+      accessibilityLabel={`${t('settings.channels.notifications')} ${state(phone)}`}
     >
       <SmartPhone01Icon size={15} className={phone ? TONES.ok : TONES.muted} />
-      <ComputerTerminal01Icon size={15} className={cli ? TONES.ok : TONES.muted} />
     </View>
   )
 }

@@ -1,11 +1,11 @@
 {
-  "version": "a430e2ac2a0e",
-  "builtAt": "2026-09-03T22:24:49.894Z",
-  "conversations": 62,
-  "totalBytes": 2682489,
+  "version": "7d5bab2f5869",
+  "builtAt": "2026-09-03T23:40:17.541Z",
+  "conversations": 61,
+  "totalBytes": 2675523,
   "config": {
     "file": "config-snapshot.json",
-    "bytes": 472683
+    "bytes": 473291
   },
   "shards": [
     {
@@ -15,8 +15,8 @@
     },
     {
       "file": "conversations-001.json",
-      "bytes": 1109684,
-      "conversations": 54
+      "bytes": 1102718,
+      "conversations": 53
     }
   ]
 }

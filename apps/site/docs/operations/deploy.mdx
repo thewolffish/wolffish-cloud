@@ -1,0 +1,134 @@
+---
+title: "Deploy a tenant"
+description: "Fork, brand, deploy under the tenant's own Cloudflare account"
+---
+
+The deployment model is **fork per tenant**. Each organization gets its own repository fork, its own
+Cloudflare account, its own keys and its own domain. There is no shared instance and no version of
+this where one tenant's data sits beside another's.
+
+Nothing about the agent's code changes between tenants — only the endpoint, the branding and, for
+the phone, the identifiers a store keys on.
+
+## 1. Create the resources
+
+In the tenant's Cloudflare account, then put their ids in `apps/api/wrangler.jsonc`:
+
+| Resource | Name |
+| --- | --- |
+| D1 database | `wfc-master` |
+| KV namespaces | `wfc-auth`, `wfc-config` |
+| R2 bucket | `wfc-blobs` |
+| Custom domain | the tenant's API hostname |
+
+The desktop reads `API_BASE` from `apps/desktop/src/main/cloud/api.ts`, overridable at runtime with
+`WFC_API_URL`.
+
+## 2. Set the secrets
+
+With `wrangler secret put`, never committed:
+
+| Secret | Purpose |
+| --- | --- |
+| `JWT_SECRET` | HS256 signing secret for access tokens |
+| `DEEPINFRA_API_KEY` | The model host — or `MODEL_UPSTREAMS`, a JSON list of hosts |
+| `BRAVE_API_KEY` | The search plan — or `SEARCH_PROVIDERS`, a JSON list of plans |
+| `RESEND_API_KEY` | Transactional email for password reset codes |
+| `CONFIG_ENC_KEY` | 32 random bytes, base64 — seals every synced config row at rest |
+| `EXPO_ACCESS_TOKEN` | Optional; only if the Expo project enforces enhanced push security |
+
+```bash
+openssl rand -base64 32   # CONFIG_ENC_KEY
+```
+
+<Warning>
+Remove the `ADMIN_RESET_CODE_READ` var from `wrangler.jsonc`. It lets an admin read a pending
+password-reset code, and exists only so the release gate can prove the emailed flow end to end.
+Without it the route answers 404.
+</Warning>
+
+## 3. Migrate and deploy
+
+```bash
+cd apps/api
+npm run db:migrate:remote
+npm run deploy
+```
+
+`deploy` typechecks first, so a type error stops the release rather than shipping.
+
+## 4. Create the first owner
+
+Either run the demo seed — which mints a 50-person roster useful for a walkthrough — or replace it
+with a one-owner seed:
+
+```bash
+WFC_DEMO_PASSWORD=… npm run seed:remote
+```
+
+Then invite everyone else through `POST /admin/users` from the owner's desktop. If you used the demo
+seed, rotate its password and drop the sign-in form's demo prefill in
+`apps/desktop/src/renderer/src/pages/auth/AuthGate.tsx`.
+
+## 5. Publish the capabilities
+
+```bash
+node apps/api/scripts/seed-capabilities.mjs
+```
+
+Idempotent. `--check` is the drift guard for CI; `--prune` also deletes registry entries with no
+folder in `capabilities/`. See [Capabilities](/sync/capabilities).
+
+## 6. Verify
+
+```bash
+WFC_DEMO_PASSWORD=… node apps/api/scripts/verify-live.mjs
+```
+
+Every scenario against the deployed edge, pure API, no test-mode bypass. See
+[Operate](/operations/operate).
+
+## 7. Rebrand the phone app
+
+The phone is a **distinct application per tenant**, not a shared one. Every identifier is a constant
+at the top of `apps/mobile/app.config.ts`:
+
+| Constant | What it keys |
+| --- | --- |
+| `APP_NAME` | Display name |
+| `APP_SCHEME` | URL scheme |
+| `PACKAGE_IDENTIFIER` | Bundle id / package name |
+| `EXPO_PROJECT_SLUG` | The Expo project |
+
+<Warning>
+Change `APP_SCHEME` and you must change `DEEPLINK_SCHEME` in **both** copies of the wire file —
+`apps/mobile/src/lib/bridge/protocol.ts` and `apps/desktop/src/main/cloud/bridge-protocol.ts` —
+which are byte-identical by contract. A drift there is a protocol split.
+</Warning>
+
+Then:
+
+- `npx eas init` under the tenant's Expo account to create its own project and write
+  `EXPO_PROJECT_ID` back. It ships `null` on purpose, so builds stop and ask rather than publishing
+  under someone else's project.
+- Point the build at the tenant edge with `EXPO_PUBLIC_API_URL`.
+- For Android push, register the new package in the tenant's Firebase project, replace
+  `google-services.json` and uncomment `googleServicesFile`. iOS push needs only EAS credentials.
+- Replace the icon and splash under `apps/mobile/assets/images/` — the stock artwork is shared with
+  the personal edition.
+
+## 8. Decide about demo mode
+
+The phone's demo mode is a tour that runs with no pairing, served from a CDN. Either rebuild and
+publish it to the tenant's own CDN (`node scripts/demo/build-demo-bundle.mjs` in `apps/mobile`, then
+set `EXPO_PUBLIC_DEMO_BASE_URL`) or drop the entry from the door. Left alone it points every install
+at the upstream repository's bundle.
+
+## Where inference and infrastructure are billed
+
+Both to the tenant, directly, at their providers' rates:
+
+- **Inference** — the tenant's own model account, on a zero-data-retention endpoint. It never passes
+  through Wolffish and carries no margin.
+- **Infrastructure** — the tenant's Cloudflare account: the Worker, D1, R2, KV and the Durable
+  Objects. There are no GPUs in that line, because agents execute on employee devices.

@@ -1,0 +1,73 @@
+---
+title: "Browser extension"
+description: "The agent's hands in the employee's own browser — and why it never touches the cloud"
+---
+
+The extension gives the agent direct control of the employee's real Chrome or Brave: navigate,
+click, fill forms, read content, screenshot, manage tabs, run JavaScript — in their actual session,
+with their cookies and logins.
+
+It is the one surface that **does not sync**, and that is a design decision, not an omission.
+
+## How it connects
+
+```text
+Desktop app  ←── WebSocket, localhost:23152 ──→  Service worker  ──→  Content script / Chrome APIs
+```
+
+When the agent needs something done in the browser it sends a command down the local socket. The
+extension executes it and sends the result straight back. Nothing in that loop leaves the machine —
+there is no cloud endpoint, no organization-side extension state, and no place for the API to sit in
+the middle.
+
+| Layer | What it does |
+| --- | --- |
+| **Service worker** | Receives commands over the WebSocket, dispatches to handlers or content scripts, sends responses back |
+| **Content script** | Injected into every page — clicks, typing, reading, scrolling, waiting |
+| **Side panel** | Connection status, the live event feed for the current conversation, history |
+| **Shared** | Wire protocol types, constants, command definitions |
+| **Storage** | Chrome storage for the connection config (the port) |
+
+## Why local-only
+
+Three reasons, in order of weight:
+
+1. **The pages are the employee's.** Their banking tab, their HR portal, their authenticated
+   sessions. Routing browser control through an organization server would put that traffic somewhere
+   it does not need to be, for no capability gained.
+2. **The agent is already local.** The desktop is the only thing that issues commands. A cloud hop
+   between two processes on the same machine adds latency and a failure mode and nothing else.
+3. **There is nothing durable here.** The extension holds no record — it acts and returns. What
+   *results* from a browser action (a file, a message, a conversation record) syncs through the
+   desktop like anything else.
+
+<Note>
+Anything the agent does in the browser still shows up in the record, because the desktop writes it:
+the conversation, the tool call, the screenshot it saved. What does not exist anywhere is a
+server-side copy of the browser session itself.
+</Note>
+
+## The port
+
+Default **23152**. Deliberately not the personal edition's `23151`, so both apps — and both
+extensions — can run on one machine without colliding.
+
+Change it only on a conflict, and change it in two places: the desktop's Channels settings and the
+extension's connection settings. They must agree.
+
+## Health and liveness
+
+- Every real extension sends `extension_info` immediately on open. A connection silent for 10
+  seconds is not an extension — typically the orphaned socket of a reloaded service worker — and is
+  dropped.
+- A client whose last ping is older than 45 seconds is a dead peer, swept every 15 seconds.
+- Debug logs land at `~/.wfc/workspace/logs/extension/.debug/<date>.log`.
+
+If the side panel says disconnected: confirm the desktop is running and unlocked, confirm both sides
+name the same port, then reload the extension.
+
+## Attribution
+
+The extension is one of the surfaces the router can attribute spend to, alongside the desktop app,
+the phone, the heartbeat and procedures — so browser-driven agent work shows up separately in
+[usage](/governance/audit) rather than blending into desktop totals.

@@ -17,10 +17,8 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
-  Attachment01Icon,
   Delete02Icon,
   Edit02Icon,
-  Folder01Icon,
   PlayIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -487,7 +485,7 @@ export function Procedures(): React.JSX.Element {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-10">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
           <header className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
@@ -515,144 +513,106 @@ export function Procedures(): React.JSX.Element {
               {t('procedures.empty')}
             </div>
           ) : (
-            <ul className="flex flex-col gap-3">
+            // Services' landing grid, card for card: three columns of equal
+            // identity tiles. The prompt, files and folders are NOT on the
+            // card — they are what the editor is for.
+            <ul className="grid grid-cols-3 gap-3">
               {procedures.map((procedure) => {
                 const name = procedure.title.trim() || t('procedures.untitled')
                 const runnable = procedure.prompt.trim().length > 0
+                const project = procedure.projectId
+                  ? projectsById.get(procedure.projectId)
+                  : undefined
                 return (
-                  <li
-                    key={procedure.id}
-                    className="bg-surface border-border flex flex-col gap-2.5 rounded-2xl border px-4 py-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <span aria-hidden className="text-2xl leading-none">
+                  <li key={procedure.id} className="min-w-0">
+                    <div className="bg-surface border-border flex h-full w-full flex-col items-start gap-3 rounded-2xl border p-4 text-start">
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <span
+                          aria-hidden
+                          className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
+                        >
                           {procedureCardIcon(procedure)}
                         </span>
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <span title={name} className="text-fg truncate text-sm font-medium">
-                            {name}
-                          </span>
-                          <span className="text-muted text-xs">
-                            {t('procedures.editedAt', {
-                              time: formatFromNow(procedure.updatedAt, now, locale)
-                            })}
-                            {procedure.projectId &&
-                              projectsById.get(procedure.projectId) &&
-                              ` · ${
-                                projectsById.get(procedure.projectId)!.title.trim() ||
-                                t('projects.untitled')
-                              }`}
-                          </span>
+                        <div className="flex shrink-0 items-center">
+                          <button
+                            type="button"
+                            onClick={() => handlePlay(procedure)}
+                            disabled={!runnable}
+                            aria-label={t('procedures.run')}
+                            title={runnable ? t('procedures.run') : t('procedures.runEmptyHint')}
+                            className={cn(
+                              iconButtonClass,
+                              'hover:text-emerald-600 disabled:hover:text-muted dark:hover:text-emerald-400'
+                            )}
+                          >
+                            <PlayIcon size={17} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditor(procedure)}
+                            aria-label={t('procedures.edit')}
+                            title={t('procedures.edit')}
+                            className={cn(iconButtonClass, 'hover:text-fg')}
+                          >
+                            <Edit02Icon size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(procedure)}
+                            aria-label={t('procedures.delete')}
+                            title={t('procedures.delete')}
+                            className={cn(iconButtonClass, 'hover:text-rose-500')}
+                          >
+                            <Delete02Icon size={15} />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handlePlay(procedure)}
-                          disabled={!runnable}
-                          aria-label={t('procedures.run')}
-                          title={runnable ? t('procedures.run') : t('procedures.runEmptyHint')}
-                          className={cn(
-                            iconButtonClass,
-                            'hover:text-emerald-600 disabled:hover:text-muted dark:hover:text-emerald-400'
-                          )}
-                        >
-                          <PlayIcon size={18} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditor(procedure)}
-                          aria-label={t('procedures.edit')}
-                          title={t('procedures.edit')}
-                          className={cn(iconButtonClass, 'hover:text-fg')}
-                        >
-                          <Edit02Icon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(procedure)}
-                          aria-label={t('procedures.delete')}
-                          title={t('procedures.delete')}
-                          className={cn(iconButtonClass, 'hover:text-rose-500')}
-                        >
-                          <Delete02Icon size={16} />
-                        </button>
-                        <div
-                          role="tablist"
-                          aria-label={t('procedures.modeAria')}
-                          className="border-border bg-bg/40 ms-1 inline-flex items-center gap-0.5 rounded-lg border p-0.5"
-                        >
-                          {(['single', 'workflow'] as const).map((m) => {
-                            const active = (procedure.mode ?? globalMode) === m
-                            return (
-                              <button
-                                key={m}
-                                role="tab"
-                                type="button"
-                                aria-selected={active}
-                                onClick={() => void handleSetMode(procedure, m)}
-                                className={cn(
-                                  'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
-                                  'focus-visible:ring-2 focus-visible:ring-accent',
-                                  active
-                                    ? 'bg-primary text-primary-fg shadow-sm'
-                                    : 'text-muted hover:text-fg'
-                                )}
-                              >
-                                {t(
-                                  m === 'workflow'
-                                    ? 'chat.modePicker.workflow'
-                                    : 'chat.modePicker.single'
-                                )}
-                              </button>
-                            )
+                      <div className="flex w-full min-w-0 flex-col gap-1">
+                        <span title={name} className="text-fg truncate text-sm font-semibold">
+                          {name}
+                        </span>
+                        <span className="text-muted line-clamp-2 text-xs leading-relaxed">
+                          {t('procedures.editedAt', {
+                            time: formatFromNow(procedure.updatedAt, now, locale)
                           })}
-                        </div>
+                          {project && ` · ${project.title.trim() || t('projects.untitled')}`}
+                        </span>
+                      </div>
+                      {/* Mode is a property of the procedure, not of its
+                          prompt — it stays on the card, in the footer the
+                          three pages share. */}
+                      <div
+                        role="tablist"
+                        aria-label={t('procedures.modeAria')}
+                        className="border-border bg-bg/40 mt-auto inline-flex items-center gap-0.5 rounded-lg border p-0.5"
+                      >
+                        {(['single', 'workflow'] as const).map((m) => {
+                          const active = (procedure.mode ?? globalMode) === m
+                          return (
+                            <button
+                              key={m}
+                              role="tab"
+                              type="button"
+                              aria-selected={active}
+                              onClick={() => void handleSetMode(procedure, m)}
+                              className={cn(
+                                'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
+                                'focus-visible:ring-2 focus-visible:ring-accent',
+                                active
+                                  ? 'bg-primary text-primary-fg shadow-sm'
+                                  : 'text-muted hover:text-fg'
+                              )}
+                            >
+                              {t(
+                                m === 'workflow'
+                                  ? 'chat.modePicker.workflow'
+                                  : 'chat.modePicker.single'
+                              )}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
-                    {runnable ? (
-                      <pre
-                        dir="auto"
-                        className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                      >
-                        {procedure.prompt}
-                      </pre>
-                    ) : (
-                      <p className="text-muted text-xs italic">{t('procedures.runEmptyHint')}</p>
-                    )}
-                    {/* What this procedure carries into every run. On the card,
-                        not just in the editor: the paths are the part of a
-                        procedure you cannot infer from its prompt. Read-only
-                        here — detaching lives in the editor. */}
-                    {((procedure.files?.length ?? 0) > 0 ||
-                      (procedure.directories?.length ?? 0) > 0) && (
-                      <div dir="ltr" className="flex flex-wrap items-center gap-1.5">
-                        {/* Transparent, not `bg-bg`: these sit ON the card, so
-                            they take its surface rather than punching a darker
-                            well into it. */}
-                        {(procedure.files ?? []).map((file) => (
-                          <span
-                            key={file.path}
-                            title={file.path}
-                            className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 text-[10px] leading-none"
-                          >
-                            <Attachment01Icon size={10} className="shrink-0" />
-                            <span className="truncate">{file.name}</span>
-                          </span>
-                        ))}
-                        {(procedure.directories ?? []).map((dir) => (
-                          <code
-                            key={dir}
-                            title={dir}
-                            className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 font-mono text-[10px] leading-none"
-                          >
-                            <Folder01Icon size={10} className="shrink-0" />
-                            <span className="truncate">{dir}</span>
-                          </code>
-                        ))}
-                      </div>
-                    )}
                   </li>
                 )
               })}

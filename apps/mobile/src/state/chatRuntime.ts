@@ -54,9 +54,9 @@ export type LiveStream = {
   /** Paired mode only — text deltas received after `base`. */
   tail?: string
   /**
-   * Where the turn was started — 'cli', 'mobile', 'heartbeat', … Carried so
-   * a conversation known ONLY from a running turn can still wear its origin
-   * badge. Without it a chat started in a terminal appeared in the list with
+   * Where the turn was started — 'mobile', 'heartbeat', … Carried so a
+   * conversation known ONLY from a running turn can still wear its origin
+   * badge. Without it a chat an automation started appeared in the list with
    * no glyph at all until the desktop pushed its metadata, which on a slow
    * link is the whole time anyone is watching it happen.
    */

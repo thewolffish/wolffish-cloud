@@ -1,113 +1,84 @@
 ---
-title: "What is Wolffish?"
-description: "A local-first, markdown-powered personal AI desktop agent"
+title: "What is Wolffish Cloud?"
+description: "An agent on every employee's machine, and one organization API that is the master record"
 ---
 
-# Overview
+Wolffish Cloud is an enterprise agent platform built on one inversion:
 
-Wolffish is a local-first, markdown-powered personal AI desktop app built with Electron. It runs on macOS, Windows, and Linux, and maps the human brain's architecture onto a deterministic software pipeline where 15 runtime modules each handle one specific function — routing input, building context, managing memory, executing tools, enforcing safety, and learning from outcomes.
+**The agent runs on the employee's machine. The organization's API holds the truth.**
 
-## Demo Walkthrough
+Nothing about the agent moves to a server. The employee's desktop app thinks, reads files, runs
+commands and drives their browser locally, with the permissions that person already has. What moves
+to the edge is the *record* — every model call, every conversation, every file, every setting, every
+quota decision — through one Cloudflare Worker the organization owns at `api.wolffi.sh`.
 
-See Wolffish in action. This walkthrough shows you what it actually does — how it thinks, how it routes your requests, and how it gets things done. If you've ever wanted an AI agent you can actually understand and trust, this is why Wolffish exists.
+The folder on disk (`~/.wfc`) is a cache. Delete it, sign in on any machine, and the workspace walks
+back out of the organization.
 
-<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
-  <iframe
-    src="https://www.youtube.com/embed/oog1q7T8H-s"
-    title="Wolffish — Demo Walkthrough"
-    frameBorder="0"
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-    allowFullScreen
-    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-  />
-</div>
-
-## Official Cinematic Launch
-
-Our vision is simple: put a personal agent in the hands of every person on Earth and turbocharge humanity. This is Wolffish, officially launched.
-
-<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
-  <iframe
-    src="https://www.youtube.com/embed/XZdBttn-99E"
-    title="Wolffish — Official Cinematic Launch"
-    frameBorder="0"
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-    allowFullScreen
-    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-  />
-</div>
-
-## Official Cinematic Reveal
-
-We're big fans of [OpenClaw](https://openclaw.ai). We genuinely admire what it set out to do. But after months of trying, we found it unusable — broken in ways we couldn't fix, buried under layers of bloat. It's not a server. It's not a CLI. It's certainly not an app. Wolffish is what we wish OpenClaw had been: simple, it works, and it's easy to use.
-
-<div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "12px", marginTop: "24px", marginBottom: "32px" }}>
-  <iframe
-    src="https://www.youtube.com/embed/TKdTWd6BXR8"
-    title="Wolffish — Official Cinematic Reveal"
-    frameBorder="0"
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-    allowFullScreen
-    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-  />
-</div>
-
-## Install
-
-macOS / Linux / Windows:
-
-```bash
-curl -fsSL https://releases.wolffi.sh/install.sh | sh
-```
-
-Windows (PowerShell):
-
-```powershell
-irm https://releases.wolffi.sh/install.ps1 | iex
-```
-
-Or download the latest release directly from [wolffi.sh](https://wolffi.sh/).
-
-## The Core Idea
-
-**Markdown is the source of truth for all agent behavior.** The TypeScript code is pure plumbing — it reads markdown, calls LLMs, executes tools, and writes markdown back. To change what the agent does, you edit a markdown file, not code. The LLM reads these instructions at runtime, so behavior evolves without rebuilds.
-
-## Key Features
+## What that buys you
 
 <CardGroup cols={2}>
-  <Card title="Local-First" icon="house">
-    Can work 100% offline with local Ollama models. Cloud providers and Ollama are both optional — use whichever fits your setup.
+  <Card title="Agents, not a chat box" icon="terminal">
+    One persistent agent per employee, on their machine, with real file and shell permissions —
+    not a sidebar that can only talk.
   </Card>
 
-  <Card title="Markdown-Powered" icon="file-lines">
-    Your agent's entire brain is readable, editable, and version-controllable markdown files.
+  <Card title="No prompt ever reaches a vendor you didn't pick" icon="shield">
+    Model calls go to the organization's own zero-data-retention endpoint on the organization's
+    keys. No device ever holds a provider key.
   </Card>
 
-  <Card title="Deterministic Pipeline" icon="diagram-project">
-    The same input follows the same path through the same gates every time. The LLM adds creativity at one specific point.
+  <Card title="Cost you set, not a bill you receive" icon="gauge">
+    Hard token and search caps per person and per organization, enforced at the choke point
+    before the call is forwarded.
   </Card>
 
-  <Card title="Extensible Capabilities" icon="puzzle-piece">
-    Add new abilities by dropping a folder with a SKILL.md file. No code changes required.
+  <Card title="Every action logged, in your own store" icon="list-check">
+    One usage row per decision and one audit row per admin mutation, in the organization's own
+    D1 database.
   </Card>
 </CardGroup>
 
-## How It Works
+## The two tiers
 
-Wolffish talks to LLMs via ten native cloud providers — DeepSeek, Z.ai (GLM), Xiaomi MiMo, Qwen (Alibaba Cloud), Kimi (Moonshot AI), MiniMax, xAI (Grok), Stepfun, Anthropic (Claude), OpenAI (GPT) — plus the OpenRouter aggregator and Ollama for local models. All are optional. You explicitly select your **Brain** model from the model switch beside the chat input — the one you choose is the one that runs. There's no automatic cascade or fallback. Optionally, switch the chat into **[workflow mode](/configuration/workflow-mode)**, where the agent plans phases and spawns parallel agents on models it picks from your connected providers. We recommend starting with DeepSeek or MiMo — they handle complex agentic tasks well at a fraction of the cost. Switch to Anthropic or OpenAI only if needed.
+| | Where it runs | What lives there |
+| --- | --- | --- |
+| **Tier 1 — the agent** | The employee's device | The 15-region brain, capabilities, the markdown workspace, files, tool execution, the browser extension. `~/.wfc` is workbench and cache. |
+| **Tier 2 — the master** | Cloudflare's edge | One Worker: auth, the model lane, the search lane, sync ingest, the capability registry, the admin layer. D1 is the relational master, R2 holds blobs and archives, KV caches config and session kill-markers, three Durable Objects hold the admission gates and the desktop↔phone link. |
 
-Everything lives in one folder: `~/.wolffish/`. Delete it and you're back to factory defaults. No system-level daemons, no crontabs, no registry entries, no scattered config files — unless you deliberately register [autostart](/getting-started/server-deployment#make-it-survive-a-reboot), whose one launch entry `wolffish service uninstall` removes again.
+Read [Architecture](/introduction/architecture) for the full map of what runs where.
 
-```text
-User message → Context Assembly → LLM Call → Tool Execution → Memory → Response
-```
+## Three surfaces, one account
 
-Each step is handled by a dedicated brain module, and every step is inspectable via markdown files.
+The employee sees the same account from three places, and they are not three agents:
 
-## Who Is It For?
+- **Desktop** — where the agent actually runs. Everything else is a view of it.
+- **Phone** — a paired device of the same organization account. It reads the record from the API
+  and reaches a *running* desktop for live turns over the API's per-user bridge.
+- **Browser extension** — the agent's hands in the employee's own Chrome. It talks to the desktop
+  over `localhost` only; it has no cloud endpoint of its own.
 
-Wolffish is for anyone who wants a personal AI agent they fully understand, can use effectively, and can extend reliably. You don't need to be a developer — you just need to understand how it works. Everything is plain markdown files you can read, edit, and debug. If you want to own your AI tools rather than rent them, Wolffish is for you.
+[Sync](/sync/overview) explains exactly what travels between them.
 
-<Card title="Get Started" icon="rocket" href="/getting-started/installation">
-  Install Wolffish and run your first conversation in under 5 minutes.
+## What this edition does not have
+
+Wolffish Cloud is a fork of the personal Wolffish edition, deliberately stripped down. If you are
+coming from that edition or from older documentation, these are gone:
+
+| Removed | Why |
+| --- | --- |
+| Per-user model providers (OpenAI, Anthropic, OpenRouter, Ollama, Qwen, Kimi, MiMo, MiniMax, xAI, Stepfun, Z.ai) | The organization runs **one** model lane. A device cannot hold a provider key. |
+| Telegram and WhatsApp channels | The surfaces are desktop, phone and browser extension. |
+| Notion, GitHub, Google Workspace, Memes integrations | Replaced by first-class integrations built per deployment, not a connector menu. |
+| Video generation | Removed from the API, both clients and the capability registry. |
+| Episodic memory (`episodes`) | Dropped in migration `0011`. Knowledge and conversation records remain. |
+| The `wfc` CLI channel | Removed; the desktop and phone are the channels. |
+
+What survives as an organization-provided service: **web search** (Brave, behind the API),
+**computer use**, **speech-to-text** and **text-to-speech**. Everything else an agent can do comes
+from the [capability registry](/sync/capabilities) — 33 capabilities today, published from the
+repository's `capabilities/` folder.
+
+<Card title="Set up your first device" icon="rocket" href="/getting-started/setup">
+  Sign in on the desktop, pair a phone, install the extension.
 </Card>

@@ -278,17 +278,13 @@ Projects, procedures and automations now each carry **files and a working folder
 
 Long-press a message to **select its text**. On Android that is ordinary selection, in place, where the words already are. On iPhone, where the platform offers no selection for rendered text at all, the long press opens a sheet holding that same message in a form iOS will let you select — the **reply as you were reading it**, headings and bold and lists intact, not the markdown behind it.
 
-### The Terminal, From Your Pocket
-
-Wolffish runs in a terminal on your desktop too, and Channels now shows that half of it. A **CLI card** answers the two questions worth asking about a shell you are not sitting at: can it **find the `wolffish` command**, and did **autostart** take — named down to the mechanism it registered under, launchd or systemd or schtasks. Neither is a switch here. Registering with an operating system is that machine's own act, the same as Launch at startup, so this device reports it rather than driving it. What you can change is the terminal's feed: a clean account of what the agent said and delivered, or every tool call and result. And a desktop that could not answer says **Unknown** — a command nobody managed to probe never reads as a command that is missing.
-
 ### A Turn Still Being Written Says So
 
 Come back while the desktop is **mid-answer** — the app waking, the tunnel re-forming — and the conversation now knows the turn is still going. It used to render as finished, because the announcement that it started had come and gone while the phone was away: a composer inviting a new message, no stop button, and a rating bar offering to score an answer still being written. The phone now **asks what is running** the moment it connects, and it re-opens those turns rather than beginning them, so a run you left parked on a permission card is still parked on it when you get back.
 
 ### Where a Conversation Came From
 
-A chat started in a terminal wears a **terminal glyph** in the list, next to the phone, Telegram and WhatsApp marks already there. And a conversation the phone knows about **only because a turn is running in it** now shows its origin from the first instant, instead of sitting blank until the desktop gets round to sending the details — which, on a slow link, is the entire time anyone is watching it happen.
+A conversation the phone knows about **only because a turn is running in it** now shows its origin from the first instant, instead of sitting blank until the desktop gets round to sending the details — which, on a slow link, is the entire time anyone is watching it happen.
 
 ### Smaller Things
 

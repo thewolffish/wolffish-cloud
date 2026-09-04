@@ -253,7 +253,7 @@ describe('the dataset as a whole', () => {
     // not here is a badge the dataset never proves it can draw. `electron` is
     // not in that switch — it is the in-app default the badge draws nothing
     // for — but rows legitimately carry it, so it is named here.
-    const known = new Set(['electron', 'mobile', 'cli', 'heartbeat', 'procedure'])
+    const known = new Set(['electron', 'mobile', 'heartbeat', 'procedure'])
     const seen = new Set<string>()
     for (const { conversation } of dataset) {
       if (!conversation.channel) continue

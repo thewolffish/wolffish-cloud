@@ -95,29 +95,7 @@
       "runCards": "Run cards",
       "runCardsDesktopDescription": "Show a live card over the desktop app while one of your automations or procedures runs. Off (the default) keeps that screen quiet — the run still happens and still reports on its own page.",
       "runCardsPhoneDescription": "Show a live card on this phone while one of your automations or procedures runs on the desktop. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
-      "enabled": "Enabled",
-      "cli": {
-        "title": "CLI",
-        "description": "Wolffish in a terminal on your desktop — the same agent, the same settings, the same conversations, no window needed.",
-        "command": "The wolffish command",
-        "commandDescription": "Whether a shell on your desktop can find it.",
-        "commandReady": "Ready",
-        "commandMissing": "Not on PATH",
-        "unknown": "Unknown",
-        "verboseDescription": "Off prints a clean feed in the terminal: what the agent says, the files it delivers, and anything that failed. On adds every tool call and result.",
-        "service": "Start on its own",
-        "serviceState": "Autostart",
-        "serviceDescription": "Whether your desktop registered Wolffish to come back after a restart.",
-        "serviceRegistered": "Registered",
-        "serviceNotRegistered": "Not registered",
-        "mode": "Start it as",
-        "modes": {
-          "gui": "Login item",
-          "headless": "Background service"
-        },
-        "mechanism": "Mechanism",
-        "serviceOnDesktop": "Registering with the operating system is your desktop's own act, so this device reports it rather than changing it — the same as Launch at startup. Change it in Settings › Channels › CLI over there."
-      }
+      "enabled": "Enabled"
     },
     "services": {
       "subtitle": "Connections the agent uses.",

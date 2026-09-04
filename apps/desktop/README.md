@@ -14,7 +14,7 @@ The Wolffish Cloud desktop app — a fork of the personal [wolffish-app](https:/
 
 | Phase | Scope | State |
 | --- | --- | --- |
-| Prune | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity; the CLI's provider/Ollama verbs and cards, the bundled provider config keys and the vendor code paths swept out (2026-09) | ✅ done |
+| Prune | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity; the bundled provider config keys and the vendor code paths swept out; the terminal CLI channel and headless run mode removed entirely, leaving the window and the phone as the only surfaces (2026-09) | ✅ done |
 | Auth | Sign-in screen (email + password, forced first-login reset), PIN quick-lock, keychain-sealed session storage + refresh loop, admin PIN clear / revoke | ✅ done |
 | API integration | Server-driven model catalog, streaming through `/ai/v1/chat/completions`, config LWW row, conversations + workspace files as the outbox, restore on sign-in, usage from the metering table, capabilities from the registry | ✅ done |
 

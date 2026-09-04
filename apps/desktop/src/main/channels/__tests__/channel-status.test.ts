@@ -1,9 +1,8 @@
 /**
  * What every surface believes about channel connectivity.
  *
- * One function feeds three readers: `wolffish status` in the terminal, and the
- * agent's own `channel_status` and `wolffish_status` tools. That last one is
- * why the shape matters more than a settings row would — the agent decides
+ * One function feeds the agent's own `channel_status` and `wolffish_status`
+ * tools. The shape matters more than a settings row would — the agent decides
  * whether it can REACH the user from this, and relays the reconnect line
  * verbatim when it cannot.
  *
@@ -69,36 +68,15 @@ const mobileRow = (mobile: unknown): ReturnType<typeof collectChannelStatus>[num
   return row
 }
 
-check('every channel is listed, mobile and the terminal among them', () => {
+check('every channel is listed, mobile among them', () => {
   const ids = snapshot(unpaired).map((entry) => entry.id)
-  assert.deepEqual(ids, ['mobile', 'cli', 'electron'])
+  assert.deepEqual(ids, ['mobile', 'electron'])
 })
 
-check('the terminal reads connected only while a terminal is attached', () => {
-  const rows = (cli: { clients: number; listening: boolean } | undefined): unknown =>
-    collectChannelStatus({
-      mobile: () => unpaired,
-      cli: cli ? () => cli : undefined
-    } as never).find((entry) => entry.id === 'cli')
-
-  assert.equal((rows({ clients: 1, listening: true }) as { connected: boolean }).connected, true)
-  // Listening is not the same as reachable: with nobody attached there is
-  // nowhere for a message to land.
-  assert.equal((rows({ clients: 0, listening: true }) as { connected: boolean }).connected, false)
-  assert.equal((rows({ clients: 0, listening: false }) as { connected: boolean }).connected, false)
-  assert.equal((rows(undefined) as { connected: boolean }).connected, false)
-})
-
-check('in-app chat is not claimed as available on a headless box', () => {
-  const row = (headless: boolean): { connected: boolean; detail: string } =>
-    collectChannelStatus({
-      mobile: () => unpaired,
-      headless: () => headless
-    } as never).find((entry) => entry.id === 'electron') as never
-
-  assert.equal(row(false).connected, true)
-  assert.equal(row(true).connected, false)
-  assert.match(row(true).detail, /headless/)
+check('in-app chat is available while the app is the process reporting', () => {
+  const row = snapshot(unpaired).find((entry) => entry.id === 'electron')
+  assert.ok(row)
+  assert.equal(row.connected, true)
 })
 
 check('a paired phone with a live tunnel reads connected, by name', () => {

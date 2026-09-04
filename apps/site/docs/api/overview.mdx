@@ -1,0 +1,124 @@
+---
+title: "The API"
+description: "One Worker, one front door, every endpoint"
+---
+
+`wfc-api` is a single Cloudflare Worker at **`api.wolffi.sh`**. Everything the desktop and the phone
+do passes through it, and every request runs the same middleware chain:
+
+```text
+verify token → resolve user → resolve role → policy / quota gate → handler
+```
+
+There is no second environment by design: the deployment *is* the system, and `wrangler dev` against
+mock upstreams is the iteration loop.
+
+Check what is live with `GET /health`, which answers the service name and the deployed version.
+
+## Conventions
+
+- **Auth** — a bearer access token on `Authorization: Bearer <jwt>`. The one exception is the bridge
+  WebSocket, which also accepts `?access_token=` because a browser-style socket cannot set a header.
+- **Errors** — JSON `{"error": "<code>"}` with an HTTP status. Clients map the *code*, never the
+  message: `email_not_found`, `wrong_password`, `rate_limited`, `account_disabled`,
+  `temp_password_expired`, `session_revoked`, `forbidden`, `not_found`, `quota_exceeded`.
+- **Idempotency** — every sync item carries a client-generated id, so replays are no-ops and the
+  response names every item it refused.
+
+## Public
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/` | Landing page |
+| `GET` | `/health` | `{ok, service, version, time}` |
+
+## Auth and pairing
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/auth/login` | Password sign-in; issues an access + refresh token pair |
+| `POST` | `/auth/password` | Forced first-login change, and voluntary change |
+| `POST` | `/auth/refresh` | Rotate the refresh token, mint a new access token |
+| `POST` | `/auth/reset/request` | Email a reset code |
+| `POST` | `/auth/reset/confirm` | Redeem the code |
+| `POST` | `/auth/pair/claim` | A phone claims a pairing offer and receives a device session |
+
+## Session surface (`/v1`)
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/v1/me` | Identity, role, status — the desktop's first call after login |
+| `GET` | `/v1/models` | The server-driven model catalog: exactly what this user's picker shows |
+| `PATCH` | `/v1/profile` | Name and phone (email, role and status are the admin's) |
+| `PUT`&nbsp;·&nbsp;`GET`&nbsp;·&nbsp;`DELETE` | `/v1/profile/avatar` | Avatar blob |
+| `POST` | `/v1/device/pin` | Report local PIN state, acknowledge an admin clear-request |
+| `POST` | `/v1/logout` | Revoke this session |
+| `GET` | `/v1/devices` | The caller's own devices |
+| `DELETE` | `/v1/devices/:id` | Unpair a device (refuses the caller's own) |
+| `POST` | `/v1/pair/offer` | Open a pairing offer (code + QR payload) |
+| `GET`&nbsp;·&nbsp;`DELETE` | `/v1/pair/offer/:id` | Poll or withdraw an offer |
+| `GET` | `/v1/bridge/ws` | WebSocket upgrade into this user's `UserBridge` |
+| `GET` | `/v1/bridge/status` | Presence: is my desktop up right now? |
+
+## Sync (`/v1`)
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET`&nbsp;·&nbsp;`PUT` | `/v1/config` | The one settings row, last-write-wins |
+| `POST` | `/v1/sync/batch` | The outbox drain: conversations + records, idempotent |
+| `GET` | `/v1/sync/bootstrap` | One-call restore: config + conversation index + file manifest |
+| `POST` | `/v1/sync/wipe` | Wipe this user's synced record |
+| `GET` | `/v1/conversations` | The index — `after` (restore) or `since` (catch-up) |
+| `GET` | `/v1/conversations/:id/records` | A page of one conversation's records |
+| `DELETE` | `/v1/conversations/:id` | Tombstone a conversation |
+| `POST` | `/v1/files/upload` | Content-addressed upload (dedupe by sha256) |
+| `GET` | `/v1/files/manifest` | The file manifest |
+| `POST` | `/v1/files/delete` | Tombstone files |
+| `GET`&nbsp;·&nbsp;`HEAD` | `/v1/files/path?name=` | The newest live blob at a workspace path |
+| `GET` | `/v1/files/:sha256` | Fetch a blob |
+| `GET` | `/v1/usage` | The raw usage ledger for this user |
+| `GET` | `/v1/usage/days` | Usage folded per day |
+
+## Capabilities (`/v1`)
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/v1/capabilities/manifest` | Org capabilities + this user's own imports — the whole sync contract |
+| `GET` | `/v1/capabilities/org/:slug/package` | Download an org package |
+| `GET`&nbsp;·&nbsp;`PUT`&nbsp;·&nbsp;`DELETE` | `/v1/capabilities/user/:slug` | The user's own scope |
+
+## The lanes
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/ai/v1/chat/completions` | The model lane — OpenAI-compatible |
+| `POST` | `/v1/search` | The search lane |
+| `GET` | `/v1/search/status` | Provider, whether the lane is live, this user's standing |
+
+See [The lanes](/api/lanes).
+
+## Admin (`/admin`)
+
+Reads are open to `owner`, `admin` and `support`; mutations to `owner` and `admin` only, and only an
+owner may act on an owner. Every mutation writes an audit row.
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET`&nbsp;·&nbsp;`POST` | `/admin/users` | List, invite |
+| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/users/:id` | Read, update (role, status, profile) |
+| `POST` | `/admin/users/:id/reset-password` | Mint a one-time temp password |
+| `POST` | `/admin/users/:id/clear-pin` | Ask a device to clear its local lock |
+| `POST` | `/admin/users/:id/revoke-sessions` | Kill every session this user holds |
+| `PUT` | `/admin/users/:id/policy` | Per-user allowlist and caps |
+| `GET`&nbsp;·&nbsp;`PUT` | `/admin/users/:id/config` | Read or repair a user's synced settings |
+| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/org` | Org defaults: default model, allowlist, caps, search switch |
+| `GET`&nbsp;·&nbsp;`PUT`&nbsp;·&nbsp;`DELETE` | `/admin/capabilities[/:slug]` | The org capability registry |
+| `GET` | `/admin/usage` | Totals per user, from the daily rollup |
+| `GET` | `/admin/gates` | Live gate state: queue depth, in-flight per host, cooldowns |
+| `POST` | `/admin/maintenance/run` | Run the nightly jobs now |
+| `GET` | `/admin/audit` | The audit log |
+
+<Note>
+The admin **UI** lives inside the admin's own desktop client. Every endpoint re-verifies the role
+server-side, so the UI is presentation only — hiding a button is not a control.
+</Note>

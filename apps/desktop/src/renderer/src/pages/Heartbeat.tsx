@@ -23,11 +23,9 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
-  Attachment01Icon,
   Delete02Icon,
   Edit02Icon,
   FloppyDiskIcon,
-  Folder01Icon,
   GridViewIcon,
   HelpCircleIcon,
   InformationCircleIcon,
@@ -1450,7 +1448,7 @@ export function Heartbeat(): React.JSX.Element {
 
       {view === 'cards' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
             <header className="flex items-start justify-between gap-3">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
@@ -1478,80 +1476,114 @@ export function Heartbeat(): React.JSX.Element {
                 {t('heartbeat.empty')}
               </div>
             ) : (
-              <ul className="flex flex-col gap-3">
+              // Services' landing grid, card for card: three columns of equal
+              // identity tiles. The prompt, files and folders are NOT on the
+              // card — they are what the editor is for.
+              <ul className="grid grid-cols-3 gap-3">
                 {orderedJobs.map((job) => {
                   const busy = job.active ? busyByLabel.get(job.label) : undefined
                   return (
-                    <li
-                      key={job.label}
-                      className={cn(
-                        'bg-surface border-border flex flex-col gap-2.5 rounded-2xl border px-4 py-3',
-                        !job.active && 'opacity-60'
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                          <span aria-hidden className="text-2xl leading-none">
+                    <li key={job.label} className="min-w-0">
+                      <div
+                        className={cn(
+                          'bg-surface border-border flex h-full w-full flex-col items-start gap-3 rounded-2xl border p-4 text-start',
+                          !job.active && 'opacity-60'
+                        )}
+                      >
+                        <div className="flex w-full items-center justify-between gap-2">
+                          <span
+                            aria-hidden
+                            className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
+                          >
                             {jobCardIcon(job)}
                           </span>
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span
-                              title={job.label}
-                              className="text-fg truncate text-sm font-medium"
+                          <div className="flex shrink-0 items-center">
+                            {job.active && (
+                              <button
+                                type="button"
+                                onClick={() => void handleRun(job)}
+                                disabled={!!busy}
+                                aria-label={t('heartbeat.run')}
+                                title={
+                                  busy
+                                    ? t(
+                                        busy === 'running'
+                                          ? 'heartbeat.noteRunning'
+                                          : 'heartbeat.noteQueued'
+                                      )
+                                    : t('heartbeat.run')
+                                }
+                                className={cn(
+                                  iconButtonClass,
+                                  'hover:text-emerald-600 dark:hover:text-emerald-400',
+                                  'disabled:cursor-not-allowed disabled:opacity-40'
+                                )}
+                              >
+                                <PlayIcon size={17} />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openEditor(job)}
+                              aria-label={t('heartbeat.edit')}
+                              title={t('heartbeat.edit')}
+                              className={cn(iconButtonClass, 'hover:text-fg')}
                             >
-                              <bdi>{job.label}</bdi>
-                            </span>
+                              <Edit02Icon size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(job)}
+                              aria-label={t('heartbeat.delete')}
+                              title={t('heartbeat.delete')}
+                              className={cn(iconButtonClass, 'hover:text-rose-500')}
+                            >
+                              <Delete02Icon size={15} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex w-full min-w-0 flex-col gap-1">
+                          <span
+                            title={job.label}
+                            className="text-fg flex min-w-0 items-center gap-2 text-sm font-semibold"
+                          >
+                            <bdi className="truncate">{job.label}</bdi>
                             <Badge variant="primary" size="sm" className="shrink-0">
                               {t(`heartbeat.type.${job.type}`)}
                             </Badge>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {job.active && (
-                            <button
-                              type="button"
-                              onClick={() => void handleRun(job)}
-                              disabled={!!busy}
-                              aria-label={t('heartbeat.run')}
-                              title={
-                                busy
-                                  ? t(
-                                      busy === 'running'
-                                        ? 'heartbeat.noteRunning'
-                                        : 'heartbeat.noteQueued'
-                                    )
-                                  : t('heartbeat.run')
-                              }
+                          </span>
+                          <span className="text-muted line-clamp-2 text-xs leading-relaxed">
+                            {jobMetaLine(job)}
+                          </span>
+                          {busy && (
+                            <span
                               className={cn(
-                                iconButtonClass,
-                                'hover:text-emerald-600 dark:hover:text-emerald-400',
-                                'disabled:cursor-not-allowed disabled:opacity-40'
+                                'flex items-center gap-1.5 text-xs',
+                                busy === 'running'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-amber-600 dark:text-amber-400'
                               )}
                             >
-                              <PlayIcon size={18} />
-                            </button>
+                              <InformationCircleIcon size={13} className="shrink-0" />
+                              <span className="truncate">
+                                {t(
+                                  busy === 'running'
+                                    ? 'heartbeat.noteRunning'
+                                    : 'heartbeat.noteQueued'
+                                )}
+                              </span>
+                            </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => openEditor(job)}
-                            aria-label={t('heartbeat.edit')}
-                            title={t('heartbeat.edit')}
-                            className={cn(iconButtonClass, 'hover:text-fg')}
-                          >
-                            <Edit02Icon size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(job)}
-                            aria-label={t('heartbeat.delete')}
-                            title={t('heartbeat.delete')}
-                            className={cn(iconButtonClass, 'hover:text-rose-500')}
-                          >
-                            <Delete02Icon size={16} />
-                          </button>
+                        </div>
+
+                        {/* On/off and mode are properties of the automation,
+                            not of its prompt — they stay on the card, in the
+                            footer the three pages share. */}
+                        <div className="mt-auto flex w-full flex-wrap items-center gap-1.5">
                           <div
                             role="tablist"
-                            className="border-border bg-bg/40 ms-1 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                            className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
                           >
                             <button
                               role="tab"
@@ -1620,69 +1652,6 @@ export function Heartbeat(): React.JSX.Element {
                           </div>
                         </div>
                       </div>
-                      {/* Own full-width row — under the label column it wrapped
-                        onto two lines next to the action cluster. */}
-                      <span className="text-muted text-xs">{jobMetaLine(job)}</span>
-                      {busy && (
-                        <span
-                          className={cn(
-                            'flex items-center gap-1.5 text-xs',
-                            busy === 'running'
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-amber-600 dark:text-amber-400'
-                          )}
-                        >
-                          <InformationCircleIcon size={13} className="shrink-0" />
-                          <span className="truncate">
-                            {t(
-                              busy === 'running' ? 'heartbeat.noteRunning' : 'heartbeat.noteQueued'
-                            )}
-                          </span>
-                        </span>
-                      )}
-                      {job.body ? (
-                        <pre
-                          dir="auto"
-                          className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                        >
-                          {job.body}
-                        </pre>
-                      ) : (
-                        <p className="text-muted text-xs italic">{t('heartbeat.promptEmpty')}</p>
-                      )}
-                      {/* What this automation carries into every run. On the
-                          card, not just in the editor: the paths are the part
-                          of an automation you cannot infer from its prompt.
-                          Read-only here — detaching lives in the editor. */}
-                      {(job.files.length > 0 || job.dirs.length > 0) && (
-                        <div dir="ltr" className="flex flex-wrap items-center gap-1.5">
-                          {/* Transparent, not `bg-bg`: these sit ON the card,
-                              so they take its surface rather than punching a
-                              darker well into it. Local to this card by
-                              design — code blocks elsewhere in the app keep
-                              their own recessed background. */}
-                          {job.files.map((file) => (
-                            <span
-                              key={file}
-                              title={file}
-                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 text-[10px] leading-none"
-                            >
-                              <Attachment01Icon size={10} className="shrink-0" />
-                              <span className="truncate">{fileBaseName(file)}</span>
-                            </span>
-                          ))}
-                          {job.dirs.map((dir) => (
-                            <code
-                              key={dir}
-                              title={dir}
-                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 font-mono text-[10px] leading-none"
-                            >
-                              <Folder01Icon size={10} className="shrink-0" />
-                              <span className="truncate">{dir}</span>
-                            </code>
-                          ))}
-                        </div>
-                      )}
                     </li>
                   )
                 })}

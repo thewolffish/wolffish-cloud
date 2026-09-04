@@ -5,7 +5,7 @@
  * the one Brave Search key behind the API's /v1/search lane, and the
  * web-search capability's plugin calls that lane with the session token
  * (through the cerebellum's cloud host). This module is the status view
- * the settings panel, the phone snapshot and the CLI render — one read of
+ * the settings panel and the phone snapshot render — one read of
  * GET /v1/search/status, cached briefly so a panel mount does not hit the
  * edge on every render, with a forced refresh for the panel's button.
  */

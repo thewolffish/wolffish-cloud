@@ -1,0 +1,110 @@
+---
+title: "Usage & audit"
+description: "What is logged, what is deliberately not, and how long it is kept"
+---
+
+Two ledgers, written by two different things, for two different questions.
+
+| Ledger | Written by | Answers |
+| --- | --- | --- |
+| `usage` + `usage_daily` | The meter, on every lane decision | *What did the organization spend, and who spent it?* |
+| `audit_log` | Every admin mutation | *Who changed what, and when?* |
+
+Both live in the organization's own D1 database. Neither leaves it.
+
+## The usage ledger
+
+Every decision on either lane — allowed, denied or errored — becomes **one raw row and one
+increment of the daily rollup, written in the same atomic D1 batch**. Totals therefore never depend
+on raw rows surviving the retention sweep.
+
+A raw `usage` row carries:
+
+| Column | Meaning |
+| --- | --- |
+| `user_id`, `device_id` | Who, and on which device |
+| `surface` | Which surface spent it — `inapp`, `mobile`, `extension`, `heartbeat`, `procedure`, `api`; `''` when unattributed |
+| `kind` | `chat` or `search` |
+| `model`, `upstream` | Which model, on which host |
+| `tokens_in`, `tokens_out`, `tokens_cached` | Exact counts as the host reported them; cached is a subset of input |
+| `cost_microusd` | The host's own reported cost when it gives one, else priced from the token counts |
+| `latency_ms` | How long it took |
+| `decision` | `allowed` · `denied_model` · `denied_quota` · `error` |
+| `error` | The failure, when there was one |
+| `created_at` | UTC |
+
+Surface attribution matters because a phone's turns run on the employee's **desktop** device: without
+it, mobile spend would be indistinguishable from in-app spend and extension spend would be invisible.
+
+### What is deliberately not recorded
+
+- **No prompt content. No response content.** The router never logs or stores a body. It reads the
+  stream only far enough to find the usage block.
+- **No search query text.** The search row records that a search happened, not what was asked.
+- **No identity sent upstream.** The outbound request is the client's body with the wire model id and
+  the organization's key.
+
+Worker observability is metadata-only for the same reason: errors, latency and the platform's own
+structured events.
+
+### Reading it
+
+| Endpoint | Who | What |
+| --- | --- | --- |
+| `GET /v1/usage` | The employee | Their own raw ledger |
+| `GET /v1/usage/days` | The employee | Their own usage folded per day |
+| `GET /admin/usage` | owner, admin, support | Totals per user, from the rollup |
+
+The desktop's usage screen does not keep its own books: it is rebuilt from `GET /v1/usage` after a
+purge and reconciled on a running app, so calls made from the employee's other devices fold in and
+every surface shows the organization's number.
+
+## The audit log
+
+Every admin mutation writes one row: the actor, the action, the target, a JSON detail blob and a
+timestamp. Read it with `GET /admin/audit`.
+
+| Action | Written when |
+| --- | --- |
+| `user.invite` | An account is created |
+| `user.update` | Role, status or profile changed |
+| `user.reset_password` | A temp password is minted |
+| `user.revoke_sessions` | Every session is killed |
+| `device.clear_pin` | A device is asked to clear its local lock |
+| `policy.set` | A user's allowlist or caps changed |
+| `config.view` | An admin **read** a user's synced settings |
+| `config.set` | An admin wrote or reset them |
+| `org.update` | The organization defaults changed |
+| `capability.put` · `capability.delete` | The registry changed |
+| `maintenance.run` | The nightly jobs were run on demand |
+
+`config.view` is the only audited **read** in the API, because that row carries the user's stored
+integration secrets — a disclosure worth recording. `config.set` is audited by **size only**: the
+content is the user's secrets and stays out of the log.
+
+## Retention
+
+D1 holds a bounded hot window; the long tail goes to R2. All of it runs in the nightly cron
+(`17 3 * * *` UTC), and each job is bounded by its own deadline so a backlog drains over successive
+nights rather than overrunning.
+
+| Data | Kept in D1 | Then |
+| --- | --- | --- |
+| Conversation records | 14 days after last touch | Moved into one gzipped JSON blob in R2 (`archive/<user>/<conv>.json.gz`), rows deleted |
+| Raw `usage` rows | 180 days | Exported to R2 as gzipped JSON, then deleted |
+| `usage_daily` rollup | Indefinitely | It is what admin totals read |
+| Deleted conversations | Tombstone forever; records 30 days | Records and the archive blob purged — "wipe my data" is a real wipe a month later |
+| Expired sessions | 30 days past expiry | Deleted |
+| Reset codes | Until expiry | Deleted |
+| Pairing offers | 1 day | Deleted — an offer is a three-minute door |
+| Orphan blobs | — | Collected nightly |
+
+Archiving is invisible to clients: the records read merges the R2 blob with any rows that arrived
+since, under the same cursor contract. A conversation that comes back to life simply accumulates new
+rows in D1 again, and the next idle pass merges them back into the blob.
+
+## Where the numbers come from
+
+`GET /admin/gates` is the live view — queue depth, in-flight per host, cooldowns, what each host has
+served. It reads the gates directly, not the ledger, so it answers "what is happening right now"
+rather than "what happened".

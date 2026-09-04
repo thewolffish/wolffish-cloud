@@ -11,9 +11,9 @@ import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from 
 
 /**
  * A channel is one mouth wolffish can speak through. The Electron renderer
- * is the original channel; the terminal and the paired phone followed. All
- * run the same agent pipeline — the only difference is how segments,
- * approvals, and turn events get rendered to the user.
+ * is the original channel; the paired phone followed. Both run the same agent
+ * pipeline — the only difference is how segments, approvals, and turn events
+ * get rendered to the user.
  *
  * Concretely, a channel receives a user message, calls into the shared
  * turn runner with a TurnSink describing how to render output, and the
@@ -21,7 +21,7 @@ import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from 
  * channel via the singleton TurnRouter so amygdala doesn't need to know
  * which channel a turn belongs to.
  */
-export type ChannelId = 'electron' | 'cli' | 'mobile'
+export type ChannelId = 'electron' | 'mobile'
 
 /**
  * The set of callbacks the agent uses to render an active turn. The

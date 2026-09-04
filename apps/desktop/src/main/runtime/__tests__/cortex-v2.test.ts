@@ -219,7 +219,7 @@ async function run(): Promise<void> {
   // The list fast path feeds the rail's number-chip badge straight from this
   // row — a missing icon column is why the badge only showed on a cold index.
   check('conversation icon', convs[0]?.icon, '🛩️')
-  const byChannel = cortex.listConversations({ channel: 'cli' })
+  const byChannel = cortex.listConversations({ channel: 'heartbeat' })
   check('channel filter empty', byChannel.length, 0)
 
   // ── Conversation count (usage:getStats fast path) ───────────────────

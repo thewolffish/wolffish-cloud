@@ -1,0 +1,123 @@
+---
+title: "Desktop sync"
+description: "The outbox, the restore, and why ~/.wfc is a cache"
+---
+
+The desktop is the only writer of the record. Everything it holds locally in `~/.wfc` exists at the
+organization too, and the local copy can be deleted without loss.
+
+State for all of it lives in one file: `~/.wfc/.sync-state.json`.
+
+## Push: the outbox
+
+Every conversation write and every config write schedules a **debounced drain** (2.5 s). A drain:
+
+1. Uploads any message attachments — content-addressed, so R2 dedupes and a re-send costs a hash.
+2. `POST /v1/sync/batch` with the conversation row, one `snapshot` record carrying the envelope
+   (title, model, project, working folders — everything but messages), and one `message` record per
+   new message.
+3. Pushes the config row if it changed.
+
+### Pushes are incremental
+
+`.sync-state.json` remembers the digest of each conversation file as last pushed, so a launch, or a
+lock and unlock, re-pushes only what changed — nothing, in the steady state. Within a process the
+engine also remembers which record ids the server acknowledged, so a turn on a 200-message
+conversation sends the new messages and the envelope, not the whole transcript again.
+
+The envelope rides a **stable** record id (`snap.<conversation id>`), which the server upserts and
+whose superseded rows it retires. The envelope history can therefore never accumulate and bloat a
+restore.
+
+### Deletes are durable
+
+The delete outbox rides `.sync-state.json`. A conversation deleted and then followed by a quit — or
+made offline entirely — still reaches the server on a later launch, instead of resurrecting at the
+next restore.
+
+## Config: last-write-wins, decided by the server
+
+The settings row is one blob at `PUT /v1/config`. Last-write-wins, but on the **server's** stamp, not
+the client's clock:
+
+- `.sync-state.json` remembers the `updated_at` of the last row this client wrote or adopted.
+- A **differing** server stamp means someone else wrote it — an admin repairing this user's settings
+  through `PUT /admin/users/:id/config`, or another of their devices. That row is pulled and adopted
+  instead of being buried under a blind re-push.
+- A client with **no** stamp — a purged install, or one from before stamping — never pushes blind.
+  It reads the server row first and adopts it when one exists, pushing only into a genuinely empty
+  row.
+
+That last rule is what makes it impossible for a fresh install's default config to overwrite a
+user's real one.
+
+<Note>
+The synced config row carries integration credentials, so it is **sealed at rest** in D1 with
+`CONFIG_ENC_KEY`. An admin reading it (`GET /admin/users/:id/config`) is the one audited *read* in
+the whole API.
+</Note>
+
+## Files
+
+Workspace files sweep as path-named blobs, and the sweep carries **deletions** too:
+`.sync-state.json` remembers every path known to be on the server, and a remembered path no longer
+on disk is tombstoned via `POST /v1/files/delete`. A purge-and-restore therefore honours what the
+user deleted.
+
+The usage ledger is deliberately **not** a blob. The organization meters every call, so the ledger
+is rebuilt from `GET /v1/usage` after a purge and reconciled on a running app, folding in calls made
+from the user's other devices.
+
+## Pull: restore
+
+Restore is a durable, retryable step keyed on `restore_done` in `.sync-state.json`. On session ready
+with restore pending:
+
+<Steps>
+  <Step title="Bootstrap">
+    `GET /v1/sync/bootstrap` returns config, the conversation index and the file manifest in one
+    call, with paged continuations for `/v1/conversations` and `/v1/files/manifest` — walked to
+    exhaustion, no caps.
+  </Step>
+
+  <Step title="Rebuild transcripts">
+    Record pages are pulled a few conversations at a time and each transcript is rebuilt — newest
+    version per message, one envelope, sequence order — and **merged onto** whatever is already on
+    disk, so a retry or a concurrent turn can never lose messages.
+  </Step>
+
+  <Step title="Materialise the workspace">
+    The working-setup blobs — brain, deliverables, channel maps — land back on their paths.
+  </Step>
+</Steps>
+
+A fresh install lays the **bundled defaults** down before restore can run (`soul.md`,
+`heartbeat.md`, the knowledge stubs). A virgin restore replaces a file that still equals its bundled
+default with the organization's copy, and keeps anything the user has already produced.
+
+### Media hydrates on open
+
+Conversation media — uploads, voice, speech, generated files under `conv-*` directories — is
+deliberately not predownloaded. It streams to disk when its conversation is **opened**, with
+throttled byte-level progress driving the chat's download banner. Flights dedupe per conversation, a
+hydrated conversation costs one stat pass, and per-file failures retry on the next open.
+
+Not-yet-hydrated paths stay out of `synced_paths`, so the deletion sweep can never tombstone media
+the user simply has not opened yet.
+
+## Ownership
+
+The workspace is bound to the account that produced it. The owner's user id is recorded on first
+sync, and a session belonging to someone else resets the cache rather than ever cross-pushing one
+person's data into another's account.
+
+## When sync runs
+
+A full session flow — ownership check, restore, the digest sweep, the usage reconcile — runs when a
+session **becomes authenticated**. Never on UI-only transitions between ready and locked, and never
+on a profile save. Its steady-state cost is a handful of small reads.
+
+## Signing out
+
+Signing out drains the outbox, then revokes the session, then purges the cache — in that order, so
+nothing unsent is lost and nothing is left behind.

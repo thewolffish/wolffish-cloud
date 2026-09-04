@@ -1,0 +1,96 @@
+---
+title: "Capabilities"
+description: "How the organization's capability registry becomes a folder on every machine"
+---
+
+A capability is what the agent can *do*: a folder with a `SKILL.md` and optionally a `plugin/`,
+assets and a `package.json`. The agent reads the markdown at runtime, so adding an ability is
+publishing a folder, not shipping a build.
+
+In Wolffish Cloud capabilities are **cloud-distributed**. Nothing is bundled into a client. The
+organization's registry — versioned zip packages in R2, indexed in D1 — is the distribution source,
+and every desktop mirrors it.
+
+## Two scopes
+
+| Scope | Who controls it | On disk | Direction |
+| --- | --- | --- | --- |
+| **org** | Admins, via `/admin/capabilities` | Dot-prefixed folders (`.git`, `.browser`, …) | Mirrored exactly — download what's new, remove what's absent |
+| **user** | The employee | Plain folders | Two-way — local imports push, other devices' changes pull |
+
+`GET /v1/capabilities/manifest` returns both in one response, and that manifest **is** the whole
+sync contract. Clients diff it against local state, so an admin's add, update or remove propagates
+on the next pull with no per-client bookkeeping server-side.
+
+## A sync pass
+
+Silent and boring by design. A pass fires on session ready, after an import or delete, and on a
+30-minute interval:
+
+<Steps>
+  <Step title="Pull the manifest">
+    Per-slug `{version, sha256}` for both scopes. Local state lives in
+    `<cerebellum>/.wfc-caps.json`. Packages hash deterministically, so "the sha matches and the
+    folder exists" is the entire up-to-date check.
+  </Step>
+
+  <Step title="Download to staging">
+    New or changed packages download off to the side. Nothing on disk has moved yet.
+  </Step>
+
+  <Step title="Swap, only when idle">
+    Folder swaps — the only disruptive moment — happen **only when no agent run is active**.
+    Otherwise the pass parks and retries.
+  </Step>
+</Steps>
+
+Deletes made while offline persist in the state file until the server confirms them, so a dropped
+connection never resurrects a capability. `node_modules` survive swaps: packages never contain them,
+and the lazy npm install keyed on package.json hashes rebuilds them only when an update actually
+changed dependencies.
+
+## Publishing
+
+The repository's `capabilities/` folder is the single editing path. **The registry mirrors git,
+never the other way around** — a direct `PUT /admin/capabilities/:slug` makes the two disagree.
+
+```bash
+# publish: version-bumps changed capabilities, skips unchanged ones
+node apps/api/scripts/seed-capabilities.mjs
+
+# publish including removals: deletes registry entries with no folder here
+node apps/api/scripts/seed-capabilities.mjs --prune
+
+# verify (CI-able): exit 1 if the folder and the live registry disagree
+node apps/api/scripts/seed-capabilities.mjs --check
+```
+
+Every uploaded version is kept at `capabilities/org/<slug>/v<n>.zip`, so a rollback is checking out
+an old tree and re-publishing.
+
+## The package format
+
+One deterministic zip — sorted entries, STORE, fixed timestamps — so the API and the desktop emit
+identical bytes for the same tree:
+
+- `SKILL.md` at the root (required; the API refuses a package without it)
+- No `node_modules` — clients reinstall lazily
+- No `.wfc-installed` / `.wfc-tested` markers — those are earned per install
+- Unsafe paths refused, and the sha256 must match the upload
+
+## What ships today
+
+33 capabilities, published from `capabilities/`. Among them: `shell`, `filesystem`, `git`, `python`,
+`node`, `browser`, `browser-extension`, `computer-use`, `web-search`, `pdf`, `document`,
+`spreadsheet`, `dataviz`, `ffmpeg`, `speech-to-text`, `text-to-speech`, `knowledge`, `procedures`,
+`projects`, `automations`, `workflow`, `mcp`, `secrets`, `skills`.
+
+Four of these are organization-provided **services** rather than pure local tooling: web search
+(through the [search lane](/api/lanes)), computer use, speech-to-text and text-to-speech.
+
+<Warning>
+Capabilities removed in this edition — Telegram, WhatsApp, Notion, GitHub, Google Workspace, Memes
+and video generation — are gone from the registry as well as from the clients. A desktop still
+holding one of those folders has it removed on its next sync pass, because the manifest no longer
+names it.
+</Warning>

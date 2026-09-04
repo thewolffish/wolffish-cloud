@@ -4202,7 +4202,7 @@ function renderSegments(
   // In-place reasoning (kind 'reasoning') supersedes the legacy turn_end copy:
   // when any exists in this message, the turn_end card is skipped or the final
   // iteration's thinking would render twice (broca dual-publishes it for the
-  // mobile/CLI surfaces that only know turn_end).
+  // mobile surface, which only knows turn_end).
   const hasReasoningSegments = segments.some((s) => s.kind === 'reasoning' && !s.worker)
   // Generic guard: every file path already rendered as a player/viewer in this
   // message. Prevents the same file showing twice when it's reachable from more

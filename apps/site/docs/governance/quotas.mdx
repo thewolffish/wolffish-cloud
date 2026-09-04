@@ -1,0 +1,109 @@
+---
+title: "Quotas & enforcement"
+description: "Hard caps at the choke point — how a limit is decided, and what it costs"
+---
+
+Every model call and every web search passes through one door, so a limit is a **decision made
+before the call is forwarded**, not a spend alert that arrives after the money is gone.
+
+That is the whole reason the choke point exists: the organization can quote a fixed cost per seat
+because the ceiling is enforced, not reported.
+
+## What is enforced, and where
+
+| Control | Scope | Enforced by | On breach |
+| --- | --- | --- | --- |
+| Model allowlist | Per user, falling back to org default | The model lane, before admission | `denied_model` |
+| Daily token cap | Per user, per UTC day | `ModelGate` durable counter | `denied_quota` |
+| Monthly token cap | Whole org, per UTC month | `ModelGate` durable counter | `denied_quota` |
+| Daily search cap | Per user, per UTC day | `SearchGate` durable counter | Refused before queueing |
+| Monthly search cap | Whole org, per UTC month | `SearchGate` durable counter | Refused before queueing |
+| Search lane switch | Whole org | `search_enabled` on the org row | Lane reports itself off |
+
+`0` means unlimited on every cap. An organization that wants alerting rather than blocking sets
+them all to zero and watches [usage](/governance/audit) instead.
+
+<Note>
+The counters live in the gates' Durable Object storage, incremented atomically by the same call that
+admits the request — single-threaded and durable, so they are **exact**. The `usage` table remains
+the authoritative record; the counters are what a live decision reads.
+</Note>
+
+## How a limit resolves
+
+```text
+GET /v1/models  ─▶  effective policy = the user's model_policies row,
+                    each field falling back to the org row
+
+POST /ai/v1/chat/completions
+     └─▶ is this model in the effective allowlist?      no  → denied_model
+     └─▶ ModelGate: is the user under their day cap?    no  → denied_quota
+         is the org under its month cap?                no  → denied_quota
+     └─▶ admit, forward, meter on release
+```
+
+An empty allowlist means "the org default model only" — not "everything".
+
+Both the org row and each user's policy are cached in KV so the hot path never reads D1 for
+configuration. An admin mutation deletes the cached key, so an edit lands within the edge cache
+window of about a minute. A cache miss simply reads D1, and a failed cache write is not an error.
+
+## Token plans
+
+On top of the fine-grained daily caps, an employee is assigned a **plan** — the product-level
+monthly ceiling from the pricing model. Only the plan *name* is stored on the user's policy row; the
+ceilings live in code, so changing one is a deploy rather than a backfill of every row.
+
+| Plan | Input / month | Output / month | Enforcement |
+| --- | --- | --- | --- |
+| `standard` | 100M | 8M | Hard cap, per user and per org |
+| `high` | 300M | 25M | Hard cap, per user and per org |
+| `unmetered` | no ceiling | no ceiling | Alerting only |
+
+Input and output are separate ceilings on purpose: they differ by roughly 2× in price and by an
+order of magnitude in volume, so one combined number would either strangle input — which is mostly
+cached prefix, and nearly free — or leave output unbounded, which it should not be.
+
+`standard` is the default; an existing account with no plan assigned is treated as `standard`.
+
+## Why the ceilings are generous
+
+Agent loops resend the same system prompt, tool definitions and file context on every step, so most
+input is served from the host's prefix cache at a fraction of the fresh rate. The router meters
+cached prompt tokens separately (`tokens_cached`) and prices them at the cache-read rate, and the
+host's own reported cost wins whenever it is present.
+
+The practical effect is that a ceiling large enough to never be hit by a real employee still costs a
+predictable, small amount per seat — which is what lets the quota stop being rationing and start
+being a budget nobody reaches.
+
+<Warning>
+Inference is billed to the **organization's own provider account**, at the provider's rate. It does
+not pass through Wolffish and carries no margin. A cap is therefore a control over the
+organization's own spend, not a metering product.
+</Warning>
+
+## Capacity is not a quota
+
+Being at capacity never produces an error, and it is never confused with being over quota:
+
+- Out of **quota** → the call is refused immediately and metered as `denied_quota`.
+- Out of **capacity** → the call **waits** in the gate, fairly, behind the other employees, and is
+  then served. Only after four minutes of waiting is it told to come back with a `503` and a
+  `Retry-After`, and the client's retry simply re-queues it.
+
+See [The lanes](/api/lanes) for how the queues and cooldowns work.
+
+## What an employee sees
+
+- `GET /v1/models` — exactly the models their picker should show.
+- `GET /v1/search/status` — provider, whether the lane is live, their searches today against their
+  daily cap, the organization's month against its cap.
+- `GET /v1/usage` and `GET /v1/usage/days` — their own ledger, rebuilt from the organization's
+  record rather than a local file, so it is the same number an admin sees.
+
+## What an admin sets
+
+`PUT /admin/users/:id/policy` for one person, `PATCH /admin/org` for the defaults. Both are audited.
+The one thing an admin cannot do is raise a ceiling for a call already in flight — the decision was
+made at admission.

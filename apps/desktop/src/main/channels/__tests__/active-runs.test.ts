@@ -2,9 +2,9 @@
  * Cross-channel run visibility + cancel (TurnRunner.activeRuns /
  * cancelConversation).
  *
- * Why these exist: chat:turnState is a BROADCAST of TRANSITIONS, and this
- * app keeps running with no window at all — terminal and phone turns fire
- * headless. A renderer window opened (or reopened from the tray) mid-run
+ * Why these exist: chat:turnState is a BROADCAST of TRANSITIONS, and this app
+ * keeps running with its window closed to the tray — a phone turn fires with
+ * nothing rendering it. A renderer window opened (or reopened from the tray) mid-run
  * therefore never saw 'started', and the in-app chat rendered the
  * conversation as a fresh, ready-to-send one: composer live, model
  * switchable, no stop. activeRuns() is the cold-start snapshot that closes
@@ -100,12 +100,12 @@ async function run(): Promise<void> {
   const lifecycle: Lifecycle[] = []
   runner.setLifecycleListener((ev) => lifecycle.push(ev))
 
-  // A terminal sink — the point of the feature is that this run is visible
+  // A phone sink — the point of the feature is that this run is visible
   // (and cancelable) from a surface that does NOT own it.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const makeSink = (ctx: { turnId: string; conversationId: string | null }): any => ({
     ...ctx,
-    channelId: 'cli',
+    channelId: 'mobile',
     onSegment: () => {},
     onTurnEvent: () => {},
     onApprovalRequest: async () => 'denied' as const,
@@ -114,7 +114,7 @@ async function run(): Promise<void> {
     onCredentialBlocked: () => {}
   })
 
-  const sendTerminal = (conversationId: string, content: string): { done: Promise<void> } =>
+  const sendFromPhone = (conversationId: string, content: string): { done: Promise<void> } =>
     runner.send({
       history: [{ role: 'user', content }],
       conversationId,
@@ -123,18 +123,18 @@ async function run(): Promise<void> {
       makeSink
     })
 
-  const handle = sendTerminal('conv_tg', 'hello from the terminal')
+  const handle = sendFromPhone('conv_ph', 'hello from the phone')
   await started.promise
 
   // ── 1. A live channel run is visible to a window that never saw 'started' ──
   {
     const runs = runner.activeRuns()
     ok('activeRuns: lists the running conversation', runs.length === 1, JSON.stringify(runs))
-    ok('activeRuns: carries the owning channel', runs[0]?.channel === 'cli', runs[0]?.channel)
+    ok('activeRuns: carries the owning channel', runs[0]?.channel === 'mobile', runs[0]?.channel)
     ok('activeRuns: carries the title', runs[0]?.title === 'Live Run', String(runs[0]?.title))
     ok(
       'activeRuns: names the conversation',
-      runs[0]?.conversationId === 'conv_tg',
+      runs[0]?.conversationId === 'conv_ph',
       runs[0]?.conversationId
     )
   }
@@ -143,7 +143,7 @@ async function run(): Promise<void> {
   // The renderer must lock the composer for a queued turn as well — it is
   // work the conversation owes, and Stop has to be able to reach it.
   {
-    const queued = sendTerminal('conv_tg', 'second message')
+    const queued = sendFromPhone('conv_ph', 'second message')
     await tick()
     const runs = runner.activeRuns()
     ok(
@@ -153,7 +153,7 @@ async function run(): Promise<void> {
     )
 
     // ── 3. Cross-channel cancel reaches BOTH (running + queued) ────────────
-    const canceled = runner.cancelConversation('conv_tg')
+    const canceled = runner.cancelConversation('conv_ph')
     ok('cancel: reports it hit a live run', canceled)
     await handle.done
     await queued.done
@@ -163,7 +163,7 @@ async function run(): Promise<void> {
   // ── 4. Cleared once settled — a stale entry would lock the composer ─────
   await waitFor(() => runner.activeRuns().length === 0)
   ok('activeRuns: empty after the lane drains', runner.activeRuns().length === 0)
-  ok('activeRuns: matches isConversationActive', !runner.isConversationActive('conv_tg'))
+  ok('activeRuns: matches isConversationActive', !runner.isConversationActive('conv_ph'))
   ok(
     'lifecycle: a terminal event always follows (the renderer unlocks on it)',
     lifecycle.filter((e) => e.phase !== 'started').length === 2,

@@ -52,7 +52,7 @@ function shortId(value: string): string {
  *
  * The desktop card also DRIVES that app's updater now — check, watch the
  * download, install-and-restart — through the same registered handlers a
- * click on the desktop or a CLI command invokes (see lib/sync/updater). The
+ * click on the desktop invokes (see lib/sync/updater). The
  * check row is always on the card; the button only works while the live
  * mirror does — connected, to a desktop that serves it.
  */
@@ -176,8 +176,8 @@ const UPDATE_ERROR_CODES = ['checksum', 'network', 'timeout', 'filesystem', 'unk
 /**
  * Check / download / install for the paired desktop's updater — this phone
  * driving the same phase machine the desktop's own Updates panel renders,
- * through the same registered handlers a click there or a CLI command
- * invokes. Phases arrive as pushes (seeded per connection), so what this row
+ * through the same registered handlers a click there invokes. Phases arrive
+ * as pushes (seeded per connection), so what this row
  * shows is what the desktop is actually doing, whoever asked for it.
  *
  * PAIRED with no live mirror — disconnected, or a desktop too old to serve

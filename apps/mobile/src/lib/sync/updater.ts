@@ -13,7 +13,7 @@ import { create } from 'zustand'
  * own Updates panel renders (idle / checking / downloading / verifying /
  * ready / installing / error), now also driven from this phone. A check or
  * install sent from here lands on the SAME registered handlers a click on
- * the desktop or a CLI command invokes, so the acts cannot drift.
+ * the desktop invokes, so the acts cannot drift.
  *
  * IN MEMORY ONLY, and cleared the moment the tunnel drops, for the overlay
  * rule: every phase claims something is happening right now on a machine

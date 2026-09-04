@@ -86,7 +86,7 @@ tools:
     description: Get current Wolffish status including uptime, the organization-provided model in use, loaded capabilities, and system health
     parameters: {}
   - name: channel_status
-    description: Check whether each chat channel (the paired phone, the terminal, in-app) is currently connected, with reconnect steps for any that are down
+    description: Check whether each chat channel (the paired phone, in-app) is currently connected, with reconnect steps for any that are down
     parameters: {}
   - name: wolffish_performance
     description: Get performance stats including task success rates, most used tools, and error rates
@@ -153,7 +153,7 @@ tools:
         required: false
         description: Max records for prefix refs (default 50)
   - name: conversation_list
-    description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/cli/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
+    description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
     parameters:
       channel:
         type: string

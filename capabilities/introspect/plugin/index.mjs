@@ -30,7 +30,7 @@ const toolDefinitions = [
   {
     name: 'channel_status',
     description:
-      'Check whether each messaging channel — the paired phone, the terminal, and the in-app chat — is currently connected, and when one is not, exactly how the user can reconnect it. Use this before promising to reach the user somewhere: presence in the tool index means installed, not connected.',
+      'Check whether each messaging channel — the paired phone and the in-app chat — is currently connected, and when one is not, exactly how the user can reconnect it. Use this before promising to reach the user somewhere: presence in the tool index means installed, not connected.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -117,7 +117,7 @@ const toolDefinitions = [
   {
     name: 'conversation_list',
     description:
-      'Enumerate your past conversations, newest first: id, channel (electron/mobile/cli/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use this when the user refers to a past chat you cannot see.',
+      'Enumerate your past conversations, newest first: id, channel (electron/mobile/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use this when the user refers to a past chat you cannot see.',
     parameters: {
       type: 'object',
       properties: {

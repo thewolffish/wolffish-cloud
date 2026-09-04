@@ -15,7 +15,7 @@ src/
 ├── main/            Electron main process (Node)
 │   ├── index.ts     entry — IPC handlers live here
 │   ├── cloud/       the org API — auth, sync, capability + catalog mirrors
-│   ├── channels/    the surfaces a turn arrives on (electron/, cli/, mobile/, extension/)
+│   ├── channels/    the surfaces a turn arrives on (electron/, mobile/, extension/)
 │   ├── uploads/     attachment staging, validation, owned copies
 │   ├── workspace/   ~/.wfc init, config, purge
 │   ├── lockfile.ts  single-instance guard
@@ -24,7 +24,6 @@ src/
 │       ├── thalamus.ts, prefrontal.ts, hippocampus.ts, ...
 │       └── providers/cloud.ts  the single model lane (the org API)
 ├── preload/         contextBridge — types in index.d.ts
-├── cli/             the `wfc` terminal client — talks to main over the CLI socket
 ├── renderer/src/
 │   ├── App.tsx, main.tsx, env.d.ts, assets/
 │   ├── components/  common/ (composed) and core/ (primitives)
@@ -79,13 +78,13 @@ Hard rule: **uninstall must be `rm -rf ~/.wfc/`**. Every byte the app writes goe
 - `~/.wfc/workspace/` — user data (config.json + brain/ folders)
 - `~/.wfc/runtime/` — Chromium state (cookies, localStorage, GPU cache, ...) via `app.setPath('userData', ...)`
 - `~/.wfc/logs/` — via `app.setAppLogsPath(...)`
-- `~/.wfc/bin/` — every managed binary: `ffmpeg`, the voice engines, and the `wolffish` CLI shim. One directory on every platform, and one PATH entry that covers all of them (`autostart/cli-path.ts` writes it).
+- `~/.wfc/bin/` — every managed binary: `ffmpeg` and the voice engines. One directory on every platform.
 
 Do not write outside this tree. Do not introduce keytar / electron-store / safeStorage / OS keychains. The Snap target in `electron-builder.yml` is the one known exception (Snap confines writes to `~/snap/`); flag it before shipping a Snap.
 
-**When a location is a free choice, it is `~/.wfc/`.** Convention is not a reason to leave the tree: the CLI shim briefly lived in `~/.local/bin` because that is the XDG norm and "already on PATH" — but it is _not_ in macOS's default PATH (`/etc/paths` lists only `/usr/local/bin` and the system dirs), so the convenience was imaginary on one platform and the file survived `rm -rf ~/.wfc` on all of them.
+**When a location is a free choice, it is `~/.wfc/`.** Convention is not a reason to leave the tree: a managed binary briefly lived in `~/.local/bin` because that is the XDG norm and "already on PATH" — but it is _not_ in macOS's default PATH (`/etc/paths` lists only `/usr/local/bin` and the system dirs), so the convenience was imaginary on one platform and the file survived `rm -rf ~/.wfc` on all of them.
 
-The exception is a location the OS _owns_, where a file elsewhere would simply never be read. Those are unavoidable, and today they are exactly the autostart registrations — `~/Library/LaunchAgents/`, `~/.config/systemd/user/`, `~/.config/autostart/`, the Windows registry PATH entry, Task Scheduler. Each is written only on an explicit user action, each is removed by its own uninstall path, and `src/main/autostart/` is the only place any of them appear. Adding a new one needs the same justification: a service manager that reads nowhere else.
+The exception is a location the OS _owns_, where a file elsewhere would simply never be read. Today that is exactly one thing: the Linux autostart entry at `~/.config/autostart/`. It is written only on an explicit user action, it is removed by its own uninstall path, and `src/main/autostart/` is the only place it appears. (That module also SWEEPS the launchd/systemd/schtasks service registrations older builds wrote, which is a removal, not a new location.) Adding a new one needs the same justification: a session manager that reads nowhere else.
 
 Workspace init runs **only when `~/.wfc/workspace/` does not exist** — see `workspace/workspace.ts:ensureWorkspace`. Never overwrite an existing workspace.
 

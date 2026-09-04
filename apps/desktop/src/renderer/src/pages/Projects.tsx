@@ -23,12 +23,10 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
-  Attachment01Icon,
   BubbleChatIcon,
   Delete01Icon,
   Delete02Icon,
-  Edit02Icon,
-  Folder01Icon
+  Edit02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -272,7 +270,7 @@ export function Projects(): React.JSX.Element {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
           <header className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
@@ -300,12 +298,15 @@ export function Projects(): React.JSX.Element {
               {t('projects.empty')}
             </div>
           ) : (
-            <ul className="flex flex-col gap-3">
+            // Services' landing grid, card for card: three columns of equal
+            // identity tiles. The instructions, files and folders are NOT on
+            // the card — they are what the edit dialog is for.
+            <ul className="grid grid-cols-3 gap-3">
               {projects.map((project) => {
                 const name = project.title.trim() || t('projects.untitled')
                 const stats = convStats.get(project.id)
                 return (
-                  <li key={project.id}>
+                  <li key={project.id} className="min-w-0">
                     <div
                       role="button"
                       tabIndex={0}
@@ -315,33 +316,17 @@ export function Projects(): React.JSX.Element {
                       }}
                       title={name}
                       className={cn(
-                        'bg-surface border-border hover:border-accent/50 flex h-full cursor-pointer flex-col gap-2.5 rounded-2xl border px-4 py-3 text-start',
+                        'bg-surface border-border hover:border-accent/50 flex h-full w-full cursor-pointer flex-col items-start gap-3 rounded-2xl border p-4 text-start',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span aria-hidden className="text-2xl leading-none">
-                            {project.icon || '📁'}
-                          </span>
-                          <div className="flex min-w-0 flex-col gap-0.5">
-                            <span className="text-fg truncate text-sm font-medium">{name}</span>
-                            <span className="text-muted truncate text-xs">
-                              {t('projects.editedAt', {
-                                time: formatFromNow(project.updatedAt, now, locale)
-                              })}
-                              {stats
-                                ? ` · ${t('projects.usedAt', {
-                                    time: formatFromNow(stats.lastUsed, now, locale)
-                                  })}`
-                                : ''}
-                              {' · '}
-                              {t('projects.conversationCount', { count: stats?.count ?? 0 })}
-                              {' · '}
-                              {t('chat.files.fileCount', { count: project.files.length })}
-                            </span>
-                          </div>
-                        </div>
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <span
+                          aria-hidden
+                          className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
+                        >
+                          {project.icon || '📁'}
+                        </span>
                         <div className="flex shrink-0 items-center">
                           <button
                             type="button"
@@ -381,52 +366,23 @@ export function Projects(): React.JSX.Element {
                           </button>
                         </div>
                       </div>
-                      {project.instructions.trim() ? (
-                        <pre
-                          dir="auto"
-                          // Scrolling/selecting inside the block must not count
-                          // as "open the project" — the card is the click target.
-                          onClick={(e) => e.stopPropagation()}
-                          className="bg-bg border-border text-muted max-h-40 cursor-auto overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                        >
-                          {project.instructions}
-                        </pre>
-                      ) : (
-                        <p className="text-muted text-xs italic">{t('projects.noInstructions')}</p>
-                      )}
-                      {/* What this project carries into every conversation in
-                          it. On the card, not just in the dialog: the paths are
-                          the part of a project you cannot infer from its
-                          instructions. Read-only — attaching lives in the
-                          dialog. Same row the Automations and Procedures cards
-                          draw. */}
-                      {(project.files.length > 0 || (project.directories?.length ?? 0) > 0) && (
-                        <div dir="ltr" className="flex flex-wrap items-center gap-1.5">
-                          {/* Transparent, not `bg-bg`: these sit ON the card, so
-                              they take its surface rather than punching a darker
-                              well into it. */}
-                          {project.files.map((file) => (
-                            <span
-                              key={file.path}
-                              title={file.path}
-                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 text-[10px] leading-none"
-                            >
-                              <Attachment01Icon size={10} className="shrink-0" />
-                              <span className="truncate">{file.name}</span>
-                            </span>
-                          ))}
-                          {(project.directories ?? []).map((dir) => (
-                            <code
-                              key={dir}
-                              title={dir}
-                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 font-mono text-[10px] leading-none"
-                            >
-                              <Folder01Icon size={10} className="shrink-0" />
-                              <span className="truncate">{dir}</span>
-                            </code>
-                          ))}
-                        </div>
-                      )}
+                      <div className="flex w-full min-w-0 flex-col gap-1">
+                        <span className="text-fg truncate text-sm font-semibold">{name}</span>
+                        <span className="text-muted line-clamp-2 text-xs leading-relaxed">
+                          {t('projects.editedAt', {
+                            time: formatFromNow(project.updatedAt, now, locale)
+                          })}
+                          {stats
+                            ? ` · ${t('projects.usedAt', {
+                                time: formatFromNow(stats.lastUsed, now, locale)
+                              })}`
+                            : ''}
+                          {' · '}
+                          {t('projects.conversationCount', { count: stats?.count ?? 0 })}
+                          {' · '}
+                          {t('chat.files.fileCount', { count: project.files.length })}
+                        </span>
+                      </div>
                     </div>
                   </li>
                 )

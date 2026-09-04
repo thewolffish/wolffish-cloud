@@ -184,76 +184,43 @@ async function run(): Promise<void> {
     ok('absent section still means no cards', snapshot.channels.mobile?.runCards === false)
   }
 
-  // ------------------------------------------------------ the terminal channel
+  // ------------------------------------------------- the autostart probe
 
   /**
-   * The CLI card on the phone. `verbose` is an ordinary config mirror like the
-   * two above; the other three are PROBES of this machine (a PATH walk, an
-   * autostart query) and they are the interesting case, because both are
-   * allowed to fail.
+   * Whether this machine ACTUALLY starts on its own is a PROBE, not a config
+   * mirror — a launchctl/systemctl query the snapshot builder is allowed to
+   * fail at.
    *
    * The rule being pinned is that a failed probe OMITS its field. The phone
    * turns an absent field into `null` and prints "Unknown"; if the builder
    * emitted `false` instead, a laptop whose launchctl query timed out would
-   * tell its owner the `wolffish` command is not installed — a confident lie
-   * about a machine they cannot see to check. Nothing here shells out: every
-   * probe is a stub, exactly as the sandbox rule requires.
+   * tell its owner autostart is off — a confident lie about a machine they
+   * cannot see to check. Nothing here shells out: the probe is a stub,
+   * exactly as the sandbox rule requires.
    */
   {
-    type CliSection = {
-      verbose?: boolean
-      runMode?: string
-      pathInstalled?: boolean
-      serviceActive?: boolean
-      mechanism?: string
-    }
-    const read = async (sources: Record<string, unknown>): Promise<CliSection> =>
+    type Prefs = { launchAtStartupActive?: boolean }
+    const read = async (sources: Record<string, unknown>): Promise<Prefs> =>
       (
         (await buildConfigSnapshot({
           agent: {},
           serializeCapabilities: async () => [],
           ...sources
-        } as never)) as { channels: { cli?: CliSection } }
-      ).channels.cli ?? {}
+        } as never)) as { preferences?: Prefs }
+      ).preferences ?? {}
 
-    const answered = await read({
-      cliPathInstalled: async () => true,
-      launchAtStartupActive: async () => true,
-      cliMechanism: async () => 'launchd'
-    })
-    ok('the snapshot carries the terminal channel', answered.runMode === 'gui')
-    ok('a fresh workspace keeps the terminal feed clean', answered.verbose === false)
-    ok('the PATH probe reaches the phone', answered.pathInstalled === true)
-    ok('the autostart probe reaches the phone', answered.serviceActive === true)
-    ok('the mechanism is named, not generic', answered.mechanism === 'launchd')
+    const answered = await read({ launchAtStartupActive: async () => true })
+    ok('the autostart probe reaches the phone', answered.launchAtStartupActive === true)
 
     const refused = await read({
-      cliPathInstalled: async () => {
-        throw new Error('command -v failed')
-      },
       launchAtStartupActive: async () => {
         throw new Error('launchctl failed')
-      },
-      cliMechanism: async () => {
-        throw new Error('no mechanism')
       }
     })
-    ok('a failed PATH probe omits the field', !('pathInstalled' in refused))
-    ok('a failed autostart probe omits the field', !('serviceActive' in refused))
-    ok('a failed mechanism probe omits the field', !('mechanism' in refused))
-    // The two that never depend on a probe still have to arrive, or the card
-    // loses its only editable row along with the failure.
-    ok('the feed setting survives a failed probe', refused.verbose === false)
-    ok('the run mode survives a failed probe', refused.runMode === 'gui')
+    ok('a failed autostart probe omits the field', !('launchAtStartupActive' in refused))
 
-    // A desktop registered as a background service says so, and the phone's
-    // "Start it as" row is the only place that fact is visible from here.
-    const { setCliConfig } = await import('@main/workspace/workspace')
-    await setCliConfig({ runMode: 'headless', verbose: true })
-    const headless = await read({ cliMechanism: async () => 'systemd' })
-    ok('the run mode mirrors config.json', headless.runMode === 'headless')
-    ok('the terminal feed setting mirrors config.json', headless.verbose === true)
-    ok('an unsupplied probe is simply absent', !('pathInstalled' in headless))
+    const unsupplied = await read({})
+    ok('an unsupplied probe is simply absent', !('launchAtStartupActive' in unsupplied))
   }
 
   // ------------------------------------------------ the thinking-mode set

@@ -85,7 +85,7 @@ export type ConversationMessage = {
  * with conversation files written before the field shipped — those
  * are treated as `electron` by default.
  */
-export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string

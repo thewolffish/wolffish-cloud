@@ -998,6 +998,11 @@ async function pushConversation(id: string): Promise<boolean> {
       type: 'conversation',
       id: conv.id,
       title: (conv.title ?? '').slice(0, 500),
+      // Provenance on the ROW, not only inside the envelope below: the org
+      // leaderboard counts the two autonomous channels (heartbeat,
+      // procedure) as agentic tasks, and a count that has to open a JSON
+      // blob per conversation is a count nobody can afford to read.
+      channel: conv.channel ?? '',
       created_at: iso(conv.createdAt || Date.now()),
       updated_at: iso(conv.updatedAt || Date.now())
     }

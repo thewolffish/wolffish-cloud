@@ -11,14 +11,14 @@ import type { MobileStatus } from '@main/channels/mobile/channel'
  */
 export type ChannelStatusSnapshot = {
   /** Stable channel id used in tool output and logs. */
-  id: 'mobile' | 'cli' | 'electron'
+  id: 'mobile' | 'electron'
   /** Human label shown to the user (e.g. "Mobile"). */
   label: string
   /** True when the channel is connected and able to send right now. */
   connected: boolean
   /** Raw lifecycle state (connected, listening, unpaired, …). */
   state: string
-  /** One-line specifics — linked phone, attached terminals, or why it's down. */
+  /** One-line specifics — the linked phone, or why it's down. */
   detail: string
   /** When NOT connected, concrete steps to (re)connect. Empty when connected. */
   reconnect: string
@@ -31,10 +31,6 @@ export type ChannelStatusSnapshot = {
  */
 export type ChannelStatusDeps = {
   mobile: () => MobileStatus
-  /** Terminals attached to the control socket right now. */
-  cli?: () => { clients: number; listening: boolean }
-  /** True when this process has no window and never will. */
-  headless?: () => boolean
 }
 
 const MOBILE_PAIR =
@@ -47,37 +43,7 @@ const MOBILE_WAKE =
  * stable order) so the agent can see which are down, not just which are up.
  */
 export function collectChannelStatus(deps: ChannelStatusDeps): ChannelStatusSnapshot[] {
-  return [
-    mobileSnapshot(deps.mobile()),
-    cliSnapshot(deps.cli?.() ?? null),
-    electronSnapshot(deps.headless?.() ?? false)
-  ]
-}
-
-/**
- * The terminal, as a channel like any other.
- *
- * It was missing from this list entirely, which on a headless box meant the
- * status the agent reads — and prints — named every way of reaching the user
- * EXCEPT the only one that worked.
- */
-function cliSnapshot(cli: { clients: number; listening: boolean } | null): ChannelStatusSnapshot {
-  const listening = cli?.listening === true
-  const clients = cli?.clients ?? 0
-  return {
-    id: 'cli',
-    label: 'Terminal',
-    // Reachable means someone is attached. The socket being up only means a
-    // terminal COULD attach, which is not somewhere a message can be sent.
-    connected: listening && clients > 0,
-    state: listening ? (clients > 0 ? 'attached' : 'listening') : 'off',
-    detail: !listening
-      ? 'the control socket is not listening'
-      : clients > 0
-        ? `${clients} terminal${clients === 1 ? '' : 's'} attached`
-        : 'no terminal attached — run: wolffish',
-    reconnect: listening ? '' : 'Restart Wolffish — the control socket failed to start.'
-  }
+  return [mobileSnapshot(deps.mobile()), electronSnapshot()]
 }
 
 /**
@@ -129,25 +95,8 @@ function mobileSnapshot(s: MobileStatus): ChannelStatusSnapshot {
   }
 }
 
-/**
- * In-app chat is available only where there is an app to be in.
- *
- * Reported as unconditionally connected, it told a headless server that a
- * window was there to answer in — which is both false and the worst kind of
- * false, because it is what the agent reads when deciding how to reach
- * someone.
- */
-function electronSnapshot(headless: boolean): ChannelStatusSnapshot {
-  if (headless) {
-    return {
-      id: 'electron',
-      label: 'In-app chat',
-      connected: false,
-      state: 'unavailable',
-      detail: 'no window on this machine — it runs headless',
-      reconnect: ''
-    }
-  }
+/** In-app chat, always there: this process is the window. */
+function electronSnapshot(): ChannelStatusSnapshot {
   return {
     id: 'electron',
     label: 'In-app chat',

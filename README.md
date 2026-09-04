@@ -37,7 +37,6 @@ wolffish-cloud/
 │   ├── desktop/     · the Electron desktop agent, cloud-first (Tier 1)
 │   ├── mobile/      · the Expo companion phone app — carried over, PARKED (see below)
 │   └── site/
-│       ├── landing/ · marketing site (Next.js)
 │       └── docs/    · documentation (Mintlify, EN + AR)
 ├── packages/
 │   └── extension/   · browser capability, bundled into desktop; local-only, no cloud endpoint
@@ -67,7 +66,7 @@ The companion phone app, re-aimed at the API. Pairing (QR or a typed code the de
 
 ### `apps/site` — the tenant-facing web
 
-The bilingual Next.js landing page and the Mintlify docs, side by side, unmodified from the personal edition.
+The bilingual Mintlify documentation (EN + AR), carried over unmodified from the personal edition. The marketing landing page is not part of this package — it is a public-web concern, not a tenant deliverable, and stays in its own repo ([wolffish-landing](https://github.com/thewolffish/wolffish-landing)).
 
 ### `packages/extension` — the browser capability
 
@@ -128,7 +127,6 @@ Every carried folder is a clean export of the corresponding personal repo (track
 | --- | --- |
 | `apps/desktop` | [wolffish-app](https://github.com/thewolffish/wolffish-app) |
 | `apps/mobile` | [wolffish-mobile](https://github.com/thewolffish/wolffish-mobile) |
-| `apps/site/landing` | [wolffish-landing](https://github.com/thewolffish/wolffish-landing) |
 | `apps/site/docs` | [wolffish-docs](https://github.com/thewolffish/wolffish-docs) |
 | `packages/extension` | [wolffish-extension](https://github.com/thewolffish/wolffish-extension) |
 

@@ -1,8 +1,8 @@
 # The foundation's gate: every push and pull request typechecks both apps and
-# runs the desktop's seam tests (sync engine, capability mirror, CLI settings
-# table, usage ledger) — the suites that need no network and no Cloudflare
-# account. The API's smoke suites need `wrangler dev` plus the mock hosts and
-# stay a local step (`npm test` in apps/api); the live gate
+# runs the desktop's seam tests (sync engine, capability mirror, channel
+# settings table, usage ledger) — the suites that need no network and no
+# Cloudflare account. The API's smoke suites need `wrangler dev` plus the mock
+# hosts and stay a local step (`npm test` in apps/api); the live gate
 # (scripts/verify-live.mjs) runs after every deploy by hand.
 name: ci
 
@@ -54,9 +54,8 @@ jobs:
             src/main/cloud/__tests__/purge-cycle.test.ts \
             src/main/runtime/__tests__/usage-brave.test.ts \
             src/main/runtime/__tests__/vision.test.ts \
-            src/main/channels/__tests__/cli-settings-table.test.ts \
-            src/main/channels/__tests__/cli-owners.test.ts \
-            src/main/channels/__tests__/cli-qr.test.ts \
+            src/main/channels/__tests__/mobile-channel-settings.test.ts \
+            src/main/channels/__tests__/channel-status.test.ts \
             src/main/__tests__/media-url.test.ts \
             src/main/__tests__/conversation-titler.test.ts; do
             echo "━━━ $t"

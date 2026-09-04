@@ -273,98 +273,7 @@
       "tabs": {
         "inapp": "In-App",
         "mobile": "Mobile",
-        "cli": "CLI",
         "browser": "Browser"
-      },
-      "cli": {
-        "title": "CLI",
-        "subtitle": "Wolffish in a terminal. The same agent, the same settings, the same conversations — no window needed, which is what lets it run on a server you reach over SSH.",
-        "tabLabel": "CLI",
-        "verbose": {
-          "label": "Verbose task results",
-          "description": "Off (default) prints a clean feed: what the agent says, the files it delivers, and anything that failed. On adds the model chip and every tool call and result, the same way the in-app verbose toggle does."
-        },
-        "path": {
-          "title": "The wfc command",
-          "installed": "Ready",
-          "missing": "Not on your PATH",
-          "install": "Install command",
-          "reinstall": "Reinstall",
-          "remove": "Remove",
-          "installed_at": "Installed at",
-          "resolves": "Your shell runs",
-          "shadowed": "Another program named \"wfc\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
-          "needsEntry": "Its folder is not on your PATH yet. Add this line, then open a new terminal:",
-          "failed": "Could not install the command: {{error}}",
-          "hint": "Wolffish writes this automatically on every launch, so it stays pointed at the current version after an update.",
-          "verify": "Check any time with",
-          "nothing": "nothing",
-          "toast": {
-            "installed": "Command installed",
-            "needsPath": "Installed — add its folder to your PATH",
-            "shadowed": "Installed, but another wfc runs first",
-            "failed": "Could not install the command",
-            "removed": "Command removed",
-            "removeFailed": "Could not remove the command"
-          }
-        },
-        "service": {
-          "title": "Start on its own",
-          "description": "Wolffish registers itself with the operating system so it comes back after a restart — automations fire, channels answer, and the terminal attaches whenever you want one. This is the same setting as Launch at startup; changing it here changes it there.",
-          "registered": "Registered with the OS",
-          "notRegistered": "Not registered",
-          "location": "Location",
-          "managedByOs": "managed by the OS",
-          "modeLabel": "Start it as",
-          "mode": {
-            "gui": {
-              "label": "Login item",
-              "description": "Starts when you log in, and opens the window. Needs a desktop session, so it never fires on a server."
-            },
-            "headless": {
-              "label": "Background service",
-              "description": "Starts with the machine, with no session and no window. This is what a server wants, and what the terminal attaches to."
-            }
-          },
-          "headlessHostHint": "This machine has no desktop session, so a login item will never fire here. Choose the background service.",
-          "sameAsPreferences": "This is the same switch, so changing it here changes it there. What this card adds is the choice of mechanism, which only matters when you run without a window.",
-          "openSetting": "Open {{tab}}",
-          "confirm": {
-            "title": "Run as a background service?",
-            "body": "A background service is registered to stay running: if you quit Wolffish, the system starts it again within a few seconds. That is what a server wants — automations keep firing and channels keep answering with nobody logged in — but on a machine you use directly it means the app will not stay closed.",
-            "reversible": "You can switch back to a login item, or turn autostart off entirely, from this same card at any time.",
-            "accept": "Register as a service",
-            "cancel": "Keep the login item"
-          }
-        },
-        "guide": {
-          "title": "How it works",
-          "daemon": {
-            "title": "The terminal is a view, not the app",
-            "body": "Wolffish runs as a background process. The command attaches to it and detaches when you leave — close the terminal, or lose the SSH connection, and the agent keeps working. Come back and it reattaches to whatever is still running."
-          },
-          "files": {
-            "title": "Files are paths, both ways",
-            "body": "Attach with a path; a delivered file prints its own path, ready to open or copy. Nothing is uploaded or encoded, because the terminal and the agent share one filesystem."
-          },
-          "settings": {
-            "title": "Every setting on this screen",
-            "body": "The command reads and writes the same settings these panels do, through the same code. Anything you can change here you can change there, with the same label and description."
-          },
-          "approvals": {
-            "title": "Approvals wait for you",
-            "body": "A tool call that needs approval pauses and asks in the terminal. If you disconnect first, it waits — you can answer when you come back, or from your phone."
-          }
-        },
-        "commands": {
-          "title": "Commands",
-          "chat": "Chat",
-          "conversations": "Conversations",
-          "settings": "Settings",
-          "workspace": "Workspace",
-          "machine": "Machine",
-          "examples": "Examples"
-        }
       }
     },
     "services": {
@@ -448,7 +357,7 @@
           "lane": "Every web search goes through your organization's API, which holds the one Brave Search key — no key on this device, nothing to paste.",
           "fair": "Searches from everyone in the company are queued fairly behind the plan's rate limit, so a busy colleague never gets you rate-limited.",
           "caps": "Admins set a daily allowance per person and a monthly budget for the company; when either is reached the agent says so instead of failing silently.",
-          "meter": "Each search is metered to your account at the plan price and shows in Usage, on the phone and in the CLI.",
+          "meter": "Each search is metered to your account at the plan price and shows in Usage, and on the phone.",
           "privacy": "The query is sent to Brave with the company key only. Your organization records that a search happened — never what you searched for."
         }
       },

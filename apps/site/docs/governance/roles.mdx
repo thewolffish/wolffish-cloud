@@ -1,0 +1,89 @@
+---
+title: "Roles & admin"
+description: "Who may do what, and the API behind the admin console"
+---
+
+Four roles, a fixed hierarchy:
+
+| Role | Reads admin data | Mutates | Notes |
+| --- | --- | --- | --- |
+| `owner` | yes | yes | The only role that may act on an owner, or mint one |
+| `admin` | yes | yes | Cannot touch an owner |
+| `support` | yes | **no** | The view-only tier |
+| `employee` | no | no | Their own account and their own data only |
+
+The role travels on the access token and `/v1/me` returns it, so the client knows whether to render
+admin controls. **That is presentation only.** Every admin endpoint re-verifies the role
+server-side; hiding a button is not a control.
+
+<Note>
+There is no separate admin web console. The admin UI lives inside the admin's own desktop client,
+against the same API any client uses.
+</Note>
+
+## Managing people
+
+| Action | Endpoint | Who |
+| --- | --- | --- |
+| Invite | `POST /admin/users` | owner, admin |
+| List / read | `GET /admin/users`, `GET /admin/users/:id` | owner, admin, support |
+| Update role, status, profile | `PATCH /admin/users/:id` | owner, admin |
+| Reset password | `POST /admin/users/:id/reset-password` | owner, admin |
+| Clear a device PIN | `POST /admin/users/:id/clear-pin` | owner, admin |
+| Revoke every session | `POST /admin/users/:id/revoke-sessions` | owner, admin |
+
+An invite creates the account and mints a temporary password; the first sign-in forces a personal
+one. Suspending an account and revoking its sessions are separate acts — suspension stops future
+sign-ins, revocation kills the sessions that already exist. Offboarding is usually both.
+
+## Model policy
+
+`PUT /admin/users/:id/policy` sets a user's allowlist and caps; `PATCH /admin/org` sets the defaults
+everyone inherits. A user's effective policy is their own row where it has a value, falling back to
+the org row.
+
+Edits land on devices within the edge cache window — about a minute — because an admin mutation
+deletes the cached copy in KV. See [Quotas & enforcement](/governance/quotas).
+
+## Repairing a user's settings
+
+The support path for "my app is misbehaving", because the synced config row **is** the user's
+desktop settings:
+
+- `GET /admin/users/:id/config` reads it verbatim. This one sits above the support tier, an admin
+  cannot open an owner's, and **the disclosure itself is audited** — it is the only audited *read*
+  in the API — because the row carries the user's stored integration secrets.
+- `PUT /admin/users/:id/config` writes it, or resets it with `{"config": {}}`. The fresh server
+  stamp this mints is what makes it land: the desktop adopts any row stamped by someone else before
+  it would re-push its own copy, so an admin's fix survives the user's next launch instead of dying
+  under a stale client blob. Audited by **size only** — the content is the user's secrets and stays
+  out of the log.
+
+## The organization row
+
+`GET` / `PATCH /admin/org` carries the defaults:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Organization name |
+| `default_model` | What a user with no allowlist may call |
+| `default_allowed_models` | The default allowlist |
+| `user_daily_token_cap` | Tokens per employee per UTC day (0 = unlimited) |
+| `org_monthly_token_cap` | Tokens for the whole org per UTC month (0 = unlimited) |
+| `search_enabled` | The search lane's master switch |
+| `user_daily_search_cap` | Searches per employee per UTC day |
+| `org_monthly_search_cap` | Searches for the whole org per UTC month |
+
+## Watching the system
+
+| Endpoint | What it answers |
+| --- | --- |
+| `GET /admin/usage` | Totals per user, from the daily rollup |
+| `GET /admin/gates` | Live gate state — queue depth, in-flight per host, cooldowns, what each host served |
+| `GET /admin/audit` | The audit log |
+| `POST /admin/maintenance/run` | Run the nightly jobs now |
+
+## Every mutation is audited
+
+There is no admin action that does not leave a row. See [Usage & audit](/governance/audit) for the
+full list of recorded actions and what each row carries.

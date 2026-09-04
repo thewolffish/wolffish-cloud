@@ -8,8 +8,7 @@
  * Mirrored (kept in the same order, so diffs line up) in:
  *  - the STT plugin's WHISPER_LANGUAGES validation set (defaults/workspace/
  *    brain/cerebellum/speech-to-text/plugin/index.mjs) — codes only,
- *  - the CLI settings table (src/main/channels/cli/settings.ts),
- *  - the phone's services screen (wolffish-mobile services.tsx).
+ *  - the phone's services screen (apps/mobile services.tsx).
  * The special value 'auto' (Whisper detection) is NOT in this list — surfaces
  * add it themselves with a localized label, pinned above the languages.
  */

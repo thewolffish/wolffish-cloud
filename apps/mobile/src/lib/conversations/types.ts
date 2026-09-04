@@ -11,7 +11,7 @@
  * kinds and tool names.
  */
 
-export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'heartbeat' | 'procedure'
 
 export type SegmentTurnEndReason =
   'end_turn' | 'tool_use' | 'max_tokens' | 'error' | 'no_provider_available'

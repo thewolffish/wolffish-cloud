@@ -1,0 +1,105 @@
+---
+title: "The lanes"
+description: "Model routing and web search — the two paths a device can reach the outside world through"
+---
+
+A device has exactly two ways to reach a paid upstream, and both are doors in the organization's
+Worker. **No provider key is ever on a device.** The keys exist only in Worker secrets; the gates
+receive ids and capacities, never credentials.
+
+## The model lane
+
+`POST /ai/v1/chat/completions` — OpenAI-compatible, so the desktop's provider layer points at it
+with the session token as its bearer.
+
+```text
+session → allowlist → ModelGate (quota, then a slot on a host)
+        → forward with the org's key
+        → stream back through a pump that watches for the usage block
+        → meter → release the slot
+```
+
+### Graceful by contract
+
+Capacity never produces an error. When every host is full the call **waits** in the gate. When a
+host answers 429 or 5xx before a byte has reached the client, the slot is released, that host is
+rested, and the call is re-admitted — possibly to a different host. Only a hard upstream refusal (a
+4xx that is not 429) or a stream that breaks after the client has started receiving surfaces as an
+error.
+
+### What the ModelGate does
+
+A model host enforces concurrency per **account**, not per user — on DeepInfra, 200 concurrent
+requests per model by default. Five hundred agents therefore share one budget, and without a
+coordinator a busy hour becomes random 429s that every client's retry ladder makes worse.
+
+The `ModelGate` is a single global Durable Object that every model call passes through:
+
+- **Slot pools** per host and model, sized from the configured concurrency. Nothing above it is ever
+  in flight; everything else queues, fair by employee — one person may hold 8 streams at once, and
+  their extra calls wait behind everyone else's.
+- **Sticky routing.** Calls sharing a prompt cache key (one conversation) prefer the same host, so
+  the host's prefix cache keeps hitting. A full or cooling host spills the call to the freest other.
+- **Cooldowns.** A host that answered 429 or 5xx rests for the time it named in `Retry-After`, or an
+  escalating few seconds, while the queue drains to the others.
+- **Leases with a heartbeat.** A slot belongs to a lease the Worker renews while its stream runs, so
+  a Worker that dies mid-stream cannot leak a slot past the 90-second lease TTL. Leases live in
+  durable storage, not just memory, so an evicted object rebuilds its in-flight counts on wake.
+- **The token counters** — per user per UTC day, per org per UTC month — bumped on release with the
+  tokens the host actually reported. Single-threaded and durable, so they are exact.
+
+A call that has queued for four minutes is answered `503` with a `Retry-After` rather than kept
+hanging past the point where a client's own connection timeout would turn the wait into an error it
+cannot classify. The client's retry simply re-queues it.
+
+### The models
+
+The organization lane runs open-weight frontier models on a zero-data-retention endpoint:
+
+| Model | Context | Reasoning | Vision |
+| --- | --- | --- | --- |
+| `deepseek-ai/DeepSeek-V4-Flash-0731` | 1,048,576 | yes | no |
+| `deepseek-ai/DeepSeek-V4-Pro-0813` | 1,048,576 | yes | no |
+
+`GET /v1/models` returns exactly what a given user's picker should show — the allowlist resolved
+against org defaults. An admin edits the policy, the list changes, the client re-renders.
+
+### Privacy on this lane
+
+Nothing identity-shaped is sent upstream: the outbound request is the client's body with the wire
+model id and the organization's key. Prompt content is never logged or stored — only metering
+metadata is. See [Usage & audit](/governance/audit).
+
+## The search lane
+
+`POST /v1/search`, with `GET /v1/search/status` as the "is this configured" read the settings panel
+renders. There is nothing to configure on a device.
+
+Brave enforces its rate limit per **plan**, not per key — extra keys add nothing, and extra accounts
+are forbidden by its terms. So the `SearchGate` is the same idea as the ModelGate, with one
+difference: **the upstream call runs inside the object**, because a search is milliseconds rather
+than minutes.
+
+- A sliding one-second window **per provider**, sized from the plan's per-second limit (50 q/s on
+  the Brave Search plan) and then *learned* from the provider's own `X-RateLimit-Limit` header, run
+  at 80% headroom so network jitter cannot compress two of our seconds into one of theirs.
+- A **provider pool** — more real capacity comes from more plans, never from more keys.
+- A queue fair by employee, with 4 in-flight per person.
+- A stray 429 pauses that provider's window for the time it names and retries once, unseen by the
+  employee; an exhausted monthly window fails over to the next provider.
+- **In-flight coalescing**: identical concurrent queries share one upstream call. Strictly
+  in-flight, never a cache — Brave's terms allow only transient operational storage of results.
+
+`GET /v1/search/status` answers the provider, whether the organization's lane is configured and
+enabled, this user's searches today against their daily cap, the organization's month against its
+cap, the plan's price per query and the gate's live limit.
+
+### Privacy on this lane
+
+The query goes upstream with the organization's key and nothing else. The usage row records that a
+search happened — who, when, how long, what it cost — **never the query text**.
+
+## Watching both
+
+`GET /admin/gates` returns the live state of both gates: queue depth, in-flight per host, cooldowns,
+and what each host has served. It is the number an admin watches as the organization grows.

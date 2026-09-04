@@ -1,0 +1,113 @@
+---
+title: "Set up a device"
+description: "Sign in on the desktop, pair a phone, install the browser extension"
+---
+
+There is no self-signup. An admin invites you; you receive an email address and a temporary
+password, and your first sign-in forces you to choose your own.
+
+## 1. The desktop app
+
+The desktop is where the agent runs, so it comes first — a phone cannot be paired before a desktop
+is signed in.
+
+<Steps>
+  <Step title="Sign in">
+    Enter your work email and the temporary password. If it is your first sign-in, the app requires
+    a new password before it will continue. A temporary password expires; ask your admin to reissue
+    one if it has.
+  </Step>
+
+  <Step title="Set a device PIN">
+    A 4-digit PIN locks the app on this machine. It is stored on the device and **never** sent to
+    the API — the organization can ask you to clear it, but cannot read it.
+  </Step>
+
+  <Step title="Wait for the restore">
+    On the first ready state the app calls `/v1/sync/bootstrap` and walks every page of the
+    conversation index and file manifest. A fresh install adopts the organization's copy of your
+    settings, rebuilds every transcript and materialises your workspace files before the chat screen
+    opens. Conversation media downloads later, when you open that conversation.
+  </Step>
+</Steps>
+
+The restore is durable and retryable — it is keyed on a flag in `.sync-state.json`, so a failed
+attempt retries on a backoff and only a fully clean pass marks it done. Interrupting it loses
+nothing.
+
+<Note>
+Your workspace lives in `~/.wfc`. It is a cache: deleting it and signing back in rebuilds it from
+the organization. See [Desktop sync](/sync/desktop) for exactly what is rebuilt and what is not.
+</Note>
+
+### Signing out
+
+Signing out drains the outbox first, then revokes the session and purges the local cache. Nothing
+unsent is lost, and nothing of yours is left on a machine you are leaving.
+
+## 2. The phone
+
+The phone is a **device of the same organization account**. It never sees your password.
+
+<Steps>
+  <Step title="Open a pairing from the desktop">
+    The desktop asks the API for an offer and shows both halves of it: an 8-character code to type
+    and a QR the phone can scan. Both are single-use and live **three minutes**. Opening a new offer
+    retires the previous one, so "new code" means what it says.
+  </Step>
+
+  <Step title="Claim it on the phone">
+    Scan the QR or type the code. The QR also carries the address of the API it was minted at, so a
+    fork's desktop points its phones at the fork's API for the life of the pairing.
+  </Step>
+
+  <Step title="You are paired">
+    The phone receives an ordinary device session — the same shape a password login issues — and
+    from then on talks to the API like any other client.
+  </Step>
+</Steps>
+
+|  | QR | Typed code |
+| --- | --- | --- |
+| Carries | API address + one-time token | One-time code (8 characters) |
+| Entropy | 256 bits | 40 bits, rate-limited per IP, three-minute window |
+
+Unpairing is the organization revoking that session: the phone's next request fails, its bridge
+socket closes on the spot, and its push registration is dropped. Do it from the desktop's Mobile
+panel (`DELETE /v1/devices/:id`) or from the admin layer.
+
+<Warning>
+The phone app is a **distinct application** from the personal edition's phone app
+(`sh.wolffi.cloud.mobile` / `wolffishcloud://`, versus `sh.wolffi.mobile` / `wolffish://`). The
+store listings under *Wolffish* install the personal app, which cannot pair with an organization.
+Both can be installed side by side.
+</Warning>
+
+## 3. The browser extension
+
+The extension gives the agent hands in your real Chrome or Brave — your session, your cookies, your
+logins. It is a **local** channel and has no cloud endpoint.
+
+<Steps>
+  <Step title="Install the extension">
+    The desktop bundles a build. Load it in your browser and open the side panel.
+  </Step>
+
+  <Step title="Check the port">
+    It connects to the desktop over a local WebSocket on port **23152** by default. Change it only
+    if something else on the machine already holds that port — the desktop's Channels settings and
+    the extension's connection settings must agree.
+  </Step>
+</Steps>
+
+Nothing the extension does crosses the network: commands travel `desktop → localhost → service
+worker → content script`, and results come straight back. See
+[Browser extension](/sync/browser-extension).
+
+## What good looks like
+
+- The desktop shows your name and role, and a model in the picker.
+- `Settings → Services` shows the organization's search lane as **ready** — you configure no keys.
+- The phone shows your desktop as present when the desktop is running, and says the desktop is
+  unreachable when it is not, rather than spinning.
+- The browser extension's side panel shows **connected**.

@@ -181,8 +181,8 @@ describe('the wider editable surface', () => {
       chatMode: 'single',
       thinkingMode: 'high',
       brainModel: 'claude-opus-4-8',
-      cliVerbose: false,
       inappVerbose: false,
+      mobileVerbose: false,
       compactionDailyHour: 23,
       mcpServers: { 'github-mcp': true, 'notion-mcp': false }
     })
@@ -206,13 +206,13 @@ describe('the wider editable surface', () => {
   })
 
   it('a channel row and the compaction schedule write through', async () => {
-    setConfigValue('cliVerbose', true)
     setConfigValue('inappVerbose', true)
+    setConfigValue('mobileVerbose', true)
     setConfigValue('compactionDailyHour', 5)
     await jest.advanceTimersByTimeAsync(0)
     expect(configSetCalls()).toEqual([
-      [Rpc.configSet, { settings: { cliVerbose: true } }],
       [Rpc.configSet, { settings: { inappVerbose: true } }],
+      [Rpc.configSet, { settings: { mobileVerbose: true } }],
       [Rpc.configSet, { settings: { compactionDailyHour: 5 } }]
     ])
   })
@@ -245,9 +245,8 @@ describe('the wider editable surface', () => {
  * This phone's own two channel settings — the pair the Channels screen's
  * "This phone" card carries, and the desktop's Mobile panel carries too.
  *
- * They were the first settings on this screen the phone could actually WRITE
- * (the terminal's row joined them in the any-setting pass, pinned above), so
- * the thing worth holding is that they leave as configSet patches
+ * They were the first settings on this screen the phone could actually WRITE,
+ * so the thing worth holding is that they leave as configSet patches
  * rather than sitting locally looking applied until the next refresh quietly
  * undoes them. The absent-section case is the older desktop: notifications
  * default ON, and a phone that read that as off would show a switch saying

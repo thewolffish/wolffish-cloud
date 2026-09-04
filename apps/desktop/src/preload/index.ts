@@ -48,66 +48,6 @@ export type InAppApi = {
   onConfigChange: (callback: (config: InAppConfig) => void) => () => void
 }
 
-/** Mirrors main's CliConfig (dual decl — see the channel-config convention). */
-export type CliConfig = {
-  verbose?: boolean
-  runMode?: 'gui' | 'headless'
-}
-
-/**
- * Whether the shell can find `wolffish`. Every field answers a different
- * failure the user would otherwise only meet as "command not found":
- * the shim missing, its folder absent from PATH, or another binary of the
- * same name winning (on Linux the package's own /usr/bin symlink to the GUI).
- */
-export type CliPathStatus = {
-  installed: boolean
-  /** The shim file exists, even if the shell cannot find it — see cli-path.ts. */
-  present: boolean
-  target: string
-  resolved: string | null
-  needsPathEntry: boolean
-  profileHint: string | null
-  shadowedBy: string | null
-  error: string | null
-}
-
-export type AutostartInfo = {
-  active: boolean
-  mechanism: string
-  location: string | null
-  warning: string | null
-  mode: 'gui' | 'headless'
-}
-
-/**
- * What each run mode WOULD register on this machine. Lets the picker label the
- * two choices with the real mechanism rather than generic words, and flag a
- * host with no desktop session, where a login item can never fire.
- */
-export type AutostartMechanisms = {
-  gui: string
-  headless: string
-  current: string
-  headlessHost: boolean
-}
-
-export type CliApi = {
-  getConfig: () => Promise<CliConfig>
-  setConfig: (patch: Partial<CliConfig>) => Promise<{ ok: true; config: CliConfig }>
-  onConfigChange: (callback: (config: CliConfig) => void) => () => void
-  pathStatus: () => Promise<CliPathStatus>
-  installPath: () => Promise<CliPathStatus>
-  uninstallPath: () => Promise<CliPathStatus>
-  onPathChange: (callback: (status: CliPathStatus) => void) => () => void
-  serviceStatus: () => Promise<AutostartInfo>
-  serviceInstall: (mode?: 'gui' | 'headless') => Promise<AutostartInfo>
-  serviceUninstall: () => Promise<AutostartInfo>
-  serviceSetMode: (mode: 'gui' | 'headless') => Promise<AutostartInfo>
-  serviceMechanism: () => Promise<AutostartMechanisms>
-  entryPath: () => Promise<{ execPath: string; entry: string }>
-}
-
 // MCP connection views. Mirrors src/main/runtime/mcp/types.ts (the
 // preload re-declares main types by convention) — keep both in sync.
 export type McpTransportKind = 'stdio' | 'http'
@@ -302,7 +242,7 @@ export type ConversationMessage = {
   voiceLang?: string
 }
 
-export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
+export type ConversationChannel = 'electron' | 'mobile' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -1813,7 +1753,6 @@ export type WolffishApi = {
   upload: UploadApi
   mobile: MobileApi
   inapp: InAppApi
-  cli: CliApi
   mcp: McpApi
   brave: BraveApi
   mic: MicApi
@@ -2070,21 +2009,6 @@ const api: WolffishApi = {
     getConfig: () => ipcRenderer.invoke('inapp:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('inapp:setConfig', patch),
     onConfigChange: (callback) => subscribe('inapp:configChange', callback)
-  },
-  cli: {
-    getConfig: () => ipcRenderer.invoke('cli:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('cli:setConfig', patch),
-    onConfigChange: (callback) => subscribe('cli:configChange', callback),
-    pathStatus: () => ipcRenderer.invoke('cli:pathStatus'),
-    installPath: () => ipcRenderer.invoke('cli:installPath'),
-    uninstallPath: () => ipcRenderer.invoke('cli:uninstallPath'),
-    onPathChange: (callback) => subscribe('cli:pathChanged', callback),
-    serviceStatus: () => ipcRenderer.invoke('service:status'),
-    serviceInstall: (mode) => ipcRenderer.invoke('service:install', mode),
-    serviceUninstall: () => ipcRenderer.invoke('service:uninstall'),
-    serviceSetMode: (mode) => ipcRenderer.invoke('service:setMode', mode),
-    serviceMechanism: () => ipcRenderer.invoke('service:mechanism'),
-    entryPath: () => ipcRenderer.invoke('cli:entryPath')
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),

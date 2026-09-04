@@ -1,13 +1,13 @@
 {
   "theme": "mint",
-  "name": "Wolffish",
+  "name": "Wolffish Cloud",
   "seo": {
     "metatags": {
-      "og:title": "Wolffish Documentation",
-      "og:description": "A desktop agent with full access to your machine. Automate, create, and execute — entirely local. No cloud required.",
+      "og:title": "Wolffish Cloud Documentation",
+      "og:description": "The agent runs on the employee's machine. The organization's API is the master record — one lane for models, one for search, everything metered and audited.",
       "og:image": "https://cdn.wolffi.sh/generic/banner.jpg",
       "twitter:card": "summary_large_image",
-      "twitter:title": "Wolffish Documentation",
+      "twitter:title": "Wolffish Cloud Documentation",
       "twitter:image": "https://cdn.wolffi.sh/generic/banner.jpg"
     }
   },
@@ -28,55 +28,15 @@
         "label": "GitHub",
         "href": "https://github.com/thewolffish"
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Download",
-      "href": "https://www.wolffi.sh/"
-    }
+    ]
   },
   "footer": {
     "socials": {
       "x": "https://x.com/younesbites",
-      "reddit": "https://www.reddit.com/user/younesbites",
       "github": "https://github.com/thewolffish"
     }
   },
-  "redirects": [
-    {
-      "source": "/configuration/orchestrator-mode",
-      "destination": "/configuration/workflow-mode",
-      "permanent": true
-    },
-    {
-      "source": "/ar/configuration/orchestrator-mode",
-      "destination": "/ar/configuration/workflow-mode",
-      "permanent": true
-    }
-  ],
   "navigation": {
-    "global": {
-      "anchors": [
-        {
-          "anchor": "GitHub",
-          "icon": "github",
-          "color": {
-            "light": "#1E40AF",
-            "dark": "#1E40AF"
-          },
-          "href": "https://github.com/thewolffish"
-        },
-        {
-          "anchor": "Community",
-          "icon": "discord",
-          "href": "https://discord.gg/zWJpD3SgTt",
-          "color": {
-            "light": "#1E40AF",
-            "dark": "#1E40AF"
-          }
-        }
-      ]
-    },
     "languages": [
       {
         "language": "en",
@@ -86,156 +46,40 @@
             "tab": "Documentation",
             "groups": [
               {
-                "group": "Get Started",
+                "group": "Start",
                 "expanded": true,
                 "pages": [
                   "introduction/overview",
-                  "getting-started/installation",
-                  "introduction/philosophy",
-                  "getting-started/first-launch",
-                  "getting-started/quickstart",
-                  "getting-started/cli",
-                  "getting-started/server-deployment"
+                  "introduction/architecture",
+                  "getting-started/setup"
                 ]
               },
               {
-                "group": "Core Concepts",
+                "group": "The API",
+                "expanded": true,
+                "pages": ["api/overview", "api/auth", "api/lanes"]
+              },
+              {
+                "group": "Sync",
                 "expanded": true,
                 "pages": [
-                  "architecture/gods-creation",
-                  "architecture/overview",
-                  "architecture/pipeline",
-                  "architecture/stateless-model",
-                  "architecture/context-compaction",
-                  "architecture/lean-context",
-                  "architecture/brain-modules",
-                  "architecture/workspace",
-                  "architecture/event-bus"
+                  "sync/overview",
+                  "sync/desktop",
+                  "sync/mobile",
+                  "sync/browser-extension",
+                  "sync/capabilities"
                 ]
               },
               {
-                "group": "Capabilities",
+                "group": "Governance",
                 "expanded": true,
-                "pages": [
-                  "capabilities/overview",
-                  "capabilities/skill-md-reference",
-                  "capabilities/writing-plugins",
-                  "capabilities/creating-capabilities",
-                  "capabilities/self-authoring-skills",
-                  "capabilities/built-in-capabilities",
-                  "capabilities/community-capabilities"
-                ]
+                "pages": ["governance/roles", "governance/quotas", "governance/audit"]
               },
               {
-                "group": "Channels",
+                "group": "Operations",
                 "expanded": true,
-                "pages": [
-                  "channels/overview",
-                  "channels/telegram",
-                  "channels/whatsapp"
-                ]
-              },
-              {
-                "group": "Models",
-                "expanded": true,
-                "pages": [
-                  "configuration/providers",
-                  "configuration/workflow-mode",
-                  "configuration/deepseek",
-                  "configuration/mimo",
-                  "configuration/qwen",
-                  "configuration/kimi",
-                  "configuration/minimax",
-                  "configuration/xai",
-                  "configuration/stepfun",
-                  "configuration/zai",
-                  "configuration/anthropic",
-                  "configuration/openai",
-                  "configuration/openrouter",
-                  "configuration/ollama"
-                ]
-              },
-              {
-                "group": "Integrations",
-                "expanded": true,
-                "pages": [
-                  "integrations/overview",
-                  "integrations/mcp",
-                  "integrations/browser-extension",
-                  "integrations/mobile-app",
-                  "integrations/notifications",
-                  "integrations/video-generation",
-                  "integrations/google-workspace",
-                  "integrations/github",
-                  "integrations/notion"
-                ]
-              },
-              {
-                "group": "Memory & Learning",
-                "expanded": true,
-                "pages": [
-                  "memory/overview",
-                  "memory/retrieval-tools",
-                  "memory/episodes",
-                  "memory/consolidation",
-                  "memory/knowledge",
-                  "memory/feedback-loop",
-                  "memory/reflection"
-                ]
-              },
-              {
-                "group": "Configuration",
-                "expanded": true,
-                "pages": [
-                  "configuration/soul-md",
-                  "configuration/user-md",
-                  "configuration/agents-md",
-                  "configuration/config-json",
-                  "configuration/variables",
-                  "configuration/heartbeat",
-                  "configuration/what-to-schedule",
-                  "configuration/procedures",
-                  "configuration/projects"
-                ]
-              },
-              {
-                "group": "Debugging",
-                "expanded": true,
-                "pages": [
-                  "debugging/overview",
-                  "debugging/debug-snapshots",
-                  "debugging/event-logs",
-                  "debugging/task-files",
-                  "debugging/diagnostic-export",
-                  "debugging/troubleshooting"
-                ]
-              },
-              {
-                "group": "Extending Wolffish",
-                "expanded": true,
-                "pages": [
-                  "extending/agents-md",
-                  "extending/advanced-plugins",
-                  "extending/adding-channels",
-                  "extending/safety-patterns"
-                ]
-              },
-              {
-                "group": "Development",
-                "expanded": true,
-                "pages": [
-                  "development/setup",
-                  "development/project-structure",
-                  "development/contributing",
-                  "development/adding-brain-modules"
-                ]
+                "pages": ["operations/deploy", "operations/operate"]
               }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "pages": [
-              "changelog/overview"
             ]
           }
         ]
@@ -244,159 +88,43 @@
         "language": "ar",
         "tabs": [
           {
-            "tab": "Documentation",
+            "tab": "التوثيق",
             "groups": [
               {
-                "group": "ابدأ هنا",
+                "group": "البداية",
                 "expanded": true,
                 "pages": [
                   "ar/introduction/overview",
-                  "ar/getting-started/installation",
-                  "ar/introduction/philosophy",
-                  "ar/getting-started/first-launch",
-                  "ar/getting-started/quickstart",
-                  "ar/getting-started/cli",
-                  "ar/getting-started/server-deployment"
+                  "ar/introduction/architecture",
+                  "ar/getting-started/setup"
                 ]
               },
               {
-                "group": "المفاهيم الأساسية",
+                "group": "الواجهة البرمجية",
+                "expanded": true,
+                "pages": ["ar/api/overview", "ar/api/auth", "ar/api/lanes"]
+              },
+              {
+                "group": "المزامنة",
                 "expanded": true,
                 "pages": [
-                  "ar/architecture/gods-creation",
-                  "ar/architecture/overview",
-                  "ar/architecture/pipeline",
-                  "ar/architecture/stateless-model",
-                  "ar/architecture/context-compaction",
-                  "ar/architecture/lean-context",
-                  "ar/architecture/brain-modules",
-                  "ar/architecture/workspace",
-                  "ar/architecture/event-bus"
+                  "ar/sync/overview",
+                  "ar/sync/desktop",
+                  "ar/sync/mobile",
+                  "ar/sync/browser-extension",
+                  "ar/sync/capabilities"
                 ]
               },
               {
-                "group": "القدرات",
+                "group": "الحوكمة",
                 "expanded": true,
-                "pages": [
-                  "ar/capabilities/overview",
-                  "ar/capabilities/skill-md-reference",
-                  "ar/capabilities/writing-plugins",
-                  "ar/capabilities/creating-capabilities",
-                  "ar/capabilities/self-authoring-skills",
-                  "ar/capabilities/built-in-capabilities",
-                  "ar/capabilities/community-capabilities"
-                ]
+                "pages": ["ar/governance/roles", "ar/governance/quotas", "ar/governance/audit"]
               },
               {
-                "group": "القنوات",
+                "group": "التشغيل",
                 "expanded": true,
-                "pages": [
-                  "ar/channels/overview",
-                  "ar/channels/telegram",
-                  "ar/channels/whatsapp"
-                ]
-              },
-              {
-                "group": "النماذج",
-                "expanded": true,
-                "pages": [
-                  "ar/configuration/providers",
-                  "ar/configuration/workflow-mode",
-                  "ar/configuration/deepseek",
-                  "ar/configuration/mimo",
-                  "ar/configuration/qwen",
-                  "ar/configuration/kimi",
-                  "ar/configuration/minimax",
-                  "ar/configuration/xai",
-                  "ar/configuration/stepfun",
-                  "ar/configuration/zai",
-                  "ar/configuration/anthropic",
-                  "ar/configuration/openai",
-                  "ar/configuration/openrouter",
-                  "ar/configuration/ollama"
-                ]
-              },
-              {
-                "group": "التكاملات",
-                "expanded": true,
-                "pages": [
-                  "ar/integrations/overview",
-                  "ar/integrations/mcp",
-                  "ar/integrations/browser-extension",
-                  "ar/integrations/mobile-app",
-                  "ar/integrations/notifications",
-                  "ar/integrations/video-generation",
-                  "ar/integrations/google-workspace",
-                  "ar/integrations/github",
-                  "ar/integrations/notion"
-                ]
-              },
-              {
-                "group": "الذاكرة والتعلم",
-                "expanded": true,
-                "pages": [
-                  "ar/memory/overview",
-                  "ar/memory/retrieval-tools",
-                  "ar/memory/episodes",
-                  "ar/memory/consolidation",
-                  "ar/memory/knowledge",
-                  "ar/memory/feedback-loop",
-                  "ar/memory/reflection"
-                ]
-              },
-              {
-                "group": "التكوين",
-                "expanded": true,
-                "pages": [
-                  "ar/configuration/soul-md",
-                  "ar/configuration/user-md",
-                  "ar/configuration/agents-md",
-                  "ar/configuration/config-json",
-                  "ar/configuration/variables",
-                  "ar/configuration/heartbeat",
-                  "ar/configuration/what-to-schedule",
-                  "ar/configuration/procedures",
-                  "ar/configuration/projects"
-                ]
-              },
-              {
-                "group": "التشخيص",
-                "expanded": true,
-                "pages": [
-                  "ar/debugging/overview",
-                  "ar/debugging/debug-snapshots",
-                  "ar/debugging/event-logs",
-                  "ar/debugging/task-files",
-                  "ar/debugging/diagnostic-export",
-                  "ar/debugging/troubleshooting"
-                ]
-              },
-              {
-                "group": "توسيع وولفيش",
-                "expanded": true,
-                "pages": [
-                  "ar/extending/agents-md",
-                  "ar/extending/advanced-plugins",
-                  "ar/extending/adding-channels",
-                  "ar/extending/safety-patterns"
-                ]
-              },
-              {
-                "group": "التطوير",
-                "expanded": true,
-                "pages": [
-                  "ar/development/setup",
-                  "ar/development/project-structure",
-                  "ar/development/contributing",
-                  "ar/development/adding-brain-modules"
-                ]
+                "pages": ["ar/operations/deploy", "ar/operations/operate"]
               }
-            ]
-          },
-          {
-            "tab": "Changelog",
-            "pages": [
-              "ar/changelog/overview"
             ]
           }
         ]

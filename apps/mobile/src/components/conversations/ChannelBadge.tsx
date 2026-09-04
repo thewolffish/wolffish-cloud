@@ -1,9 +1,4 @@
-import {
-  Activity04Icon,
-  ComputerTerminal01Icon,
-  PlayIcon,
-  SmartPhone01Icon
-} from '@/components/core/icons'
+import { Activity04Icon, PlayIcon, SmartPhone01Icon } from '@/components/core/icons'
 import type { ConversationChannel } from '@/lib/conversations/types'
 import { Text } from 'react-native'
 
@@ -11,11 +6,10 @@ import { Text } from 'react-native'
  * Where a conversation came from, as one glyph — the desktop's ChannelIcon,
  * under the desktop's precedence: a source emoji (a project's icon, an
  * automation's) wins outright, because it says something the row cannot say
- * twice over. The channel badge is the fallback, and `mobile` and `cli` sit in
- * it with the rest — a conversation started on the phone shows a phone, one
- * started in a terminal shows a terminal, unless either has an emoji of its own
- * to show instead. In-app conversations show nothing: the app is the default,
- * not a badge.
+ * twice over. The channel badge is the fallback: a conversation started on the
+ * phone shows a phone, one an automation started shows its pulse, unless
+ * either has an emoji of its own to show instead. In-app conversations show
+ * nothing: the app is the default, not a badge.
  *
  * Shared by every surface that lists conversations (History, the conversations
  * sheet) so one origin can never read as two different things.
@@ -41,8 +35,6 @@ export function ChannelBadge({
   switch (channel) {
     case 'mobile':
       return <SmartPhone01Icon size={size} className="text-muted" />
-    case 'cli':
-      return <ComputerTerminal01Icon size={size} className="text-muted" />
     case 'heartbeat':
       return <Activity04Icon size={size} className="text-muted" />
     case 'procedure':

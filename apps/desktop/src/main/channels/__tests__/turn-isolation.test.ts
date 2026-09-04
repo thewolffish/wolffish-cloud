@@ -433,7 +433,7 @@ async function run(): Promise<void> {
     const corpus = new Corpus({ devLog: false })
     const gates = new Map<string, ReturnType<typeof deferred<void>>>()
     const started = new Map<string, ReturnType<typeof deferred<void>>>()
-    const TAGS = ['app1', 'app2', 'app3', 'mb', 'tm'] as const
+    const TAGS = ['app1', 'app2', 'app3', 'mb', 'hb'] as const
     for (const tag of TAGS) {
       gates.set(tag, deferred<void>())
       started.set(tag, deferred<void>())
@@ -505,12 +505,12 @@ async function run(): Promise<void> {
       )
       /* eslint-enable @typescript-eslint/no-explicit-any */
     }
-    // Two channel-shaped turns (a phone and a terminal): per-chat sinks that
-    // accumulate segments, exactly how the channels persist them.
+    // Two channel-shaped turns on the phone channel — two conversations, two
+    // sinks: the accumulating per-chat sinks the channels persist from.
     const channelFeeds = new Map<string, string[]>()
     for (const [tag, channelId] of [
       ['mb', 'mobile'],
-      ['tm', 'cli']
+      ['hb', 'mobile']
     ] as const) {
       channelFeeds.set(tag, [])
       runner.send({
@@ -536,13 +536,13 @@ async function run(): Promise<void> {
     // ALL FIVE turns must be in flight simultaneously before any completes.
     await Promise.all(TAGS.map((tag) => started.get(tag)!.promise))
     ok(
-      'five-turn: all 5 turns (3 app + mb + tm) in flight simultaneously',
+      'five-turn: all 5 turns (3 app + mb + hb) in flight simultaneously',
       runner.activeTurnCount() === 5,
       String(runner.activeTurnCount())
     )
 
     // Release in scrambled order; every turn must complete gracefully.
-    for (const tag of ['mb', 'app2', 'tm', 'app1', 'app3']) {
+    for (const tag of ['mb', 'app2', 'hb', 'app1', 'app3']) {
       gates.get(tag)?.resolve()
     }
     await waitFor(() => runner.activeTurnCount() === 0)
@@ -567,7 +567,7 @@ async function run(): Promise<void> {
       ok(`five-turn: ${tag} completed gracefully`, done)
     }
     // Channels: same isolation through their own sinks.
-    for (const tag of ['mb', 'tm']) {
+    for (const tag of ['mb', 'hb']) {
       const feed = channelFeeds.get(tag)!.join('')
       ok(
         `five-turn: ${tag} feed is whole and uncontaminated`,
@@ -585,7 +585,7 @@ async function run(): Promise<void> {
     )
     ok(
       'five-turn: lifecycle events carry channel identities',
-      new Set(startedEvents.map((l) => l.channel)).size === 3
+      new Set(startedEvents.map((l) => l.channel)).size === 2
     )
   }
 

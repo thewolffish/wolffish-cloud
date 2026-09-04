@@ -50,19 +50,13 @@ import {
   type EngineRuntimeState,
   type EngineStatus
 } from '@main/voice-engines'
-import { CliChannel } from '@main/channels/cli/channel'
-import { CliServer } from '@main/channels/cli/server'
-import { registerCliIpc, type AutostartFacts } from '@main/channels/cli/ipc'
-import { stableExecPath } from '@main/autostart/appimage'
-import { cliEntryPath, cliPathStatus, installCliPath } from '@main/autostart/cli-path'
 import {
-  autostartMechanism,
   autostartStatus,
   installAutostart,
   uninstallAutostart,
-  type AutostartMode
+  type AutostartStatus
 } from '@main/autostart/autostart'
-import { handle, ipcHandlers } from '@main/ipc-registry'
+import { handle } from '@main/ipc-registry'
 import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import {
@@ -166,7 +160,6 @@ import {
   getReflectionConfig,
   normalizeReflectionConfig,
   getComputerUseConfig,
-  getCliConfig,
   getSttConfig,
   getTtsConfig,
   getInAppConfig,
@@ -183,7 +176,6 @@ import {
   setMode as persistMode,
   setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
-  setCliConfig as persistCliConfig,
   setCompactionConfig as persistCompactionConfig,
   setReflectionConfig as persistReflectionConfig,
   setInAppConfig as persistInAppConfig,
@@ -239,19 +231,6 @@ const WOLFFISH_ROOT = join(os.homedir(), '.wfc')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
 
-/**
- * Headless: boot the whole agent — channels, automations, MCP, the CLI socket
- * — and never create a window or a tray. This is what a VPS runs under
- * systemd, and what the `wfc` command attaches to.
- *
- * Only the window and tray are skipped. Everything else is deliberately the
- * same code path, because a headless mode that boots differently is a second
- * app to keep working; this one is the same app with its face turned off.
- * `window-all-closed` was already a no-op (the tray app stays resident), so
- * nothing had to change for the process to survive with zero windows.
- */
-const IS_HEADLESS = process.argv.includes('--headless') || process.env.WOLFFISH_HEADLESS === '1'
-
 // Resolve a path the assistant mentioned in chat (which may start with ~) to an
 // absolute path. Returns null for anything that isn't a real absolute/home path
 // — the renderer only ever passes such paths, but this guards against junk.
@@ -276,14 +255,6 @@ function resolveDevicePath(p: string): string | null {
 //
 // Do NOT also pass `--disable-setuid-sandbox`: it's redundant under
 // `--no-sandbox` and Linux-only, so it only muddies the flag set.
-/**
- * Same two signals `IS_HEADLESS` reads further down. Duplicated rather than
- * hoisted because the switches below have to be appended before Electron
- * commits to a display, which is earlier than that constant is defined.
- */
-const IS_HEADLESS_BOOT =
-  process.argv.includes('--headless') || process.env.WOLFFISH_HEADLESS === '1'
-
 app.commandLine.appendSwitch('no-sandbox')
 // Test-harness escape hatch: an isolated $HOME (integration runs) has no
 // authorized login keychain, and Chromium's Safe Storage bootstrap then
@@ -312,8 +283,8 @@ app.commandLine.appendSwitch('disable-dev-shm-usage')
 // the impossible `access(...) /tmp: No such process` (ESRCH = seccomp denial).
 // With no buffer, the <webview> page viewer / PDF preview / wolffish-media files
 // can't composite → BLANK, while the main window (already painted) looks fine.
-// In dev the CLI `--no-sandbox` tears down seccomp too, which is why dev renders;
-// macOS/Windows have no seccomp layer. Disabling the seccomp + GPU sandbox layers
+// In dev the `--no-sandbox` command-line flag tears down seccomp too, which is
+// why dev renders; macOS/Windows have no seccomp layer. Disabling the seccomp + GPU sandbox layers
 // here matches the --no-sandbox intent (fully unsandboxed) and lets the guests
 // get their shared memory. No effect on the sudo/no_new_privs behavior above.
 app.commandLine.appendSwitch('disable-seccomp-filter-sandbox')
@@ -323,33 +294,6 @@ app.commandLine.appendSwitch('disable-gpu-sandbox')
 // have committed to a sandbox before appendSwitch() ran in this main module.
 // Belt-and-suspenders for the same blank-guest issue.
 app.commandLine.appendSwitch('no-zygote')
-
-/**
- * A Linux box with no display server — the machine this whole CLI exists for.
- *
- * Electron is Chromium, and Chromium on Linux insists on a display at startup
- * even when nothing will ever be drawn: without one it aborts with "Missing X
- * server or $DISPLAY" before a single line of this file's logic runs. The
- * systemd unit written by autostart.ts launches exactly that way — no session,
- * no DISPLAY — so a VPS install would register successfully, report itself
- * healthy, and then fail to boot on every restart, with the reason visible
- * only in the journal.
- *
- * Ozone's headless platform is the supported way to run with no display at
- * all. Applied ONLY when this really is a headless Linux launch, so a normal
- * desktop start is untouched.
- */
-if (
-  process.platform === 'linux' &&
-  IS_HEADLESS_BOOT &&
-  !process.env.DISPLAY &&
-  !process.env.WAYLAND_DISPLAY
-) {
-  app.commandLine.appendSwitch('ozone-platform', 'headless')
-  app.commandLine.appendSwitch('disable-gpu')
-  app.commandLine.appendSwitch('disable-software-rasterizer')
-  app.disableHardwareAcceleration()
-}
 
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.
@@ -444,14 +388,6 @@ agent.corpus.on('conversation.indexed', ({ rel }) => {
 // one list-changed when the pass ends so every surface reconciles.
 agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
-// The terminal. Same pipeline, same TurnRunner, no window — which is also
-// what makes a VPS install possible: nothing here needs one.
-const cliChannel = new CliChannel(agent, turnRunner)
-const cliServer = new CliServer({
-  handlers: ipcHandlers,
-  channel: cliChannel,
-  version: app.getVersion()
-})
 
 /**
  * The phone is a second view of this app, not a chat channel: it renders the
@@ -704,24 +640,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       case 'mobileRunCards':
         await mobileChannel.setRunCards(value === true)
         break
-      /**
-       * The terminal's feed preference — the one CLI setting the phone edits.
-       * Everything else on that card is a machine fact (is `wfc` on PATH,
-       * did the autostart registration take, by which mechanism), and the two
-       * that ARE knobs upstream — autostart on/off and its mode — are the same
-       * OS registration `launchAtStartup` is, which this device has always
-       * reported rather than driven.
-       *
-       * Persist and announce exactly as `cli:setConfig` does, broadcast
-       * included: that push is what an open Channels → CLI panel re-seeds
-       * from, so a flip made on the phone moves the segmented control in the
-       * window without a refetch. Skipping it would leave the two screens
-       * disagreeing until the panel was reopened.
-       */
-      case 'cliVerbose':
-        await persistCliConfig({ verbose: value === true })
-        broadcast('cli:configChange', await getCliConfig())
-        break
       // The in-app feed preference — persist and announce exactly as
       // `inapp:setConfig` does, window push included, so an open desktop
       // chat adopts the phone's flip without a refetch. It drives the
@@ -865,11 +783,6 @@ const mobileChannel = new MobileChannel({
   // What the OS has ACTUALLY registered, not the stored intent — the two
   // disagree whenever a registration failed, which on Linux used to be always.
   launchAtStartupActive: async () => (await readAutostartStatus()).active,
-  // The terminal half of this desktop, as the phone's CLI card reports it.
-  // Same two probes the Channels → CLI panel runs, so the card on the phone
-  // and the card in the window answer from one source rather than two.
-  cliPathInstalled: async () => (await cliPathStatus()).installed,
-  cliMechanism: async () => autostartMechanism(await currentRunMode()),
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
   extensionStatus: async () => extensionServer.getStatus(),
@@ -975,10 +888,6 @@ function pushTurnToMobile(ev: {
     // never let a dead tunnel disturb a turn
   }
 }
-// A terminal turn mirrors the same way: it persists its user
-// message before running, so both the app window and the phone can follow a
-// CLI run live instead of learning about it at the fold.
-cliChannel.setMessageMirror(mirrorMessageToRenderer)
 // Automations and procedures mirror the same way. Their conversation is
 // created and saved BEFORE the run starts, so it can be opened while it works
 // — and this is what makes that feed fill in live instead of sitting on the
@@ -1137,13 +1046,7 @@ const knowledgeStore = new KnowledgeStore({
 // check which channels are reachable (via `channel_status` / `wolffish_status`)
 // and tell the user how to reconnect a disconnected one.
 agent.cerebellum.setChannelStatusProvider(() =>
-  collectChannelStatus({
-    mobile: () => mobileChannel.getStatus(),
-    // The agent's own view has to include the terminal, or on a headless box
-    // it believes it has no way to answer the person it is talking to.
-    cli: () => ({ clients: cliServer.clientCount(), listening: cliServer.isListening() }),
-    headless: () => IS_HEADLESS
-  })
+  collectChannelStatus({ mobile: () => mobileChannel.getStatus() })
 )
 // Rolling prefix summarizer: fires after conversation persistence (channel
 // post-turn saves + the conversation:save IPC). The onUpdated push tells the
@@ -1538,35 +1441,31 @@ const MOBILE_CONFIG_SILENT = new Set([
 ])
 
 /**
- * Autostart, dispatched by platform and run mode.
+ * Autostart, dispatched by platform.
  *
- * A GUI install on macOS/Windows keeps using Electron's login item — that path
- * works and there is no reason to replace it. Everything else goes through the
- * autostart module, because `setLoginItemSettings` is `@platform darwin,win32`
- * and has never done anything at all on Linux: the app shipped a toggle there
- * that wrote a preference and registered nothing. `active` below is what is
- * REGISTERED, never what was asked for, which is what makes that visible.
+ * macOS/Windows keep using Electron's login item — that path works and there
+ * is no reason to replace it. Linux goes through the autostart module, because
+ * `setLoginItemSettings` is `@platform darwin,win32` and has never done
+ * anything at all there: the app shipped a toggle that wrote a preference and
+ * registered nothing. `active` below is what is REGISTERED, never what was
+ * asked for, which is what makes that visible.
  */
-async function currentRunMode(): Promise<AutostartMode> {
-  const cfg = await getCliConfig().catch(() => ({}) as { runMode?: 'gui' | 'headless' })
-  return cfg.runMode === 'headless' ? 'headless' : 'gui'
-}
+type AutostartFacts = Pick<AutostartStatus, 'active' | 'mechanism' | 'warning' | 'location'>
 
-function usesElectronLoginItem(mode: AutostartMode): boolean {
-  return mode === 'gui' && (process.platform === 'darwin' || process.platform === 'win32')
+function usesElectronLoginItem(): boolean {
+  return process.platform === 'darwin' || process.platform === 'win32'
 }
 
 /**
- * Turn autostart on or off. THE one writer — the Wolffish tab's toggle and the
- * CLI panel's Register button both land here, and it moves both halves
- * together: the stored intent, then the OS registration. Splitting them (one
- * screen writing the preference, another writing the unit) is how the two end
- * up disagreeing, and nothing surfaces the disagreement until a reboot.
+ * Turn autostart on or off. THE one writer — the Wolffish tab's toggle lands
+ * here, and it moves both halves together: the stored intent, then the OS
+ * registration. Splitting them (one screen writing the preference, another
+ * writing the unit) is how the two end up disagreeing, and nothing surfaces
+ * the disagreement until a reboot.
  */
 async function setAutostart(value: boolean): Promise<AutostartFacts> {
   await persistLaunchAtStartup(value)
-  const mode = await currentRunMode()
-  if (usesElectronLoginItem(mode)) {
+  if (usesElectronLoginItem()) {
     app.setLoginItemSettings({ openAtLogin: value })
     return {
       active: app.getLoginItemSettings().openAtLogin,
@@ -1575,9 +1474,7 @@ async function setAutostart(value: boolean): Promise<AutostartFacts> {
       location: null
     }
   }
-  const status = value
-    ? await installAutostart(mode, app.getPath('exe'))
-    : await uninstallAutostart(mode)
+  const status = value ? await installAutostart(app.getPath('exe')) : await uninstallAutostart()
   return {
     active: status.active,
     mechanism: status.mechanism,
@@ -1608,8 +1505,7 @@ async function reassertAutostart(): Promise<void> {
 }
 
 async function readAutostartStatus(): Promise<AutostartFacts> {
-  const mode = await currentRunMode()
-  if (usesElectronLoginItem(mode)) {
+  if (usesElectronLoginItem()) {
     return {
       active: app.getLoginItemSettings().openAtLogin,
       mechanism: 'loginItem',
@@ -1617,45 +1513,13 @@ async function readAutostartStatus(): Promise<AutostartFacts> {
       location: null
     }
   }
-  const status = await autostartStatus(mode)
+  const status = await autostartStatus()
   return {
     active: status.active,
     mechanism: status.mechanism,
     warning: status.warning,
     location: status.location
   }
-}
-
-/** Everything `wfc status` prints that isn't a config value. */
-async function buildCliStatus(callerPath?: string | null): Promise<Record<string, unknown>> {
-  const [workspace, autostart, cliPath] = await Promise.all([
-    getStatus().catch(() => null),
-    readAutostartStatus().catch(() => null),
-    // The terminal's PATH when it sent one — see cliPathStatus for why the
-    // daemon's own is the wrong thing to answer this question with.
-    cliPathStatus(callerPath).catch(() => null)
-  ])
-  return {
-    version: app.getVersion(),
-    platform: process.platform,
-    headless: IS_HEADLESS,
-    workspace,
-    autostart,
-    path: cliPath,
-    channels: collectChannelStatus({
-      mobile: () => mobileChannel.getStatus(),
-      cli: () => ({ clients: cliServer.clientCount(), listening: cliServer.isListening() }),
-      headless: () => IS_HEADLESS
-    }),
-    mobile: mobileChannel.getStatus(),
-    extension: extensionServer.getStatus(),
-    activeRuns: [...turnRunner.activeRuns(), ...agent.activeAutonomousRuns()]
-  }
-}
-
-/** The CLI's read side — the phone's snapshot, plus the live autostart probe. */
-function buildCliSnapshot(): Promise<Record<string, unknown>> {
-  return mobileChannel.buildSnapshot()
 }
 
 /** Coalesces a burst of config broadcasts into one push. */
@@ -1665,11 +1529,6 @@ function broadcast<T>(channel: string, payload: T): void {
   for (const w of BrowserWindow.getAllWindows()) {
     w.webContents.send(channel, payload)
   }
-  // Third audience, same signal, same reason: an attached terminal is another
-  // open surface, and a setting saved from the app (or the phone, or a
-  // channel command) has to land there too. Hooking the chokepoint is what
-  // makes that true for every broadcast there is, including ones added later.
-  cliServer.pushBroadcast(channel, payload)
   // Same signal, second audience. Saving a setting fires one of these on
   // every path there is, so hooking here covers them all at once instead of
   // one remembered push per handler.
@@ -2102,8 +1961,7 @@ app.whenReady().then(async () => {
   // healthy install pays one status read and no shell-outs.
   //
   // Through the dispatcher, not app.setLoginItemSettings directly: that call
-  // does nothing on Linux, and on a headless install it would register a
-  // login item over the service unit that is the real mechanism there.
+  // does nothing on Linux, where a .desktop entry is the real mechanism.
   //
   // Skipped in dev — registering the dev binary as a login item brings the
   // Electron debug menu back on restart instead of the production app.
@@ -2206,10 +2064,9 @@ app.whenReady().then(async () => {
    * Which reasoning modes a given provider+model actually honours, and what is
    * stored for it now.
    *
-   * The renderer works this out through the thalamus it shares by import; a
-   * terminal has no such access, so per-model reasoning effort — the brain
-   * button — was the one model control with no headless route at all. Reading
-   * it here keeps ONE registry (reasoning.ts) answering for every surface.
+   * The renderer works this out through the thalamus it shares by import.
+   * Reading it here keeps ONE registry (reasoning.ts) answering for every
+   * surface, the phone's settings screens included.
    */
   handle(
     'runtime:reasoningModes',
@@ -4153,8 +4010,8 @@ app.whenReady().then(async () => {
   // mid-run seeds its feed from it instead of showing a bare thinking bubble
   // until the next mirror tick, which across a long tool call is minutes
   // away. Served from the mobile channel's mirror cache, which every
-  // channel's mirror feeds — a run started on the phone, the CLI
-  // or an automation all answer here.
+  // channel's mirror feeds — a run started on the phone or by an
+  // automation both answer here.
   handle('chat:turnMirror', (_e, conversationId: string) =>
     mobileChannel.turnMirrorFor(String(conversationId ?? ''))
   )
@@ -4274,65 +4131,6 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(join(workspaceRoot(), relativePath)).href)
   })
 
-  // The CLI socket serves BOTH modes: a desktop user gets `wfc` in a
-  // terminal alongside the app, a headless box gets it as the only surface.
-  // Started after the IPC handlers above are registered — the server's whole
-  // job is forwarding into that map.
-  registerCliIpc({
-    handle,
-    handlers: ipcHandlers,
-    channel: cliChannel,
-    server: cliServer,
-    snapshot: () => buildCliSnapshot(),
-    broadcast: (channelName, payload) => broadcast(channelName, payload),
-    status: (callerPath) => buildCliStatus(callerPath),
-    // The same three-step fallthrough chat:cancel uses, so the terminal can
-    // stop a run it did not start — which on a headless box is every run.
-    cancelAnywhere: async (conversationId) => {
-      if ((await electronChannel.cancel(conversationId)).canceled) return true
-      if (turnRunner.cancelConversation(conversationId)) return true
-      return agent.cancelAutonomousRun(conversationId)
-    },
-    // The .AppImage rather than the /tmp mount it is running from, so the
-    // Channels → CLI panel names a path the user can still find afterwards.
-    execPath: stableExecPath(app.getPath('exe')),
-    cliEntry: cliEntryPath(is.dev, app.getAppPath(), process.resourcesPath),
-    // Same three functions the Wolffish tab's toggle calls. Sharing them is
-    // what keeps the two screens from ever disagreeing about whether Wolffish
-    // starts on its own — they are one setting with two doors.
-    autostart: {
-      enable: () => setAutostart(true),
-      disable: () => setAutostart(false),
-      read: () => readAutostartStatus()
-    }
-  })
-  void cliServer.start().catch((err) => wlog.error('[cli]', `socket start failed: ${err}`))
-
-  // Install the `wfc` shim on every boot, not just on first run. It is
-  // idempotent and it has to be re-pointed after an update anyway (the app
-  // binary's path can move), so writing it unconditionally is both simpler
-  // and more correct than tracking whether it was ever installed. Silent and
-  // best-effort: it writes into the user's own ~/.wfc/bin, needs no
-  // privilege, and a failure only means the Channels → CLI panel shows its
-  // "not on PATH" card with the fix.
-  // Skipped in dev, where process.execPath is the electron-vite binary.
-  if (!is.dev) {
-    void installCliPath(
-      app.getPath('exe'),
-      cliEntryPath(false, app.getAppPath(), process.resourcesPath)
-    )
-      .then((state) => {
-        if (state.error) wlog.warn('[cli]', `shim install failed: ${state.error}`)
-        else if (state.needsPathEntry) wlog.info('[cli]', `shim written, PATH entry needed`)
-      })
-      .catch(() => undefined)
-  }
-
-  if (IS_HEADLESS) {
-    wlog.info('[boot]', 'headless — no window, no tray; CLI socket is the surface')
-    return
-  }
-
   createTray(cfg?.locale ?? 'en')
   createWindow()
 
@@ -4364,11 +4162,6 @@ app.on('before-quit', (event) => {
 })
 
 app.on('will-quit', () => {
-  // Attached terminals get their socket closed rather than left dangling on a
-  // path whose daemon is gone — the client reads that as "detached", not as a
-  // hang. Fire-and-forget: will-quit is synchronous and the OS reclaims the
-  // socket regardless.
-  void cliServer.stop().catch(() => undefined)
   // Last-resort synchronous sweep for stdio MCP children: the idle quit
   // path never runs the async drain, and Node does not kill children on
   // parent exit — a server that ignores stdin EOF would orphan.

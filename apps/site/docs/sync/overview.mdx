@@ -1,0 +1,90 @@
+---
+title: "How syncing works"
+description: "The organization holds the record; the desktop writes it; the phone mirrors it"
+---
+
+One sentence governs every surface:
+
+**The organization holds the record. The desktop writes it. The phone mirrors it and asks the
+desktop to change things. The browser extension is not in this picture at all.**
+
+```text
+                          ┌──────────────────────────────┐
+                          │       api.wolffi.sh          │
+                          │   D1 (record) · R2 (blobs)   │
+                          └───┬───────────────────┬──────┘
+                  writes      │                   │      reads
+              ┌───────────────┘                   └──────────────┐
+              │                                                  │
+    ┌─────────▼──────────┐        live turns only       ┌─────────▼────────┐
+    │      DESKTOP       │◀────── UserBridge (wss) ─────▶│      PHONE       │
+    │  the agent runs    │                              │  a second view   │
+    └─────────┬──────────┘                              └──────────────────┘
+              │ localhost:23152  (never leaves the machine)
+    ┌─────────▼──────────┐
+    │ BROWSER EXTENSION  │
+    └────────────────────┘
+```
+
+## Who writes what
+
+| | Writes the record | Reads the record | Runs turns |
+| --- | --- | --- | --- |
+| **Desktop** | Yes — it is the only writer of conversations, files and settings | Yes | Yes |
+| **Phone** | Only through the desktop, over the bridge | Yes, directly over REST | No |
+| **Browser extension** | No | No | No — it executes browser commands for the desktop |
+
+The phone has no offline write queue and no CRDT, on purpose. When the desktop is not on the bridge,
+editable surfaces go **read-only** rather than accepting a change with nowhere to land.
+
+## What syncs
+
+| Thing | Where it lands | How |
+| --- | --- | --- |
+| Conversations and their messages | D1 `conversations` + `conversation_records` | Incremental outbox batches from the desktop |
+| Attachments and workspace files | R2, indexed in D1 `files` | Content-addressed by sha256; R2 dedupes |
+| Settings (`config.json`) | D1 `settings`, one row | Last-write-wins on a server stamp, sealed at rest |
+| Capabilities | R2 packages, D1 index | Registry manifest, mirrored onto every desktop |
+| Usage ledger | D1 `usage` + `usage_daily` | Written by the API's meter, **read back** by clients |
+
+## What never syncs
+
+- **Prompt and response content beyond the transcript.** The router stores no bodies; the
+  conversation record is the transcript the desktop chose to sync, not a copy of the wire traffic.
+- **The device PIN.** Local only.
+- **Provider keys.** They exist only in Worker secrets.
+- **Search queries.** The lane records that a search happened, not what was asked.
+- **Anything the extension does.** It runs over `localhost`.
+- **Media, eagerly.** Conversation media hydrates when its conversation is opened, on both desktop
+  and phone.
+
+## Two properties worth naming
+
+**Idempotence.** Every synced item carries a client-generated id, and record ids embed a content
+hash. A replay is a no-op. An edited message lands as a new row that restore prefers by sequence.
+The batch response names every item it refused, so the client can quarantine it rather than retrying
+forever.
+
+**Completeness over speed.** Restore is a durable, retryable step keyed on a flag — not on
+inference about onboarding. A failed attempt retries on a backoff; only a fully clean pass marks
+restore done. Pages are walked to exhaustion with no caps.
+
+## Where to read next
+
+<CardGroup cols={2}>
+  <Card title="Desktop sync" icon="desktop" href="/sync/desktop">
+    The outbox, restore, config last-write-wins, the file sweep.
+  </Card>
+
+  <Card title="Phone sync" icon="mobile" href="/sync/mobile">
+    Pairing, the bridge, the catch-up cursor, the dirty-key outbox.
+  </Card>
+
+  <Card title="Browser extension" icon="chrome" href="/sync/browser-extension">
+    Why it has no cloud endpoint.
+  </Card>
+
+  <Card title="Capabilities" icon="puzzle-piece" href="/sync/capabilities">
+    How the org registry becomes a folder on every machine.
+  </Card>
+</CardGroup>

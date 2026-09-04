@@ -49,7 +49,7 @@ export default defineConfig(
     // reason: Node loads them directly, so there is nothing to strip
     // annotations. Exempting the rule rather than adding them to `ignores`
     // (where scripts/ sits) keeps every non-TypeScript rule on them.
-    files: ['src/cli/**/*.mjs', 'build/**/*.mjs'],
+    files: ['build/**/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }

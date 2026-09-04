@@ -1,0 +1,95 @@
+---
+title: "Auth & sessions"
+description: "How a device proves who it is, and how access is taken away"
+---
+
+Sign-in is invite-only. There is no self-registration endpoint: an admin creates the account, the
+API mints a temporary password, and the first sign-in forces a personal one.
+
+## Passwords
+
+PBKDF2-SHA256, 100,000 iterations, a 16-byte per-user salt. A temporary password carries an expiry;
+after it, sign-in fails with `temp_password_expired` and the admin reissues.
+
+Self-service reset is a code emailed through Resend (`POST /auth/reset/request`, then
+`/auth/reset/confirm`). An admin can also mint a temp password outright with
+`POST /admin/users/:id/reset-password`, which forces a personal password at the next sign-in.
+
+## Tokens
+
+Two tokens, deliberately asymmetric:
+
+| | Access token | Refresh token |
+| --- | --- | --- |
+| Shape | HS256 JWT | `<session id>.<secret>` |
+| Lifetime | **15 minutes** | 30 idle days |
+| Stored server-side | Nothing — it is stateless | Only a SHA-256 hash of the secret |
+| Sent on | Every request | Only `/auth/refresh` |
+
+A refresh rotates: the presented secret is replaced by a new one. **A refresh secret that does not
+match the current hash is treated as reuse** — possible theft — and the session is killed outright
+rather than refreshed.
+
+Both tokens are sealed with the OS keychain on the desktop and the OS keystore on the phone.
+
+## Revocation
+
+Because the access token is stateless, the only per-request storage read is one KV lookup for a
+session kill-marker.
+
+```text
+revoke → write kill:<session id> to AUTH_KV   (visible globally within ~a minute)
+       → delete the D1 session row            (authoritative on every refresh)
+```
+
+So a revoked session dies at the next request within KV propagation, and at absolute worst when the
+15-minute access token expires. There is no path by which a revoked session survives longer than
+that.
+
+Four things revoke:
+
+- The user signs out (`POST /v1/logout`).
+- The user unpairs a device (`DELETE /v1/devices/:id`).
+- An admin revokes every session (`POST /admin/users/:id/revoke-sessions`).
+- An admin suspends or disables the account.
+
+Revoking also closes that device's bridge socket on the spot and drops its push registration, so a
+signed-out phone stops receiving immediately rather than at the next poll.
+
+## The device PIN
+
+A 4-digit PIN quick-locks the desktop app. It is **local-only**: it is never transmitted, never
+stored server-side, and cannot be read by an admin.
+
+What an admin *can* do is ask for it to be cleared — `POST /admin/users/:id/clear-pin` sets a pending
+clear-request, the client wipes its local lock, and `POST /v1/device/pin` acknowledges. The PIN
+itself never enters the exchange.
+
+## Pairing a phone
+
+Pairing is how a phone becomes a signed-in device of the same user without ever seeing a password.
+
+```text
+desktop ── POST /v1/pair/offer ──▶ API      (code + QR token, 3 minutes, single-use)
+phone   ── POST /auth/pair/claim ──▶ API    (whichever it saw)
+                                    └──────▶ device row + session, minted atomically with the claim
+```
+
+The single-use guarantee is the `UPDATE` that marks the offer claimed — it can only ever succeed
+once. Offers live in D1 rather than KV precisely for that: KV's eventual consistency could let one
+code mint two sessions for up to a minute.
+
+Only hashes are stored. The typed code is Crockford base32 with `I`, `L`, `O` and `U` removed so it
+survives being read aloud, and the claim endpoint is rate-limited per IP because an 8-character code
+is 40 bits behind a three-minute window.
+
+## Roles on the token
+
+The access token carries the role, and `/v1/me` returns it so the client knows whether to show admin
+controls. That is a *rendering* decision only — every admin endpoint re-checks the role server-side.
+See [Roles & admin](/governance/roles).
+
+## Sessions and hygiene
+
+The nightly run deletes `device_sessions` rows more than 30 days past expiry, expired password reset
+codes, and pairing offers older than a day. See [Operate](/operations/operate).

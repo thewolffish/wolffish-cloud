@@ -40,22 +40,6 @@ export type InAppConfig = {
 }
 
 /**
- * CLI channel preferences. `verbose` is the same feed toggle every other
- * channel carries — off (default) prints agent prose, delivered files and
- * errors; on adds every tool call, result and activity line.
- *
- * `runMode` is what a machine says it is. It exists because "start Wolffish
- * on boot" means two different registrations: a login item for a desktop, a
- * service unit for a box with no session. Stored rather than sniffed so a
- * server that happens to have DISPLAY set during an SSH -X session doesn't
- * silently reinstall itself as a desktop autostart.
- */
-export type CliConfig = {
-  verbose?: boolean
-  runMode?: 'gui' | 'headless'
-}
-
-/**
  * Mobile channel preferences that must survive restarts. `notifications`
  * gates the model's notify_phone tool entirely: off means the tool refuses
  * before any frame is built, and nothing reaches the relay or the phone.
@@ -240,9 +224,6 @@ export type WorkspaceConfig = {
   // In-app (desktop) chat display preferences. Optional so legacy configs
   // migrate cleanly — when absent the feed defaults to clean (verbose off).
   inapp?: InAppConfig
-  // Terminal channel preferences + declared run mode. Optional so legacy
-  // configs migrate cleanly — absent means a clean feed on a gui install.
-  cli?: CliConfig
   // Mobile channel preferences. Optional so legacy configs migrate cleanly
   // — when absent, model-initiated phone notifications default to ON.
   mobile?: MobileChannelConfig
@@ -954,24 +935,6 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
       runCards: patch.runCards ?? current.runCards ?? false
     }
     return { ...c, inapp: next }
-  })
-}
-
-const EMPTY_CLI_CONFIG: CliConfig = { verbose: false, runMode: 'gui' }
-
-export async function getCliConfig(): Promise<CliConfig> {
-  const config = await readConfig()
-  return config?.cli ?? EMPTY_CLI_CONFIG
-}
-
-export async function setCliConfig(patch: Partial<CliConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.cli ?? EMPTY_CLI_CONFIG
-    const next: CliConfig = {
-      verbose: patch.verbose ?? current.verbose,
-      runMode: patch.runMode ?? current.runMode
-    }
-    return { ...c, cli: next }
   })
 }
 

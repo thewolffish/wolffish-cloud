@@ -1,0 +1,107 @@
+---
+title: "Architecture"
+description: "Where every part runs, and which way the data flows"
+---
+
+One rule decides everything below: **execution is local, the record is central.**
+
+## The map
+
+```text
+   EMPLOYEE'S MACHINE                              CLOUDFLARE EDGE (the org's account)
+ ┌───────────────────────────────┐              ┌──────────────────────────────────────┐
+ │  Desktop app  (Electron)      │              │  wfc-api — one Worker, api.wolffi.sh │
+ │  ┌─────────────────────────┐  │              │                                      │
+ │  │ 15-region brain         │  │  ──https──▶  │  /auth      sessions, pairing        │
+ │  │ capabilities + tools    │  │              │  /ai/v1/…   the model lane           │
+ │  │ shell · files · browser │  │              │  /v1/search the search lane          │
+ │  └─────────────────────────┘  │              │  /v1/sync…  conversations, files     │
+ │  ~/.wfc  ← cache, not truth   │              │  /v1/bridge desktop ↔ phone          │
+ └───────┬───────────────────────┘              │  /admin     governance               │
+         │ localhost:23152                      └────────┬─────────────────────────────┘
+ ┌───────┴───────────────────┐                           │
+ │  Browser extension        │                  ┌────────┴──────────┬──────────────────┐
+ │  (Chrome / Brave)         │                  │ D1  wfc-master    │ R2  wfc-blobs    │
+ └───────────────────────────┘                  │ relational master │ files + archives │
+                                                ├───────────────────┴──────────────────┤
+ ┌───────────────────────────┐                  │ KV  config cache · session kill-marks│
+ │  Phone (iOS / Android)    │  ──https/wss──▶  ├──────────────────────────────────────┤
+ │  a paired device          │                  │ Durable Objects                      │
+ └───────────────────────────┘                  │  ModelGate · SearchGate · UserBridge │
+                                                └──────────────────┬───────────────────┘
+                                                                   │ org's keys only
+                                                        ┌──────────┴──────────┐
+                                                        │ Model host (ZDR)    │
+                                                        │ Search plan (Brave) │
+                                                        └─────────────────────┘
+```
+
+## Where the agent runs
+
+On the device. Always. The desktop app carries the whole runtime: fifteen brain regions
+(`thalamus`, `ras`, `prefrontal`, `cortex`, `hippocampus`, `cerebellum`, `wernicke`, `broca`,
+`amygdala`, `motor`, `basalganglia`, `hypothalamus`, `brainstem`, `corpus`, `insula`), the capability
+folders, the markdown workspace, the tool executor and the safety gate.
+
+Three consequences follow from that, and they are the reason the architecture is shaped this way:
+
+1. **Tool calls never leave the machine.** Reading a file, running a command, clicking a page in the
+   employee's own browser — the network is not involved. There is no sandbox to provision, no
+   repository to upload, no GPU fleet to rent.
+2. **A turn needs a running desktop.** The phone can read everything at any time, but it cannot run
+   a turn while the desktop is asleep. It says so plainly rather than queueing.
+3. **The organization's infrastructure line is a relay and an audit log**, not compute. That is why
+   adding agent work adds tokens, not servers.
+
+## What the API is for
+
+Everything that must be true for the whole organization rather than for one machine:
+
+| Concern | Handled by |
+| --- | --- |
+| Who may sign in, on what device, for how long | `/auth`, `/v1/me`, KV kill-markers — see [Auth & sessions](/api/auth) |
+| Which models a person may call, and how many tokens | The model lane + `ModelGate` — see [The lanes](/api/lanes) |
+| Whether a web search is allowed, and at what rate | The search lane + `SearchGate` |
+| The conversation, file and settings record | [Sync](/sync/overview) — D1 + R2 |
+| Which capabilities exist on every desktop | The [capability registry](/sync/capabilities) |
+| What happened, and who did it | [Usage & audit](/governance/audit) |
+
+## The three Durable Objects
+
+Cloudflare Durable Objects give the platform something Workers alone cannot: a single-threaded,
+durable place to coordinate. All three are used for exactly that.
+
+<CardGroup cols={3}>
+  <Card title="ModelGate" icon="gauge-high">
+    One global instance. Admits every model call against the hosts' concurrency limits, keeps the
+    exact token counters, and holds the leases that make a dead Worker unable to leak a slot.
+  </Card>
+
+  <Card title="SearchGate" icon="magnifying-glass">
+    One global instance. A per-second window per search plan, a queue fair by employee, the search
+    counters, and the upstream call itself.
+  </Card>
+
+  <Card title="UserBridge" icon="link">
+    One instance **per user**. The live desktop↔phone WebSocket link, presence, and the phone's push
+    registration. Nothing durable passes through it.
+  </Card>
+</CardGroup>
+
+## Storage, and what is in each
+
+- **D1 (`wfc-master`)** — the relational master: `users`, `devices`, `device_sessions`, `org`,
+  `model_policies`, `conversations`, `conversation_records`, `files`, `capabilities`, `pairings`,
+  `settings`, `password_resets`, `usage`, `usage_daily`, `audit_log`. Kept to a bounded hot window
+  by the nightly archive.
+- **R2 (`wfc-blobs`)** — content-addressed file blobs, capability packages
+  (`capabilities/org/<slug>/v<n>.zip`), gzipped conversation archives and retired usage exports.
+- **KV** — `AUTH_KV` holds session kill-markers; `CONFIG_KV` caches org config and per-user policy so
+  the hot path never reads D1 for configuration. Both are caches: a miss simply reads D1.
+
+## What is never on the edge
+
+Prompt and response **content** is never logged or stored by the router. The usage ledger records
+metadata — who, when, which model, how many tokens, how long, what it cost, what was decided —
+and nothing else. The search lane records that a query happened, never the query text. The
+employee's 4-digit device PIN never leaves the device.
