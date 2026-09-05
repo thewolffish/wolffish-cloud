@@ -1,7 +1,7 @@
 import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
-import { Modal } from '@components/core/Modal'
+import { EditorSheet } from '@components/core/EditorSheet'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { Project, ProjectCopyProgress, ProjectFileRef } from '@preload/index'
@@ -261,14 +261,13 @@ function ProjectDialogBody({
   }, [draftInstructions, t, toast])
 
   return (
-    <Modal
+    <EditorSheet
       open={project !== null}
       onClose={close}
       // While the expanded editor is stacked on top, Escape/backdrop must only
-      // close that — not both dialogs at once.
+      // close that — not both sheets at once.
       dismissable={!instructionsExpanded}
       title={t('projects.editTitle')}
-      className="max-w-xl"
       footer={
         <div className="flex w-full items-center gap-2">
           {onExitProject && (
@@ -576,6 +575,6 @@ function ProjectDialogBody({
           </div>,
           document.body
         )}
-    </Modal>
+    </EditorSheet>
   )
 }

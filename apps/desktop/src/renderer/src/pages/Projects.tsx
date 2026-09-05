@@ -298,10 +298,11 @@ export function Projects(): React.JSX.Element {
               {t('projects.empty')}
             </div>
           ) : (
-            // Services' landing grid, card for card: three columns of equal
-            // identity tiles. The instructions, files and folders are NOT on
-            // the card — they are what the edit dialog is for.
-            <ul className="grid grid-cols-3 gap-3">
+            // Services' landing grid, card for card: two columns of equal
+            // identity tiles — wide enough that a long name and its meta line
+            // stay readable. The instructions, files and folders are NOT on
+            // the card — they are what the edit sheet is for.
+            <ul className="grid grid-cols-2 gap-3">
               {projects.map((project) => {
                 const name = project.title.trim() || t('projects.untitled')
                 const stats = convStats.get(project.id)

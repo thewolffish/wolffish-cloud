@@ -3,6 +3,7 @@ import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
 import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
+import { EditorSheet } from '@components/core/EditorSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
@@ -513,10 +514,11 @@ export function Procedures(): React.JSX.Element {
               {t('procedures.empty')}
             </div>
           ) : (
-            // Services' landing grid, card for card: three columns of equal
-            // identity tiles. The prompt, files and folders are NOT on the
-            // card — they are what the editor is for.
-            <ul className="grid grid-cols-3 gap-3">
+            // Services' landing grid, card for card: two columns of equal
+            // identity tiles — wide enough that a long name, its meta line and
+            // the mode toggle stay readable. The prompt, files and folders are
+            // NOT on the card — they are what the editor sheet is for.
+            <ul className="grid grid-cols-2 gap-3">
               {procedures.map((procedure) => {
                 const name = procedure.title.trim() || t('procedures.untitled')
                 const runnable = procedure.prompt.trim().length > 0
@@ -621,14 +623,13 @@ export function Procedures(): React.JSX.Element {
         </div>
       </div>
 
-      <Modal
+      <EditorSheet
         open={editing !== null}
         onClose={closeEditor}
         // While the expanded prompt editor is stacked on top, Escape/backdrop
-        // must only close that — not both dialogs at once.
+        // must only close that — not both sheets at once.
         dismissable={!promptExpanded}
         title={t('procedures.editTitle')}
-        className="max-w-xl"
         footer={
           <div className="flex justify-end">
             <Button size="sm" onClick={closeEditor}>
@@ -871,7 +872,7 @@ export function Procedures(): React.JSX.Element {
           </Button>
           <p className="text-muted text-xs">{t('procedures.autosaveHint')}</p>
         </div>
-      </Modal>
+      </EditorSheet>
 
       {/* The expanded prompt editor — the composer's own expand dialog, over
           the same draft state, so what is typed here autosaves on the dialog's

@@ -4,6 +4,7 @@ import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
+import { EditorSheet } from '@components/core/EditorSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { escapePromptBody } from '@lib/heartbeat-escape'
@@ -23,6 +24,7 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  Clock01Icon,
   Delete02Icon,
   Edit02Icon,
   FloppyDiskIcon,
@@ -333,6 +335,16 @@ const iconButtonClass = cn(
 // starts and keeps it when progress gives way to the finished file row —
 // the project dialog's contract, because it is the same block.
 const fileCardClass = 'border-border bg-bg rounded-lg border p-1.5'
+/**
+ * The composer's active-model chip, shape for shape — what the countdown wears
+ * on a card and, identically, in the editor's schedule preview. One constant so
+ * the preview and the thing it previews can never drift apart. The tint is the
+ * caller's: primary for an armed run, muted for a switched-off automation.
+ */
+const nextRunChipClass = cn(
+  'inline-flex h-7 max-w-full items-center gap-1.5 self-start rounded-lg px-2',
+  'text-[11px] leading-tight font-medium'
+)
 /** h-8 — the remove button's h-6 plus the row's former py-1, top and bottom. */
 const fileRowHeight = 'h-8'
 const fileRowClass = cn(fileRowHeight, 'flex items-center gap-2 rounded-md px-1.5')
@@ -547,12 +559,21 @@ function parseSidebarJobs(
       .trim()
     const activeJob = activeByLabel.get(label)
     const cron = activeJob?.cron ?? schedule.cron
+    // The engine stamps nextRunMs when its snapshot is FETCHED, so the value
+    // goes stale the moment it passes — the job fired, or the page has simply
+    // been open across it. Trust it only while it is still ahead; otherwise
+    // re-derive from the cron, so a card's countdown rolls over to the next
+    // occurrence on its own instead of sitting on a moment already gone.
+    const engineNextMs = activeJob?.nextRunMs ?? null
 
     result.push({
       label,
       type: schedule.type,
       active: !!activeLine,
-      nextRunMs: activeJob?.nextRunMs ?? schedule.atMs ?? (cron ? nextCronMs(cron, nowMs) : null),
+      nextRunMs:
+        engineNextMs != null && engineNextMs > nowMs
+          ? engineNextMs
+          : (schedule.atMs ?? (cron ? nextCronMs(cron, nowMs) : engineNextMs)),
       // Body and mode come from THIS parse of the current file — never from
       // the engine snapshot. An engine running older marker rules once fed a
       // body with `project:`/`icon:` lines still embedded through this join;
@@ -987,6 +1008,44 @@ export function Heartbeat(): React.JSX.Element {
         : Number.MAX_SAFE_INTEGER
     return [...sidebarJobs].sort((a, b) => rank(a) - rank(b))
   }, [sidebarJobs])
+
+  // The soonest armed run — what the cards' countdown chips are racing toward.
+  const soonestRunMs = useMemo(() => {
+    let soonest: number | null = null
+    for (const job of sidebarJobs) {
+      if (!job.active || job.nextRunMs == null) continue
+      if (soonest == null || job.nextRunMs < soonest) soonest = job.nextRunMs
+    }
+    return soonest
+  }, [sidebarJobs])
+
+  // A chip inside its final minute counts seconds ("Next run in 17 seconds"),
+  // which the 30s clock above would render as a lie for up to 29 of them. This
+  // second clock ticks per second — but ONLY inside that last minute: further
+  // out it sleeps right up to the moment the minute begins, and while the
+  // editor sheet covers the cards it doesn't run at all.
+  const [countdownNow, setCountdownNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (editorOpen || soonestRunMs == null) return
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (): void => {
+      const dt = soonestRunMs - Date.now()
+      // Overdue by more than half a minute means the run is still executing
+      // (the snapshot re-arms when it ends) — back off instead of spinning at
+      // 1Hz for the length of a long run.
+      const delay = dt > 60_000 ? Math.min(30_000, dt - 60_000) : dt > -30_000 ? 1_000 : 30_000
+      timer = setTimeout(() => {
+        setCountdownNow(Date.now())
+        schedule()
+      }, delay)
+    }
+    schedule()
+    return () => clearTimeout(timer)
+  }, [editorOpen, soonestRunMs])
+
+  // Newest sample of the two clocks: the chips must never read older than the
+  // page's coarse tick (which keeps running while the countdown one sleeps).
+  const clock = Math.max(now, countdownNow)
 
   const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
 
@@ -1438,19 +1497,34 @@ export function Heartbeat(): React.JSX.Element {
       .finally(() => setAddingDirs(false))
   }, [addingDirs, t, toast])
 
+  // The countdown chip's label. Timing lives in the chip now, not the meta
+  // line: it is the one thing on an automation card that changes by itself.
+  const nextRunLabel = useCallback(
+    (job: SidebarJob): string => {
+      if (!job.active) return t('heartbeat.inactive')
+      if (job.type === 'startup') return t('heartbeat.onLaunch')
+      if (job.nextRunMs == null) return t('heartbeat.active')
+      // A moment already gone formats as "… ago", which is nonsense for a NEXT
+      // run — that window is the job firing before the snapshot re-arms, so
+      // clamp it to now and read "Next run now" until the new moment lands.
+      return t('heartbeat.nextRun', {
+        time: formatFromNow(Math.max(job.nextRunMs, clock), clock, locale)
+      })
+    },
+    [clock, locale, t]
+  )
+
   const jobMetaLine = useCallback(
     (job: SidebarJob): string => {
-      const scheduleText = job.active
-        ? job.type === 'startup'
-          ? t('heartbeat.onLaunch')
-          : job.nextRunMs != null
-            ? `${t('heartbeat.nextRun', { time: formatFromNow(job.nextRunMs, now, locale) })} · ${formatAbsolute(job.nextRunMs, locale)}`
-            : t('heartbeat.active')
-        : t('heartbeat.inactive')
       // With a name in the title slot the heading's own syntax would otherwise
       // vanish from the card — "next run in 21 hours" does not say "weekly".
       // A job with no name still has it as its title, so don't repeat it.
-      const parts = job.name?.trim() ? [job.label, scheduleText] : [scheduleText]
+      const parts = job.name?.trim() ? [job.label] : []
+      // The chip carries the relative countdown; the wall-clock moment it
+      // lands on stays here, where it doesn't have to re-render every second.
+      if (job.active && job.type !== 'startup' && job.nextRunMs != null) {
+        parts.push(formatAbsolute(job.nextRunMs, locale))
+      }
       const project = job.project ? projectsById.get(job.project) : undefined
       if (project) parts.push(project.title.trim() || t('projects.untitled'))
       const edited = editStamps[job.label]
@@ -1524,16 +1598,20 @@ export function Heartbeat(): React.JSX.Element {
                 {t('heartbeat.empty')}
               </div>
             ) : (
-              // Services' landing grid, card for card: three columns of equal
-              // identity tiles. The prompt, files and folders are NOT on the
-              // card — they are what the editor is for.
-              <ul className="grid grid-cols-3 gap-3">
+              // Services' landing grid, card for card: two columns of equal
+              // identity tiles — wide enough that the next-run chip, the name
+              // and the toggles stay readable. The prompt, files and folders
+              // are NOT on the card — they are what the editor sheet is for.
+              <ul className="grid grid-cols-2 gap-x-3 gap-y-5">
                 {orderedJobs.map((job) => {
                   const busy = job.active ? busyByLabel.get(job.label) : undefined
-                  // The name is what this automation is CALLED; the schedule is
-                  // what it does, and it already reads on the meta line below.
-                  // A job written before names existed has only its heading.
+                  // The name is what this automation is CALLED; the schedule
+                  // is what it does, and the chip below already reads it. A
+                  // job written before names existed has only its heading.
                   const title = job.name?.trim() || job.label
+                  // Can come back empty (an unnamed, inactive, unbound job) —
+                  // the chip above already says everything it would have.
+                  const metaLine = jobMetaLine(job)
                   return (
                     <li key={job.label} className="min-w-0">
                       <div
@@ -1595,18 +1673,117 @@ export function Heartbeat(): React.JSX.Element {
                           </div>
                         </div>
 
-                        <div className="flex w-full min-w-0 flex-col gap-1">
+                        <div className="flex w-full min-w-0 flex-1 flex-col gap-2">
+                          {/* On/off and mode are properties of the
+                              automation, not of its prompt. They lead the
+                              stack, pushed to the card's two edges: the switch
+                              under the emoji, the mode under the action
+                              buttons — so the controls frame the same width the
+                              header row above them does. */}
+                          <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
+                            <div
+                              role="tablist"
+                              className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                            >
+                              <button
+                                role="tab"
+                                type="button"
+                                aria-selected={job.active}
+                                onClick={() => {
+                                  if (!job.active) void handleToggle(job)
+                                }}
+                                className={cn(
+                                  'rounded-md px-2 py-1 text-[10px] font-medium',
+                                  job.active
+                                    ? 'bg-primary text-primary-fg shadow-sm'
+                                    : 'text-muted hover:text-fg cursor-pointer'
+                                )}
+                              >
+                                {t('settings.wolffish.toggle.on')}
+                              </button>
+                              <button
+                                role="tab"
+                                type="button"
+                                aria-selected={!job.active}
+                                onClick={() => {
+                                  if (job.active) void handleToggle(job)
+                                }}
+                                className={cn(
+                                  'rounded-md px-2 py-1 text-[10px] font-medium',
+                                  !job.active
+                                    ? 'bg-primary text-primary-fg shadow-sm'
+                                    : 'text-muted hover:text-fg cursor-pointer'
+                                )}
+                              >
+                                {t('settings.wolffish.toggle.off')}
+                              </button>
+                            </div>
+                            <div
+                              role="tablist"
+                              aria-label={t('heartbeat.modeAria')}
+                              className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                            >
+                              {(['single', 'workflow'] as const).map((m) => {
+                                const selected = (job.mode ?? globalMode) === m
+                                return (
+                                  <button
+                                    key={m}
+                                    role="tab"
+                                    type="button"
+                                    aria-selected={selected}
+                                    onClick={() => {
+                                      if (!selected) void handleSetMode(job, m)
+                                    }}
+                                    className={cn(
+                                      'rounded-md px-2 py-1 text-[10px] font-medium',
+                                      selected
+                                        ? 'bg-primary text-primary-fg shadow-sm'
+                                        : 'text-muted hover:text-fg cursor-pointer'
+                                    )}
+                                  >
+                                    {t(
+                                      m === 'workflow'
+                                        ? 'chat.modePicker.workflow'
+                                        : 'chat.modePicker.single'
+                                    )}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
                           <span
                             title={title}
-                            className="text-fg flex min-w-0 items-center gap-2 text-sm font-semibold"
+                            className="text-fg flex w-full min-w-0 items-center justify-between gap-2 text-sm font-semibold"
                           >
-                            <bdi className="truncate">{title}</bdi>
+                            {/* The name takes the whole row and ellipses on one
+                                line however long it runs; the interval badge
+                                holds the end edge, so every card's badge lands
+                                on the same column. */}
+                            <bdi className="min-w-0 flex-1 truncate">{title}</bdi>
                             <Badge variant="primary" size="sm" className="shrink-0">
                               {t(`heartbeat.type.${job.type}`)}
                             </Badge>
                           </span>
-                          <span className="text-muted line-clamp-2 text-xs leading-relaxed">
-                            {jobMetaLine(job)}
+                          {/* The countdown, worn as the composer's active-model
+                              chip: same soft primary tint, same size. It sits
+                              straight under the name because it is the card's
+                              headline fact — when this thing runs next. An
+                              automation that is switched off wears the muted
+                              variant instead of promising a run that isn't
+                              coming. */}
+                          <span
+                            title={
+                              job.active && job.nextRunMs != null
+                                ? formatAbsolute(job.nextRunMs, locale)
+                                : undefined
+                            }
+                            className={cn(
+                              nextRunChipClass,
+                              job.active ? 'bg-primary/10 text-primary' : 'bg-border/40 text-muted'
+                            )}
+                          >
+                            <Clock01Icon size={13} className="shrink-0" />
+                            <span className="truncate">{nextRunLabel(job)}</span>
                           </span>
                           {busy && (
                             <span
@@ -1627,81 +1804,16 @@ export function Heartbeat(): React.JSX.Element {
                               </span>
                             </span>
                           )}
-                        </div>
-
-                        {/* On/off and mode are properties of the automation,
-                            not of its prompt — they stay on the card, in the
-                            footer the three pages share. */}
-                        <div className="mt-auto flex w-full flex-wrap items-center gap-1.5">
-                          <div
-                            role="tablist"
-                            className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                          >
-                            <button
-                              role="tab"
-                              type="button"
-                              aria-selected={job.active}
-                              onClick={() => {
-                                if (!job.active) void handleToggle(job)
-                              }}
-                              className={cn(
-                                'rounded-md px-2 py-1 text-[10px] font-medium',
-                                job.active
-                                  ? 'bg-primary text-primary-fg shadow-sm'
-                                  : 'text-muted hover:text-fg cursor-pointer'
-                              )}
-                            >
-                              {t('settings.wolffish.toggle.on')}
-                            </button>
-                            <button
-                              role="tab"
-                              type="button"
-                              aria-selected={!job.active}
-                              onClick={() => {
-                                if (job.active) void handleToggle(job)
-                              }}
-                              className={cn(
-                                'rounded-md px-2 py-1 text-[10px] font-medium',
-                                !job.active
-                                  ? 'bg-primary text-primary-fg shadow-sm'
-                                  : 'text-muted hover:text-fg cursor-pointer'
-                              )}
-                            >
-                              {t('settings.wolffish.toggle.off')}
-                            </button>
-                          </div>
-                          <div
-                            role="tablist"
-                            aria-label={t('heartbeat.modeAria')}
-                            className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                          >
-                            {(['single', 'workflow'] as const).map((m) => {
-                              const selected = (job.mode ?? globalMode) === m
-                              return (
-                                <button
-                                  key={m}
-                                  role="tab"
-                                  type="button"
-                                  aria-selected={selected}
-                                  onClick={() => {
-                                    if (!selected) void handleSetMode(job, m)
-                                  }}
-                                  className={cn(
-                                    'rounded-md px-2 py-1 text-[10px] font-medium',
-                                    selected
-                                      ? 'bg-primary text-primary-fg shadow-sm'
-                                      : 'text-muted hover:text-fg cursor-pointer'
-                                  )}
-                                >
-                                  {t(
-                                    m === 'workflow'
-                                      ? 'chat.modePicker.workflow'
-                                      : 'chat.modePicker.single'
-                                  )}
-                                </button>
-                              )
-                            })}
-                          </div>
+                          {/* Schedule syntax, the moment it lands on, and
+                              the edit stamp — reference detail, set in the
+                              mono well the guide and folder rows use, and
+                              pinned to the bottom so every card in the row
+                              ends on the same line. */}
+                          {metaLine !== '' && (
+                            <code className="border-border bg-bg text-muted mt-auto line-clamp-2 rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
+                              {metaLine}
+                            </code>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -1768,14 +1880,13 @@ export function Heartbeat(): React.JSX.Element {
         </div>
       )}
 
-      <Modal
+      <EditorSheet
         open={editorOpen}
         onClose={closeEditor}
         // While the guide or the expanded prompt editor is stacked on top,
-        // Escape/backdrop must only close that — not both dialogs at once.
+        // Escape/backdrop must only close that — not both surfaces at once.
         dismissable={!guideOpen && !promptExpanded}
         title={editorJob ? t('heartbeat.editor.editTitle') : t('heartbeat.editor.createTitle')}
-        className="max-w-xl"
         footer={
           <div className="flex justify-end">
             <Button size="sm" onClick={closeEditor}>
@@ -1902,11 +2013,17 @@ export function Heartbeat(): React.JSX.Element {
               {t('heartbeat.editor.pastOnce')}
             </p>
           ) : draftNextMs != null ? (
-            <p className="text-muted text-xs">
-              {t('heartbeat.nextRun', { time: formatFromNow(draftNextMs, now, locale) })}
-              {' · '}
-              {formatAbsolute(draftNextMs, locale)}
-            </p>
+            // The very chip this automation will wear on its card once saved —
+            // the preview and the result should not be two different objects.
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn(nextRunChipClass, 'bg-primary/10 text-primary')}>
+                <Clock01Icon size={13} className="shrink-0" />
+                <span className="truncate">
+                  {t('heartbeat.nextRun', { time: formatFromNow(draftNextMs, now, locale) })}
+                </span>
+              </span>
+              <span className="text-muted text-xs">{formatAbsolute(draftNextMs, locale)}</span>
+            </div>
           ) : (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               {t('heartbeat.editor.cronUnknown')}
@@ -2097,7 +2214,7 @@ export function Heartbeat(): React.JSX.Element {
           </Button>
           <p className="text-muted text-xs">{t('heartbeat.editor.autosaveHint')}</p>
         </div>
-      </Modal>
+      </EditorSheet>
 
       {/* The expanded prompt editor — the composer's own expand dialog, over
           the same draft state, so what is typed here autosaves on the dialog's
