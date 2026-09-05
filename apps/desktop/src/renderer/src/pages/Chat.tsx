@@ -519,13 +519,21 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // and viewers the feed already uses). collectConversationFiles reuses the
   // feed's extractors.
   //
-  // Files only ever change when a user attachment or a whole tool_call /
-  // tool_result segment lands — never mid-text-stream — so we key the heavy
-  // scan on those cheap counts instead of `messages` identity. (tool_call is
-  // counted too: files are now pulled from call args, so a producer/send call
-  // must re-run the scan even before its result arrives.) Otherwise it would
-  // re-run on every streaming token (messages gets a fresh identity per delta)
-  // and re-scan every historical segment, regressing the per-delta budget.
+  // Files almost only ever change when a user attachment or a whole tool_call /
+  // tool_result segment lands, so we key the heavy scan on those cheap counts
+  // instead of `messages` identity. (tool_call is counted too: files are now
+  // pulled from call args, so a producer/send call must re-run the scan even
+  // before its result arrives.) Otherwise it would re-run on every streaming
+  // token (messages gets a fresh identity per delta) and re-scan every
+  // historical segment, regressing the per-delta budget.
+  //
+  // The one exception is inline media — a `wolffish-media://` ref the model
+  // writes into its own prose — which arrives mid-text-stream and moves
+  // neither count. So the tail message's ref count joins the key. Only the
+  // LAST message is ever mid-stream, which keeps this bounded to the text
+  // being typed rather than the whole transcript, and it is enough: the count
+  // is a change DETECTOR, while the rescan it fires still walks every message.
+  // Any earlier message was itself the tail when its own refs landed.
   const filesKey = useMemo(() => {
     let userAttachments = 0
     let toolSegments = 0
@@ -535,7 +543,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         for (const s of m.segments)
           if (s.kind === 'tool_result' || s.kind === 'tool_call') toolSegments += 1
     }
-    return `${userAttachments}:${toolSegments}`
+    const tail = messages[messages.length - 1]
+    const tailMedia = tail && tail.role !== 'user' ? countMediaRefs(tail.segments) : 0
+    return `${userAttachments}:${toolSegments}:${tailMedia}`
   }, [messages])
   const conversationFiles = useMemo(
     () => collectConversationFiles(messages),
@@ -5634,6 +5644,43 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
   return out
 }
 
+const MEDIA_SCHEME = 'wolffish-media://'
+
+/**
+ * How many wolffish-media:// refs a message's text carries. A change detector
+ * for filesKey — mediaRefsInText does the actual parsing — so it counts the
+ * scheme alone and never asks whether the ref around it is well-formed: an
+ * over-count costs one rescan, and a rescan is what we wanted anyway.
+ *
+ * Counted with a carry rather than per segment because a LIVE stream keeps one
+ * text segment per token (they are only coalesced at persistence time, see
+ * mapConversationMessages), so the scheme almost always straddles a boundary —
+ * `wolffish-med` then `ia://…`. The carry is one character shorter than the
+ * scheme, which is exactly the width that makes both directions safe: no
+ * occurrence can fit inside it to be counted twice, and none spanning any
+ * number of one-character deltas can slip between two scans.
+ *
+ * The alternative, joining the whole message per delta the way collectText
+ * does, is the per-token cost filesKey exists to avoid.
+ */
+function countMediaRefs(segments: Segment[]): number {
+  let count = 0
+  let carry = ''
+  for (const s of segments) {
+    if (s.kind !== 'text') continue
+    const chunk = carry + s.delta
+    for (
+      let i = chunk.indexOf(MEDIA_SCHEME);
+      i !== -1;
+      i = chunk.indexOf(MEDIA_SCHEME, i + MEDIA_SCHEME.length)
+    ) {
+      count += 1
+    }
+    carry = chunk.slice(1 - MEDIA_SCHEME.length)
+  }
+  return count
+}
+
 // Workspace-relative paths of the wolffish-media:// images a message shows in
 // its own prose. Deliberately looser than flushTextOnly's anchored match: that
 // one only swaps a STANDALONE ref for a file card, but a ref sitting inside a
@@ -5649,7 +5696,7 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
 // keep the two in step.
 function mediaRefsInText(segments: Segment[]): string[] {
   const text = collectText(segments)
-  if (!text.includes('wolffish-media://')) return []
+  if (!text.includes(MEDIA_SCHEME)) return []
   const out: string[] = []
   for (const m of text.matchAll(/!\[[^\]\n]*\]\(wolffish-media:\/\/([^)\s]+)\)/g)) {
     let rel: string
