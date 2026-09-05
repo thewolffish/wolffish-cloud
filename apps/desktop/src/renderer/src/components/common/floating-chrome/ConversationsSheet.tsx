@@ -17,18 +17,16 @@ import { ADMIN_ROLES } from '@pages/settings/settingsNav'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import {
-  AngelIcon,
+  AiBrain01Icon,
   ChampionIcon,
   Clock01Icon,
   FileEditIcon,
   Folder01Icon,
   HeartCheckIcon,
   PlayListIcon,
-  Robot01Icon,
   Settings02Icon,
   UserGroupIcon,
-  SquareLock01Icon,
-  UserIcon
+  SquareLock01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -68,9 +66,12 @@ const NAV: {
   { key: 'heartbeat', screen: 'heartbeat', icon: HeartCheckIcon, labelKey: 'chat.heartbeat' },
   { key: 'projects', screen: 'projects', icon: Folder01Icon, labelKey: 'chat.projects' },
   { key: 'procedures', screen: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' },
-  { key: 'soul', screen: 'soul', icon: AngelIcon, labelKey: 'chat.soul' },
-  { key: 'user', screen: 'user', icon: UserIcon, labelKey: 'chat.user' },
-  { key: 'agents', screen: 'agents', icon: Robot01Icon, labelKey: 'chat.agents' },
+  {
+    key: 'customization',
+    screen: 'customization',
+    icon: AiBrain01Icon,
+    labelKey: 'chat.customization'
+  },
   { key: 'viewer', screen: 'viewer', icon: FileEditIcon, labelKey: 'chat.workspace' },
   { key: 'history', screen: 'history', icon: Clock01Icon, labelKey: 'chat.conversations' }
 ]

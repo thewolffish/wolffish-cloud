@@ -25,9 +25,7 @@ export type Screen =
   | 'heartbeat'
   | 'procedures'
   | 'projects'
-  | 'soul'
-  | 'user'
-  | 'agents'
+  | 'customization'
   | 'leaderboard'
   | 'admin'
 

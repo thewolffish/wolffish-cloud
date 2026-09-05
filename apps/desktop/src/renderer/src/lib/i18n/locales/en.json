@@ -1221,6 +1221,7 @@
     "conversations": "Conversations",
     "conversationsUntitled": "Untitled",
     "workspace": "Workspace",
+    "customization": "Customization",
     "soul": "Soul",
     "user": "User",
     "agents": "Agents",
@@ -1446,6 +1447,21 @@
       "error": "Recording failed"
     },
     "admin": "Admin"
+  },
+  "customization": {
+    "title": "Customization",
+    "unsaved": "Unsaved changes",
+    "docs": {
+      "soul": {
+        "description": "Personality, tone, humor and the hard rules. This is who Wolffish is on every surface — chat, Telegram, WhatsApp."
+      },
+      "user": {
+        "description": "Facts about you Wolffish should always know: name, work, preferences, the people and routines it keeps track of."
+      },
+      "agents": {
+        "description": "Your own procedures and overrides. These win over the built-in ones when the two disagree."
+      }
+    }
   },
   "workspace": {
     "title": "Workspace",
