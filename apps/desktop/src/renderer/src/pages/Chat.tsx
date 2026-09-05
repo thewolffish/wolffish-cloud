@@ -2976,8 +2976,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             {/* Logs and files ride beside the meter rather than inside its
                 card: the footer's start edge has the room, and one click
                 opens the sheet instead of hover-card → button. Icon + count
-                only — the count is the label. Kept mounted (dimmed) at zero
-                so the row doesn't shift the moment the first event lands. */}
+                only — the count is the label. A chip with nothing behind it
+                is dead weight, so each one stays out of the row entirely until
+                its count is non-zero. */}
             {recPhase === 'idle' && (
               <>
                 <SheetCountButton
@@ -3472,8 +3473,9 @@ function formatDuration(ms: number): string {
 }
 
 // A composer-footer chip for a sheet that has a count: icon + number, no
-// text. Zero keeps it mounted but disabled — the counts climb mid-turn, and a
-// button that appears out of nowhere would shove the whole row sideways.
+// text. Zero renders nothing at all — there is no sheet worth opening behind
+// an empty log or file list, and a greyed-out chip only advertises that
+// absence. The chip joins the row when the first event or file lands.
 function SheetCountButton({
   icon,
   count,
@@ -3487,21 +3489,18 @@ function SheetCountButton({
   /** Pluralized "N events" / "N files" — the count for screen readers. */
   countLabel: string
   onOpen: () => void
-}): React.JSX.Element {
-  const off = count === 0
+}): React.JSX.Element | null {
+  if (count === 0) return null
   return (
     <button
       type="button"
-      disabled={off}
       onClick={onOpen}
       title={label}
       aria-label={`${label} (${countLabel})`}
       className={cn(
         'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5',
         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-        off
-          ? 'text-muted/40 cursor-not-allowed'
-          : 'text-muted hover:text-fg hover:bg-border/40 cursor-pointer'
+        'text-muted hover:text-fg hover:bg-border/40 cursor-pointer'
       )}
     >
       {icon}
