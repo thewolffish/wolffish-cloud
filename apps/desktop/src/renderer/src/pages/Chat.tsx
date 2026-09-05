@@ -3498,7 +3498,14 @@ function SheetCountButton({
       title={label}
       aria-label={`${label} (${countLabel})`}
       className={cn(
-        'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5',
+        // The same frame the ContextMeter wears beside it: 28px tall, 8px
+        // radius, a 1px stroke in the border token and no fill — its
+        // SquareFrame is literally `fill="none"` stroked in `text-border`,
+        // and both utilities read the one `--color-border`, so the two match
+        // in either theme. The hover wash is the single departure: unlike the
+        // meter's hover-card trigger these chips actually click, so they keep
+        // the affordance the meter has no use for.
+        'flex h-7 shrink-0 items-center gap-1 rounded-lg border border-border px-1.5',
         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
         'text-muted hover:text-fg hover:bg-border/40 cursor-pointer'
       )}
