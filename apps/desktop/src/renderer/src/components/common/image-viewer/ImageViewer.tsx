@@ -49,13 +49,28 @@ function DeletedImage({ width, height }: { width?: number; height?: number }): R
   return (
     <div
       className={cn(
-        'border-border bg-surface flex max-w-[85%] flex-col items-center justify-center gap-2 self-start',
-        'rounded-2xl border opacity-50'
+        // The placeholder takes the width its container offers and treats the
+        // original's pixel size as a ceiling, never as a fixed width. A fixed
+        // width outranked the files-sheet grid wrapper's `[&>*]:w-full`, so a
+        // deleted image sat in its masonry column as a 320px stub — or, from a
+        // large original, a slab overflowing the column — while every other
+        // tile filled it. Both caps here are liftable: the wrapper's
+        // `[&>*]:max-w-none!` is `!important`, so it beats the class *and* the
+        // inline ceiling, and the tile fills its column like the deleted
+        // audio/video tiles. Under a chat bubble the ceiling holds, so sizing
+        // there is unchanged — it restates the class's 85% because an inline
+        // max-width would otherwise silently replace it. The aspect ratio
+        // holds the shape the image had, with a floor so the icon and label
+        // fit even when the original was a wide banner.
+        'border-border bg-surface flex w-full max-w-[85%] flex-col items-center justify-center',
+        'min-h-24 gap-2 self-start rounded-2xl border opacity-50'
       )}
-      style={{ aspectRatio: ratio, width: width ? Math.max(width, 192) : 320 }}
+      style={{ aspectRatio: ratio, maxWidth: `min(85%, ${width ? Math.max(width, 192) : 320}px)` }}
     >
       <Image02Icon size={32} className="text-muted" />
-      <span className="text-muted text-sm italic">{t('chat.imageViewer.deleted')}</span>
+      <span className="text-muted px-4 text-center text-sm italic">
+        {t('chat.imageViewer.deleted')}
+      </span>
     </div>
   )
 }

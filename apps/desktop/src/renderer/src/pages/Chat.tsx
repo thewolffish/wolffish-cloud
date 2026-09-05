@@ -29,6 +29,7 @@ import { Markdown } from '@components/core/Markdown'
 import { useToast } from '@components/core/toast/useToast'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
 import { mapConversationMessage, mapConversationMessages } from '@lib/conversation-open'
+import { isPathHydrating, useHydrationFileVersion } from '@lib/hydration/hydrationStore'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
@@ -543,6 +544,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [filesKey]
   )
+  // What the sheet and its chip actually show: named-and-still-there. Every
+  // display site below reads this, never conversationFiles, so the count on
+  // the chip and the tiles behind it can't disagree.
+  const presentFiles = useFilesOnDisk(conversationFiles)
 
   // A conversation's event log. In-app turns build `timelineEntries` live and
   // persist it; channel-owned conversations (phone / terminal) never do —
@@ -2990,9 +2995,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 />
                 <SheetCountButton
                   icon={<Files01Icon size={14} />}
-                  count={conversationFiles.length}
+                  count={presentFiles.length}
                   label={t('chat.files.viewFiles')}
-                  countLabel={t('chat.files.fileCount', { count: conversationFiles.length })}
+                  countLabel={t('chat.files.fileCount', { count: presentFiles.length })}
                   onOpen={() => setFilesOpen(true)}
                 />
               </>
@@ -3209,7 +3214,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
       {visible &&
         filesOpen &&
-        conversationFiles.length > 0 &&
+        presentFiles.length > 0 &&
         createPortal(
           <div
             role="presentation"
@@ -3244,11 +3249,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   )}
                 </span>
                 <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
-                  {t('chat.files.fileCount', { count: conversationFiles.length })}
+                  {t('chat.files.fileCount', { count: presentFiles.length })}
                 </span>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4">
-                <AttachmentList attachments={conversationFiles} variant="grid" />
+                <AttachmentList attachments={presentFiles} variant="grid" />
               </div>
             </aside>
           </div>,
@@ -5397,6 +5402,31 @@ const FILE_PATH_ARG_KEYS = new Set([
   'url'
 ])
 
+// Tools that pull an EXISTING file's content into the transcript as reference.
+// Their args are skipped: the file they name predates the conversation and
+// belongs to whatever run produced it, so listing it here answers "what did
+// the agent consult" when the sheet is asking "what does this conversation
+// have". In practice these resolve to earlier runs' output — a digest run
+// reads last week's PDFs and its ledger, and each one used to land in today's
+// sheet as if today had made it.
+//
+// image_view deliberately is NOT in this set, though it also only reads. Its
+// path is almost always something THIS run just made: the design manuals build
+// a page, render it, and instruct the model to LOOK at the result before
+// shipping, so it is the one structured signal for artifacts a shell script
+// wrote — covers, chart PNGs, page renders. Nothing else names those files
+// anywhere in the conversation, so skipping it would drop real deliverables to
+// spare the sheet some intermediate render proofs. Proofs at least get cleaned
+// up, and useFilesOnDisk drops them when they do.
+const CONTENT_READ_TOOLS = new Set([
+  'file_read',
+  'pdf_read',
+  'pdf_info',
+  'pdf_search',
+  'archive_list',
+  'skill_read_source'
+])
+
 // Decide whether a file-path arg value names a WORKSPACE file worth listing,
 // and if so normalize it to the relative form AttachmentList resolves. Guards
 // reject anything that can't render: prose / commands (metacharacters), URLs
@@ -5470,17 +5500,80 @@ function toWorkspaceRelative(p: string): string {
   return p.replace(/^.*?\.wfc\/workspace\//, '')
 }
 
+/** Shared empty set, so "nothing missing" keeps a stable identity. */
+const NO_MISSING_FILES: ReadonlySet<string> = new Set()
+
+/**
+ * Narrow the collected files to the ones actually on disk right now.
+ *
+ * collectConversationFiles reports every file a conversation ever NAMED, and a
+ * long run names plenty it then cleans up: a PDF verify loop renders proof
+ * pages, looks at them, re-renders and `rm`s the batch. Those are gone by the
+ * time anyone opens the sheet, and a "log of files" made mostly of tombstones
+ * is worse than a short honest one — so the sheet drops them, and its chip
+ * counts what it will actually show.
+ *
+ * The FEED deliberately keeps the opposite behavior: a message that delivered
+ * a file still renders that file's per-type "deleted" state, because hiding it
+ * there would make the history claim the delivery never happened.
+ *
+ * Absent is not the same as gone on this build: media hydrates when the
+ * conversation opens, so a file can be missing simply because its download has
+ * not landed. A hydrating path is never dropped (AttachmentList shows it as
+ * downloading), and the checks re-run on every hydration file tick — so a file
+ * that arrives appears, and one the flight ends without delivering is dropped
+ * on that same tick, when it stops being pending.
+ *
+ * Two failure modes to fail SAFE on, both toward showing too much rather than
+ * too little: a check that never resolves leaves the full list up (nothing is
+ * hidden until a stat has actually come back false, so the first paint is the
+ * complete list, not a flash of empty), and a check that errors counts as
+ * present, since a broken IPC is not evidence a file is gone.
+ */
+function useFilesOnDisk(files: MessageAttachment[]): MessageAttachment[] {
+  const [missing, setMissing] = useState<ReadonlySet<string>>(NO_MISSING_FILES)
+  const hydrationFileVersion = useHydrationFileVersion()
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const paths = files.map((f) => f.filePath)
+      const present = await Promise.all(
+        paths.map((p) => window.api.upload.exists(p).catch(() => true))
+      )
+      if (cancelled) return
+      const gone = new Set<string>()
+      paths.forEach((p, i) => {
+        if (!present[i] && !isPathHydrating(p)) gone.add(p)
+      })
+      setMissing(gone.size === 0 ? NO_MISSING_FILES : gone)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [files, hydrationFileVersion])
+
+  return useMemo(
+    () => (missing.size === 0 ? files : files.filter((f) => !missing.has(f.filePath))),
+    [files, missing]
+  )
+}
+
 /**
  * Build the flat, ordered, de-duplicated list of files that appear across the
- * whole conversation — a "log of files". Three sources: user uploads (already
+ * whole conversation — a "log of files". Four sources: user uploads (already
  * MessageAttachment[]); files a tool NAMED in its call args (produced,
- * converted, read, written, or sent to a channel — see argFilePaths); and
- * files a tool DELIVERED via a [wolffish-output:] marker in its result (pulled
- * with the SAME extractors the feed uses). All adapt into MessageAttachment so
- * AttachmentList renders them with its existing per-type dispatch, existence
- * checks and viewers. Order follows appearance; dedup is on the canonical,
- * workspace-relative path so a file surfaced in more than one place (e.g.
- * produced then sent, or arg + marker) collapses to a single entry.
+ * converted, written, inspected — see argFilePaths, and CONTENT_READ_TOOLS for
+ * what that excludes); files a tool DELIVERED via a [wolffish-output:] marker
+ * in its result (pulled with the SAME extractors the feed uses); and generated
+ * media the model showed inline as a wolffish-media:// ref. All adapt into
+ * MessageAttachment so AttachmentList renders them with its existing per-type
+ * dispatch, existence checks and viewers. Order follows appearance; dedup is on
+ * the canonical, workspace-relative path so a file surfaced in more than one
+ * place (e.g. produced then sent, or arg + marker) collapses to a single entry.
+ *
+ * Every entry here is a CLAIM that a file exists; the caller is what turns
+ * that into a list worth showing — see useFilesOnDisk.
  */
 function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] {
   const out: MessageAttachment[] = []
@@ -5499,18 +5592,26 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
     }
     // First pass over tool_calls: index them for result pairing AND surface
     // every file named in their args. This is what makes View Files a complete
-    // "log of files" — producers (browser_pdf, document_convert), channel send
-    // tools and readers/writers all put their file path in the args and leave
-    // no [wolffish-output:] marker, so the result-marker pass below never sees
-    // them. Order follows call order, so the dialog reads like a timeline.
-    // AttachmentList's existence check hides anything no longer on disk, so an
-    // arg that named a since-deleted or out-of-workspace path self-heals.
+    // "log of files" — producers (browser_pdf, document_convert) and writers
+    // all put their file path in the args and leave no [wolffish-output:]
+    // marker, so the result-marker pass below never sees them. Order follows
+    // call order, so the dialog reads like a timeline. Reference reads are
+    // skipped — see CONTENT_READ_TOOLS.
     const callById = new Map<string, ToolCallSegment>()
     for (const seg of message.segments) {
       if (seg.kind !== 'tool_call') continue
       callById.set(seg.toolCallId, seg)
+      if (CONTENT_READ_TOOLS.has(seg.name)) continue
       for (const p of argFilePaths(seg.args)) push(fileToAttachment(p, extToBucket(p)))
     }
+    // Media the model generated and showed inline: a chart or a screenshot can
+    // reach the feed as `![alt](wolffish-media://<relative path>)`, which
+    // flushTextOnly turns into a real image card — but it is neither an arg nor
+    // a [wolffish-output:] marker, so without this the file the user is looking
+    // at is the one file the sheet does not list. The scheme is resolved to the
+    // plain relative path here so the entry resolves like every other one and
+    // dedups against whatever else named the same file.
+    for (const ref of mediaRefsInText(message.segments)) push(fileToAttachment(ref, 'image'))
     for (const seg of message.segments) {
       if (seg.kind !== 'tool_result' || seg.status !== 'success' || !seg.output) continue
       const call = callById.get(seg.toolCallId)
@@ -5529,6 +5630,38 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
       if (call && WORKFLOW_TOOL_NAMES.has(call.name)) continue
       for (const att of deliveredFilesToAttachments(seg)) push(att)
     }
+  }
+  return out
+}
+
+// Workspace-relative paths of the wolffish-media:// images a message shows in
+// its own prose. Deliberately looser than flushTextOnly's anchored match: that
+// one only swaps a STANDALONE ref for a file card, but a ref sitting inside a
+// paragraph still renders as an image, and both are files the user can see.
+// Read off the joined text, never a single delta — the markdown routinely
+// straddles a token boundary mid-stream.
+//
+// The parsing mirrors main's workspaceMediaPath (which the protocol handler
+// uses), since that is what decides which bytes a ref actually serves: percent
+// escapes decoded — the browser capability emits an encodeURIComponent'd path —
+// query dropped, leading slashes trimmed, and anything climbing out of the
+// workspace refused. It cannot be imported across the main/renderer split, so
+// keep the two in step.
+function mediaRefsInText(segments: Segment[]): string[] {
+  const text = collectText(segments)
+  if (!text.includes('wolffish-media://')) return []
+  const out: string[] = []
+  for (const m of text.matchAll(/!\[[^\]\n]*\]\(wolffish-media:\/\/([^)\s]+)\)/g)) {
+    let rel: string
+    try {
+      rel = decodeURIComponent(m[1])
+    } catch {
+      continue
+    }
+    rel = (rel.split('?')[0] ?? '').replace(/^\/+/, '')
+    if (!rel) continue
+    if (rel.split(/[\\/]/).some((part) => part === '..')) continue
+    out.push(rel)
   }
   return out
 }
