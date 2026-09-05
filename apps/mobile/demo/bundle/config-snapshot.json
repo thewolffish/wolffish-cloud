@@ -1034,7 +1034,25 @@
         ]
       }
     ],
-    "thinkingMode": "high"
+    "thinkingMode": "high",
+    "models": [
+      {
+        "id": "deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash",
+        "reasoning": true,
+        "vision": false,
+        "contextWindow": 1048576,
+        "default": true
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro",
+        "reasoning": true,
+        "vision": false,
+        "contextWindow": 1048576,
+        "default": false
+      }
+    ]
   },
   "preferences": {
     "launchAtStartup": true,

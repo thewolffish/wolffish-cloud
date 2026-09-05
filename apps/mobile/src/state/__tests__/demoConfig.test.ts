@@ -159,6 +159,109 @@ describe('demoConfig org lane', () => {
     }
   })
 
+  /**
+   * The catalog behind the model chips. It is the ONLY thing standing between
+   * this device and a model picker that cannot pick: the desktop sends the
+   * list, this device renders one chip per entry, and a tap writes back the id
+   * — so a mapping that quietly dropped it would leave the screen looking
+   * finished with exactly one model on it.
+   */
+  it('ingests the org model catalog the chips are drawn from', () => {
+    const base = snapshot()
+    useDemoConfig.getState().applySnapshot({
+      ...base,
+      llm: {
+        ...base.llm,
+        models: [
+          {
+            id: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+            name: 'DeepSeek V4 Flash',
+            reasoning: true,
+            vision: false,
+            contextWindow: 1_048_576,
+            default: true
+          },
+          {
+            id: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
+            name: 'DeepSeek V4 Flash Vision',
+            reasoning: true,
+            vision: true,
+            contextWindow: 1_048_576,
+            default: false
+          }
+        ]
+      }
+    })
+    const catalog = useDemoConfig.getState().modelCatalog
+    // The API's order is the picker's order on both surfaces.
+    expect(catalog.map((model) => model.id)).toEqual([
+      'deepseek-ai/DeepSeek-V4-Flash-0731',
+      'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
+    ])
+    expect(catalog[0]).toEqual({
+      id: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+      name: 'DeepSeek V4 Flash',
+      reasoning: true,
+      vision: false,
+      contextWindow: 1_048_576,
+      default: true
+    })
+    expect(catalog[1].vision).toBe(true)
+  })
+
+  it('coerces catalog rows and drops the ones that are not models', () => {
+    const base = snapshot()
+    useDemoConfig.getState().applySnapshot({
+      ...base,
+      llm: {
+        ...base.llm,
+        models: [
+          // No id — a chip with no model behind it would write an empty pick.
+          { name: 'Nameless' },
+          // Same id twice: one chip, not two identical ones.
+          { id: 'dup', name: 'First' },
+          { id: 'dup', name: 'Second' },
+          // Missing name falls back to the id; junk numbers to 0; flags to false.
+          { id: 'bare', contextWindow: 'lots' }
+        ]
+      } as unknown as ConfigSnapshot['llm']
+    })
+    const catalog = useDemoConfig.getState().modelCatalog
+    expect(catalog.map((model) => model.id)).toEqual(['dup', 'bare'])
+    expect(catalog[0].name).toBe('First')
+    expect(catalog[1]).toEqual({
+      id: 'bare',
+      name: 'bare',
+      reasoning: false,
+      vision: false,
+      contextWindow: 0,
+      default: false
+    })
+  })
+
+  /**
+   * A catalog is policy, not history: the list this device offers has to be
+   * the list the desktop last claimed. An older desktop and a cold cache both
+   * send nothing, and the picker answers that by falling back to the current
+   * model — it must not keep offering models from a snapshot that has stopped
+   * naming any.
+   */
+  it('clears the catalog when a snapshot stops carrying one', () => {
+    const base = snapshot()
+    useDemoConfig.getState().applySnapshot({
+      ...base,
+      llm: {
+        ...base.llm,
+        models: [
+          { id: 'a', name: 'A', reasoning: false, vision: false, contextWindow: 0, default: true }
+        ]
+      }
+    })
+    expect(useDemoConfig.getState().modelCatalog).toHaveLength(1)
+    useDemoConfig.getState().applySnapshot(base)
+    expect(useDemoConfig.getState().modelCatalog).toEqual([])
+  })
+
   // Web search is the organization's lane: the snapshot says whether it is
   // ready, and that is the whole of what the phone holds about it.
   it('carries the web-search lane as status only', () => {

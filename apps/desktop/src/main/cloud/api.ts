@@ -316,6 +316,12 @@ export type DeviceWire = {
   platform: string
   name: string
   app_version: string
+  /** What the device is and how it was paired, as the org recorded it at the
+   *  claim and refreshed on every connect. Empty when it never said. */
+  model: string
+  os: string
+  os_version: string
+  pair_method: string
   created_at: string
   last_seen_at: string | null
   paired: boolean

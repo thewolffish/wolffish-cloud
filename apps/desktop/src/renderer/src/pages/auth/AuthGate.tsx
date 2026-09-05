@@ -26,7 +26,7 @@ import { useTranslation } from 'react-i18next'
  * password, so the sign-in form prefills it and a demo needs just an email.
  * Client forks remove the prefill (and rotate the seed password).
  */
-const DEMO_PASSWORD = 'wolffish'
+const DEMO_PASSWORD = 'wolffish123'
 
 /** Wire error codes with a dedicated message; anything else falls back. */
 const KNOWN_ERRORS = new Set([

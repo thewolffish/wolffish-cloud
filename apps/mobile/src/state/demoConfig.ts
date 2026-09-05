@@ -89,6 +89,57 @@ export type CompactionRuns = {
   deepClean?: CompactionRunRecord | null
 }
 
+/**
+ * One model in the organization's catalog, as the desktop's snapshot carries
+ * it (`llm.models` — the API's GET /v1/models, in its own order).
+ *
+ * The same list the desktop's own composer picker renders, which is the point:
+ * both surfaces offer exactly the models the org allows this user, and neither
+ * can invent one. Prices are not carried — the usage ledger already knows what
+ * a turn cost, and a per-model rate is the field that would go stale in silence.
+ */
+export type ModelCatalogEntry = {
+  id: string
+  /** Display name from the catalog; falls back to the id when absent. */
+  name: string
+  reasoning: boolean
+  vision: boolean
+  /** Input-token window, 0 when the catalog did not say. */
+  contextWindow: number
+  /** The org's default pick — the model a fresh desktop adopts. */
+  default: boolean
+}
+
+/**
+ * Coerce the snapshot's model list field by field. It arrives from the paired
+ * desktop, and a row missing `id` is not a model — it would render an unnamed
+ * chip that writes an empty selection.
+ */
+function sanitizeModelCatalog(rows: unknown): ModelCatalogEntry[] {
+  if (!Array.isArray(rows)) return []
+  const seen = new Set<string>()
+  const models: ModelCatalogEntry[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const entry = row as Record<string, unknown>
+    const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    models.push({
+      id,
+      name: typeof entry.name === 'string' && entry.name.trim() ? entry.name : id,
+      reasoning: entry.reasoning === true,
+      vision: entry.vision === true,
+      contextWindow:
+        typeof entry.contextWindow === 'number' && Number.isFinite(entry.contextWindow)
+          ? Math.max(0, Math.round(entry.contextWindow))
+          : 0,
+      default: entry.default === true
+    })
+  }
+  return models
+}
+
 /** Model catalog for the demo — the models actually seen in the imported data. */
 export const DEMO_MODELS: Array<{ provider: string; model: string }> = [
   { provider: 'anthropic', model: 'claude-opus-4-8' },
@@ -193,6 +244,13 @@ export type DemoConfigValues = {
    * pocket. Both default off.
    */
   inappRunCards: boolean
+  /**
+   * inapp.reasoning — whether the model's thinking renders as a card. One
+   * workspace answer for BOTH surfaces (unlike the run cards above): this
+   * phone's feed and the desktop's obey the same key. Off by default, and
+   * display-only — the reasoning is still streamed and still stored.
+   */
+  inappReasoning: boolean
   /**
    * mobile.notifications — whether the model's notify_phone tool may reach
    * THIS phone. Off makes the desktop withdraw the tool entirely, so it is
@@ -338,6 +396,7 @@ const DEFAULTS: DemoConfigValues = {
   weekStartsOn: 1,
   inappVerbose: false,
   inappRunCards: false,
+  inappReasoning: false,
   mobileNotifications: true,
   mobileVerbose: false,
   mobileRunCards: false,
@@ -516,7 +575,7 @@ export type ConfigSnapshot = {
   channels: {
     /** Absent in bundles published before the in-app feed setting shipped;
      *  `runCards` is later still and falls back to off. */
-    inapp?: { verbose?: boolean; runCards?: boolean }
+    inapp?: { verbose?: boolean; runCards?: boolean; reasoning?: boolean }
     /** This phone's own channel. Absent in bundles (and on desktops) from
      *  before these two settings reached the snapshot; notifications then
      *  falls back to ON and the feed to clean, as the desktop defaults them. */
@@ -538,6 +597,14 @@ export type ConfigSnapshot = {
      * keep the device's last value rather than inventing a choice.
      */
     thinkingMode?: string
+    /**
+     * Every model this user may pick, in the API's order. Absent from bundles
+     * published before the phone could pick one, and from a live desktop whose
+     * catalog cache has not been filled yet (it omits rather than sending an
+     * empty list) — both read as "no catalog", and the picker then offers the
+     * current model alone until the desktop pushes one.
+     */
+    models?: ModelCatalogEntry[]
   }
   /** Same tolerance as `llm`: `updatesEnabled` and `ollamaModelsFolder` no
    *  longer ride here and are not read when they do. */
@@ -668,6 +735,17 @@ export type ExtensionBrowser = {
 export type DemoConfigState = DemoConfigValues & {
   /** Read-only service surface state (desktop-managed). */
   services: ServiceStatus[]
+  /**
+   * The org model catalog from the snapshot — desktop-managed and display-only
+   * in the sense that this device cannot ADD to it; which entry is selected is
+   * `brainModel`, and that one IS editable from here.
+   *
+   * Empty when the snapshot carried no list, which is a real state and not an
+   * error: an older desktop, a demo bundle from before models were pickable, or
+   * a live desktop whose catalog has not landed yet. The picker answers it by
+   * showing the current model alone rather than an empty row.
+   */
+  modelCatalog: ModelCatalogEntry[]
   /**
    * Live browser-extension connections — desktop-managed, display only, the
    * rows behind the Services screen's browser cards.
@@ -928,6 +1006,7 @@ const DROPPED_IN_V3 = [
 const INITIAL_STATE = {
   ...DEFAULTS,
   services: READ_ONLY_SERVICES,
+  modelCatalog: [] as ModelCatalogEntry[],
   extensionBrowsers: [] as ExtensionBrowser[],
   capabilityInfo: {} as DemoConfigState['capabilityInfo'],
   compactionRuns: { daily: null, weekly: null } as CompactionRuns,
@@ -1036,12 +1115,19 @@ export const useDemoConfig = create<DemoConfigState>()(
             // them lands exactly as a desktop that dropped them does.
             brainProvider: snapshot.llm.brainProvider,
             brainModel: snapshot.llm.brainModel,
+            // Replaced outright, never merged: the catalog IS the policy, so a
+            // model the org withdrew has to leave this list in the same beat
+            // the desktop stops offering it. An absent list clears it for the
+            // same reason — a picker must not keep offering models from a
+            // snapshot that no longer claims to know any.
+            modelCatalog: sanitizeModelCatalog(snapshot.llm.models),
             chatMode: snapshot.llm.chatMode,
             ...(THINKING_LEVELS.includes(snapshot.llm.thinkingMode as ThinkingLevel)
               ? { thinkingMode: snapshot.llm.thinkingMode as ThinkingLevel }
               : {}),
             inappVerbose: snapshot.channels.inapp?.verbose ?? DEFAULTS.inappVerbose,
             inappRunCards: snapshot.channels.inapp?.runCards ?? DEFAULTS.inappRunCards,
+            inappReasoning: snapshot.channels.inapp?.reasoning ?? DEFAULTS.inappReasoning,
             mobileNotifications:
               snapshot.channels.mobile?.notifications ?? DEFAULTS.mobileNotifications,
             mobileVerbose: snapshot.channels.mobile?.verbose ?? DEFAULTS.mobileVerbose,
@@ -1143,6 +1229,10 @@ export const useDemoConfig = create<DemoConfigState>()(
       partialize: (state) => {
         const persisted: Record<string, unknown> = {
           capabilityInfo: state.capabilityInfo,
+          // Held across launches like the rest of the mirror: the picker paints
+          // its chips on the first frame after a cold start, instead of
+          // collapsing to a single model until the desktop's next push lands.
+          modelCatalog: state.modelCatalog,
           extensionBrowsers: state.extensionBrowsers,
           compactionRuns: state.compactionRuns,
           usage: state.usage,
@@ -1218,8 +1308,8 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   'ttsVoice',
   'ttsSpeed',
   'ttsVoiceReplies',
-  'screenshotMaxWidth',
-  'screenshotFormat',
+  // Computer-use screenshot width/format are absent on purpose: the agent
+  // picks them per capture, so neither app has a control for them.
   'browserScreenshotMaxWidth',
   'browserScreenshotFormat',
   'browserScreenshotQuality',
@@ -1241,6 +1331,9 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   // The desktop's floating automation cards — that machine's setting, edited
   // from here exactly as the feed switch above it is.
   'inappRunCards',
+  // The thinking card — the workspace's answer, so flipping it here changes
+  // this phone's feed and the desktop's in the same act.
+  'inappReasoning',
   // The MCP switches, as one name→enabled map — the desktop diffs it against
   // its server list and toggles through the same path its own panel uses.
   // Adding servers, headers and OAuth remain desktop tasks.
@@ -1426,6 +1519,15 @@ export function useSettingsReadOnly(): boolean {
   const [connected, setConnected] = useState(bridgeClient.connected)
   useEffect(() => bridgeClient.subscribe((state) => setConnected(state.status === 'connected')), [])
   return paired && !connected
+}
+
+/**
+ * The org catalog to pick from. Empty is a legitimate answer (see
+ * `modelCatalog`), and callers render the current model rather than an empty
+ * row when it is.
+ */
+export function useModelCatalog(): ModelCatalogEntry[] {
+  return useDemoConfig((state) => state.modelCatalog)
 }
 
 /** The last daily/weekly compaction runs — null until one has actually run. */

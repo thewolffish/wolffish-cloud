@@ -16,7 +16,7 @@
  * whole suite still costs fractions of a cent.
  */
 const BASE = process.env.API_BASE ?? 'https://api.wolffi.sh'
-const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
+const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 import { createHash } from 'node:crypto'
 import { buildZip } from './lib/zip.mjs'
 
@@ -51,18 +51,30 @@ const api = async (path, { token, body, method, raw } = {}) => {
  * usually land instantly, worst case ~60s). Poll until the expected status
  * appears, like a real client would, instead of trusting one fixed sleep.
  */
-const untilStatus = async (fn, wantStatus, tries = 20, delayMs = 3000) => {
+const until = async (fn, ok, tries = 20, delayMs = 3000) => {
   let last
   for (let i = 0; i < tries; i++) {
     last = await fn()
-    if (last.status === wantStatus) return last
+    if (ok(last)) return last
     await new Promise((r) => setTimeout(r, delayMs))
   }
   return last
 }
+const untilStatus = (fn, wantStatus, tries = 20, delayMs = 3000) =>
+  until(fn, (r) => r.status === wantStatus, tries, delayMs)
 
 const FLASH = 'deepseek-ai/DeepSeek-V4-Flash-0731'
 const PRO = 'deepseek-ai/DeepSeek-V4-Pro-0813'
+const VISION = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
+/**
+ * A 64x64 solid magenta PNG, 133 bytes, built pixel by pixel rather than
+ * copied: a model that answers "magenta" or "pink" read the actual pixels,
+ * which a 1x1 swatch could never prove.
+ */
+const MAGENTA_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAATElEQVR42u3PMQkA' +
+  'AAwDsPo33UnoPQjEQNL0tQgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' +
+  'LAdBp+HSRtACMAAAAABJRU5ErkJggg=='
 const tinyChat = (token, model, stream = false) =>
   stream
     ? fetch(`${BASE}/ai/v1/chat/completions`, {
@@ -296,8 +308,11 @@ check(
 
 // ── 5 · governance: allowlist + quota, live edits ────────────────────────
 const models0 = await api('/v1/models', { token: VT })
+// A brand-new account gets org.default_allowed_models and nothing else.
+// Flash-Vision-Exp is provisioned per user (seed-demo.mjs), so it must NOT
+// appear here — this check is the guard on that.
 check(
-  'catalog serves the frontier pair',
+  'catalog serves the baseline pair',
   (models0.json?.models ?? []).length === 2 &&
     models0.json?.default_model === FLASH &&
     (models0.json?.models ?? []).every((m) => m.reasoning === true && m.vision === false && m.context_window === 1_048_576),
@@ -327,6 +342,114 @@ check(
 )
 const restored = await untilStatus(() => tinyChat(VT, PRO), 200)
 check('service restored after cap lift', restored.status === 200, JSON.stringify(restored.json))
+
+// ── 5.5 · the vision model, granted then exercised ───────────────────────
+// Flash-Vision-Exp is the lane's first multimodal model and is provisioned
+// per user, so proving it takes an admin grant first. Everything the
+// catalog claims about it is then checked against the model itself: it
+// takes an image (where Flash 502s on the same body), it honours the same
+// reasoning_effort rungs the desktop's brain button sends, and the price
+// it publishes is the one the host actually bills.
+check(
+  'vision model granted',
+  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: [FLASH, PRO, VISION] } })).status === 200
+)
+const models2 = await until(
+  () => api('/v1/models', { token: VT }),
+  (r) => (r.json?.models ?? []).some((m) => m.id === VISION)
+)
+const visEntry = (models2.json?.models ?? []).find((m) => m.id === VISION)
+check(
+  'catalog describes the vision model',
+  (models2.json?.models ?? []).length === 3 &&
+    visEntry?.vision === true &&
+    visEntry?.reasoning === true &&
+    visEntry?.context_window === 1_048_576 &&
+    visEntry?.in_per_mtok_microusd === 215_600 &&
+    visEntry?.out_per_mtok_microusd === 646_800,
+  JSON.stringify(models2.json).slice(0, 400)
+)
+const seeing = await untilStatus(
+  () =>
+    api('/ai/v1/chat/completions', {
+      token: VT,
+      body: {
+        model: VISION,
+        max_tokens: 200,
+        reasoning_effort: 'none',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What colour fills this image? Answer with one word.' },
+              { type: 'image_url', image_url: { url: MAGENTA_PNG } }
+            ]
+          }
+        ]
+      }
+    }),
+  200
+)
+const sawColour = (seeing.json?.choices?.[0]?.message?.content ?? '').toLowerCase()
+check(
+  'vision model reads the pixels (magenta swatch)',
+  seeing.status === 200 && /magenta|pink|fuchsia|purple/.test(sawColour),
+  `${seeing.status} ${JSON.stringify(seeing.json).slice(0, 200)}`
+)
+// The desktop sends reasoning_effort on every V4 model (providers/cloud.ts
+// keys off 'deepseek-v4'), so all three rungs must be accepted here too —
+// a narrower enum upstream would kill every turn on this model.
+for (const effort of ['none', 'high', 'max']) {
+  const r = await api('/ai/v1/chat/completions', {
+    token: VT,
+    body: {
+      model: VISION,
+      max_tokens: effort === 'none' ? 60 : 500,
+      reasoning_effort: effort,
+      messages: [{ role: 'user', content: 'What is 17 * 23? Reply with just the number.' }]
+    }
+  })
+  const msg = r.json?.choices?.[0]?.message
+  check(
+    `Vision-Exp effort=${effort}: ${effort === 'none' ? 'answers with no reasoning' : 'reasoning_content present'}`,
+    r.status === 200 &&
+      (effort === 'none'
+        ? (msg?.content?.length ?? 0) > 0 && msg?.reasoning_content == null
+        : (msg?.reasoning_content?.length ?? 0) > 0),
+    JSON.stringify(r.json).slice(0, 200)
+  )
+}
+// The catalog publishes prices clients budget against, and a model page's
+// LIST price is not necessarily what the host bills — Flash-Vision-Exp ships
+// at 0.49x its listed rate. Divide a real estimated_cost by the tokens that
+// earned it and the two must agree, or lib/models.ts has gone stale.
+const priced = await api('/ai/v1/chat/completions', {
+  token: VT,
+  body: {
+    model: VISION,
+    max_tokens: 40,
+    reasoning_effort: 'none',
+    messages: [{ role: 'user', content: 'Say ok' }]
+  }
+})
+const u = priced.json?.usage
+const fresh = (u?.prompt_tokens ?? 0) - (u?.prompt_tokens_details?.cached_tokens ?? 0)
+const expectedUsd =
+  (fresh * (visEntry?.in_per_mtok_microusd ?? 0) +
+    (u?.completion_tokens ?? 0) * (visEntry?.out_per_mtok_microusd ?? 0)) /
+  1e12
+check(
+  'published price matches what the host bills',
+  priced.status === 200 &&
+    (u?.prompt_tokens_details?.cached_tokens ?? 0) === 0 &&
+    typeof u?.estimated_cost === 'number' &&
+    Math.abs(u.estimated_cost - expectedUsd) <= expectedUsd * 0.01,
+  `reported ${u?.estimated_cost} vs catalog ${expectedUsd} (in ${u?.prompt_tokens}, out ${u?.completion_tokens})`
+)
+check(
+  'vision grant cleared back to org defaults',
+  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: null } })).status === 200
+)
 
 // ── 6 · sync: the folder-is-a-cache proof ────────────────────────────────
 check(

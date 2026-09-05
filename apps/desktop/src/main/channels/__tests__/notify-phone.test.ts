@@ -95,7 +95,23 @@ async function run(): Promise<void> {
     })
     ok(
       'foreign-scheme deeplink refused',
-      !badLink.success && (badLink.error ?? '').includes('wolffish://') && sent.length === 0
+      !badLink.success && (badLink.error ?? '').includes('wolffishcloud://') && sent.length === 0
+    )
+
+    // The personal edition's scheme is a FOREIGN scheme here, and the most
+    // dangerous one: both apps can be installed on the same phone, so a
+    // `wolffish://` link would open the personal app — a different desktop's
+    // conversations — rather than doing nothing. This app is `wolffishcloud://`
+    // (apps/mobile/app.config.ts), and every literal in this file is that
+    // scheme on purpose: the rename went out and left these assertions behind.
+    const personalScheme = await plugin.execute('notify_phone', {
+      title: 't',
+      body: 'b',
+      deeplink: 'wolffish://settings/usage'
+    })
+    ok(
+      "the personal app's wolffish:// scheme is refused, not accepted as ours",
+      !personalScheme.success && sent.length === 0
     )
 
     // A link inside the scheme but naming a screen the app does not have is
@@ -105,12 +121,12 @@ async function run(): Promise<void> {
     const noSuchPage = await plugin.execute('notify_phone', {
       title: 't',
       body: 'b',
-      deeplink: 'wolffish://runs/1'
+      deeplink: 'wolffishcloud://runs/1'
     })
     ok(
       'unknown screen refused with the list of real ones',
       !noSuchPage.success &&
-        (noSuchPage.error ?? '').includes('wolffish://settings/automations') &&
+        (noSuchPage.error ?? '').includes('wolffishcloud://settings/automations') &&
         sent.length === 0
     )
 
@@ -123,7 +139,7 @@ async function run(): Promise<void> {
       body: 'keep\nthe\nnewlines ' + 'y'.repeat(300),
       phase: 'not-a-phase',
       urgency: 'shout',
-      deeplink: 'wolffish:///settings/usage/?from=notify'
+      deeplink: 'wolffishcloud:///settings/usage/?from=notify'
     })
     ok('sanitized send succeeds', messy.success === true && sent.length === 1)
     const frame = sent[0]
@@ -133,7 +149,7 @@ async function run(): Promise<void> {
     ok('body clamped to 180', frame.body.length <= 180)
     ok('unknown phase defaults to info', frame.phase === 'info')
     ok('unknown urgency defaults to normal', frame.urgency === 'normal')
-    ok('sloppy deeplink normalized', frame.deeplink === 'wolffish://settings/usage')
+    ok('sloppy deeplink normalized', frame.deeplink === 'wolffishcloud://settings/usage')
     ok('runId stamped from harness scope, not the model', frame.runId === 'untracked')
 
     // NOTHING here rate-limits, counts, or deduplicates. Whether a moment is
@@ -212,11 +228,11 @@ async function run(): Promise<void> {
         const bad = await plugin.execute('notify_phone', {
           title: 't',
           body: 'b',
-          deeplink: 'wolffish://nowhere'
+          deeplink: 'wolffishcloud://nowhere'
         })
         ok(
           'an undeliverable deeplink is still refused, with the real list',
-          !bad.success && (bad.error ?? '').includes('wolffish://history')
+          !bad.success && (bad.error ?? '').includes('wolffishcloud://history')
         )
         ok('and nothing was sent', sent.length === before)
       })()
@@ -256,12 +272,12 @@ async function run(): Promise<void> {
           title: 't',
           body: 'b',
           phase: 'completed',
-          deeplink: 'wolffish://chat?id=2026-08-05_10-00-00'
+          deeplink: 'wolffishcloud://chat?id=2026-08-05_10-00-00'
         })
     )
     ok(
       'explicit conversation deeplink passes through',
-      sent[1]?.deeplink === 'wolffish://chat?id=2026-08-05_10-00-00'
+      sent[1]?.deeplink === 'wolffishcloud://chat?id=2026-08-05_10-00-00'
     )
 
     // …and `current` is the one thing the harness fills in: the id comes from
@@ -275,12 +291,12 @@ async function run(): Promise<void> {
           title: 't',
           body: 'b',
           phase: 'completed',
-          deeplink: 'wolffish://chat?id=current'
+          deeplink: 'wolffishcloud://chat?id=current'
         })
     )
     ok(
       'id=current resolves to the run own conversation',
-      sent[2]?.deeplink === 'wolffish://chat?id=2026-08-05_10-00-00'
+      sent[2]?.deeplink === 'wolffishcloud://chat?id=2026-08-05_10-00-00'
     )
 
     // No conversation in scope: refused rather than sending the literal word
@@ -292,7 +308,7 @@ async function run(): Promise<void> {
           title: 't',
           body: 'b',
           phase: 'completed',
-          deeplink: 'wolffish://chat?id=current'
+          deeplink: 'wolffishcloud://chat?id=current'
         })
     )
     ok('id=current with no conversation in scope is refused', !orphan.success && sent.length === 3)
@@ -306,7 +322,7 @@ async function run(): Promise<void> {
           title: 't',
           body: 'b',
           phase: 'started',
-          deeplink: 'wolffish://chat?id=my%20morning%20digest'
+          deeplink: 'wolffishcloud://chat?id=my%20morning%20digest'
         })
     )
     ok('a non-id conversation reference is refused', !titleAsId.success && sent.length === 3)

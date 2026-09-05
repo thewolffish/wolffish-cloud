@@ -55,8 +55,13 @@ jobs:
             src/main/runtime/__tests__/usage-brave.test.ts \
             src/main/runtime/__tests__/vision.test.ts \
             src/main/channels/__tests__/mobile-channel-settings.test.ts \
+            src/main/channels/__tests__/mobile-model-catalog.test.ts \
+            src/main/channels/__tests__/mobile-snapshot-resilience.test.ts \
             src/main/channels/__tests__/channel-status.test.ts \
+            src/main/channels/__tests__/notify-phone.test.ts \
             src/main/__tests__/media-url.test.ts \
+            src/main/__tests__/computer-use-capture.test.ts \
+            src/main/__tests__/voice-settings-catalog.test.ts \
             src/main/__tests__/conversation-titler.test.ts; do
             echo "━━━ $t"
             npx tsx --tsconfig tsconfig.node.json "$t"

@@ -29,6 +29,7 @@ export type Screen =
   | 'user'
   | 'agents'
   | 'leaderboard'
+  | 'admin'
 
 export type ChatRole = 'user' | 'assistant'
 

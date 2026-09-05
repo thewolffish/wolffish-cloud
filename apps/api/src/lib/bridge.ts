@@ -57,6 +57,10 @@ type Attachment = {
   name: string
   platform: string
   appVersion: string
+  /** What the device is, as it describes itself on the way in. */
+  model: string
+  os: string
+  osVersion: string
   connectedAt: number
 }
 
@@ -146,6 +150,9 @@ export class UserBridge extends DurableObject<Env> {
       name: (request.headers.get('x-wfc-name') ?? '').slice(0, 120),
       platform: (request.headers.get('x-wfc-platform') ?? '').slice(0, 32),
       appVersion: (request.headers.get('x-wfc-version') ?? '').slice(0, 64),
+      model: (request.headers.get('x-wfc-model') ?? '').slice(0, 120),
+      os: (request.headers.get('x-wfc-os') ?? '').slice(0, 32),
+      osVersion: (request.headers.get('x-wfc-os-version') ?? '').slice(0, 60),
       connectedAt: Date.now()
     }
     // One socket per device: a reconnect replaces the socket it superseded,
@@ -177,13 +184,36 @@ export class UserBridge extends DurableObject<Env> {
   }
 
   /** The phone showed up: its device row's last_seen_at is the org's record
-   *  of that, read by the desktop's paired-phones list. Best-effort. */
+   *  of that, read by the desktop's paired-phones list. The rest of what the
+   *  phone says about itself is written back here too — an upgraded OS or a
+   *  renamed handset corrects itself on the next connect, and the panel can
+   *  describe a phone that is asleep right now. Best-effort. */
   private async touchDevice(attachment: Attachment): Promise<void> {
+    // The socket carries the device's PLATFORM (ios/android); the row's own
+    // platform column stays the device KIND ('mobile'), so the phone's OS
+    // lands in `os` — from the explicit param, or from that platform.
+    const os =
+      attachment.os ||
+      (attachment.platform === 'ios' || attachment.platform === 'android' ? attachment.platform : '')
     try {
       await this.env.DB.prepare(
-        'UPDATE devices SET last_seen_at = ?1, app_version = CASE WHEN ?2 = \'\' THEN app_version ELSE ?2 END WHERE id = ?3'
+        `UPDATE devices SET last_seen_at = ?1,
+           app_version = CASE WHEN ?2 = '' THEN app_version ELSE ?2 END,
+           name = CASE WHEN ?3 = '' THEN name ELSE ?3 END,
+           model = CASE WHEN ?4 = '' THEN model ELSE ?4 END,
+           os = CASE WHEN ?5 = '' THEN os ELSE ?5 END,
+           os_version = CASE WHEN ?6 = '' THEN os_version ELSE ?6 END
+         WHERE id = ?7`
       )
-        .bind(new Date(attachment.connectedAt).toISOString(), attachment.appVersion, attachment.deviceId)
+        .bind(
+          new Date(attachment.connectedAt).toISOString(),
+          attachment.appVersion,
+          attachment.name,
+          attachment.model,
+          os,
+          attachment.osVersion,
+          attachment.deviceId
+        )
         .run()
     } catch {
       // presence is served live either way

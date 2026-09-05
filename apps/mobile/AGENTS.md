@@ -234,6 +234,6 @@ Anything touching sync gets a test against a mocked API client and bridge, not j
 - **Chart cards mirror the desktop's `.chart.json` cards** through vendored ECharts in WebViews. Three files must track the desktop copy; changing one repo alone splits the rendering.
 - **Toasts raised inside a React Native `Modal` never paint on iOS.** Use inline errors in sheets (see `PairSheet`).
 - **An iOS system picker launched during a Modal dismissal is silently killed.** Launch it from `onDismiss`.
-- **Deep links are scheme-only (`wolffish://`) on purpose.** Universal links are deferred — the recipe and its two blockers are commented in `app.config.ts`; don't uncomment half of it.
+- **Deep links are scheme-only (`wolffishcloud://`) on purpose.** Universal links are deferred — the recipe and its two blockers are commented in `app.config.ts`; don't uncomment half of it.
 - **A new screen a notification should be able to open needs `DEEPLINK_ROUTES`** in `src/lib/bridge/protocol.ts` **and the desktop's mirrored copy**. It is an allowlist on both ends: the desktop refuses a link naming anything else (which is how the model learns the real page list), and this app ignores one, so a screen missing from it is simply unreachable by tap.
 - **Unfocused single-line `TextInput`s show only the prefix of a long value** on iOS.

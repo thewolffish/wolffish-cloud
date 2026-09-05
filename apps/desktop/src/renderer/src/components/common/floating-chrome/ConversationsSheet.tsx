@@ -13,6 +13,7 @@ import {
 import { cn } from '@lib/utils/cn'
 import { isMac } from '@lib/utils/platform'
 import type { ConversationMeta, Project } from '@preload/index'
+import { ADMIN_ROLES } from '@pages/settings/settingsNav'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import {
@@ -25,6 +26,7 @@ import {
   PlayListIcon,
   Robot01Icon,
   Settings02Icon,
+  UserGroupIcon,
   SquareLock01Icon,
   UserIcon
 } from 'hugeicons-react'
@@ -44,8 +46,19 @@ const NAV: {
   screen: Screen
   icon: ComponentType<{ size?: number }>
   labelKey: string
+  /** Shown only to the tiers that have an admin page (see ADMIN_ROLES). */
+  adminOnly?: boolean
 }[] = [
   { key: 'settings', screen: 'settings', icon: Settings02Icon, labelKey: 'chat.settings' },
+  // Directly below Settings, next to the other org-wide page: an admin
+  // reaches for this as a destination, not as a setting.
+  {
+    key: 'admin',
+    screen: 'admin',
+    icon: UserGroupIcon,
+    labelKey: 'chat.admin',
+    adminOnly: true
+  },
   {
     key: 'leaderboard',
     screen: 'leaderboard',
@@ -93,6 +106,13 @@ export function ConversationsSheet({
   const { t } = useTranslation()
   const { avatar } = useProfile()
   const { goTo, auth } = useFlow()
+  // The admin row is presentation only — every endpoint behind it re-checks
+  // the role server-side — but offering a page whose every call would come
+  // back 403 is worse than not offering it.
+  const pageRows = useMemo(
+    () => (ADMIN_ROLES.has(auth?.user?.role ?? '') ? NAV : NAV.filter((row) => !row.adminOnly)),
+    [auth?.user?.role]
+  )
   const {
     runStatuses,
     openConversation,
@@ -232,7 +252,7 @@ export function ConversationsSheet({
         aria-modal="true"
         aria-label={t('chat.conversations')}
         className={cn(
-          'wf-sheet-panel bg-bg border-border/40 absolute inset-y-0 start-0 flex w-[340px] max-w-[86vw] flex-col border-e'
+          'wf-sheet-panel bg-bg border-border/40 absolute inset-y-0 start-0 flex w-[520px] max-w-[92vw] flex-col border-e'
         )}
       >
         {/* Fixed page rows — deliberately NOT part of the scroller, so the
@@ -240,7 +260,7 @@ export function ConversationsSheet({
             clears the macOS traffic lights; Windows/Linux keep their native
             titlebar above the webview, so the rows sit higher. */}
         <nav className={cn('flex shrink-0 flex-col gap-0.5 px-2.5 pb-1', isMac ? 'pt-12' : 'pt-6')}>
-          {NAV.map(({ key, screen, icon: Icon, labelKey }) => (
+          {pageRows.map(({ key, screen, icon: Icon, labelKey }) => (
             <button
               key={key}
               type="button"

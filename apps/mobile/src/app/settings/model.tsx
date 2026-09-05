@@ -7,14 +7,13 @@ import { Text } from 'react-native'
 
 /**
  * Model — the org lane. Behavior controls up top (the two knobs touched every
- * session), then the model answering, as the desktop reports it.
+ * session), then the model answering, chosen from the organization's catalog.
  *
  * That is the whole screen on purpose. The cloud edition has one lane through
  * the organization's API: no provider cards or API keys (the desktop holds no
- * keys), no local engine (no Ollama, no models folder), and the snapshot names
- * the current model without a catalog to pick from — so this screen shows the
- * model rather than offering a choice it could not honor. Re-aiming the phone
- * at the API, catalog included, is a later phase.
+ * keys), no local engine (no Ollama, no models folder). The one choice that
+ * remains — which of the org's models answers — is the chip row below, and it
+ * writes through to the desktop, which is the machine that runs the turn.
  */
 export default function ModelScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.

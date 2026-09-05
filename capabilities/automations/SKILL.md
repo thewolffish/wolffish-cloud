@@ -41,11 +41,14 @@ triggers:
   - run automatically
 tools:
   - name: automation_list
-    description: List every configured automation — its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
+    description: List every configured automation — its name, its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
     parameters: {}
   - name: automation_create
-    description: Create a new automation that runs on a schedule. Provide the schedule and the instruction to run.
+    description: Create a new automation that runs on a schedule. Provide a short name, the schedule and the instruction to run.
     parameters:
+      name:
+        type: string
+        description: 'A short human name for this automation — what the user sees on its card (e.g. "Morning digest", "Invoice filer"). Two to four words naming the JOB, never the schedule. Required.'
       schedule:
         type: string
         description: 'YOU pick one-time vs recurring from the user''s wording. ONE-TIME (runs once, then deletes itself) for "in 15 min", "in 2 days", "at 3pm", "tomorrow", "remind me once": "In (15m)" / "In (2h)" / "In (2d)" (relative — minutes, hours, days) or "Once (2026-06-27 14:30)" (absolute, 24h local). RECURRING for "every", "each", "daily", "from now on": "Every (5m)" / "Every (2h)" · "Hourly (30)" · "Daily (08:00)" / "Nightly (23:00)" · "Weekday (09:00)" · "Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)" · "Startup". Default to one-time for a specific future moment.'
@@ -62,11 +65,15 @@ tools:
         required: false
         description: 'A single emoji for this automation — YOU pick one that fits what it does (📧 for an inbox sweep, 📰 for a news digest, 💌 for a message sender). Shown on its card and stamped on its run conversations. One emoji, no spaces. Omitted or invalid ⇒ the default 🫀.'
   - name: automation_edit
-    description: Change an existing automation's schedule and/or its instruction. Identify it by the number from automation_list or its exact schedule label.
+    description: Change an existing automation's name, schedule and/or instruction. Identify it by the number from automation_list or its exact schedule label.
     parameters:
       identifier:
         type: string
         description: The automation to edit — its 1-based number from automation_list, or its exact schedule label (e.g. "Daily (08:00)").
+      name:
+        type: string
+        required: false
+        description: New display name. Omit to keep the current one.
       schedule:
         type: string
         required: false

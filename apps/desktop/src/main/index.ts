@@ -15,6 +15,7 @@ import {
   CUSTOMIZATION_DOCS,
   CUSTOMIZATION_MAX_BYTES,
   THINKING_MODES,
+  modelSelectable,
   type CustomizationDoc
 } from '@main/channels/mobile/snapshot'
 import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
@@ -189,7 +190,6 @@ import {
   setWeekStartsOn as persistWeekStartsOn,
   readConfig,
   workspaceRoot,
-  setComputerUseConfig as persistComputerUseConfig,
   setSttConfig as persistSttConfig,
   setTtsConfig as persistTtsConfig,
   type BrowserExtensionConfig,
@@ -426,7 +426,7 @@ let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<bool
  * the shape `inapp:configChange` carries, so a listener never has to guess at
  * undefined. Mirrors EMPTY_INAPP_CONFIG in workspace.ts.
  */
-const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false }
+const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false, reasoning: false }
 
 /**
  * The phone edited a setting. Every key maps onto the exact setter
@@ -473,14 +473,10 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         // it up.
         await persistTtsConfig({ voiceReplies: value === true })
         break
-      case 'screenshotMaxWidth': {
-        const width = int(value)
-        if (width) await persistComputerUseConfig({ screenshotMaxWidth: width })
-        break
-      }
-      case 'screenshotFormat':
-        await persistComputerUseConfig({ screenshotFormat: value === 'png' ? 'png' : 'jpeg' })
-        break
+      // No computer-use screenshotMaxWidth/screenshotFormat cases: the agent
+      // sets those per capture now, so a phone write to them is a stale
+      // client and falls through to the throw below — which is how this
+      // switch is meant to reject one (the phone re-pulls the snapshot).
       case 'browserScreenshotMaxWidth': {
         const width = int(value)
         if (width) await persistBrowserExtensionConfig({ screenshotMaxWidth: width })
@@ -562,9 +558,15 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         break
       }
       case 'brainModel': {
-        // The phone's model pick — one lane now, so this simply sets the
-        // selected model. The org API is the authority on validity.
-        const updated = await persistModel(str(value))
+        // The phone's model pick, from the catalog this desktop sent it in the
+        // snapshot — so a model that catalog does not list is refused here
+        // rather than persisted for the API to reject on every turn (see
+        // modelSelectable; an unfetched catalog still allows anything).
+        const id = str(value)
+        if (!modelSelectable(id)) {
+          throw new Error(`"${id}" is not a model your organization offers`)
+        }
+        const updated = await persistModel(id)
         thalamus.setModel(updated.llm.model)
         broadcast('provider:updated', { id: 'cloud' })
         break
@@ -647,9 +649,14 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       // chat adopts the phone's flip without a refetch. It drives the
       // phone's own chat feed too; the preference is the workspace's.
       case 'inappVerbose':
-      case 'inappRunCards': {
-        const patch =
-          key === 'inappVerbose' ? { verbose: value === true } : { runCards: value === true }
+      case 'inappRunCards':
+      case 'inappReasoning': {
+        const patch: Partial<InAppConfig> =
+          key === 'inappVerbose'
+            ? { verbose: value === true }
+            : key === 'inappRunCards'
+              ? { runCards: value === true }
+              : { reasoning: value === true }
         const updated = await persistInAppConfig(patch)
         broadcast('inapp:configChange', updated.inapp ?? EMPTY_INAPP)
         break
@@ -696,8 +703,6 @@ const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
   ttsVoice: 'tts',
   ttsSpeed: 'tts',
   ttsVoiceReplies: 'tts',
-  screenshotMaxWidth: 'computerUse',
-  screenshotFormat: 'computerUse',
   browserScreenshotMaxWidth: 'browserExtension',
   browserScreenshotFormat: 'browserExtension',
   browserScreenshotQuality: 'browserExtension'
@@ -1311,6 +1316,24 @@ function createWindow(): BrowserWindow {
     mainWindow.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {})
   })
 
+  // Windows shutdown / restart / log-off. `query-session-end` fires first and
+  // is the only warning we get; `session-end` follows and cannot be stopped.
+  // Neither goes through before-quit's drain, so an in-flight turn would
+  // otherwise die exactly where it stood — which is how a forty-minute run
+  // came back as nothing but the prompt the titler shell wrote before it
+  // started. Both flush; the checkpointer's no-op guard makes the second free.
+  // We do NOT preventDefault: the user asked the machine to restart, and the
+  // periodic checkpoint means there is at most a few seconds of prose at risk.
+  const flushForSessionEnd = (): void => {
+    wlog.info('[quit]', 'windows session ending — flushing in-flight turns')
+    void electronChannel
+      .flushCheckpoints()
+      .then(() => flushOutbox(SHUTDOWN_SYNC_FLUSH_MS))
+      .catch(() => undefined)
+  }
+  mainWindow.on('query-session-end', flushForSessionEnd)
+  mainWindow.on('session-end', flushForSessionEnd)
+
   mainWindow.on('close', (event) => {
     if (isQuittingFromTray || isShuttingDown) {
       if (quitInProgress) {
@@ -1436,7 +1459,12 @@ const MOBILE_CONFIG_SILENT = new Set([
   'diagnostics:progress',
   'heartbeat:jobLog',
   'mobile:statusChange',
-  'model:catalogChanged',
+  // 'model:catalogChanged' is deliberately NOT here: the catalog rides the
+  // phone's snapshot (snapshot.ts llm.models) as the list its model chips are
+  // drawn from, so an admin policy edit — or the first fetch after launch
+  // filling a cold cache — has to reach the phone the same way a setting does.
+  // It fires only when the list actually CHANGED (catalogSync's sameCatalog
+  // guard), so the five-minute revalidations cost nothing.
   'model:pullProgress',
   'projects:copyProgress',
   'reindex:progress'
@@ -1577,7 +1605,14 @@ function writePhoneSnapshot(): Promise<Record<string, unknown> | null> {
       do {
         snapshotWriteAgain = false
         const status = cloudSession.getState().status
-        if (status !== 'ready' && status !== 'locked') return null
+        if (status !== 'ready' && status !== 'locked') {
+          // Not an error — a signed-out desktop has no org to write for. Said
+          // out loud because it is otherwise indistinguishable, from the
+          // outside, from a snapshot that failed: both leave the phone on the
+          // last copy the org holds.
+          wlog.debug('mobile', `phone snapshot skipped — session is ${status}`)
+          return null
+        }
         const snapshot = await mobileChannel.buildSnapshot()
         // Usage is the org's record and the phone reads it from the API;
         // it would make this file churn on every turn for nothing.
@@ -1588,6 +1623,10 @@ function writePhoneSnapshot(): Promise<Record<string, unknown> | null> {
         await writeFile(tmp, JSON.stringify(snapshot))
         await rename(tmp, abs)
         last = snapshot
+        // The one line that makes "is the phone's copy current?" answerable
+        // from the log alone — the question that took a filesystem timestamp
+        // to answer the first time this path stalled.
+        wlog.debug('mobile', `phone snapshot written (${Object.keys(snapshot).length} sections)`)
       } while (snapshotWriteAgain)
     } catch (err) {
       wlog.warn('mobile', 'phone snapshot write failed:', err)
@@ -1640,11 +1679,37 @@ async function saveVariablesEverywhere(variables: Variable[]): Promise<void> {
   }
 }
 
+/**
+ * How long a quit will wait for the in-flight turns' sync push. Long enough
+ * for one round trip on a working network, short enough that a broken one
+ * doesn't hold the app open.
+ */
+const SHUTDOWN_SYNC_FLUSH_MS = 5_000
+
 async function shutdownGracefully(): Promise<void> {
   if (isShuttingDown) return
   isShuttingDown = true
 
+  // Write every in-flight turn to disk BEFORE aborting it. abort() drops the
+  // accumulators on the floor, and until this landed a quit (or an update
+  // install) mid-run threw away the whole turn — the renderer folds the
+  // transcript only at chat:done, which an aborted turn never reaches.
+  await electronChannel.flushCheckpoints().catch(() => undefined)
   electronChannel.abort()
+  // Those writes armed a sync push. Drain it on the way out rather than
+  // leaving the run on this device only: ~/.wfc is a cache, and a machine
+  // that doesn't come back should still have handed the turn to the org.
+  //
+  // Raced against a hard wall rather than trusted to its own deadline:
+  // flushOutbox only checks the clock BETWEEN requests, and one request can
+  // sit on a 30s fetch timeout, so its 5s would not have been 5s on a bad
+  // network. A shutdown that hangs is worse than a push deferred — nothing is
+  // lost by giving up, the outbox is durable and the next launch's digest
+  // sweep re-pushes whatever this missed.
+  await Promise.race([
+    flushOutbox(SHUTDOWN_SYNC_FLUSH_MS).catch(() => false),
+    new Promise((resolve) => setTimeout(resolve, SHUTDOWN_SYNC_FLUSH_MS).unref?.())
+  ])
   await extensionServer.stop().catch(() => undefined)
   await mcpManager.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
@@ -1738,6 +1803,29 @@ async function purgeCacheAfterSignOut(reason: string): Promise<void> {
   wlog.info('sync', `${reason}: purging the local cache and relaunching`)
   await teardownForRelaunch(reason)
   await purgeWorkspace().catch((err) => wlog.warn('sync', 'cache purge failed:', err))
+  relaunchApp(reason)
+}
+
+/**
+ * Restart the app to pick up boot-read state (restore applied, account
+ * switch, factory reset, sign-out purge). The destructive work is already
+ * done by the time we get here; all that is left is the process bounce.
+ *
+ * `electron-vite dev` spawns Electron as a child and wires
+ * `ps.on('close', process.exit)` — so `app.exit()` does not merely restart
+ * the app under the dev server, it takes the dev server (and the terminal
+ * job running it) down too, which reads as a crash on sign-in. In dev we
+ * therefore stay alive and tell the developer to restart by hand; the
+ * on-disk work has landed either way.
+ */
+function relaunchApp(reason: string): void {
+  if (is.dev) {
+    wlog.warn(
+      'sync',
+      `${reason}: skipping the relaunch under electron-vite dev (exiting would kill the dev server) — restart \`npm run dev\` to come up on the new state`
+    )
+    return
+  }
   app.relaunch()
   app.exit(0)
 }
@@ -1837,8 +1925,7 @@ app.whenReady().then(async () => {
       )
       void (async () => {
         await teardownForRelaunch('restore complete')
-        app.relaunch()
-        app.exit(0)
+        relaunchApp('restore complete')
       })()
     },
     // The workspace on disk belongs to a DIFFERENT user than the session.
@@ -1853,8 +1940,7 @@ app.whenReady().then(async () => {
       void (async () => {
         await teardownForRelaunch('account switch')
         await purgeWorkspace().catch(() => undefined)
-        app.relaunch()
-        app.exit(0)
+        relaunchApp('account switch')
       })()
     },
     // A server config row replaced the local file (restore, launch
@@ -1877,6 +1963,40 @@ app.whenReady().then(async () => {
   // every picker open, so a refresh that lands a different list (session
   // ready, a stale-copy revalidation, an admin policy edit) is pushed.
   onCatalogChanged((models) => broadcast('model:catalogChanged', { models }))
+  /**
+   * A phone just appeared on the bridge — hand it this machine's settings
+   * without being asked.
+   *
+   * The phone has been away for anything between a screen lock and a week,
+   * and every setting it shows is a copy of this desktop's. It does pull on
+   * reconnect, but that pull fires when its SOCKET opens, which is before the
+   * org has told it this desktop is present — so it reads the copy last
+   * synced to the org and settles there. Nothing asked again once this
+   * machine appeared, which is how a phone ends up showing a model this
+   * desktop stopped using hours ago.
+   *
+   * Pushing on the appear edge closes it from this side, and does not depend
+   * on the phone's version: `config.changed` carrying a snapshot is a signal
+   * every paired build already applies. One rebuild per appearance, not per
+   * presence frame — `phones` also changes when a second device joins.
+   */
+  let phonesPresent = 0
+  mobileBridge.onState((state) => {
+    const present = state.phones.length
+    const appeared = phonesPresent === 0 && present > 0
+    phonesPresent = present
+    if (!appeared) return
+    void writePhoneSnapshot()
+      .then((snapshot) => {
+        if (!mobileChannel.hasPeer) return
+        mobileChannel.pushConfigChanged('reconnect', snapshot ?? undefined)
+        wlog.debug('mobile', 'pushed settings to a phone that just appeared')
+      })
+      .catch(() => {
+        // A phone that vanished again between the frame and the push is not
+        // this path's problem — its next appearance pushes again.
+      })
+  })
   // The bridge socket lives exactly as long as the session holds tokens.
   // A signed-out desktop has nothing to park for; a fresh sign-in dials
   // straight away and re-lists the paired phones.
@@ -2153,26 +2273,12 @@ app.whenReady().then(async () => {
       braveService.getStatus(Boolean(opts?.refresh))
   )
 
-  // Computer Use — desktop automation. Plugin reads config.json directly;
-  // these handlers let the settings panel read/write the config.
+  // Computer Use — desktop automation. The plugin reads config.json directly;
+  // this handler is the read side only. There is deliberately no setter:
+  // screenshot resolution and format are chosen by the agent per capture
+  // (`max_width` / `format` on computer_screenshot), so the stored values are
+  // a fallback default that no UI — desktop or phone — writes.
   handle('computerUse:getConfig', (): Promise<ComputerUseConfig> => getComputerUseConfig())
-
-  handle(
-    'computerUse:setConfig',
-    async (
-      _e,
-      patch: Partial<ComputerUseConfig>
-    ): Promise<{ ok: true; config: ComputerUseConfig }> => {
-      const updated = await persistComputerUseConfig(patch)
-      const next = updated.computerUse ?? {
-        enabled: true,
-        screenshotMaxWidth: 1280,
-        screenshotFormat: 'jpeg' as const
-      }
-      broadcast('services:changed', { service: 'computerUse' })
-      return { ok: true as const, config: next }
-    }
-  )
 
   handle(
     'computerUse:checkPermissions',
@@ -2424,21 +2530,64 @@ app.whenReady().then(async () => {
       w.webContents.send(channel, payload)
     }
   }
-  handle('tts:install', async (): Promise<EngineInstallResult> => {
+  // One install path per engine, shared by the panel's button (the IPC handlers
+  // below) and by the agent (the voice host further down). Whoever starts it,
+  // progress reaches every window and the terminal 'done' fires, so the panel's
+  // card tracks an agent-triggered install exactly as it tracks its own — and
+  // installTts/installStt dedupe against an in-flight run, so a click landing
+  // mid-agent-install (or the reverse) joins that run instead of starting a
+  // second one.
+  const runTtsInstall = async (): Promise<EngineInstallResult> => {
     const res = await installTts(
       (p: EngineInstallProgress) => broadcastEngineProgress('tts:installProgress', p),
       { ensureFfmpeg: () => agent.cerebellum.ensureSystemTool('ffmpeg').then(() => undefined) }
     )
     broadcastEngineProgress('tts:installProgress', { phase: 'done', percent: 100 })
     return res
-  })
-  handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
-  handle('stt:install', async (): Promise<EngineInstallResult> => {
+  }
+  const runSttInstall = async (): Promise<EngineInstallResult> => {
     const res = await installStt((p: EngineInstallProgress) =>
       broadcastEngineProgress('stt:installProgress', p)
     )
     broadcastEngineProgress('stt:installProgress', { phase: 'done', percent: 100 })
     return res
+  }
+  handle('tts:install', (): Promise<EngineInstallResult> => runTtsInstall())
+  handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
+  handle('stt:install', (): Promise<EngineInstallResult> => runSttInstall())
+
+  // The agent's own hand on these two panels. Every setter is the one the
+  // panel's IPC handler calls, broadcast included, so a change the model makes
+  // re-seeds an open TTS/STT panel and pushes to the paired phone through the
+  // same channel a click here would — no second write path, no surface left
+  // holding a stale value. Validation of WHICH values are acceptable lives in
+  // the plugins, against the catalogs the panels render.
+  agent.cerebellum.setVoiceHost({
+    getTts: () => getTtsConfig(),
+    setTts: async (patch) => {
+      const updated = await persistTtsConfig(patch)
+      broadcast('services:changed', { service: 'tts' })
+      return {
+        defaultVoice: updated.tts?.defaultVoice ?? '',
+        defaultSpeed: updated.tts?.defaultSpeed ?? '',
+        voiceReplies: updated.tts?.voiceReplies !== false
+      }
+    },
+    getStt: () => getSttConfig(),
+    setStt: async (patch) => {
+      const updated = await persistSttConfig(patch)
+      broadcast('services:changed', { service: 'stt' })
+      return {
+        defaultModel: updated.stt?.defaultModel ?? '',
+        language: updated.stt?.language ?? ''
+      }
+    },
+    ttsInstalled: async () => (await ttsStatus()).installed,
+    sttInstalled: async () => (await sttStatus()).installed,
+    installTts: () => runTtsInstall(),
+    installStt: () => runSttInstall(),
+    ttsInstalling: () => getTtsInstallState().installing,
+    sttInstalling: () => getSttInstallState().installing
   })
 
   // Real Kokoro preview for the TTS panel: synthesize a short sample with the
@@ -2560,8 +2709,7 @@ app.whenReady().then(async () => {
     // Stamp the fresh workspace as already-restored: a factory reset must
     // never be followed by a restore that pulls the erased data back.
     await markWorkspaceReset(cloudSession.getUserId()).catch(() => undefined)
-    app.relaunch()
-    app.exit(0)
+    relaunchApp('factory reset')
   })
 
   handle('data:getAnalytics', (): Promise<DataAnalytics> => getDataAnalytics())
@@ -3973,6 +4121,7 @@ app.whenReady().then(async () => {
         history: ChatHistoryMessage[]
         conversationId?: string | null
         userMessageId?: string
+        assistantMessageId?: string
         workingFolders?: string[]
         contextFiles?: string[]
         thinkingMode?: string

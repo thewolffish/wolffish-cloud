@@ -76,8 +76,10 @@ import {
   CancelCircleIcon,
   Clock01Icon,
   CloudUploadIcon,
+  ComputerTerminal01Icon,
   Delete02Icon,
   Download01Icon,
+  Files01Icon,
   Folder01Icon,
   Image02Icon,
   Mic01Icon,
@@ -161,6 +163,12 @@ const REMOTE_RUN_PLACEHOLDER: AssistantMessage = {
 // cards are hidden. true = the full activity feed (chip included). Provided
 // by Chat, read in AssistantBubble.
 const InAppVerboseContext = createContext(false)
+
+// Whether the model's thinking renders as a ReasoningCard. Off by default and
+// display-only: reasoning still streams, still persists, still exports — the
+// feed simply doesn't show it. Same workspace key the phone obeys
+// (`inapp.reasoning`), so the two surfaces can never disagree.
+const InAppReasoningContext = createContext(false)
 
 export type ChatProps = {
   /** Stable identity of this session in the ChatSessionsProvider. */
@@ -280,12 +288,21 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // getConfig() below flipped it to true a beat later, and tool cards popped in
   // on a second render — growing the conversation and flashing on open.
   const [inAppVerbose, setInAppVerbose] = useState(status?.config?.inapp?.verbose ?? false)
+  // Same seed-then-subscribe as verbose above, and for the same reason: a
+  // late flip would pop thinking cards into a feed that had already laid out.
+  const [inAppReasoning, setInAppReasoning] = useState(status?.config?.inapp?.reasoning ?? false)
   useEffect(() => {
     let cancelled = false
     void window.api.inapp.getConfig().then((cfg) => {
-      if (!cancelled) setInAppVerbose(cfg.verbose ?? false)
+      if (!cancelled) {
+        setInAppVerbose(cfg.verbose ?? false)
+        setInAppReasoning(cfg.reasoning ?? false)
+      }
     })
-    const off = window.api.inapp.onConfigChange((cfg) => setInAppVerbose(cfg.verbose ?? false))
+    const off = window.api.inapp.onConfigChange((cfg) => {
+      setInAppVerbose(cfg.verbose ?? false)
+      setInAppReasoning(cfg.reasoning ?? false)
+    })
     return () => {
       cancelled = true
       off()
@@ -460,6 +477,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // shows the last state (including the previous turn's elapsed time) after
   // a reload or restart.
   const [convStats, setConvStats] = useState<ConversationStats | null>(null)
+  // Ref twin of `convStats`, for the once-created sync() closure below: it
+  // compares what is on screen against what another surface just wrote.
+  const convStatsRef = useRef<ConversationStats | null>(null)
+  useEffect(() => {
+    convStatsRef.current = convStats
+  }, [convStats])
   // True when the latest brain call reported no usage (stream died before
   // the terminal meta). The meter keeps its last reading instead
   // of wiping to 0%; the card labels the reading as unavailable.
@@ -976,6 +999,58 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     ]
   )
 
+  /**
+   * Put a conversation's PERSISTED tokenomics on the meter — the lifetime
+   * totals, the last turn's roll-up, and the saved reading with the budget it
+   * was measured against.
+   *
+   * Shared by the two paths that can hand this session a stats snapshot it
+   * didn't compute: opening a conversation, and another surface finishing a
+   * turn in the one already open (the phone, an automation). Both must apply
+   * the SAME model rules, which is why this is one function and not two
+   * copies — the reading and its denominator only mean anything together.
+   */
+  const applyPersistedStats = useCallback((conv: ConversationFile): void => {
+    setConvStats(conv.stats ?? null)
+    const meter =
+      conv.stats?.meter ??
+      (conv.contextMeter
+        ? {
+            contextTokens: conv.contextMeter.contextTokens,
+            contextBudget: conv.contextMeter.contextBudget,
+            compactionAt: null,
+            model: null
+          }
+        : null)
+    if (!meter) {
+      const cw = modelContextWindowRef.current
+      if (cw && cw > 0) {
+        setContextBudget(cw)
+        setCompactionAt(activeCompactionAtRef.current)
+      }
+      return
+    }
+    setContextTokens(meter.contextTokens)
+    // Legacy snapshots carry no model stamp. Mark the ref with a sentinel
+    // (never a real model name) so the capabilities effect treats the reading
+    // as "measured under an unknown model" and keeps the saved
+    // self-consistent budget instead of swapping the denominator. Display
+    // state stays null (no bogus header text).
+    meterModelRef.current = meter.model ?? LEGACY_METER_MODEL
+    setMeterModel(meter.model ?? null)
+    // Adopt the live model's window only when the saved reading was measured
+    // under the same model; otherwise keep the saved self-consistent pair
+    // (old numerator ÷ new denominator lies).
+    const cw = modelContextWindowRef.current
+    const sameModel = meter.model != null && meter.model === activeModelNameRef.current
+    setContextBudget(sameModel && cw && cw > 0 ? cw : meter.contextBudget)
+    setCompactionAt(
+      sameModel
+        ? (activeCompactionAtRef.current ?? meter.compactionAt ?? null)
+        : (meter.compactionAt ?? null)
+    )
+  }, [])
+
   useEffect(() => {
     // Within one session the conversation id only ever transitions null→id
     // (first send / seeded open). A turn somehow pending across an id CHANGE
@@ -1031,7 +1106,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         lastCallRef.current = null
         meterModelRef.current = null
         turnStatsRef.current = emptyTurnStats()
-        setConvStats(conv.stats ?? null)
         // The meter's workflow section survives reopen the way lastTurn does:
         // restore the persisted snapshot only when the FINAL assistant message
         // carries one (i.e. the last turn was a workflow run) — an older run's
@@ -1041,43 +1115,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           (s): s is Extract<Segment, { kind: 'workflow' }> => s.kind === 'workflow'
         )
         setWorkflowSpend(wfSeg?.snapshot ?? null)
-        const meter =
-          conv.stats?.meter ??
-          (conv.contextMeter
-            ? {
-                contextTokens: conv.contextMeter.contextTokens,
-                contextBudget: conv.contextMeter.contextBudget,
-                compactionAt: null,
-                model: null
-              }
-            : null)
-        if (meter) {
-          setContextTokens(meter.contextTokens)
-          // Legacy snapshots carry no model stamp. Mark the ref with a
-          // sentinel (never a real model name) so the capabilities effect
-          // treats the reading as "measured under an unknown model" and
-          // keeps the saved self-consistent budget instead of swapping the
-          // denominator. Display state stays null (no bogus header text).
-          meterModelRef.current = meter.model ?? LEGACY_METER_MODEL
-          setMeterModel(meter.model ?? null)
-          // Adopt the live model's window only when the saved reading was
-          // measured under the same model; otherwise keep the saved
-          // self-consistent pair (old numerator ÷ new denominator lies).
-          const cw = modelContextWindowRef.current
-          const sameModel = meter.model != null && meter.model === activeModelNameRef.current
-          setContextBudget(sameModel && cw && cw > 0 ? cw : meter.contextBudget)
-          setCompactionAt(
-            sameModel
-              ? (activeCompactionAtRef.current ?? meter.compactionAt ?? null)
-              : (meter.compactionAt ?? null)
-          )
-        } else {
-          const cw = modelContextWindowRef.current
-          if (cw && cw > 0) {
-            setContextBudget(cw)
-            setCompactionAt(activeCompactionAtRef.current)
-          }
-        }
+        applyPersistedStats(conv)
         const raw = conv.workingFolder
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
@@ -1120,7 +1158,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         setFilesOpen(false)
       })
     }
-  }, [activeConversationId, resetTurnStats])
+  }, [activeConversationId, resetTurnStats, applyPersistedStats])
 
   // Pull in messages another surface appended to the conversation we have open
   // — you answer on your phone while this chat sits on screen. Nothing else
@@ -1179,6 +1217,25 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           ...mapConversationMessages({ ...conv, messages: conv.messages.slice(have) })
         ]
       })
+      // Another surface just wrote this conversation — the phone finishing a
+      // turn we are watching, a heartbeat run landing in it. Its stats are the
+      // only thing that can move OUR meter here (this session owns no turn —
+      // guarded at the top), and without adopting them the card sat blank
+      // through a whole phone-driven session and only filled in if the user
+      // happened to switch conversations and back.
+      //
+      // Never move BACKWARDS in time: conversation:changed fires for every
+      // writer, so one landing between our own turn ending and our save
+      // reaching disk would otherwise roll the meter back to the previous
+      // turn's reading. A snapshot with no last turn (a titled shell) is not
+      // newer than anything and never displaces a live reading.
+      const disk = conv.stats
+      if (disk) {
+        const shown = convStatsRef.current
+        const diskAt = disk.lastTurn?.endedAt ?? 0
+        const shownAt = shown?.lastTurn?.endedAt ?? 0
+        if (!shown || diskAt > shownAt) applyPersistedStats(conv)
+      }
     }
 
     // The broadcast carries no id, so it fires for EVERY conversation's writes
@@ -1193,7 +1250,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (timer) clearTimeout(timer)
       off()
     }
-  }, [activeConversationId])
+  }, [activeConversationId, applyPersistedStats])
 
   // Live mirror of an IN-FLIGHT channel turn. The channel streams
   // throttled snapshots of its in-progress assistant message (main-side
@@ -1824,6 +1881,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // SAME id, so our end-of-turn save reconciles with the shell
           // instead of duplicating it.
           userMessageId: userMessage.id,
+          // Main checkpoints the turn-so-far to disk under this id while it
+          // runs (channels/turn-checkpoint.ts). Handing it OUR placeholder's
+          // id is what makes that checkpoint and the save below one message:
+          // the id-keyed merge replaces it rather than appending a second
+          // copy of the same answer.
+          assistantMessageId: assistantPlaceholder.id,
           workingFolders: opts?.workingFolders ?? workingFolders,
           contextFiles: opts?.contextFiles ?? contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
@@ -2099,6 +2162,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // Same contract as sendContent: the titler shell persists this very
           // message, and it must carry the feed's id to reconcile later.
           userMessageId: userMsgId,
+          // Same contract as sendContent — main's mid-turn checkpoint writes
+          // under this id so the fold below replaces it, not duplicates it.
+          assistantMessageId: assistantPlaceholder.id,
           workingFolders,
           contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
@@ -2678,25 +2744,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             </div>
           )}
           <InAppVerboseContext.Provider value={inAppVerbose}>
-            {feedMessages.map((m, i) => (
-              <ChatItem
-                key={m.id}
-                message={m}
-                t={t}
-                awaitingApproval={awaitingApproval}
-                awaitingAsk={awaitingAsk}
-                onApprovalDecision={respondApproval}
-                onAskRespond={respondAsk}
-                onTryAgain={
-                  i === feedMessages.length - 1 &&
-                  !busy &&
-                  m.role === 'assistant' &&
-                  m.status === 'error'
-                    ? handleTryAgain
-                    : undefined
-                }
-              />
-            ))}
+            <InAppReasoningContext.Provider value={inAppReasoning}>
+              {feedMessages.map((m, i) => (
+                <ChatItem
+                  key={m.id}
+                  message={m}
+                  t={t}
+                  awaitingApproval={awaitingApproval}
+                  awaitingAsk={awaitingAsk}
+                  onApprovalDecision={respondApproval}
+                  onAskRespond={respondAsk}
+                  onTryAgain={
+                    i === feedMessages.length - 1 &&
+                    !busy &&
+                    m.role === 'assistant' &&
+                    m.status === 'error'
+                      ? handleTryAgain
+                      : undefined
+                  }
+                />
+              ))}
+            </InAppReasoningContext.Provider>
           </InAppVerboseContext.Provider>
           {hasMessages && !hasAnyModel && (
             <div
@@ -2903,11 +2971,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   convStats?.lastTurn?.provider ??
                   (selectedModel ? 'cloud' : null)
                 }
-                logsCount={timelineEventCount}
-                filesCount={conversationFiles.length}
-                onOpenTimeline={() => setTimelineOpen(true)}
-                onOpenFiles={() => setFilesOpen(true)}
               />
+            )}
+            {/* Logs and files ride beside the meter rather than inside its
+                card: the footer's start edge has the room, and one click
+                opens the sheet instead of hover-card → button. Icon + count
+                only — the count is the label. Kept mounted (dimmed) at zero
+                so the row doesn't shift the moment the first event lands. */}
+            {recPhase === 'idle' && (
+              <>
+                <SheetCountButton
+                  icon={<ComputerTerminal01Icon size={14} />}
+                  count={timelineEventCount}
+                  label={t('chat.timeline.viewLogs')}
+                  countLabel={t('chat.timeline.eventCount', { count: timelineEventCount })}
+                  onOpen={() => setTimelineOpen(true)}
+                />
+                <SheetCountButton
+                  icon={<Files01Icon size={14} />}
+                  count={conversationFiles.length}
+                  label={t('chat.files.viewFiles')}
+                  countLabel={t('chat.files.fileCount', { count: conversationFiles.length })}
+                  onOpen={() => setFilesOpen(true)}
+                />
+              </>
             )}
             <div className="min-w-0 flex-1" />
             {/* Expands the draft into the full-screen CodeMirror editor —
@@ -3081,11 +3168,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           <div
             role="presentation"
             onClick={() => setTimelineOpen(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           >
-            <div
+            <aside
+              role="dialog"
+              aria-modal="true"
               onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+              className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 end-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
             >
               <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
@@ -3113,7 +3202,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 </span>
               </div>
               <TimelineList entries={displayTimeline} locale={locale} />
-            </div>
+            </aside>
           </div>,
           document.body
         )}
@@ -3124,11 +3213,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           <div
             role="presentation"
             onClick={() => setFilesOpen(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           >
-            <div
+            <aside
+              role="dialog"
+              aria-modal="true"
               onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+              className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 end-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
             >
               <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
@@ -3158,7 +3249,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4">
                 <AttachmentList attachments={conversationFiles} variant="grid" />
               </div>
-            </div>
+            </aside>
           </div>,
           document.body
         )}
@@ -3378,6 +3469,47 @@ function formatDuration(ms: number): string {
   const hr = Math.floor(min / 60)
   const remMin = min % 60
   return remMin === 0 ? `${hr}h` : `${hr}h ${remMin}m`
+}
+
+// A composer-footer chip for a sheet that has a count: icon + number, no
+// text. Zero keeps it mounted but disabled — the counts climb mid-turn, and a
+// button that appears out of nowhere would shove the whole row sideways.
+function SheetCountButton({
+  icon,
+  count,
+  label,
+  countLabel,
+  onOpen
+}: {
+  icon: ReactNode
+  count: number
+  label: string
+  /** Pluralized "N events" / "N files" — the count for screen readers. */
+  countLabel: string
+  onOpen: () => void
+}): React.JSX.Element {
+  const off = count === 0
+  return (
+    <button
+      type="button"
+      disabled={off}
+      onClick={onOpen}
+      title={label}
+      aria-label={`${label} (${countLabel})`}
+      className={cn(
+        'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5',
+        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+        off
+          ? 'text-muted/40 cursor-not-allowed'
+          : 'text-muted hover:text-fg hover:bg-border/40 cursor-pointer'
+      )}
+    >
+      {icon}
+      <span className="text-[10px] font-medium leading-none tabular-nums" dir="ltr">
+        {count}
+      </span>
+    </button>
+  )
 }
 
 // The working-folder control: a bordered card that reveals the folder list on
@@ -4060,6 +4192,7 @@ export function AssistantBubble({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const verbose = useContext(InAppVerboseContext)
+  const showReasoning = useContext(InAppReasoningContext)
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
   const [typedText, setTypedText] = useState('')
@@ -4111,7 +4244,8 @@ export function AssistantBubble({
     message.toolTimings,
     onApprovalDecision,
     onAskRespond,
-    verbose
+    verbose,
+    showReasoning
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -4200,7 +4334,8 @@ function renderSegments(
   toolTimings: Record<string, ToolTiming> | undefined,
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
   onAskRespond: (askId: string, response: AskUserResponse) => void,
-  verbose: boolean
+  verbose: boolean,
+  showReasoning: boolean
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -4229,6 +4364,13 @@ function renderSegments(
   // flushes the other before accumulating), so flushText draining both below
   // can never reorder them.
   const flushReasoning = (): void => {
+    // Thinking hidden (default): drop the run instead of carding it. Dropped
+    // at the flush rather than at the segment so the buffer/ordering rules
+    // above stay in one place.
+    if (!showReasoning) {
+      reasoningBuffer = ''
+      return
+    }
     if (reasoningBuffer.trim().length === 0) {
       reasoningBuffer = ''
       return
@@ -4723,7 +4865,7 @@ function renderSegments(
       // LEGACY: conversations persisted before in-place reasoning segments
       // carry the final iteration's thinking only here. When the message has
       // reasoning segments, this is a duplicate of the last one — skip it.
-      if (seg.reasoningContent?.trim() && !hasReasoningSegments) {
+      if (showReasoning && seg.reasoningContent?.trim() && !hasReasoningSegments) {
         blocks.push(<ReasoningCard key={`r-${seg.segmentId}`} content={seg.reasoningContent} />)
       }
     }

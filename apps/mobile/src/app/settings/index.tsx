@@ -12,8 +12,7 @@ import {
   Globe02Icon,
   NeuralNetworkIcon,
   PaintBoardIcon,
-  PuzzleIcon,
-  UserGroupIcon
+  PuzzleIcon
 } from '@/components/core/icons'
 import {
   AppearanceSummary,
@@ -33,7 +32,6 @@ import {
 import { NavRow, PanelScreen, type StatusTone } from '@/components/settings/SettingsUI'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
 import { describeBridgeStatus, useBridgeStatus } from '@/lib/cloud/useBridgeStatus'
-import { useAdminAccess } from '@/lib/cloud/useAdminAccess'
 import { useAppStore } from '@/state/appStore'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -54,25 +52,20 @@ export default function SettingsScreen(): React.JSX.Element {
   // same on-focus refresh every screen rendering them takes.
   useFreshConfig()
   const paired = useAppStore((state) => state.paired)
-  // Demo mode has no session, but it does have a Connection screen — the
-  // tour's made-up link (lib/demo/connection) — so the row shows there too, wearing the
-  // connected face that screen always describes.
+  // Demo mode has no session and no link, but it does have a Connection
+  // screen — the place to pair a real desktop — so the row shows there too,
+  // wearing the state that screen describes: idle, because nothing is paired.
   const demoMode = useAppStore((state) => state.demoMode)
   // The link's state is the one thing on this list worth knowing before you
   // tap anything: a stale phone explains every other screen, and the
   // connecting overlay is dismissible, so "not connected" has to be legible
   // from here rather than only from inside Connection.
   const connectionStatus = useBridgeStatus()
-  // The Admin row exists only for the tiers that have an admin page. This is
-  // presentation — the org re-checks the role on every request — but it also
-  // keeps the list from advertising a screen most people cannot open.
-  const admin = useAdminAccess()
 
   const rows: Array<{
     key: string
     href: string
     icon: React.JSX.Element
-    description?: string
     trailing?: React.JSX.Element
     status?: { tone: StatusTone; label: string }
   }> = [
@@ -85,7 +78,7 @@ export default function SettingsScreen(): React.JSX.Element {
             // longer the brain, which belongs to Model two rows down.
             icon: <Globe02Icon size={18} className="text-muted" />,
             status: demoMode
-              ? describeBridgeStatus('connected', t)
+              ? describeBridgeStatus('idle', t)
               : { tone: connectionStatus.tone, label: connectionStatus.label }
           }
         ]
@@ -176,22 +169,7 @@ export default function SettingsScreen(): React.JSX.Element {
       href: '/settings/appearance',
       icon: <PaintBoardIcon size={18} className="text-muted" />,
       trailing: <AppearanceSummary />
-    },
-    // Last, below everything else, exactly where the desktop puts it. It
-    // carries a description rather than a live figure: the other rows report
-    // a state worth monitoring, while this one is a place you go — and a
-    // summary here would mean fetching the whole company's spend every time
-    // anybody opened Settings.
-    ...(admin.canRead
-      ? [
-          {
-            key: 'admin',
-            href: '/settings/admin',
-            icon: <UserGroupIcon size={18} className="text-muted" />,
-            description: t('settings.admin.rowDescription')
-          }
-        ]
-      : [])
+    }
   ]
 
   return (
@@ -201,7 +179,6 @@ export default function SettingsScreen(): React.JSX.Element {
           <NavRow
             key={row.key}
             label={t(`settings.tabs.${row.key}`)}
-            description={row.description}
             icon={row.icon}
             status={row.status}
             trailing={row.trailing}

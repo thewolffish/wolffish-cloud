@@ -158,7 +158,14 @@ export type ClaimResult = {
 export async function claimPairing(input: {
   code?: string
   token?: string
-  device: { id?: string | null; name: string; app_version: string }
+  device: {
+    id?: string | null
+    name: string
+    app_version: string
+    model?: string
+    os?: 'ios' | 'android'
+    os_version?: string
+  }
 }): Promise<ClaimResult> {
   const wire = await request<
     SessionWire & {
@@ -174,7 +181,12 @@ export async function claimPairing(input: {
       device: {
         ...(input.device.id ? { id: input.device.id } : {}),
         name: input.device.name,
-        app_version: input.device.app_version
+        app_version: input.device.app_version,
+        // Descriptive only, and only when known: the org rejects an empty
+        // enum, so an unknown OS is simply absent rather than ''.
+        ...(input.device.model ? { model: input.device.model } : {}),
+        ...(input.device.os ? { os: input.device.os } : {}),
+        ...(input.device.os_version ? { os_version: input.device.os_version } : {})
       }
     }
   })

@@ -14,6 +14,27 @@ const DEFAULT_MAX_WIDTH = 1280
 const DEFAULT_FORMAT = 'jpeg'
 const JPEG_QUALITY = 85
 
+// Per-call screenshot overrides. config.json only supplies the DEFAULT the
+// model falls back to; resolution and format are otherwise the model's to
+// pick per capture (there is no user-facing control for them any more).
+// The floor is where an overview stops being usable for aiming at all; the
+// ceiling is where extra pixels stop buying detail on any vision encoder
+// while still costing tokens linearly.
+const MIN_REQ_WIDTH = 480
+const MAX_REQ_WIDTH = 2560
+
+// Per-screenshot byte ceiling, applied AFTER encoding. The org API refuses a
+// chat body over 8 MB (apps/api/src/routes/ai.ts) and the runtime keeps the
+// newest 6 tool images, so ~1.2 MB of base64 each is the envelope the app
+// already lives in (a full-width zoom PNG sits right about there). PNG of a
+// 1920 or 2560 screen blows straight past it — measured at 1.7 MB and 3.8 MB
+// base64 — and six of those would wedge the conversation on a 413 rather than
+// fail one call. Over budget, the capture falls back to JPEG at the SAME
+// width, because a reader who asked for png at 2560 wanted the pixels more
+// than the codec, and computer_zoom still delivers lossless native detail.
+const MAX_IMAGE_B64_BYTES = 1.2 * 1024 * 1024
+const B64_RATIO = 4 / 3
+
 // Magnifier patch: the close-up returned by move/click/drag so the model can
 // verify exactly where the cursor landed. Sized in logical pixels, rendered
 // at 3x — a 16px control becomes ~48px in the image, big enough for any
@@ -788,29 +809,107 @@ async function renderMagnifier(preShot = null) {
 
 // ─── Tools ──────────────────────────────────────────────────────────────
 
+/**
+ * Decide THIS capture's width and format. Exported and pure so the rules can
+ * be tested without a screen — every branch here is a rule the model is told
+ * about in SKILL.md, and a drift between the two is silent.
+ *
+ * Resolution and format are model-owned per capture: `config.json` supplies
+ * only the fallback the call lands on when it passes nothing, and an override
+ * never persists. `notes` carries the corrections worth telling the model
+ * about (clamped, unrecognized, wider than the display can capture) — silence
+ * means it got exactly what it asked for.
+ */
+export function resolveCapture({ args, cfg, logicalW, nativeW }) {
+  const cfgWidth = cfg?.screenshotMaxWidth || DEFAULT_MAX_WIDTH
+  const cfgFormat = cfg?.screenshotFormat === 'png' ? 'png' : DEFAULT_FORMAT
+  const notes = []
+
+  const rawWidth = Number(args?.max_width)
+  const wantsWidth = Number.isFinite(rawWidth) && rawWidth > 0
+  const reqWidth = wantsWidth
+    ? Math.round(Math.min(MAX_REQ_WIDTH, Math.max(MIN_REQ_WIDTH, rawWidth)))
+    : null
+  if (wantsWidth && reqWidth !== Math.round(rawWidth)) {
+    notes.push(
+      `max_width ${Math.round(rawWidth)} is outside the supported ${MIN_REQ_WIDTH}-${MAX_REQ_WIDTH} range — used ${reqWidth}.`
+    )
+  }
+
+  const rawFormat = typeof args?.format === 'string' ? args.format.trim().toLowerCase() : ''
+  const reqFormat =
+    rawFormat === 'png' ? 'png' : rawFormat === 'jpeg' || rawFormat === 'jpg' ? 'jpeg' : null
+  if (rawFormat && reqFormat === null) {
+    notes.push(
+      `format "${args.format}" is not recognized — used ${cfgFormat.toUpperCase()}. Valid values: jpeg, png.`
+    )
+  }
+
+  // Default path: very wide displays (ultrawides) would compress unreadably at
+  // the configured width, so floor the overview at 1/3 of logical width and
+  // cap it where the default stops paying for itself. An EXPLICIT max_width
+  // skips both — the model asked for exactly this many pixels, and the
+  // compression note tells it what that bought.
+  const maxWidth = reqWidth ?? Math.min(2048, Math.max(cfgWidth, Math.ceil(logicalW / 3)))
+  const outW = Math.min(nativeW, maxWidth)
+  if (reqWidth !== null && outW < reqWidth) {
+    notes.push(
+      `max_width ${reqWidth} is wider than this display captures — this is its native ${outW}px, the most detail available.`
+    )
+  }
+
+  return {
+    cfgWidth,
+    cfgFormat,
+    format: reqFormat ?? cfgFormat,
+    outW,
+    overrode: reqWidth !== null || reqFormat !== null,
+    notes
+  }
+}
+
 async function takeScreenshot(args) {
   const denied = requirePermissions()
   if (denied) return denied
 
   try {
     const cfg = await readConfig()
-    const cfgWidth = cfg.screenshotMaxWidth || DEFAULT_MAX_WIDTH
-    const format = cfg.screenshotFormat || DEFAULT_FORMAT
     const displayIndex = Number(args?.display_index) || 0
     const { displays, display } = getDisplayByIndex(displayIndex)
 
     overlayFollow(display)
     const { png, nativeW, nativeH } = await captureNative(display)
 
-    // Very wide displays (ultrawides) would compress unreadably at the
-    // configured width; floor the overview at 1/3 of logical width so
-    // compression never exceeds ~3x. Zoom still provides native detail.
-    const maxWidth = Math.min(2048, Math.max(cfgWidth, Math.ceil(display.size.width / 3)))
-    const outW = Math.min(nativeW, maxWidth)
-    const outH = Math.round(nativeH * (outW / nativeW))
+    const { cfgWidth, cfgFormat, format, outW, overrode, notes } = resolveCapture({
+      args,
+      cfg,
+      logicalW: display.size.width,
+      nativeW
+    })
 
-    let pipeline = sharp(png)
-    if (outW < nativeW) pipeline = pipeline.resize({ width: outW, withoutEnlargement: true })
+    // Resize first and MEASURE the result rather than predicting its height.
+    // libvips does not always land on Math.round(nativeH * outW / nativeW) —
+    // a 2560x1600 capture at width 1500 comes out 937 tall where the formula
+    // says 938 — and a one-pixel-too-tall crosshair overlay makes sharp
+    // refuse the composite outright ("Image to composite must have same
+    // dimensions or smaller"), failing the whole screenshot. With arbitrary
+    // model-chosen widths that stops being a lucky near-miss. Raw output
+    // keeps the extra pass to a memory copy instead of a re-encode.
+    const resized = await (outW < nativeW
+      ? sharp(png).resize({ width: outW, withoutEnlargement: true })
+      : sharp(png)
+    )
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+    const outH = resized.info.height
+
+    let pipeline = sharp(resized.data, {
+      raw: {
+        width: resized.info.width,
+        height: resized.info.height,
+        channels: resized.info.channels
+      }
+    })
 
     // Frame maps image pixels to this display's logical space.
     const frame = {
@@ -842,10 +941,22 @@ async function takeScreenshot(args) {
     }
 
     let buffer, mediaType, ext
+    let downgradeNote = ''
     if (format === 'png') {
       buffer = await pipeline.png().toBuffer()
       mediaType = 'image/png'
       ext = 'png'
+      if (buffer.length * B64_RATIO > MAX_IMAGE_B64_BYTES) {
+        const pngKb = Math.round(buffer.length / 1024)
+        buffer = await pipeline.jpeg({ quality: JPEG_QUALITY }).toBuffer()
+        mediaType = 'image/jpeg'
+        ext = 'jpg'
+        downgradeNote =
+          ` PNG of this screen came to ${pngKb}KB — over the per-image budget, and a few of those would exceed the` +
+          ` request size limit outright — so it was encoded as JPEG at the SAME ${outW}px instead. The resolution you` +
+          ` asked for is intact. If you need lossless pixels, ask for png at a smaller max_width, or use computer_zoom,` +
+          ` which is always PNG at native resolution.`
+      }
     } else {
       buffer = await pipeline.jpeg({ quality: JPEG_QUALITY }).toBuffer()
       mediaType = 'image/jpeg'
@@ -862,11 +973,27 @@ async function takeScreenshot(args) {
     const savedPath = await savePersistedImage(buffer, ext, 'shot')
     const pathLine = savedPath ? `\n${savedPath}` : ''
 
+    const headroom = Math.min(nativeW, MAX_REQ_WIDTH)
     const compression = frame.scale
     const compressionLine =
       compression >= 2
-        ? ` This overview is compressed ${compression.toFixed(1)}x — small text and small controls are degraded in it, so do NOT locate or judge small targets from this image alone: zoom into candidate regions with computer_zoom and find them there.`
+        ? ` This overview is compressed ${compression.toFixed(1)}x — small text and small controls are degraded in it, so do NOT locate or judge small targets from this image alone: zoom into candidate regions with computer_zoom and find them there` +
+          (outW < headroom
+            ? `, or re-take this screenshot with a bigger max_width (up to ${headroom} here) when you need the whole screen legible at once.`
+            : '.')
         : ''
+
+    // An override is deliberately loud and deliberately temporary. The model
+    // is told what it got AND that it evaporates, because a high-res pass
+    // that silently falls back to 1280 on the next capture is the failure
+    // this whole knob exists to prevent.
+    const delivered = ext === 'png' ? 'PNG' : 'JPEG'
+    const settingsLine = overrode
+      ? ` Per-call capture settings applied to THIS image: ${outW}px wide, ${delivered}.` +
+        notes.map((n) => ` ${n}`).join('') +
+        downgradeNote +
+        ` They do NOT persist — the next computer_screenshot returns to the ${cfgWidth}px ${cfgFormat.toUpperCase()} default unless you pass max_width/format again. Keep passing them for as long as the task needs this quality.`
+      : downgradeNote
 
     return {
       success: true,
@@ -874,6 +1001,7 @@ async function takeScreenshot(args) {
         `Frame ${outW}x${outH} — screenshot of ${displayInfo}. ${cursorLine} ` +
         `Mouse coordinates must be pixel positions read from THIS image (x 0-${outW - 1}, y 0-${outH - 1}); ` +
         `they are translated to the screen automatically. For a small or crowded target, zoom in with computer_zoom before clicking.` +
+        settingsLine +
         compressionLine +
         pathLine,
       images: [{ mediaType, data: buffer.toString('base64') }]
@@ -1450,13 +1578,24 @@ const toolDefinitions = [
   {
     name: 'computer_screenshot',
     description:
-      'See the screen. Captures a display and returns the image; it becomes the current frame that all mouse coordinates refer to.',
+      'See the screen. Captures a display and returns the image; it becomes the current frame that all mouse coordinates refer to. Resolution and format are yours to choose per capture via max_width and format — there is no user setting for them.',
     parameters: {
       type: 'object',
       properties: {
         display_index: {
           type: 'number',
           description: 'Display index (default 0 = primary). Use computer_list_displays to see all displays.'
+        },
+        max_width: {
+          type: 'number',
+          description:
+            'Width cap in pixels for THIS capture only (480-2560, default 1280). Raise to 1920-2560 when detail decides the outcome: the user asked for a high-res/full-quality screenshot, you must read dense text or a whole document at once, or you are judging fine visual detail (spacing, alignment, colors, fonts). Lower to 640-960 only for long repetitive loops where coarse layout is all you need. Does not persist — pass it on every capture that needs it.'
+        },
+        format: {
+          type: 'string',
+          enum: ['jpeg', 'png'],
+          description:
+            'Image format for THIS capture only (default jpeg). Use png when JPEG artifacts would corrupt what you must read or judge: text-heavy screens, code, terminals, small UI labels, thin lines, or exact colors. Keep jpeg for ordinary navigation. Does not persist — pass it on every capture that needs it.'
         }
       },
       required: []

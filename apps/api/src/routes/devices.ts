@@ -20,6 +20,12 @@ type DeviceRow = {
   platform: string
   name: string
   app_version: string
+  /** What the phone is and how it got here — written at the claim, corrected
+   *  on every bridge connect. Empty when it never said. */
+  model: string
+  os: string
+  os_version: string
+  pair_method: string
   status: string
   created_at: string
   last_seen_at: string | null
@@ -29,7 +35,8 @@ type DeviceRow = {
 devices.get('/devices', async (c) => {
   const auth = c.get('auth')
   const rows = await c.env.DB.prepare(
-    `SELECT d.id, d.platform, d.name, d.app_version, d.status, d.created_at, d.last_seen_at,
+    `SELECT d.id, d.platform, d.name, d.app_version, d.model, d.os, d.os_version,
+       d.pair_method, d.status, d.created_at, d.last_seen_at,
        (SELECT COUNT(*) FROM device_sessions s
          WHERE s.device_id = d.id AND s.revoked_at IS NULL AND s.expires_at > ?2) AS sessions
      FROM devices d WHERE d.user_id = ?1 AND d.status = 'active'
@@ -43,6 +50,10 @@ devices.get('/devices', async (c) => {
       platform: d.platform,
       name: d.name,
       app_version: d.app_version,
+      model: d.model ?? '',
+      os: d.os ?? '',
+      os_version: d.os_version ?? '',
+      pair_method: d.pair_method ?? '',
       created_at: d.created_at,
       last_seen_at: d.last_seen_at,
       paired: d.sessions > 0,

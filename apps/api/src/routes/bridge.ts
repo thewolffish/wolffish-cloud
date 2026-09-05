@@ -62,10 +62,23 @@ bridge.get('/bridge/ws', async (c) => {
     return c.json({ error: 'session_revoked' }, 401)
   }
   const role = c.req.query('role') === 'desktop' ? 'desktop' : 'phone'
-  const device = await c.env.DB.prepare('SELECT platform, name, app_version, status FROM devices WHERE id = ?1')
+  const device = await c.env.DB.prepare(
+    'SELECT platform, name, app_version, model, os, os_version, status FROM devices WHERE id = ?1'
+  )
     .bind(claims.dev)
-    .first<{ platform: string; name: string; app_version: string; status: string }>()
+    .first<{
+      platform: string
+      name: string
+      app_version: string
+      model: string
+      os: string
+      os_version: string
+      status: string
+    }>()
   if (!device || device.status !== 'active') return c.json({ error: 'unauthorized' }, 401)
+  // What the device says about itself on the way in. Every connect is a
+  // chance to correct the stored row (a renamed phone, an OS upgrade), so
+  // these ride the socket and the object writes them back.
   const headers = new Headers({
     upgrade: 'websocket',
     'x-wfc-role': role,
@@ -74,7 +87,10 @@ bridge.get('/bridge/ws', async (c) => {
     'x-wfc-session': claims.sid,
     'x-wfc-name': (c.req.query('name') ?? device.name ?? '').slice(0, 120),
     'x-wfc-platform': (c.req.query('platform') ?? device.platform ?? '').slice(0, 32),
-    'x-wfc-version': (c.req.query('version') ?? device.app_version ?? '').slice(0, 64)
+    'x-wfc-version': (c.req.query('version') ?? device.app_version ?? '').slice(0, 64),
+    'x-wfc-model': (c.req.query('model') ?? device.model ?? '').slice(0, 120),
+    'x-wfc-os': (c.req.query('os') ?? device.os ?? '').slice(0, 32),
+    'x-wfc-os-version': (c.req.query('os_version') ?? device.os_version ?? '').slice(0, 60)
   })
   return stubFor(c.env, claims.sub).fetch('https://bridge/ws', { headers })
 })

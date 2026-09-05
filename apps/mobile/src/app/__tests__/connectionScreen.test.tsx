@@ -133,7 +133,7 @@ import ConnectionScreen from '@/app/settings/connection'
 import SettingsScreen from '@/app/settings/index'
 import { factoryResetDevice } from '@/lib/demo/factoryReset'
 import { applyConfigSnapshot } from '@/lib/demo/importer'
-import { resetDemoConnection, DEMO_DESKTOP_NAME } from '@/lib/demo/connection'
+import { resetDemoConnection } from '@/lib/demo/connection'
 import { clearAllBadges, unregisterPush } from '@/lib/notifications/push'
 import { refreshConfig, refreshSync } from '@/lib/sync/sync'
 import { bridgeClient } from '@/lib/cloud/bridge'
@@ -180,10 +180,11 @@ beforeEach(() => {
 })
 
 describe('the settings list row', () => {
-  it('shows Connection wearing the connected face in demo mode', async () => {
+  it('shows Connection, and does not claim to be connected, in demo mode', async () => {
     await draw(<SettingsScreen />)
     expect(screen.getByText('Connection')).toBeTruthy()
-    expect(screen.getByText('Connected')).toBeTruthy()
+    expect(screen.getByText('Idle')).toBeTruthy()
+    expect(screen.queryByText('Connected')).toBeNull()
   })
 
   it('is absent on the door — neither paired nor demo', async () => {
@@ -193,17 +194,26 @@ describe('the settings list row', () => {
   })
 })
 
-describe('the demo link on screen', () => {
-  it('renders connected, with the made-up details a paired screen would show', async () => {
+describe('the demo connection on screen', () => {
+  it('says nothing is paired, and never invents a desktop', async () => {
     await draw(<ConnectionScreen />)
 
-    expect(screen.getByText('Connected')).toBeTruthy()
-    // The real endpoint and the fiction's desktop — the page must read like
-    // a paired one, not like a placeholder.
+    // The org's address is real and worth showing; the link is not, and the
+    // screen must not pretend otherwise.
     expect(screen.getByText('https://api.wolffi.sh')).toBeTruthy()
-    expect(screen.getByText(DEMO_DESKTOP_NAME)).toBeTruthy()
-    // Up for hours, not since the tap that opened the screen.
-    expect(screen.getByText('3h')).toBeTruthy()
+    expect(screen.getByText('Not paired')).toBeTruthy()
+    expect(screen.getByText('No desktop paired')).toBeTruthy()
+    expect(screen.queryByText('Connected')).toBeNull()
+    // Counters a demo never earned.
+    expect(screen.queryByText('1,369')).toBeNull()
+    expect(screen.queryByText('3h')).toBeNull()
+  })
+
+  it('offers the way to pair for real, and no way to "reconnect" to nothing', async () => {
+    await draw(<ConnectionScreen />)
+
+    expect(screen.getByText('Pairing screen')).toBeTruthy()
+    expect(screen.queryByText('Reconnect')).toBeNull()
   })
 
   it('Sync answers from the snapshot and never calls the live sync module', async () => {
@@ -222,13 +232,10 @@ describe('the demo link on screen', () => {
     expect(mockRefreshSync).not.toHaveBeenCalled()
   })
 
-  it("Reconnect moves the fiction's own counter, not the socket", async () => {
+  it('leaves the live socket alone — there is nothing here to reconnect', async () => {
     await draw(<ConnectionScreen />)
 
-    fireEvent.press(screen.getAllByText('Reconnect')[1])
-
-    // The reconnect counter is the only row that can read '1'.
-    expect(await screen.findByText('1')).toBeTruthy()
+    expect(screen.queryByText('Reconnect')).toBeNull()
     expect(mockRefresh).not.toHaveBeenCalled()
   })
 })

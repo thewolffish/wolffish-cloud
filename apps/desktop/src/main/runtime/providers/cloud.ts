@@ -327,13 +327,29 @@ export class CloudProvider {
     }
     if (assembler.size > 0 && stopReason === 'unknown') stopReason = 'tool_use'
 
+    // OpenAI-shaped hosts report `prompt_tokens` INCLUSIVE of the cached
+    // prefix, with `cached_tokens` naming the subset that hit the cache.
+    // Everything downstream — the context meter's numerator, calculateCost,
+    // the on-disk ledger, the persisted conversation stats — assumes the
+    // Anthropic convention instead, where `inputTokens` is the FRESH tokens
+    // only and cache reads are counted beside it. Passing the inclusive
+    // number through counted the cached prefix twice: on a warm turn (94-98%
+    // cache-hit is normal here) the meter read roughly double the real
+    // window occupancy, and the local cost estimate billed the cached
+    // tokens at the full input rate on top of the 0.1x cache rate. Subtract
+    // here, once, where the wire format is known.
+    const promptTokens = Math.max(0, usage?.prompt_tokens ?? 0)
+    const cachedTokens = Math.min(
+      Math.max(0, usage?.prompt_tokens_details?.cached_tokens ?? 0),
+      promptTokens
+    )
     yield {
       type: 'turn_meta',
       stopReason,
       usage: {
-        inputTokens: usage?.prompt_tokens ?? 0,
-        outputTokens: usage?.completion_tokens ?? 0,
-        cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0
+        inputTokens: promptTokens - cachedTokens,
+        outputTokens: Math.max(0, usage?.completion_tokens ?? 0),
+        cacheReadTokens: cachedTokens
       }
     }
   }

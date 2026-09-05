@@ -48,6 +48,20 @@ jest.mock('@/lib/sync/projects', () => ({
   useActiveProject: () => mockActiveProject
 }))
 
+// The Admin row is gated on the signed-in role. Real hook, mocked session —
+// so the gate under test is the app's own, not a stand-in for it.
+let mockRole: string | null = null
+jest.mock('@/lib/cloud/session', () => ({
+  cloudSession: {
+    get current() {
+      return mockRole === null
+        ? null
+        : { session: { user: { id: 'u', email: 'me@wolffi.sh', name: 'Me', role: mockRole } } }
+    },
+    subscribe: () => () => undefined
+  }
+}))
+
 import { ConversationsSheet } from '@/components/chat/ConversationsSheet'
 import type { ConversationMeta } from '@/lib/conversations/types'
 import { ThemeContext } from '@/providers/theme/useTheme'
@@ -117,6 +131,9 @@ beforeEach(() => {
   mockMetas = []
   mockProjects = []
   mockActiveProject = null
+  // Signed out by default: the Admin row is opt-in, so every existing test
+  // keeps asserting against the list most people see.
+  mockRole = null
   useChatRuntime.setState({ streams: {} })
   useRunStatus.setState({ runs: {} })
 })
@@ -139,6 +156,37 @@ describe('the conversations sheet', () => {
     await fireEvent.press(screen.getByLabelText('Projects'))
     expect(onClose).toHaveBeenCalled()
     expect(router.push).toHaveBeenCalledWith('/settings/projects')
+  })
+
+  // Admin is a destination beside the other org-wide page, not a knob inside
+  // Settings — and it is the one row here that most people must never see.
+  it('hides Admin from an employee', async () => {
+    mockRole = 'employee'
+    await draw()
+    expect(screen.getByLabelText('Settings')).toBeTruthy()
+    expect(screen.queryByLabelText('Admin')).toBeNull()
+  })
+
+  it('hides Admin from a phone with no session at all', async () => {
+    mockRole = null
+    await draw()
+    expect(screen.getByLabelText('Settings')).toBeTruthy()
+    expect(screen.queryByLabelText('Admin')).toBeNull()
+  })
+
+  it('gives an owner the Admin row, directly under Settings', async () => {
+    mockRole = 'owner'
+    await draw()
+    expect(screen.getByLabelText('Admin')).toBeTruthy()
+    await fireEvent.press(screen.getByLabelText('Admin'))
+    expect(onClose).toHaveBeenCalled()
+    expect(router.push).toHaveBeenCalledWith('/settings/admin')
+  })
+
+  it('gives the read-only support tier the row too', async () => {
+    mockRole = 'support'
+    await draw()
+    expect(screen.getByLabelText('Admin')).toBeTruthy()
   })
 
   it('groups by date and keeps the numbers counting across the headers', async () => {

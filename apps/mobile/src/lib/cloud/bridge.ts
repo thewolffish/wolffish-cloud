@@ -272,7 +272,14 @@ class BridgeClient {
     const base = getApiBase().replace(/^http/, 'ws')
     const name = encodeURIComponent(Device.deviceName ?? Device.modelName ?? 'Phone')
     const version = encodeURIComponent(Constants.expoConfig?.version ?? '')
-    const url = `${base}/v1/bridge/ws?role=phone&name=${name}&platform=${Platform.OS}&version=${version}`
+    // The same self-description the hello frame carries, on the way in: the
+    // org writes it to this device's row, so the desktop's panel can describe
+    // this phone even while it is asleep.
+    const model = encodeURIComponent(Device.modelName ?? '')
+    const osVersion = encodeURIComponent(Device.osVersion ?? '')
+    const url =
+      `${base}/v1/bridge/ws?role=phone&name=${name}&platform=${Platform.OS}&version=${version}` +
+      `&model=${model}&os=${Platform.OS}&os_version=${osVersion}`
     let socket: WebSocket
     try {
       socket = new (WebSocket as unknown as RNWebSocketCtor)(url, null, {

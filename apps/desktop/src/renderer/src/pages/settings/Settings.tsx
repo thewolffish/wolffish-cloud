@@ -18,7 +18,6 @@ import { MobilePanel } from '@pages/settings/MobilePanel'
 import { UsagePanel } from '@pages/settings/UsagePanel'
 import { VariablesPanel } from '@pages/settings/VariablesPanel'
 import { WolffishPanel } from '@pages/settings/WolffishPanel'
-import { AdminPanel } from '@pages/settings/admin/AdminPanel'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
@@ -39,7 +38,6 @@ import {
   VolumeHighIcon,
   NeuralNetworkIcon,
   PaintBoardIcon,
-  UserGroupIcon,
   PuzzleIcon,
   SmartPhone01Icon
 } from 'hugeicons-react'
@@ -76,20 +74,7 @@ const TABS: Tab[] = [
   { key: 'appearance', icon: <PaintBoardIcon size={18} />, labelKey: 'settings.tabs.appearance' }
 ]
 
-/**
- * The admin page sits below everything else, and only for the tiers that
- * have one. The gate here is presentation: the API re-checks the role on
- * every call, so a stale window can show the tab but cannot do anything
- * through it.
- */
-const ADMIN_TAB: Tab = {
-  key: 'admin',
-  icon: <UserGroupIcon size={18} />,
-  labelKey: 'settings.tabs.admin'
-}
-const ADMIN_ROLES = new Set(['owner', 'admin', 'support'])
-
-const TAB_KEYS = new Set<string>([...TABS.map((t) => t.key), ADMIN_TAB.key])
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
 
 type SettingsSnapshot = {
   tab: TabKey
@@ -128,9 +113,7 @@ export function Settings(): React.JSX.Element {
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo, status, auth } = useFlow()
-  const isAdmin = ADMIN_ROLES.has(auth?.user?.role ?? '')
-  const tabs = isAdmin ? [...TABS, ADMIN_TAB] : TABS
+  const { goTo, status } = useFlow()
 
   const [snapshot] = useState(() => restoreSnapshot(status?.config ?? null))
 
@@ -217,7 +200,7 @@ export function Settings(): React.JSX.Element {
         </button>
 
         <nav role="tablist" aria-orientation="vertical" className="mt-2 flex flex-col gap-1">
-          {tabs.map((tab) => {
+          {TABS.map((tab) => {
             const isActive = active === tab.key
             return (
               <div key={tab.key} className="flex flex-col">
@@ -320,12 +303,6 @@ export function Settings(): React.JSX.Element {
       <div className="flex-1 overflow-y-auto">
         <TabPanel active={active === 'appearance'}>
           <AppearancePanel />
-        </TabPanel>
-        {/* Rendered only for the admin tiers — a demoted user whose last
-            session ended on this tab lands on it as an empty panel, not as
-            a screen full of other people's data. */}
-        <TabPanel active={active === 'admin' && isAdmin}>
-          <AdminPanel />
         </TabPanel>
         <TabPanel active={active === 'wolffish'}>
           <WolffishPanel />

@@ -18,7 +18,7 @@ import {
   Unlink01Icon
 } from 'hugeicons-react'
 import QRCode from 'qrcode'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /**
@@ -36,6 +36,21 @@ import { useTranslation } from 'react-i18next'
  * the status is already in memory by the time the user opens it and paints
  * on the first frame.
  */
+/**
+ * One phone at a time — a UI decision, not a limit of the org.
+ *
+ * The organization pairs as many phones as you like: each holds its own
+ * session, the bridge fans every event out to all of them, and unpairing one
+ * leaves the rest alone. The panel still offers a pairing only while NO phone
+ * is paired, because an offer sitting next to a live phone reads as "replace
+ * this one" and would quietly add a second — the desktop app has always meant
+ * "your phone", singular. Unpair to pair a different handset.
+ *
+ * Flip this to false and the multi-phone controls come back; nothing else
+ * needs to change.
+ */
+const SINGLE_PHONE = true
+
 let cachedStatus: MobileStatus | null = null
 let loadPromise: Promise<MobileStatus | null> | null = null
 
@@ -119,6 +134,9 @@ export function MobilePanel(): React.JSX.Element {
   const offer = status?.offer ?? null
   const bridge = status?.bridge ?? null
   const phones = status?.phones ?? []
+  // An offer already open always stays on screen — including the one being
+  // claimed right now, which is how the card turns into a phone.
+  const canPair = !SINGLE_PHONE || phones.length === 0
 
   // Ticks once a second while an offer is open so its countdown reads true.
   const [now, setNow] = useState(() => Date.now())
@@ -174,13 +192,15 @@ export function MobilePanel(): React.JSX.Element {
           {status?.paired ? (
             <div className="flex flex-col gap-5">
               <span className="text-fg text-sm font-medium">{t('settings.mobile.phones')}</span>
-              {phones.map((phone) => (
-                <PhoneRow
-                  key={phone.id}
-                  phone={phone}
-                  busy={busy || !loaded}
-                  onUnpair={() => void act(() => window.api.mobile.unpair(phone.id))}
-                />
+              {phones.map((phone, index) => (
+                <Fragment key={phone.id}>
+                  {index > 0 && <div className="border-border/60 border-t" />}
+                  <PhoneRow
+                    phone={phone}
+                    busy={busy || !loaded}
+                    onUnpair={() => void act(() => window.api.mobile.unpair(phone.id))}
+                  />
+                </Fragment>
               ))}
             </div>
           ) : (
@@ -260,6 +280,10 @@ export function MobilePanel(): React.JSX.Element {
                 </Button>
               </div>
             </div>
+          ) : !canPair ? (
+            <p className="text-muted text-sm leading-relaxed">
+              {t('settings.mobile.singlePhoneHint')}
+            </p>
           ) : (
             <div className="flex flex-col gap-5">
               {status?.paired && (
@@ -329,6 +353,27 @@ export function MobilePanel(): React.JSX.Element {
               {bridge.lastError}
             </p>
           )}
+
+          {/* What the link has actually done — the numbers that say whether it
+              is alive when the status dot alone is ambiguous. */}
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
+            <Row label={t('settings.mobile.connectedSince')} value={stamp(bridge?.connectedAt)} />
+            <Row label={t('settings.mobile.reconnects')} value={String(bridge?.reconnects ?? 0)} />
+            <Row
+              label={t('settings.mobile.frames')}
+              value={`${bridge?.framesSent ?? 0} ↑ · ${bridge?.framesReceived ?? 0} ↓`}
+            />
+            <Row
+              label={t('settings.mobile.bytes')}
+              value={`${bytes(bridge?.bytesSent ?? 0)} ↑ · ${bytes(bridge?.bytesReceived ?? 0)} ↓`}
+            />
+            <Row
+              label={t('settings.mobile.livePhones')}
+              value={String(bridge?.phones.length ?? 0)}
+            />
+            <Row label={t('settings.mobile.endpoint')} value={status?.apiBase ?? '—'} mono />
+          </dl>
+
           <div className="border-border/60 border-t" />
           <HowRow
             icon={<Key01Icon size={18} className="text-muted mt-0.5 shrink-0" />}
@@ -411,7 +456,13 @@ export function MobilePanel(): React.JSX.Element {
   )
 }
 
-/** One paired phone: what it is, when it was here, and the way to forget it. */
+/**
+ * One paired phone: what it is, when it was here, and the way to forget it.
+ *
+ * Every value comes from the organization's own device row, so a phone that
+ * is asleep still reads in full — what it said the last time it connected is
+ * the org's record, not this desktop's memory of the session.
+ */
 function PhoneRow({
   phone,
   busy,
@@ -423,48 +474,95 @@ function PhoneRow({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const os = osLabel(phone.platform, phone.osVersion)
-  const detail = [phone.model, os, phone.appVersion ? `v${phone.appVersion}` : null]
-    .filter(Boolean)
-    .join(' · ')
   return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex min-w-0 items-start gap-3">
-        {phone.platform === 'ios' ? (
-          <AppleIcon size={18} className="text-muted mt-0.5 shrink-0" />
-        ) : phone.platform === 'android' ? (
-          <AndroidIcon size={18} className="text-muted mt-0.5 shrink-0" />
-        ) : (
-          <SmartPhone01Icon size={18} className="text-muted mt-0.5 shrink-0" />
-        )}
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <span className="text-fg truncate text-sm font-medium">
-              {phone.name || t('settings.mobile.unknownDevice')}
-            </span>
-            <span
-              className={cn(
-                'size-2 shrink-0 rounded-full',
-                phone.connected ? 'bg-emerald-500' : 'bg-border'
-              )}
-            />
-            <span className="text-muted text-xs">
-              {phone.connected ? t('settings.mobile.appOpen') : t('settings.mobile.appClosed')}
-            </span>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {phone.platform === 'ios' ? (
+            <AppleIcon size={18} className="text-muted mt-0.5 shrink-0" />
+          ) : phone.platform === 'android' ? (
+            <AndroidIcon size={18} className="text-muted mt-0.5 shrink-0" />
+          ) : (
+            <SmartPhone01Icon size={18} className="text-muted mt-0.5 shrink-0" />
+          )}
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-fg truncate text-sm font-medium">
+                {phone.name || t('settings.mobile.unknownDevice')}
+              </span>
+              <span
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  phone.connected ? 'bg-emerald-500' : 'bg-border'
+                )}
+              />
+              <span className="text-muted text-xs">
+                {phone.connected ? t('settings.mobile.appOpen') : t('settings.mobile.appClosed')}
+              </span>
+            </div>
+            <p className="text-muted text-xs">{os || t('settings.mobile.unknownOs')}</p>
           </div>
-          {detail && <p className="text-muted text-xs">{detail}</p>}
-          <p className="text-muted text-xs">
-            {t('settings.mobile.pairedAt')}{' '}
-            {phone.pairedAt ? new Date(phone.pairedAt).toLocaleString() : '—'}
-            {' · '}
-            {t('settings.mobile.lastSeen')}{' '}
-            {phone.lastSeenAt ? new Date(phone.lastSeenAt).toLocaleString() : '—'}
-          </p>
         </div>
+        <Button variant="outline" size="sm" disabled={busy} className="shrink-0" onClick={onUnpair}>
+          <Unlink01Icon size={14} />
+          {t('settings.mobile.unpairAction')}
+        </Button>
       </div>
-      <Button variant="outline" size="sm" disabled={busy} className="shrink-0" onClick={onUnpair}>
-        <Unlink01Icon size={14} />
-        {t('settings.mobile.unpairAction')}
-      </Button>
+
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
+        <Row label={t('settings.mobile.device')} value={phone.model ?? '—'} />
+        <Row label={t('settings.mobile.appVersion')} value={phone.appVersion ?? '—'} />
+        <Row label={t('settings.mobile.pairedAt')} value={stamp(phone.pairedAt)} />
+        <Row
+          label={t('settings.mobile.method')}
+          value={phone.pairMethod ? t(`settings.mobile.methodValue.${phone.pairMethod}`) : '—'}
+        />
+        <Row label={t('settings.mobile.lastSeen')} value={stamp(phone.lastSeenAt)} />
+        <Row
+          label={t('settings.mobile.connectedSince')}
+          value={phone.connected ? stamp(phone.connectedSince) : '—'}
+        />
+        <Row label={t('settings.mobile.deviceId')} value={phone.id} mono className="col-span-2" />
+      </dl>
+    </div>
+  )
+}
+
+/** A timestamp as the user's locale writes it, or an em dash for "never". */
+function stamp(value: number | null | undefined): string {
+  return value ? new Date(value).toLocaleString() : '—'
+}
+
+/** Bytes at the scale they are actually read at — a phone's link never moves
+ *  gigabytes, and "1.2 MB" beats seven digits. */
+function bytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** One label-over-value cell of a detail grid. */
+function Row({
+  label,
+  value,
+  mono,
+  className
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  className?: string
+}): React.JSX.Element {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+      <dt className="text-muted text-xs">{label}</dt>
+      <dd
+        dir={mono ? 'ltr' : undefined}
+        className={cn('text-fg truncate text-sm', mono && 'font-mono text-xs')}
+        title={value}
+      >
+        {value}
+      </dd>
     </div>
   )
 }

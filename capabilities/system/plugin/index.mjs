@@ -1,6 +1,6 @@
 import os from 'node:os'
 import path from 'node:path'
-import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFileCb)
@@ -74,7 +74,7 @@ const toolDefinitions = [
   {
     name: 'system_power',
     description:
-      'Control the machine power state: restart, shutdown, sleep, lock, or logout. restart/shutdown/logout require user confirmation and will close apps.',
+      'Control the machine power state: restart, shutdown, sleep, lock, or logout. restart/shutdown/logout require user confirmation and will close apps. restart/shutdown are SCHEDULED a few seconds out by default so this turn can finish saving before the machine goes down.',
     parameters: {
       type: 'object',
       properties: {
@@ -82,6 +82,11 @@ const toolDefinitions = [
           type: 'string',
           enum: ['restart', 'shutdown', 'sleep', 'lock', 'logout'],
           description: 'Which power action to perform.'
+        },
+        delaySeconds: {
+          type: 'integer',
+          description:
+            'How long to wait before a restart/shutdown actually runs, 0-600. Defaults to 20 — enough for this turn to be written to disk (and synced) before the machine goes down. Only pass 0 if the user explicitly asked to go down immediately and accepts losing the tail of this turn. Ignored for sleep/lock/logout.'
         }
       },
       required: ['action']
@@ -280,16 +285,78 @@ async function openPath(args) {
 // system_power
 // ---------------------------------------------------------------------------
 
+/**
+ * Wrap a POSIX power command in a `sleep N` so it fires after this turn has
+ * been written. Shell-quoting is not a concern: every argument here is a
+ * literal from powerCommand below, never caller input.
+ */
+function defer(resolved, delay) {
+  if (delay <= 0) return resolved
+  const quoted = [resolved.cmd, ...resolved.args].map((a) => `'${a.replace(/'/g, `'\\''`)}'`)
+  return {
+    cmd: 'sh',
+    args: ['-c', `sleep ${delay}; exec ${quoted.join(' ')}`],
+    deferred: true
+  }
+}
+
+/**
+ * Start a deferred power command so it OUTLIVES this process. Detached with no
+ * stdio, and unref'd, so the app quitting (or being killed by the shutdown it
+ * just scheduled) doesn't take the timer down with it — the whole point is that
+ * we go away and the machine still restarts.
+ */
+function scheduleDetached(resolved) {
+  const child = spawn(resolved.cmd, resolved.args, {
+    detached: true,
+    stdio: 'ignore'
+  })
+  child.unref()
+}
+
+/**
+ * Default seconds between "yes, restart" and the machine actually going down.
+ *
+ * A power action is the one tool call whose side effect outlives the turn that
+ * made it. Going down at t+0 kills this process mid-turn: the answer, the tool
+ * cards and the task timeline are still being written when the OS pulls the
+ * floor out, and on a cloud client they have not reached the org either. Twenty
+ * seconds is far more than the fold needs and short enough that nobody notices
+ * they waited.
+ */
+const POWER_DELAY_DEFAULT_S = 20
+const POWER_DELAY_MAX_S = 600
+
+/** Clamp a caller's delay; only restart/shutdown can be scheduled. */
+function powerDelay(action, raw) {
+  if (action !== 'restart' && action !== 'shutdown') return 0
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return POWER_DELAY_DEFAULT_S
+  return Math.max(0, Math.min(POWER_DELAY_MAX_S, Math.round(n)))
+}
+
 // Resolve the concrete command per platform/action. Shared by execute() and
 // describeAction() so the approval card shows exactly what will run.
-function powerCommand(action) {
+//
+// `delay` (seconds, restart/shutdown only) is honored differently per platform:
+// Windows has a native scheduler (`shutdown /t`, abortable with `shutdown /a`),
+// so it goes straight into the command. macOS and Linux have no unprivileged
+// equivalent, so the caller detaches a `sleep N; <cmd>` instead — see
+// scheduleDetached(). `deferred: true` marks that second shape.
+function powerCommand(action, delay = 0) {
   const p = process.platform
   if (p === 'darwin') {
     switch (action) {
       case 'restart':
-        return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to restart'] }
+        return defer(
+          { cmd: 'osascript', args: ['-e', 'tell app "System Events" to restart'] },
+          delay
+        )
       case 'shutdown':
-        return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to shut down'] }
+        return defer(
+          { cmd: 'osascript', args: ['-e', 'tell app "System Events" to shut down'] },
+          delay
+        )
       case 'logout':
         return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to log out'] }
       case 'sleep':
@@ -306,9 +373,9 @@ function powerCommand(action) {
   } else if (p === 'win32') {
     switch (action) {
       case 'restart':
-        return { cmd: 'shutdown', args: ['/r', '/t', '0'] }
+        return { cmd: 'shutdown', args: ['/r', '/t', String(delay)] }
       case 'shutdown':
-        return { cmd: 'shutdown', args: ['/s', '/t', '0'] }
+        return { cmd: 'shutdown', args: ['/s', '/t', String(delay)] }
       case 'logout':
         return { cmd: 'shutdown', args: ['/l'] }
       case 'sleep':
@@ -319,9 +386,9 @@ function powerCommand(action) {
   } else {
     switch (action) {
       case 'restart':
-        return { cmd: 'systemctl', args: ['reboot'] }
+        return defer({ cmd: 'systemctl', args: ['reboot'] }, delay)
       case 'shutdown':
-        return { cmd: 'systemctl', args: ['poweroff'] }
+        return defer({ cmd: 'systemctl', args: ['poweroff'] }, delay)
       case 'logout':
         return { cmd: 'loginctl', args: ['terminate-user', os.userInfo().username] }
       case 'sleep':
@@ -355,19 +422,42 @@ async function systemPower(args) {
   if (!POWER_VERB[action]) {
     return fail(`system_power: action must be one of restart, shutdown, sleep, lock, logout.`)
   }
-  const resolved = powerCommand(action)
+  const delay = powerDelay(action, args?.delaySeconds)
+  const resolved = powerCommand(action, delay)
   if (!resolved) return fail(`system_power: ${action} is not supported on ${process.platform}.`)
 
+  // A deferred POSIX command is a sleep we must NOT wait on — it has to survive
+  // this process. Windows schedules in the OS, so its command still runs inline
+  // and returns at once.
+  if (resolved.deferred) {
+    try {
+      scheduleDetached(resolved)
+    } catch (err) {
+      return fail(`system_power ${action} failed to schedule: ${errText(err)}`)
+    }
+    return { success: true, output: powerScheduledText(action, delay) }
+  }
+
   try {
-    // Short timeout: restart/shutdown may never return because we're going
-    // down — that's success, not failure.
+    // Short timeout: an undelayed restart/shutdown may never return because
+    // we're going down — that's success, not failure.
     await run(resolved.cmd, resolved.args, { timeout: 6000 })
   } catch (err) {
     if (!isGoingDownError(err, action)) {
       return fail(`system_power ${action} failed: ${errText(err)}`)
     }
   }
+  if (delay > 0) return { success: true, output: powerScheduledText(action, delay) }
   return { success: true, output: `${POWER_VERB[action]} the machine now.` }
+}
+
+/** What the model tells the user: when it happens, and how to stop it. */
+function powerScheduledText(action, delay) {
+  const cancel =
+    process.platform === 'win32'
+      ? ' Run `shutdown /a` to cancel.'
+      : ' It runs in a detached process — closing this app will not stop it.'
+  return `${POWER_VERB[action]} the machine in ${delay} second${delay === 1 ? '' : 's'}.${cancel}`
 }
 
 function isGoingDownError(err, action) {
@@ -386,13 +476,17 @@ function isGoingDownError(err, action) {
 function describeAction(toolName, args) {
   if (toolName === 'system_power') {
     const action = typeof args?.action === 'string' ? args.action.toLowerCase() : ''
-    const resolved = powerCommand(action)
+    const delay = powerDelay(action, args?.delaySeconds)
+    const resolved = powerCommand(action, delay)
     const command = resolved ? `${resolved.cmd} ${resolved.args.join(' ')}` : undefined
     const destructive = action === 'restart' || action === 'shutdown' || action === 'logout'
     const machine = process.platform === 'darwin' ? 'Mac' : 'machine'
     return {
       title: (POWER_TITLE[action] ?? 'Power action').replace('this machine', `this ${machine}`),
-      description: `Run a ${action} on the local machine.`,
+      description:
+        delay > 0
+          ? `Run a ${action} on the local machine, ${delay} seconds from now.`
+          : `Run a ${action} on the local machine, immediately.`,
       command,
       impact: destructive
         ? 'All open apps will close. Unsaved work may be lost.'

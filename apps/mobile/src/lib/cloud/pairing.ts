@@ -1,5 +1,6 @@
 import i18n from '@/lib/i18n'
 import * as Device from 'expo-device'
+import { Platform } from 'react-native'
 import Constants from 'expo-constants'
 import { claimPairing, getApiBase, setApiBase, type ClaimResult } from '@/lib/cloud/api'
 import { cloudSession } from '@/lib/cloud/session'
@@ -21,10 +22,22 @@ import {
  * is the org revoking it.
  */
 
-function deviceDescription(): { name: string; app_version: string } {
+/** How this phone introduces itself at the claim — the same facts the bridge
+ *  hello carries, so the desktop's Mobile panel can describe a phone it has
+ *  never yet seen connect. */
+function deviceDescription(): {
+  name: string
+  app_version: string
+  model: string
+  os: 'ios' | 'android' | undefined
+  os_version: string
+} {
   return {
     name: Device.deviceName ?? Device.modelName ?? 'Phone',
-    app_version: Constants.expoConfig?.version ?? ''
+    app_version: Constants.expoConfig?.version ?? '',
+    model: Device.modelName ?? '',
+    os: Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : undefined,
+    os_version: Device.osVersion ?? ''
   }
 }
 

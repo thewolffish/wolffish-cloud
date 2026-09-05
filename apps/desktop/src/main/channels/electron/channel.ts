@@ -4,6 +4,7 @@ import {
   type MirrorMessageListener,
   type TurnSink
 } from '@main/channels/channel'
+import { TurnCheckpoint } from '@main/channels/turn-checkpoint'
 import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import { mintMessageId, type ConversationMessage } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
@@ -90,7 +91,20 @@ export class ElectronChannel {
   /** Live turns keyed by turnId. */
   private readonly turns = new Map<
     string,
-    { controller: AbortController; conversationId: string | null; taskId: string | null }
+    {
+      controller: AbortController
+      conversationId: string | null
+      taskId: string | null
+      /**
+       * Mid-turn disk checkpointer, present for every turn that names a
+       * conversation. It is what makes an in-app run survive a crash or a
+       * machine restart: the renderer folds the transcript to disk only at
+       * chat:done, so without this the whole run — prose, tool cards, task
+       * timeline — exists nowhere but volatile memory until it ends, and the
+       * cloud (which pushes off disk writes) never hears about it either.
+       */
+      checkpoint: TurnCheckpoint | null
+    }
   >()
   /** conversationId → live turnId, for same-conversation preemption/cancel. */
   private readonly byConversation = new Map<string, string>()
@@ -123,6 +137,18 @@ export class ElectronChannel {
       conversationId?: string | null
       /** Feed id of this turn's user message — the titler shell stamps it (see TurnSendOptions). */
       userMessageId?: string
+      /**
+       * Feed id of the assistant message this turn will produce, minted by the
+       * renderer alongside its streaming placeholder. It is what makes the
+       * mid-turn checkpoint and the renderer's end-of-turn fold ONE message
+       * under the id-keyed merge instead of two: this process writes the
+       * turn-so-far under this id, the renderer later writes the finished
+       * message under the same one, and the fold replaces the checkpoint.
+       * Absent (an older renderer, a caller that doesn't stream) ⇒ a locally
+       * minted id, and the checkpoint degrades to a copy the fold cannot
+       * reconcile — so it is only written when the renderer supplies one.
+       */
+      assistantMessageId?: string
       workingFolders?: string[]
       contextFiles?: string[]
       thinkingMode?: string
@@ -138,10 +164,44 @@ export class ElectronChannel {
       if (previousTurnId) this.turns.get(previousTurnId)?.controller.abort()
     }
 
-    // The prompt, for the mirror. An in-app turn keeps its user message in the
-    // renderer's feed and writes it to disk only at the fold, so this is the
-    // ONLY copy a second viewer can be shown while the turn runs.
+    // The prompt, for the mirror AND for the checkpoint. An in-app turn keeps
+    // its user message in the renderer's feed and writes it to disk only at
+    // the fold, so this is the ONLY copy a second viewer can be shown while
+    // the turn runs — and, until the checkpoint below writes it, the only copy
+    // anywhere for every turn after the first (the titler shell that carries
+    // the FIRST prompt early-returns on an already-titled conversation).
     const userMessage = promptFromHistory(payload.history, payload.userMessageId)
+
+    // The turn's assistant message, accumulated segment by segment. Feeds both
+    // the phone mirror and the disk checkpoint — same object, same id, so the
+    // snapshot a phone shows and the copy a crash leaves behind are the copy
+    // the renderer's fold replaces.
+    const acc: AssistantAccumulator = {
+      assistantMessageId: payload.assistantMessageId ?? mintMessageId(),
+      assistantTimestamp: Date.now(),
+      assistantContent: '',
+      segments: [],
+      approvals: new Map(),
+      toolTimings: new Map(),
+      stopReason: null
+    }
+
+    // makeSink runs synchronously inside runner.send, before we know the
+    // turnId; the box carries it to the liveness probe below.
+    const turnIdRef = { id: '' }
+    // No conversation id (a null-id / subagent turn) means nothing to write to,
+    // and no renderer-supplied assistant id means a checkpoint the fold could
+    // not reconcile — in both cases the turn runs exactly as it did before.
+    const checkpoint =
+      conversationId && payload.assistantMessageId
+        ? new TurnCheckpoint(
+            conversationId,
+            { channel: 'electron', projectId: payload.projectId ?? null },
+            userMessage,
+            () => buildAssistantMessage(acc),
+            () => this.turns.has(turnIdRef.id)
+          )
+        : null
 
     const handle = this.runner.send({
       history: payload.history,
@@ -153,8 +213,9 @@ export class ElectronChannel {
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,
       makeSink: ({ turnId, conversationId: cid }) =>
-        this.createSink(turnId, cid, sender, userMessage)
+        this.createSink(turnId, cid, sender, userMessage, acc, checkpoint)
     })
+    turnIdRef.id = handle.turnId
 
     // The prompt goes out NOW, ahead of the first token: mirror ticks are
     // driven by segments, and the wait for the first one is exactly the window
@@ -166,9 +227,17 @@ export class ElectronChannel {
     this.turns.set(handle.turnId, {
       controller: handle.controller,
       conversationId,
-      taskId: null
+      taskId: null,
+      checkpoint
     })
     if (conversationId) this.byConversation.set(conversationId, handle.turnId)
+
+    // The prompt hits disk NOW, before the first token — the same reason it
+    // goes out to the mirror now. A turn that is killed (crash, kill, machine
+    // restart) one second in must still come back with the question that
+    // started it, and on every turn but the first nothing else writes it. The
+    // write also schedules this conversation's next cloud push.
+    checkpoint?.promptNow()
 
     // Cleanup on EVERY exit path — including the sensitive-data gate, which
     // resolves `done` without ever entering the runner lane.
@@ -186,6 +255,9 @@ export class ElectronChannel {
   private releaseTurn(turnId: string): void {
     const turn = this.turns.get(turnId)
     this.turns.delete(turnId)
+    // Drop the throttle timers. A trailing tick after this point would write
+    // this process's copy of the message over the renderer's richer fold.
+    turn?.checkpoint?.dispose()
     if (turn?.conversationId && this.byConversation.get(turn.conversationId) === turnId) {
       this.byConversation.delete(turn.conversationId)
     }
@@ -267,6 +339,27 @@ export class ElectronChannel {
     return this.byConversation.has(conversationId)
   }
 
+  /**
+   * Write every in-flight turn to disk NOW, as far as it got.
+   *
+   * The last line of defence between a turn and an ending it never sees: a
+   * quit, a machine restart, an auto-update install. The periodic checkpoint
+   * already bounds the loss to seconds of prose; this closes even that, and it
+   * is the only write that happens at all when the shutdown arrives inside the
+   * throttle window. Marked NOT-final on purpose — these turns did not end,
+   * and the `interrupted` mark is what says so on the way back up.
+   *
+   * Never throws and never blocks longer than the writes themselves: a
+   * shutdown path that hangs is worse than one that loses a sentence.
+   */
+  async flushCheckpoints(): Promise<void> {
+    await Promise.all(
+      [...this.turns.values()].map((turn) =>
+        turn.checkpoint?.flush({ push: true }).catch(() => undefined)
+      )
+    )
+  }
+
   /** Force-stop everything (called from app shutdown). */
   abort(): void {
     for (const turn of this.turns.values()) turn.controller.abort()
@@ -278,25 +371,15 @@ export class ElectronChannel {
     turnId: string,
     conversationId: string | null,
     sender: WebContents,
-    userMessage: ConversationMessage | null
+    userMessage: ConversationMessage | null,
+    /** The turn's accumulator, owned by send() so the checkpoint can read it too. */
+    acc: AssistantAccumulator,
+    checkpoint: TurnCheckpoint | null
   ): TurnSink {
     const safeSend = (channel: string, payload: unknown): void => {
       if (sender && !sender.isDestroyed()) {
         sender.send(channel, payload)
       }
-    }
-    // Phone-mirror accumulator: the same message the renderer will persist at
-    // end of turn, built segment by segment with the SAME stable id, so the
-    // phone upserts by id and the mid-turn snapshot is replaced — never
-    // duplicated — by the saved message the post-turn refetch pulls.
-    const acc: AssistantAccumulator = {
-      assistantMessageId: mintMessageId(),
-      assistantTimestamp: Date.now(),
-      assistantContent: '',
-      segments: [],
-      approvals: new Map(),
-      toolTimings: new Map(),
-      stopReason: null
     }
     let lastMirrorAt = 0
     let mirrorTimer: NodeJS.Timeout | null = null
@@ -337,12 +420,12 @@ export class ElectronChannel {
       conversationId,
       onSegment: (segment) => {
         safeSend('chat:segment', { ...segment, conversationId })
-        // Fold into the phone mirror with the same rules every other
-        // accumulator applies (worker segments never speak as the
-        // assistant; workflow/task snapshots upsert by id). Task snapshots
-        // flush immediately — a card flipping to running/succeeded should
-        // not wait out the text throttle.
-        if (!this.mirrorListener || !conversationId) return
+        // Fold into the accumulator with the same rules every other one
+        // applies (worker segments never speak as the assistant; workflow
+        // snapshots upsert by id). It feeds the phone mirror AND the disk
+        // checkpoint now, so the fold runs whenever either has somewhere to
+        // put it.
+        if (!conversationId || (!this.mirrorListener && !checkpoint)) return
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
@@ -351,6 +434,13 @@ export class ElectronChannel {
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         scheduleMirror(false)
+        // Prose is cheap to lose a few seconds of and arrives per token;
+        // everything else — a tool call, its result, a workflow snapshot, the
+        // turn's end — is the slow, expensive part of a run and takes the
+        // sub-second floor.
+        checkpoint?.touch(
+          segment.kind === 'text' || segment.kind === 'reasoning' ? 'text' : 'structural'
+        )
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {
@@ -397,9 +487,17 @@ export class ElectronChannel {
         })
       },
       onDone: () => {
+        // Write the finished turn before telling the renderer, so a fold that
+        // never happens (window closed mid-run, renderer gone) still leaves
+        // the whole turn on disk — and on its way to the org. The renderer's
+        // own save lands after this and wins by id; it carries the approval
+        // cards and tool timings this accumulator never collects, which the
+        // checkpoint's upsert preserves either way.
+        void checkpoint?.flush({ final: true })
         safeSend('chat:done', { turnId, conversationId })
       },
       onError: (error) => {
+        void checkpoint?.flush({ final: true })
         safeSend('chat:error', { turnId, conversationId, error })
       },
       onCredentialBlocked: (type) => {

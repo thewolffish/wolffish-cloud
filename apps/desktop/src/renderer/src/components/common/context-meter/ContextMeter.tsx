@@ -9,12 +9,10 @@ import {
   ChartHistogramIcon,
   Clock01Icon,
   CloudIcon,
-  ComputerTerminal01Icon,
   CpuIcon,
   Database01Icon,
   Database02Icon,
   DollarCircleIcon,
-  Files01Icon,
   HourglassIcon,
   RepeatIcon,
   WorkflowSquare03Icon
@@ -68,12 +66,6 @@ type ContextMeterProps = {
   activeModel: string | null
   /** Provider id of the meter's model, for the header brand logo. */
   provider: string | null
-  /** Timeline events in this conversation — 0 disables the footer's Logs button. */
-  logsCount: number
-  /** Files in this conversation — 0 disables the footer's Files button. */
-  filesCount: number
-  onOpenTimeline: () => void
-  onOpenFiles: () => void
 }
 
 // Segment colors for the context-composition bar. Raw hex on purpose — these
@@ -278,11 +270,7 @@ export function ContextMeter({
   usageUnavailable,
   meterModel,
   activeModel,
-  provider,
-  logsCount,
-  filesCount,
-  onOpenTimeline,
-  onOpenFiles
+  provider
 }: ContextMeterProps): React.JSX.Element | null {
   const { t } = useTranslation()
   const [now, setNow] = useState<number>(() => Date.now())
@@ -796,63 +784,6 @@ export function ContextMeter({
               )}
             </div>
           )}
-
-          {/* Footer: the composer's old logs/files pill, folded in here as two
-              buttons. Outside the hasAnything branch on purpose — they're
-              about the conversation, not the reading, so an empty meter still
-              offers them. Zero events / files keeps the button disabled with
-              its 0 badge, so the pair never changes shape. */}
-          <div className="border-border/60 mt-3 flex items-center gap-1 border-t pt-2">
-            {[
-              {
-                key: 'logs',
-                count: logsCount,
-                onOpen: onOpenTimeline,
-                Icon: ComputerTerminal01Icon,
-                label: t('chat.timeline.viewLogs')
-              },
-              {
-                key: 'files',
-                count: filesCount,
-                onOpen: onOpenFiles,
-                Icon: Files01Icon,
-                label: t('chat.files.viewFiles')
-              }
-            ].map(({ key, count, onOpen, Icon, label }) => {
-              const off = count === 0
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  disabled={off}
-                  onClick={() => {
-                    if (off) return
-                    onOpen()
-                    setPinned(false)
-                    setOpen(false)
-                  }}
-                  className={`border-border flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                    off
-                      ? 'text-muted/40 cursor-not-allowed'
-                      : 'text-fg hover:bg-border/40 cursor-pointer'
-                  }`}
-                >
-                  <Icon
-                    size={13}
-                    className={off ? 'text-muted/40 shrink-0' : 'text-muted shrink-0'}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-start">{label}</span>
-                  <span
-                    className={`bg-bg inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums ${
-                      off ? 'border-border/60 text-muted/40' : 'border-border text-fg'
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
         </div>
       )}
     </span>

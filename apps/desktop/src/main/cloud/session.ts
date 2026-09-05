@@ -626,6 +626,12 @@ class CloudSession {
 
   private startWatchdog(): void {
     if (this.watchdog) return
+    // One tick now, not in five minutes. The watchdog is what reconciles a
+    // session with the server — the role, the org name, a pending PIN clear
+    // — and every one of those is something an admin changed while this app
+    // was closed. Waiting a full interval to notice means the first five
+    // minutes of every launch run on stale facts.
+    void this.tick()
     this.watchdog = setInterval(() => {
       void this.tick()
     }, WATCHDOG_MS)
@@ -641,6 +647,29 @@ class CloudSession {
         this.record.orgName = info.org.name
         await this.persist()
         this.setStatus(this.status)
+      }
+      // The user's IDENTITY, and above all their ROLE, comes from here.
+      //
+      // The stored session's copy is frozen at sign-in: the login response
+      // seeds it and every refresh deliberately carries the old user
+      // forward (the refresh response has no user to read). So without this
+      // a role change never reaches a device that is already signed in —
+      // somebody promoted to admin keeps being shown an app with no admin
+      // screens until they sign out and back in, and somebody demoted keeps
+      // being shown screens whose every call the server now refuses.
+      //
+      // /v1/me is the live answer, and this is the only place that asks it
+      // on a schedule. Announcing through setStatus is what makes the
+      // change land: it fires auth:changed, the renderer re-reads the role,
+      // and the admin tab appears or disappears without a restart.
+      if (this.record) {
+        const held = this.record.session.user
+        const live = { email: info.user.email, name: info.user.name, role: info.user.role }
+        if (live.role !== held.role || live.name !== held.name || live.email !== held.email) {
+          this.record.session.user = { ...held, ...live }
+          await this.persist()
+          this.setStatus(this.status)
+        }
       }
       // Admin asked for the PIN to be cleared: wipe the local hash, ack,
       // and if the app sat locked, let the user straight in — support

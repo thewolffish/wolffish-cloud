@@ -15,9 +15,10 @@ export type ExpandedSheetProps = {
 }
 
 /**
- * Centered 90%-of-viewport modal sheet for reading a file viewer's content at
- * a larger size. Reuses the expanded prompt-editor dialog's portal + backdrop +
- * panel styling, but — unlike that dialog — clicking the backdrop does NOT
+ * Trailing-edge side sheet (80% of the viewport wide, full height) for reading
+ * a file viewer's content at a larger size — the same surface, mirrored, as the
+ * conversations/profile sheets that slide in from the leading edge. Clicking
+ * the backdrop does NOT
  * dismiss it: only the × button or Escape close it, so a stray click while
  * reading a long document never loses the reader's place.
  *
@@ -51,15 +52,12 @@ export function ExpandedSheet({
   if (!open || typeof document === 'undefined') return null
 
   return createPortal(
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-    >
-      <div
+    <div role="presentation" className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
+      <aside
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
-        className="border-border bg-surface flex h-[90vh] w-[90vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+        className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 end-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
       >
         <div className="border-border flex shrink-0 items-center gap-2 border-b px-5 py-3">
           <span
@@ -85,7 +83,7 @@ export function ExpandedSheet({
           </button>
         </div>
         <div className="flex-1 overflow-auto">{children}</div>
-      </div>
+      </aside>
     </div>,
     document.body
   )

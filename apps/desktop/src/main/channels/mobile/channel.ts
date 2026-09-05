@@ -35,6 +35,8 @@ import {
 } from '@main/channels/channel'
 import { extractTranscript, extractVoiceLanguage } from '@main/channels/stt-result'
 import { fitMirrorMessage } from '@main/channels/mirror-budget'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
+import type { CorpusEvents } from '@main/runtime/corpus'
 import {
   createConversation,
   loadConversation,
@@ -211,8 +213,14 @@ export type PairedPhone = {
   appVersion: string | null
   pairedAt: number
   lastSeenAt: number | null
+  /** Which door this phone came through, as the ORG recorded it at the claim
+   *  — not something the phone told us. Null on a device paired before the
+   *  org started keeping it. */
+  pairMethod: 'qr' | 'code' | null
   /** On the bridge right now. */
   connected: boolean
+  /** Since when, for the phone that is on the bridge; null for the rest. */
+  connectedSince: number | null
 }
 
 export type MobileStatus = {
@@ -248,6 +256,12 @@ export type WireDevice = {
   platform: string
   name: string
   app_version: string
+  /** What the device is and how it was paired, as the org recorded it at the
+   *  claim and refreshed on every connect. Empty when it never said. */
+  model: string
+  os: string
+  os_version: string
+  pair_method: string
   created_at: string
   last_seen_at: string | null
   paired: boolean
@@ -2009,16 +2023,36 @@ export class MobileChannel {
       toolTimings: new Map(),
       stopReason: null
     }
-    /** Append the accumulated assistant message; resolves once it is on disk. */
+    /**
+     * This turn's tokenomics, folded into the conversation's persisted
+     * `stats` when the turn lands. Without it a phone-driven conversation
+     * saved no stats at all, so opening it in the app showed an empty
+     * context-meter card — the same gap TurnStatsCollector was written to
+     * close for the other channels, which this one never wired up. Fed from
+     * onTurnEvent below; see {@link TurnStatsCollector} for the routing
+     * rules it mirrors from the renderer.
+     */
+    const stats = new TurnStatsCollector(Date.now())
+    /**
+     * Append the accumulated assistant message and fold this turn's stats;
+     * resolves once both are on disk. Runs even when the turn produced no
+     * assistant message (errored before its first segment) so an errored
+     * turn still records its all-time roll-up — matching how every other
+     * channel persists.
+     */
     const persistTurn = async (error?: string): Promise<void> => {
       const assistant = buildAssistantMessage(acc)
-      if (!assistant) return
-      if (error) assistant.error = error
+      const foldStats = stats.hasData()
+      if (!assistant && !foldStats) return
+      if (assistant && error) assistant.error = error
       const endedAt = Date.now()
       await updateConversation(conversationId, (disk) => {
         if (!disk) return null
-        disk.messages.push(assistant)
-        disk.updatedAt = endedAt
+        if (assistant) {
+          disk.messages.push(assistant)
+          disk.updatedAt = endedAt
+        }
+        if (foldStats) disk.stats = stats.foldInto(disk.stats, endedAt)
         return disk
       }).catch(() => undefined)
     }
@@ -2111,7 +2145,12 @@ export class MobileChannel {
         // throttle, exactly as in the in-app mirror.
         scheduleMirror(false)
       },
-      onTurnEvent: () => undefined,
+      onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
+        // The phone renders none of these, but the desktop's context-meter
+        // card is built from exactly four of them — the collector picks
+        // those out and ignores the rest.
+        stats.note(type, payload)
+      },
       /**
        * A flagged tool call, put to the phone as the card the desktop shows
        * for the same request. The turn parks here until the phone answers,
@@ -2596,21 +2635,29 @@ export class MobileChannel {
   // ----------------------------------------------------------------- status
 
   getStatus(): MobileStatus {
-    const live = new Set((this.bridgeState?.phones ?? []).map((p) => p.deviceId))
+    // Presence is the live half; the org's row is the durable half. What the
+    // phone said in THIS session wins, and the row answers for a phone that
+    // has not connected since this desktop started — which is why the panel
+    // can still describe a sleeping phone.
+    const live = new Map((this.bridgeState?.phones ?? []).map((p) => [p.deviceId, p]))
+    const text = (value: string | null | undefined): string | null => value?.trim() || null
     return {
       paired: this.phones.length > 0,
       phones: this.phones.map((d) => {
         const info = this.phoneInfo.get(d.id)
+        const os = text(d.os)
         return {
           id: d.id,
           name: d.name,
-          platform: info?.platform ?? null,
-          model: info?.model ?? null,
-          osVersion: info?.osVersion ?? null,
-          appVersion: info?.appVersion ?? d.app_version ?? null,
+          platform: info?.platform ?? (os === 'ios' || os === 'android' ? os : null),
+          model: info?.model ?? text(d.model),
+          osVersion: info?.osVersion ?? text(d.os_version),
+          appVersion: info?.appVersion ?? text(d.app_version),
           pairedAt: Date.parse(d.created_at) || 0,
           lastSeenAt: d.last_seen_at ? Date.parse(d.last_seen_at) || null : null,
-          connected: live.has(d.id)
+          pairMethod: d.pair_method === 'qr' || d.pair_method === 'code' ? d.pair_method : null,
+          connected: live.has(d.id),
+          connectedSince: live.get(d.id)?.connectedAt ?? null
         }
       }),
       bridge: this.bridgeState,

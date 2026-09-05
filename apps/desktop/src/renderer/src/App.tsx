@@ -26,6 +26,7 @@ import { Projects } from '@pages/Projects'
 import { Soul } from '@pages/Soul'
 import { User } from '@pages/User'
 import { Agents } from '@pages/Agents'
+import { Admin } from '@pages/Admin'
 import { Leaderboard } from '@pages/Leaderboard'
 
 // The one-time cortex reindex (after an app update) blocks every turn, so
@@ -74,7 +75,8 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'soul',
   'user',
   'agents',
-  'leaderboard'
+  'leaderboard',
+  'admin'
 ])
 
 function AuthScreen(): React.JSX.Element | null {
@@ -116,6 +118,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <Agents />
     case 'leaderboard':
       return <Leaderboard />
+    case 'admin':
+      return <Admin />
   }
 }
 

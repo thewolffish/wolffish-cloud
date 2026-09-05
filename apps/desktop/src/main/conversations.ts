@@ -77,6 +77,16 @@ export type ConversationMessage = {
   toolTimings?: Record<string, PersistedToolTiming>
   stopReason?: SegmentTurnEndReason
   error?: string
+  /**
+   * Set on an assistant message written by a MID-TURN checkpoint — the turn
+   * was still running when this copy hit disk (see channels/turn-checkpoint.ts).
+   * Cleared by the checkpoint's own final flush and absent from every fold the
+   * renderer or a channel writes, so it survives exactly one way: the process
+   * died before the turn ended. That makes it the honest marker for "this
+   * answer is as far as the run got", and the only field the checkpoint's
+   * upsert refuses to preserve from disk.
+   */
+  interrupted?: boolean
 }
 
 /**
@@ -489,7 +499,21 @@ export async function saveConversation(conv: ConversationFile): Promise<void> {
  */
 export async function updateConversation(
   id: string,
-  mutate: (current: ConversationFile | null) => ConversationFile | null
+  mutate: (current: ConversationFile | null) => ConversationFile | null,
+  opts?: {
+    /**
+     * Whether a successful write arms this conversation's cloud push.
+     * Defaults true — every writer wants the org to have what it wrote.
+     *
+     * The mid-turn checkpointer is the one caller that says false, and only
+     * between its own push ticks: it rewrites the SAME assistant message many
+     * times over one long turn, and each version would otherwise land as its
+     * own server record (record ids embed a content hash). It arms the push on
+     * its own slower cadence, and always on its final flush, so the org gets
+     * the turn while it runs without getting forty copies of it.
+     */
+    notifySync?: boolean
+  }
 ): Promise<void> {
   let wrote = false
   await diskWriter.update(filePathForId(id), (raw) => {
@@ -507,7 +531,7 @@ export async function updateConversation(
     wrote = true
     return JSON.stringify(next, null, 2)
   })
-  if (wrote) conversationSyncHook?.('written', id)
+  if (wrote && opts?.notifySync !== false) conversationSyncHook?.('written', id)
 }
 
 /**

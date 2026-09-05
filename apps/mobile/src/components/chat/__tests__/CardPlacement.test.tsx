@@ -1,3 +1,7 @@
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+)
+
 /**
  * WHERE a parked card sits in the transcript — the other half of what
  * ParkedCards.test covers (what a card shows and when it is a control).

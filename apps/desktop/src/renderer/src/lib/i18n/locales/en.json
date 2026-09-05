@@ -329,6 +329,10 @@
         "runCards": {
           "label": "Run cards",
           "description": "Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge."
+        },
+        "reasoning": {
+          "label": "Show reasoning",
+          "description": "Show the model's thinking as a collapsible card in the chat. Off (the default) hides it on this desktop and on your phone — the model still thinks, and the reasoning is still saved with the conversation."
         }
       },
       "brave": {
@@ -425,13 +429,6 @@
         "subtitle": "Let the agent see your screen and control your mouse and keyboard to perform desktop tasks.",
         "enableLabel": "Enable Computer Use",
         "enableHint": "When enabled, the agent can take screenshots, move the mouse, click, scroll, and type.",
-        "resolutionLabel": "Screenshot resolution",
-        "resolutionHint": "Maximum width in pixels. Lower values use less tokens but reduce detail.",
-        "formatLabel": "Screenshot format",
-        "formatHint": "JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.",
-        "save": "Save",
-        "saveSuccess": "Computer Use settings saved",
-        "saveError": "Failed to save Computer Use settings",
         "permissionsTitle": "Permissions",
         "permAccessibility": "Accessibility",
         "permScreenRecording": "Screen Recording",
@@ -443,7 +440,8 @@
           "step1": "The agent takes a screenshot to see what's on your screen — with a crosshair marking the cursor.",
           "step2": "It zooms into small targets at native resolution before clicking, so it never guesses.",
           "step3": "Every click returns a magnified close-up proving exactly where it landed, and the agent corrects itself if it missed.",
-          "step4": "This verified loop continues until the task is complete."
+          "step4": "This verified loop continues until the task is complete.",
+          "step5": "It chooses each screenshot's resolution and format itself — sharper, lossless captures when it needs to read fine detail, lighter ones when it's only navigating. Ask for a higher-resolution screenshot any time."
         }
       },
       "browserExtension": {
@@ -778,6 +776,21 @@
       "pairedAt": "Paired",
       "lastSeen": "Last seen",
       "appVersion": "App version",
+      "device": "Device",
+      "unknownOs": "Unrecognized phone",
+      "deviceId": "Device ID",
+      "method": "Paired by",
+      "methodValue": {
+        "qr": "Scanned QR",
+        "code": "Typed code"
+      },
+      "connectedSince": "Connected since",
+      "endpoint": "Endpoint",
+      "frames": "Frames",
+      "bytes": "Traffic",
+      "reconnects": "Reconnects",
+      "livePhones": "Phones on the link",
+      "singlePhoneHint": "This desktop is paired with one phone. Unpair it to connect a different one.",
       "unpair": "Unpair",
       "unpairAction": "Unpair",
       "unpairHint": "Signs the phone out of your organization. Pairing again needs a new QR or code.",
@@ -1431,7 +1444,8 @@
       "transcribing": "Transcribing…",
       "transcribed": "Transcribed",
       "error": "Recording failed"
-    }
+    },
+    "admin": "Admin"
   },
   "workspace": {
     "title": "Workspace",
@@ -1573,6 +1587,9 @@
     "editor": {
       "createTitle": "New automation",
       "editTitle": "Edit automation",
+      "name": "Name",
+      "namePlaceholder": "Morning digest",
+      "nameRequired": "Give this automation a name.",
       "schedule": "Schedule",
       "pickIcon": "Choose an icon",
       "project": "Project",

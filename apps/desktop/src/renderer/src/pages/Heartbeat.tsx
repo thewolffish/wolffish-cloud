@@ -370,6 +370,12 @@ type SidebarJob = {
   project: string | null
   /** The job's `icon: <emoji>` marker; null ⇒ the page default. */
   icon: string | null
+  /**
+   * The job's `name: …` marker — what the card calls it. Null on a job written
+   * before the field existed; the schedule heading stands in there. The
+   * heading stays the identity, so renaming is free and never re-keys a job.
+   */
+  name: string | null
   /** Attached files (`file: …` markers) — copies inside the workspace. */
   files: string[]
   /** Working directories (`dir: …` markers) — references to real folders. */
@@ -387,6 +393,8 @@ type SidebarJob = {
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+// The display name is free text, so it takes the whole line like the paths.
+const NAME_MARKER_RE = /^name:\s*(.+?)\s*$/i
 // Paths, so these take the whole line (spaces and all) rather than one token.
 const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
 const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
@@ -409,6 +417,7 @@ function stripLeadingSettings(text: string): string {
       MODE_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
+      NAME_MARKER_RE.test(line) ||
       FILE_MARKER_RE.test(line) ||
       DIR_MARKER_RE.test(line)
     ) {
@@ -461,6 +470,7 @@ function parseSidebarJobs(
     let modeLineIndex: number | null = null
     let project: string | null = null
     let icon: string | null = null
+    let name: string | null = null
     const files: string[] = []
     const dirs: string[] = []
     let sawContent = false
@@ -504,6 +514,12 @@ function parseSidebarJobs(
         const ic = line.match(ICON_MARKER_RE)
         if (ic) {
           icon = ic[1]
+          if (!isBlock) endIdx = j
+          continue
+        }
+        const nm = line.match(NAME_MARKER_RE)
+        if (nm) {
+          name = nm[1]
           if (!isBlock) endIdx = j
           continue
         }
@@ -551,6 +567,7 @@ function parseSidebarJobs(
       modeLineIndex,
       project,
       icon,
+      name,
       files,
       dirs
     })
@@ -592,6 +609,8 @@ export function Heartbeat(): React.JSX.Element {
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorJob, setEditorJob] = useState<SidebarJob | null>(null)
   const [draftSchedule, setDraftSchedule] = useState('')
+  /** Required — an automation with no name can't be saved (see draftSaveable). */
+  const [draftName, setDraftName] = useState('')
   const [draftPrompt, setDraftPrompt] = useState('')
   const [draftIcon, setDraftIcon] = useState('')
   const [draftProjectId, setDraftProjectId] = useState('')
@@ -624,6 +643,7 @@ export function Heartbeat(): React.JSX.Element {
   // the procedures editor: stops idle re-saves and close-time double writes).
   const savedDraftRef = useRef<{
     schedule: string
+    name: string
     prompt: string
     icon: string
     projectId: string
@@ -632,6 +652,7 @@ export function Heartbeat(): React.JSX.Element {
     dirs: string
   }>({
     schedule: '',
+    name: '',
     prompt: '',
     icon: '',
     projectId: '',
@@ -982,6 +1003,7 @@ export function Heartbeat(): React.JSX.Element {
   // ---- Card editor -------------------------------------------------------
 
   const draftScheduleTrimmed = draftSchedule.trim()
+  const draftNameTrimmed = draftName.trim()
   const draftParsed = useMemo(() => parseSchedule(draftScheduleTrimmed), [draftScheduleTrimmed])
   // The heading is the job's identity (run status and card joins key on it) —
   // a second job with the same label would collide, so the editor blocks it.
@@ -1061,6 +1083,7 @@ export function Heartbeat(): React.JSX.Element {
     setBoundLabel(null)
     savedDraftRef.current = {
       schedule: '',
+      name: '',
       prompt: '',
       icon: '',
       projectId: '',
@@ -1069,6 +1092,7 @@ export function Heartbeat(): React.JSX.Element {
     }
     setEditorJob(null)
     applyDraftSchedule(chipSchedule('daily'))
+    setDraftName('')
     setDraftPrompt('')
     setDraftIcon('')
     setDraftProjectId('')
@@ -1086,8 +1110,10 @@ export function Heartbeat(): React.JSX.Element {
       const projectId = job.project ?? ''
       boundRef.current = { label: job.label, active: job.active }
       setBoundLabel(job.label)
+      const name = job.name ?? ''
       savedDraftRef.current = {
         schedule: job.label,
+        name,
         prompt: job.body,
         icon,
         projectId,
@@ -1096,6 +1122,7 @@ export function Heartbeat(): React.JSX.Element {
       }
       setEditorJob(job)
       applyDraftSchedule(job.label)
+      setDraftName(name)
       setDraftPrompt(job.body)
       setDraftIcon(icon)
       setDraftProjectId(projectId)
@@ -1112,6 +1139,7 @@ export function Heartbeat(): React.JSX.Element {
   const persistDraft = useCallback(
     (
       schedule: string,
+      name: string,
       prompt: string,
       icon: string,
       projectId: string,
@@ -1120,6 +1148,7 @@ export function Heartbeat(): React.JSX.Element {
     ): Promise<boolean> => {
       savedDraftRef.current = {
         schedule,
+        name,
         prompt,
         icon,
         projectId,
@@ -1141,6 +1170,9 @@ export function Heartbeat(): React.JSX.Element {
           ...(mode ? [`mode: ${mode}`] : []),
           ...(projectId ? [`project: ${projectId}`] : []),
           `icon: ${icon || DEFAULT_AUTOMATION_ICON}`,
+          // Always written: the editor refuses to save without one, so every
+          // automation this dialog touches leaves with a name.
+          `name: ${name}`,
           ...files.map((f) => `file: ${f}`),
           ...dirs.map((d) => `dir: ${d}`)
         ]
@@ -1222,14 +1254,16 @@ export function Heartbeat(): React.JSX.Element {
   )
 
   // Auto-save ~600ms after the last keystroke, but only while the draft is
-  // actually saveable: schedule recognized, no label collision, prompt
-  // present. An invalid draft is never written — closing keeps the last
+  // actually saveable: schedule recognized, no label collision, name and
+  // prompt present. An invalid draft is never written — closing keeps the last
   // saved state, mirroring the procedures title-required contract.
   useEffect(() => {
     if (!editorOpen) return
-    if (!draftParsed || isDuplicateSchedule || draftPrompt.trim() === '') return
+    if (!draftParsed || isDuplicateSchedule) return
+    if (draftNameTrimmed === '' || draftPrompt.trim() === '') return
     if (
       draftScheduleTrimmed === savedDraftRef.current.schedule &&
+      draftNameTrimmed === savedDraftRef.current.name &&
       draftPrompt === savedDraftRef.current.prompt &&
       draftIcon === savedDraftRef.current.icon &&
       draftProjectId === savedDraftRef.current.projectId &&
@@ -1242,6 +1276,7 @@ export function Heartbeat(): React.JSX.Element {
       () =>
         void persistDraft(
           draftScheduleTrimmed,
+          draftNameTrimmed,
           draftPrompt,
           draftIcon,
           draftProjectId,
@@ -1254,6 +1289,7 @@ export function Heartbeat(): React.JSX.Element {
   }, [
     editorOpen,
     draftScheduleTrimmed,
+    draftNameTrimmed,
     draftPrompt,
     draftIcon,
     draftProjectId,
@@ -1265,7 +1301,11 @@ export function Heartbeat(): React.JSX.Element {
   ])
 
   /** The draft is in a state the file can hold — the autosave gate, reused. */
-  const draftSaveable = draftParsed !== null && !isDuplicateSchedule && draftPrompt.trim() !== ''
+  const draftSaveable =
+    draftParsed !== null &&
+    !isDuplicateSchedule &&
+    draftNameTrimmed !== '' &&
+    draftPrompt.trim() !== ''
 
   const closeEditor = useCallback((): void => {
     setEditorOpen(false)
@@ -1277,6 +1317,7 @@ export function Heartbeat(): React.JSX.Element {
     if (
       draftSaveable &&
       (draftScheduleTrimmed !== saved.schedule ||
+        draftNameTrimmed !== saved.name ||
         draftPrompt !== saved.prompt ||
         draftIcon !== saved.icon ||
         draftProjectId !== saved.projectId ||
@@ -1285,6 +1326,7 @@ export function Heartbeat(): React.JSX.Element {
     ) {
       void persistDraft(
         draftScheduleTrimmed,
+        draftNameTrimmed,
         draftPrompt,
         draftIcon,
         draftProjectId,
@@ -1294,6 +1336,7 @@ export function Heartbeat(): React.JSX.Element {
     }
   }, [
     draftScheduleTrimmed,
+    draftNameTrimmed,
     draftPrompt,
     draftIcon,
     draftProjectId,
@@ -1341,6 +1384,7 @@ export function Heartbeat(): React.JSX.Element {
       if (!draftSaveable) return
       void persistDraft(
         draftScheduleTrimmed,
+        draftNameTrimmed,
         draftPrompt,
         draftIcon,
         draftProjectId,
@@ -1355,6 +1399,7 @@ export function Heartbeat(): React.JSX.Element {
       draftDirs,
       draftSaveable,
       draftScheduleTrimmed,
+      draftNameTrimmed,
       draftPrompt,
       draftIcon,
       draftProjectId,
@@ -1402,7 +1447,10 @@ export function Heartbeat(): React.JSX.Element {
             ? `${t('heartbeat.nextRun', { time: formatFromNow(job.nextRunMs, now, locale) })} · ${formatAbsolute(job.nextRunMs, locale)}`
             : t('heartbeat.active')
         : t('heartbeat.inactive')
-      const parts = [scheduleText]
+      // With a name in the title slot the heading's own syntax would otherwise
+      // vanish from the card — "next run in 21 hours" does not say "weekly".
+      // A job with no name still has it as its title, so don't repeat it.
+      const parts = job.name?.trim() ? [job.label, scheduleText] : [scheduleText]
       const project = job.project ? projectsById.get(job.project) : undefined
       if (project) parts.push(project.title.trim() || t('projects.untitled'))
       const edited = editStamps[job.label]
@@ -1482,6 +1530,10 @@ export function Heartbeat(): React.JSX.Element {
               <ul className="grid grid-cols-3 gap-3">
                 {orderedJobs.map((job) => {
                   const busy = job.active ? busyByLabel.get(job.label) : undefined
+                  // The name is what this automation is CALLED; the schedule is
+                  // what it does, and it already reads on the meta line below.
+                  // A job written before names existed has only its heading.
+                  const title = job.name?.trim() || job.label
                   return (
                     <li key={job.label} className="min-w-0">
                       <div
@@ -1545,10 +1597,10 @@ export function Heartbeat(): React.JSX.Element {
 
                         <div className="flex w-full min-w-0 flex-col gap-1">
                           <span
-                            title={job.label}
+                            title={title}
                             className="text-fg flex min-w-0 items-center gap-2 text-sm font-semibold"
                           >
-                            <bdi className="truncate">{job.label}</bdi>
+                            <bdi className="truncate">{title}</bdi>
                             <Badge variant="primary" size="sm" className="shrink-0">
                               {t(`heartbeat.type.${job.type}`)}
                             </Badge>
@@ -1733,34 +1785,10 @@ export function Heartbeat(): React.JSX.Element {
         }
       >
         <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <span className="text-muted text-xs font-medium">{t('heartbeat.editor.schedule')}</span>
-            <button
-              type="button"
-              onClick={() => setGuideOpen(true)}
-              aria-label={t('heartbeat.editor.guideButton')}
-              title={t('heartbeat.editor.guideButton')}
-              className="text-muted hover:text-fg flex h-7 w-7 cursor-pointer items-center justify-center rounded-md"
-            >
-              <HelpCircleIcon size={15} />
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {CHIP_KINDS.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => applyDraftSchedule(chipSchedule(kind))}
-                className={cn(
-                  'border-border bg-bg text-muted cursor-pointer rounded-full border px-2.5 py-1 text-xs',
-                  'hover:border-accent/50 hover:text-fg',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
-                )}
-              >
-                {t(`heartbeat.editor.chips.${kind}`)}
-              </button>
-            ))}
-          </div>
+          {/* Identity first: what this automation is CALLED, next to the emoji
+              it wears. The schedule follows below — it is a setting of the
+              automation, not its name, and the card now says the name. */}
+          <span className="text-muted text-xs font-medium">{t('heartbeat.editor.name')}</span>
           <div className="flex items-center gap-2">
             <div className="relative">
               {/* A project-bound automation wears the project's emoji — the
@@ -1795,19 +1823,63 @@ export function Heartbeat(): React.JSX.Element {
               )}
             </div>
             <input
-              value={draftSchedule}
-              onChange={(e) => applyDraftSchedule(e.target.value)}
-              placeholder="Daily (09:00)"
-              dir="ltr"
-              aria-label={t('heartbeat.editor.schedule')}
-              aria-invalid={showScheduleError}
-              className={cn(
-                fieldClass,
-                'min-w-0 font-mono',
-                showScheduleError && 'border-rose-500/70'
-              )}
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder={t('heartbeat.editor.namePlaceholder')}
+              dir="auto"
+              aria-label={t('heartbeat.editor.name')}
+              aria-invalid={draftNameTrimmed === ''}
+              className={cn(fieldClass, 'min-w-0')}
             />
           </div>
+          {/* Muted, not red: an empty name on a fresh dialog is where everyone
+              starts, not a mistake. It has to be said all the same — nothing
+              saves without it, so silence here would lose a typed prompt. */}
+          {draftNameTrimmed === '' && (
+            <p className="text-muted text-xs">{t('heartbeat.editor.nameRequired')}</p>
+          )}
+
+          <div className="flex items-center justify-between">
+            <span className="text-muted text-xs font-medium">{t('heartbeat.editor.schedule')}</span>
+            <button
+              type="button"
+              onClick={() => setGuideOpen(true)}
+              aria-label={t('heartbeat.editor.guideButton')}
+              title={t('heartbeat.editor.guideButton')}
+              className="text-muted hover:text-fg flex h-7 w-7 cursor-pointer items-center justify-center rounded-md"
+            >
+              <HelpCircleIcon size={15} />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {CHIP_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => applyDraftSchedule(chipSchedule(kind))}
+                className={cn(
+                  'border-border bg-bg text-muted cursor-pointer rounded-full border px-2.5 py-1 text-xs',
+                  'hover:border-accent/50 hover:text-fg',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
+                )}
+              >
+                {t(`heartbeat.editor.chips.${kind}`)}
+              </button>
+            ))}
+          </div>
+          <input
+            value={draftSchedule}
+            onChange={(e) => applyDraftSchedule(e.target.value)}
+            placeholder="Daily (09:00)"
+            dir="ltr"
+            aria-label={t('heartbeat.editor.schedule')}
+            aria-invalid={showScheduleError}
+            className={cn(
+              fieldClass,
+              'w-full font-mono',
+              showScheduleError && 'border-rose-500/70'
+            )}
+          />
           {showScheduleError || displayParsed === null ? (
             draftParsed === null ? (
               <p className="text-xs text-rose-500">
@@ -2120,7 +2192,11 @@ export function Heartbeat(): React.JSX.Element {
             </div>
           }
         >
-          <p className="text-muted">{t('heartbeat.deleteWarning', { name: deleteTarget.label })}</p>
+          <p className="text-muted">
+            {t('heartbeat.deleteWarning', {
+              name: deleteTarget.name?.trim() || deleteTarget.label
+            })}
+          </p>
         </Modal>
       )}
     </main>

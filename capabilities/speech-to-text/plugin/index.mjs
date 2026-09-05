@@ -49,6 +49,43 @@ let defaultModel = 'small'
 // the silent default (see resolveLanguage).
 let defaultLanguage = ''
 let getConversationId = () => null
+// Settings + provisioning seam (PluginContext.voice), wired by the desktop main
+// process over the same setters/installers the Settings panels use. Undefined
+// in a host that never wired one — the settings tools then refuse rather than
+// writing config.json behind the UI's back, which would strand every open
+// surface on a stale value.
+let voiceHost = null
+
+// The five sizes the Settings panel offers, in the order it lists them, with
+// the trade-off each one is picked for. Anything else is refused: the panel's
+// Select re-seeds from config and renders only these ids.
+const SELECTABLE_MODELS = [
+  { id: 'tiny', size: '~75 MB', note: 'fastest, lowest accuracy — quick previews of long audio' },
+  { id: 'base', size: '~150 MB', note: 'fast, good — when speed beats accuracy' },
+  { id: 'small', size: '~500 MB', note: 'the default — moderate speed, reliable language handling' },
+  { id: 'medium', size: '~1.5 GB', note: 'slow, high accuracy — high-stakes transcription' },
+  { id: 'large', size: '~3 GB', note: 'very slow, best accuracy — research-grade' }
+]
+const SELECTABLE_MODEL_IDS = new Set(SELECTABLE_MODELS.map((m) => m.id))
+
+// A short labeled sample for the settings tool's output. The FULL set of 100
+// accepted codes is WHISPER_LANGUAGES below (the validation source, mirrored in
+// the panels); listing all hundred in every tool result would be noise, and
+// ISO 639-1 is well-known — a wrong code is caught by name on the way in.
+const COMMON_LANGUAGES = [
+  { code: 'auto', label: 'Detect automatically' },
+  { code: 'en', label: 'English' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'zh', label: 'Chinese' }
+]
 
 // Locate the shared python runtime, tolerating the dot-prefix rename bundled
 // capabilities get in the user workspace (python -> .python at runtime).
@@ -127,6 +164,40 @@ const toolDefinitions = [
       },
       required: ['filePath']
     }
+  },
+  {
+    name: 'stt_settings_get',
+    description:
+      "Read the user's Speech-to-Text settings: the default Whisper model size and the pinned transcription language, plus whether the engine is installed. Also returns every selectable model. Call this before changing anything.",
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'stt_settings_set',
+    description:
+      "Change the user's Speech-to-Text defaults — the Whisper model size and/or the transcription language. Applies to every later transcription (including the user's own voice notes) and updates the Settings → Speech-to-Text panel live. Pass only the fields you are changing.",
+    parameters: {
+      type: 'object',
+      properties: {
+        model: {
+          type: 'string',
+          description:
+            'New default model size — accuracy vs. speed. A larger model downloads on first use.',
+          enum: ['tiny', 'base', 'small', 'medium', 'large']
+        },
+        language: {
+          type: 'string',
+          description:
+            'New transcription language: a Whisper ISO 639-1 code ("en", "ar", "fr", "zh"), or "auto" to detect per file. Pinning a language is more reliable than "auto" on short clips.'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'stt_engine_install',
+    description:
+      'Install (or repair) the local faster-whisper speech-recognition engine. Runs the same install as the button in Settings → Speech-to-Text, with the same live progress bar. Only needed when stt_settings_get reports the engine is not installed; transcription otherwise provisions itself on first use.',
+    parameters: { type: 'object', properties: {}, required: [] }
   }
 ]
 
@@ -468,6 +539,140 @@ async function detectLanguage(absPath, corpus) {
   return { success: true, output: JSON.stringify(parsed) }
 }
 
+// ---------- settings + engine provisioning ----------
+//
+// Everything here goes through the host seam, never through a direct write to
+// config.json: the host is the same setter the Settings panel's own IPC calls,
+// broadcast included, so one act updates the stored default, an open panel and
+// the paired phone together. A raw write would update the first and strand the
+// other two.
+
+function languageLabel(code) {
+  if (!code || code === 'auto') return 'Detect automatically'
+  return COMMON_LANGUAGES.find((l) => l.code === code)?.label ?? code
+}
+
+function hostUnavailable() {
+  return {
+    success: false,
+    error:
+      'Speech-to-text settings are not editable in this host — no settings surface is wired. Ask the user to change it in Settings → Speech-to-Text.'
+  }
+}
+
+async function readSttSettings() {
+  if (!voiceHost) return hostUnavailable()
+  const cfg = await voiceHost.getStt()
+  const model = SELECTABLE_MODEL_IDS.has(cfg.defaultModel) ? cfg.defaultModel : 'small'
+  // '' on disk means "never set", which resolveLanguage pins to English — so
+  // report what transcription will ACTUALLY do, not the empty string.
+  const stored = (cfg.language || '').toLowerCase()
+  const language = stored === 'auto' || WHISPER_LANGUAGES.has(stored) ? stored : 'en'
+  const installed = await voiceHost.sttInstalled().catch(() => false)
+  return {
+    success: true,
+    output: JSON.stringify({
+      defaultModel: model,
+      defaultModelNote: SELECTABLE_MODELS.find((m) => m.id === model)?.note ?? '',
+      language,
+      languageLabel: languageLabel(language),
+      languageIsPinned: language !== 'auto',
+      engineInstalled: installed,
+      engineInstalling: voiceHost.sttInstalling(),
+      selectableModels: SELECTABLE_MODELS,
+      commonLanguages: COMMON_LANGUAGES,
+      languageNote:
+        'Any of the 100 Whisper ISO 639-1 codes is accepted, not just the common ones listed.'
+    })
+  }
+}
+
+async function writeSttSettings(args) {
+  if (!voiceHost) return hostUnavailable()
+
+  const patch = {}
+  const changes = []
+
+  const wantedModel = (args?.model ?? '').toString().trim().toLowerCase()
+  if (wantedModel) {
+    if (!SELECTABLE_MODEL_IDS.has(wantedModel)) {
+      return {
+        success: false,
+        error: `Unknown model "${args.model}". Pick one of: ${SELECTABLE_MODELS.map((m) => m.id).join(', ')}.`
+      }
+    }
+    patch.defaultModel = wantedModel
+    changes.push(`model → ${wantedModel} (${SELECTABLE_MODELS.find((m) => m.id === wantedModel).size})`)
+  }
+
+  const wantedLanguage = (args?.language ?? '').toString().trim().toLowerCase()
+  if (wantedLanguage) {
+    if (wantedLanguage !== 'auto' && !WHISPER_LANGUAGES.has(wantedLanguage)) {
+      return {
+        success: false,
+        error: `Unknown language "${args.language}". Pass a Whisper ISO 639-1 code (e.g. en, ar, fr, zh) or "auto".`
+      }
+    }
+    patch.language = wantedLanguage
+    changes.push(`language → ${wantedLanguage} (${languageLabel(wantedLanguage)})`)
+  }
+
+  if (changes.length === 0) {
+    return { success: false, error: 'Nothing to change — pass `model`, `language`, or both.' }
+  }
+
+  const updated = await voiceHost.setStt(patch)
+  // Keep this process's own cache in step with what was just written, so a
+  // transcription later in THIS turn uses the new values without waiting for
+  // the next execute()'s config re-read.
+  if (patch.defaultModel) defaultModel = updated.defaultModel || defaultModel
+  if (patch.language != null) defaultLanguage = (updated.language ?? '').trim()
+
+  const model = updated.defaultModel || 'small'
+  const language = (updated.language || 'en').toLowerCase()
+  return {
+    success: true,
+    output: JSON.stringify({
+      changed: changes,
+      defaultModel: model,
+      language,
+      languageLabel: languageLabel(language),
+      appliesTo:
+        "every transcription from now on, including the user's own spoken messages, until changed again",
+      settingsPanel: 'Settings → Speech-to-Text (updated live)',
+      ...(patch.defaultModel && patch.defaultModel !== 'tiny' && patch.defaultModel !== 'base'
+        ? { note: `The ${model} model downloads once on its first use.` }
+        : {})
+    })
+  }
+}
+
+async function installSttEngine() {
+  if (!voiceHost) return hostUnavailable()
+  if (await voiceHost.sttInstalled().catch(() => false)) {
+    return {
+      success: true,
+      output: JSON.stringify({
+        installed: true,
+        alreadyInstalled: true,
+        message: 'The faster-whisper engine is already installed.'
+      })
+    }
+  }
+  // Deduped in main: if the user pressed Install a moment ago, this joins that
+  // run rather than starting a second one, and both finish together.
+  const res = await voiceHost.installStt()
+  if (!res.ok) return { success: false, error: `Speech-to-text engine install failed: ${res.error}` }
+  return {
+    success: true,
+    output: JSON.stringify({
+      installed: true,
+      message:
+        'The faster-whisper engine is installed. The selected model itself downloads on the first transcription.'
+    })
+  }
+}
+
 // ---------- plugin shell ----------
 
 const plugin = {
@@ -479,11 +684,26 @@ const plugin = {
     if (typeof context.getCurrentConversationId === 'function') {
       getConversationId = context.getCurrentConversationId
     }
+    voiceHost = context.voice ?? null
     // Provisioning (a uv venv + first model download) is deferred to the first
     // call so app launch never blocks on a download.
   },
 
   async execute(toolName, args) {
+    // Settings and provisioning go through the host, not through config.json —
+    // handled before the transcription defaults are read below, which none of
+    // them need.
+    switch (toolName) {
+      case 'stt_settings_get':
+        return readSttSettings()
+      case 'stt_settings_set':
+        return writeSttSettings(args)
+      case 'stt_engine_install':
+        return installSttEngine()
+      default:
+        break
+    }
+
     // Read the defaults from config on each call so Settings changes take
     // effect without a reload. Best-effort. The truthiness guard matters: an
     // empty-string defaultModel persisted by a partial settings write would

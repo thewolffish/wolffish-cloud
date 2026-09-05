@@ -343,16 +343,13 @@ export default function ServicesScreen(): React.JSX.Element {
           connected={byKey.get('computerUse')?.connected ?? false}
         />
         {connectionRows('computerUse')}
-        <ConfigSelectRow
-          field="screenshotMaxWidth"
-          label={t('settings.services.screenshotMaxWidth')}
-          options={SCREENSHOT_WIDTHS}
-        />
-        <ConfigSelectRow
-          field="screenshotFormat"
-          label={t('settings.services.screenshotFormat')}
-          options={SCREENSHOT_FORMATS}
-        />
+        {/* Screenshot width and format used to live here. They are the
+            agent's to pick per capture now (max_width / format on
+            computer_screenshot), so there is no key on this or any device
+            to edit — same shape as the Brave row above. */}
+        <Text className="text-muted text-left font-sans text-xs leading-5">
+          {t('settings.services.computerUse.agentControlled')}
+        </Text>
       </Section>
 
       <Section>

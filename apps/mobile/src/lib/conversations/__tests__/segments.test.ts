@@ -11,6 +11,8 @@ import type {
   NoProviderAvailableInfo,
   Segment
 } from '@/lib/conversations/types'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 function textSeg(delta: string, id: string, worker?: { id: string }): Segment {
   return { kind: 'text', turnId: 't1', segmentId: id, delta, ...(worker ? { worker } : {}) }
@@ -21,9 +23,113 @@ function message(segments: Segment[], extra?: Partial<ConversationMessage>): Con
 }
 
 describe('toWorkspaceRelative', () => {
-  it('strips any absolute desktop workspace prefix', () => {
+  it('strips the live desktop workspace prefix', () => {
+    // ~/.wfc/workspace is the root every send_file marker and every voice
+    // reply is written under, so this is the ONLY case that occurs in
+    // production. The normalizer matched just the legacy root below, which
+    // dropped 100% of delivered files from the phone's feed.
+    expect(toWorkspaceRelative('/Users/younes/.wfc/workspace/files/report.pdf')).toBe(
+      'files/report.pdf'
+    )
+    expect(toWorkspaceRelative('/home/u/.wfc/workspace/speech/1735-ab.mp3')).toBe(
+      'speech/1735-ab.mp3'
+    )
+  })
+
+  it('still strips the pre-rename prefix, and leaves relative paths alone', () => {
     expect(toWorkspaceRelative('/Users/x/.wolffish/workspace/files/a.pdf')).toBe('files/a.pdf')
     expect(toWorkspaceRelative('files/a.pdf')).toBe('files/a.pdf')
+  })
+
+  it('strips a Windows desktop prefix and unifies its separators', () => {
+    expect(toWorkspaceRelative('C:\\Users\\y\\.wfc\\workspace\\files\\report.pdf')).toBe(
+      'files/report.pdf'
+    )
+    expect(toWorkspaceRelative('\\\\nas\\home\\.wfc\\workspace\\uploads\\a.png')).toBe(
+      'uploads/a.png'
+    )
+  })
+
+  it('never splits a POSIX name that merely contains a backslash', () => {
+    expect(toWorkspaceRelative('/Users/x/.wfc/workspace/files/we\\ird.pdf')).toBe(
+      'files/we\\ird.pdf'
+    )
+  })
+
+  it('matches the workspace root the desktop actually defines', () => {
+    // The literal in segments.ts is a copy of a constant that lives in the
+    // other app — the exact shape that drifted once already and cost the
+    // phone every delivered file. Read the real one and prove it normalizes.
+    const rootSource = readFileSync(
+      resolve(__dirname, '../../../../../desktop/src/main/workspace/root.ts'),
+      'utf8'
+    )
+    const parts = rootSource.match(
+      /WORKSPACE_ROOT\s*=\s*path\.join\(\s*os\.homedir\(\)\s*,\s*([^)]+)\)/
+    )
+    expect(parts).not.toBeNull()
+    const segments = [...(parts as RegExpMatchArray)[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+    expect(segments.length).toBeGreaterThan(0)
+    const absolute = ['', 'Users', 'someone', ...segments, 'files', 'a.pdf'].join('/')
+    expect(toWorkspaceRelative(absolute)).toBe('files/a.pdf')
+  })
+})
+
+describe('delivered files under the live workspace root', () => {
+  const deliver = (output: string, tool = 'send_file'): ConversationMessage =>
+    message([
+      { kind: 'tool_call', turnId: 't1', segmentId: 's1', toolCallId: 'c1', name: tool, args: {} },
+      {
+        kind: 'tool_result',
+        turnId: 't1',
+        segmentId: 's2',
+        toolCallId: 'c1',
+        status: 'success',
+        output
+      }
+    ])
+
+  it('renders a send_file delivery — the marker is always absolute', () => {
+    // capabilities/utilities/plugin/index.mjs resolves every delivered path
+    // against the workspace root before emitting, so a relative marker never
+    // reaches the phone. This is the exact shape a real delivery has.
+    const blocks = buildRenderBlocks(
+      deliver('[wolffish-output: /Users/younes/.wfc/workspace/files/report.pdf (document)]')
+    )
+    expect(blocks.filter((b) => b.type === 'file')).toMatchObject([
+      { relPath: 'files/report.pdf', kind: 'document' }
+    ])
+  })
+
+  it('offers the delivered file to the prefetcher', () => {
+    expect(
+      messageFilePaths(
+        deliver('[wolffish-output: /Users/younes/.wfc/workspace/files/chart.chart.json (chart)]')
+      )
+    ).toEqual(['files/chart.chart.json'])
+  })
+
+  it('renders a voice reply — text-to-speech writes an absolute path too', () => {
+    const blocks = buildRenderBlocks(
+      deliver(
+        JSON.stringify({
+          filePath: '/Users/younes/.wfc/workspace/speech/1735-ab.mp3',
+          fileName: '1735-ab.mp3',
+          isResponse: true
+        }),
+        'speak'
+      )
+    )
+    expect(blocks.filter((b) => b.type === 'file')).toMatchObject([
+      { relPath: 'speech/1735-ab.mp3', kind: 'audio' }
+    ])
+  })
+
+  it('keeps an unstrippable Windows path out of the feed', () => {
+    // A path under some other root would pass the leading-slash test on
+    // Windows and become a card retrying a download that cannot exist.
+    const blocks = buildRenderBlocks(deliver('[wolffish-output: C:\\Temp\\frame_23.png (image)]'))
+    expect(blocks.filter((b) => b.type === 'file')).toEqual([])
   })
 })
 

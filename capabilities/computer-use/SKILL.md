@@ -95,12 +95,23 @@ tools:
     description: 'Turn OFF the screen indicator. CRITICAL: this MUST be your LAST action when you finish controlling the screen — and equally when you give up, hit an error you cannot recover from, or hand back to the user. Nothing clears the indicator automatically: if you end a session without calling this, the user is falsely told their screen is still being watched. On = first action, off = last action, every session, no exceptions.'
     parameters: {}
   - name: computer_screenshot
-    description: 'See the screen. If the screen indicator is not on yet, call computer_glow_on FIRST — it must precede the first capture of every session. Captures the chosen display (default 0 = primary) and returns the image plus a Frame line stating its exact pixel size and the cursor position (marked with a magenta crosshair). This image becomes the CURRENT FRAME. Every mouse coordinate you give afterwards must be a pixel position read from the current frame, with (0,0) at its top-left — translation to real screen position (display scaling, Retina, monitor offsets) is fully automatic, so never use screen-resolution values and never add display offsets yourself. Screenshot again whenever the screen may have changed (after clicks that open things, typing, scrolling, app switches, page loads) — acting on an outdated image is the main cause of wrong clicks. If the target is small, crowded, or you are not certain of its exact position, do not guess: zoom into it with computer_zoom first. If this tool ever reports that its image was omitted because the active model cannot view images, computer use is impossible — stop immediately and tell the user to switch to a vision-capable model.'
+    description: 'See the screen. If the screen indicator is not on yet, call computer_glow_on FIRST — it must precede the first capture of every session. Captures the chosen display (default 0 = primary) and returns the image plus a Frame line stating its exact pixel size and the cursor position (marked with a magenta crosshair). This image becomes the CURRENT FRAME. Every mouse coordinate you give afterwards must be a pixel position read from the current frame, with (0,0) at its top-left — translation to real screen position (display scaling, Retina, monitor offsets) is fully automatic, so never use screen-resolution values and never add display offsets yourself. Screenshot again whenever the screen may have changed (after clicks that open things, typing, scrolling, app switches, page loads) — acting on an outdated image is the main cause of wrong clicks. If the target is small, crowded, or you are not certain of its exact position, do not guess: zoom into it with computer_zoom first. If this tool ever reports that its image was omitted because the active model cannot view images, computer use is impossible — stop immediately and tell the user to switch to a vision-capable model. CAPTURE QUALITY IS YOURS TO SET, per capture, through max_width and format — there is no user setting for either, so a capture that is not good enough for the job is yours to fix by taking it again, and a user asking for a higher-resolution or lossless screenshot is a parameter you pass on the next call, never something you explain you cannot do. Default 1280/jpeg for ordinary navigation; go to 1920-2560 and/or png the moment detail decides the outcome. Neither setting sticks — pass it again on every capture that needs it, for as long as the task needs it.'
     parameters:
       display_index:
         type: number
         required: false
         description: 'Index of the display to capture (default 0 = primary). Use computer_list_displays to see all of them, and screenshot each index in turn to find the app you need.'
+      max_width:
+        type: number
+        required: false
+        description: 'Width cap in pixels for THIS capture only (480-2560; default 1280). RAISE to 1920-2560 when: the user asked for a high-resolution, full-quality, detailed or zoomed-in screenshot; you must read dense text, code, a terminal, a document or a table across the whole screen at once; you are judging fine visual detail (alignment, spacing, colors, fonts, image quality); or the previous capture reported heavy compression and you were not certain of what you saw. LOWER to 640-960 only for long repetitive loops where you are just tracking coarse layout or waiting for a page to change — going below the default rarely pays, because computer_zoom already gives native detail for free and one mis-aimed click costs far more than the pixels saved. Tokens scale with area, so 1920 costs roughly 2x the 1280 default and 2560 roughly 4x: spend it where it decides something. The value does not persist; pass it on every capture that needs it.'
+      format:
+        type: string
+        required: false
+        enum:
+          - jpeg
+          - png
+        description: 'Image format for THIS capture only (default jpeg). Use png whenever JPEG artifacts could corrupt what you must read or judge — text-heavy screens, code editors, terminals, small UI labels, thin lines and borders, screenshots where exact color matters, or anything the user will keep or that you must quote back precisely. JPEG stays right for ordinary navigation and hunting for a control: it is several times smaller for the same pixels. Pair png with a raised max_width when the task is reading a screen rather than clicking through it — but note that a full-screen PNG above ~1280px usually exceeds the per-image byte budget and is then delivered as JPEG at the width you asked for, with a note saying so; the resolution is always honored, the codec is what gives. For genuinely lossless pixels use computer_zoom, which is always PNG at native resolution. The value does not persist; pass it on every capture that needs it.'
   - name: computer_zoom
     description: 'Magnify a rectangular region of the current frame, captured fresh at up to native resolution — the precision instrument for small targets and small text. Pass the region in current-frame pixels; you get back a sharp close-up that becomes the NEW current frame, so you then click using the close-up''s own coordinates (far more accurate than clicking from the full screenshot). Magnification depends on region size: a NARROW region magnifies a lot, a wide region barely at all — the result states the factor, and if it warns the zoom is weak (under 2x), do not aim at small controls from it: zoom again into the narrower slice it suggests. Recommended flow for any small target: screenshot → locate it roughly → zoom a region around it (for example 300x200) → click its exact pixel in the zoom. To act outside the zoomed region, take a fresh computer_screenshot first.'
     parameters:
@@ -377,19 +388,80 @@ translation to the right monitor — including monitors with negative origins or
 different DPI — is automatic. There is deliberately no manual offset arithmetic
 anywhere in the contract.
 
-## Configuration
+## Capture Quality Is Model-Owned
 
-`config.json → computerUse`:
+There is **no user-facing control** for screenshot resolution or format. The
+model sets both per capture, on `computer_screenshot`:
 
-- `screenshotMaxWidth` — full-screenshot width cap in pixels (default 1280).
-  Zoom and magnifier images are unaffected; they always render from the
-  native-resolution capture.
-- `screenshotFormat` — `jpeg` (default) or `png` for full screenshots. Zoom and
-  magnifier images are always PNG for crisp text.
+| Parameter | Range | Default | Persists? |
+|---|---|---|---|
+| `max_width` | 480–2560 px (capped at the display's native width) | 1280 | No |
+| `format` | `jpeg` · `png` | `jpeg` | No |
+
+PNG is honored up to a per-image byte budget; past it the capture is delivered
+as JPEG at the requested width and the result says so — see *the one hard
+ceiling* below.
+
+`config.json → computerUse.screenshotMaxWidth` / `screenshotFormat` supply only
+the **default** a call falls back to when it passes nothing. Zoom and magnifier
+images ignore both entirely — they always render PNG from the native-resolution
+capture, which is why zoom, not resolution, is the right tool for one small
+target.
+
+**Neither value sticks.** Each capture starts from the default again. A
+screenshot taken with an override says so in its result, and repeats that the
+next one reverts — a high-res pass silently decaying back to 1280 halfway
+through a reading task is exactly the failure the reminder exists to prevent.
+
+### When to raise
+
+Raise to **1920–2560**, and add `format: png` when the content is text or fine
+lines, whenever detail decides the outcome:
+
+- The user asked for a **high-resolution, full-quality, detailed, sharp, or
+  lossless** screenshot — or complained that the last one was blurry,
+  unreadable, or too small. This is a parameter on the next call, never a
+  limitation to explain.
+- You must **read** rather than navigate: dense text, code, a terminal, a
+  document, a table, a spreadsheet, log output — anything where the whole
+  screen has to be legible at once rather than one region at a time.
+- You are **judging visual detail**: alignment, spacing, typography, colors,
+  icon or image quality, design review, before/after comparison, "does this
+  look right".
+- The previous capture reported **heavy compression** and left you unsure of
+  what you saw. Re-take it wider rather than guess or squint.
+- The screenshot is the **deliverable** — the user will look at it, keep it, or
+  it is being delivered to a channel.
+
+### When to lower
+
+Drop to **640–960** only for long repetitive loops where coarse layout is all
+that matters — watching for a page to finish loading, stepping through many
+near-identical screens, polling for a dialog. Going below the default rarely
+pays: `computer_zoom` already returns native detail for free, and one mis-aimed
+click costs far more than the pixels saved.
+
+### Cost, and the one hard ceiling
+
+Vision tokens scale with image area: 1920 costs roughly 2x the 1280 default,
+2560 roughly 4x, and PNG carries several times more bytes than JPEG for the
+same pixels. That is the reason the default is 1280/JPEG and the reason raising
+it is a decision, not a habit — spend it where it changes what you conclude or
+what the user receives, and drop back on the next capture when it does not.
+
+There is also a real limit underneath. The API refuses a chat request over
+8 MB and the runtime keeps the newest six tool images, so each image has to
+stay near ~1.2 MB of base64. A full-screen PNG at 1920 or 2560 is well past
+that (measured: ~1.7 MB and ~3.8 MB), and several in a row would fail every
+subsequent request rather than just one. So a PNG over budget is **encoded as
+JPEG at the same width**, and the result says so plainly. The width you asked
+for is always honored; the codec is what gives. When you genuinely need
+lossless pixels, ask for `png` at a smaller `max_width`, or use
+`computer_zoom` — it is always PNG at native resolution.
 
 Screenshots, zooms, and click magnifiers are also saved under
 `screenshots/conv-<id>/` in the workspace for chat rendering, channel
-(Telegram/WhatsApp) delivery, and post-hoc aim forensics.
+delivery, and post-hoc aim forensics.
 
 ## Safety
 

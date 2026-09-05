@@ -1,7 +1,7 @@
 import { reconcilePresentedNotifications, refreshPushRegistration } from '@/lib/notifications/push'
 import { clearOverlays, seedOverlays } from '@/lib/sync/overlays'
 import { clearDesktopUpdater, seedDesktopUpdater } from '@/lib/sync/updater'
-import { attachLiveUpdates, reconcile } from '@/lib/sync/sync'
+import { attachLiveUpdates, reconcile, refreshConfig } from '@/lib/sync/sync'
 import { attachTurnStream, seedActiveRuns } from '@/lib/sync/prompt'
 import { bridgeClient } from '@/lib/cloud/bridge'
 import { cloudSession } from '@/lib/cloud/session'
@@ -128,6 +128,24 @@ export function useConnection(): void {
         void reconcile().catch(() => undefined)
       }
       if (isConnected && !wasConnected) {
+        /**
+         * Settings, from the desktop itself.
+         *
+         * The reconcile above already pulled them — but it runs on the SOCKET
+         * edge, and at that instant the org has not yet said whether the
+         * desktop is up, so fetchConfigSnapshot takes its offline branch and
+         * reads the copy the desktop last synced. That copy is only as fresh
+         * as the desktop's last write; anything changed there since is
+         * invisible, and nothing asked again once the machine itself showed
+         * up. A model switched on the desktop half an hour ago stayed
+         * invisible here for exactly that reason.
+         *
+         * This is the same pull against a link that can now answer live, and
+         * it is cheap — one RPC the desktop serves from memory. The desktop
+         * pushes on this edge too; whichever arrives first is the same object,
+         * and the second is a no-op against an already-current store.
+         */
+        void refreshConfig().catch(() => undefined)
         // After attachTurnStream, never before: that call force-settles the
         // turns this phone may have missed the end of while it was away, and
         // this one re-opens the ones the desktop says are still going.

@@ -53,6 +53,12 @@ export type AutomationBlock = {
   /** The `icon: <emoji>` marker; null ⇒ the screen's default. */
   icon: string | null
   /**
+   * The `name: …` marker — what the card calls this automation. Null on a
+   * block written before the field existed; the heading stands in there. The
+   * heading stays the identity every parser and the scheduler key on.
+   */
+  name: string | null
+  /**
    * The repeatable `file: <path>` markers — files the desktop copied into the
    * workspace when they were attached there. The run is told their name, size
    * and path and reads them with its own tools; nothing about them is stored
@@ -241,6 +247,8 @@ export function nextCronMs(expr: string, nowMs: number): number | null {
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+// The display name is free text, so it takes the whole line like the paths.
+const NAME_MARKER_RE = /^name:\s*(.+?)\s*$/i
 // Paths, and repeatable — so these take the whole line, spaces included.
 const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
 const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
@@ -262,6 +270,7 @@ export function stripLeadingSettings(text: string): string {
       MODE_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
+      NAME_MARKER_RE.test(line) ||
       FILE_MARKER_RE.test(line) ||
       DIR_MARKER_RE.test(line)
     ) {
@@ -321,6 +330,7 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
     let modeLineIndex: number | null = null
     let project: string | null = null
     let icon: string | null = null
+    let name: string | null = null
     const files: string[] = []
     const dirs: string[] = []
     let sawContent = false
@@ -363,6 +373,12 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
           if (!isBlock) endIdx = j
           continue
         }
+        const nm = line.match(NAME_MARKER_RE)
+        if (nm) {
+          name = nm[1]
+          if (!isBlock) endIdx = j
+          continue
+        }
         const f = line.match(FILE_MARKER_RE)
         if (f) {
           files.push(f[1])
@@ -397,6 +413,7 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
       modeLineIndex,
       project,
       icon,
+      name,
       files,
       dirs
     })
@@ -460,6 +477,8 @@ export function findBlock(markdown: string, bound: BoundBlock): AutomationBlock 
 
 export type AutomationDraft = {
   schedule: string
+  /** Required — the editor refuses to save a nameless automation. */
+  name: string
   prompt: string
   icon: string
   projectId: string
@@ -518,6 +537,8 @@ function settingLines(
     // Every automation carries an emoji from birth, so this one is always
     // written; the picker can change it but never remove it.
     `icon: ${draft.icon || DEFAULT_AUTOMATION_ICON}`,
+    // Always written for the same reason: the editor gates saving on it.
+    `name: ${draft.name}`,
     ...files.map((file) => `file: ${file}`),
     ...dirs.map((dir) => `dir: ${dir}`)
   ]
@@ -627,6 +648,7 @@ export function addBlockPath(
       MODE_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
+      NAME_MARKER_RE.test(line) ||
       FILE_MARKER_RE.test(line) ||
       DIR_MARKER_RE.test(line)
     ) {

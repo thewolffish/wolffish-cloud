@@ -88,12 +88,16 @@ tools:
         required: false
         description: Reveal/highlight the item in the file manager instead of opening it. Default false.
   - name: system_power
-    description: Control the machine power state — restart, shutdown, sleep, lock, or logout.
+    description: Control the machine power state — restart, shutdown, sleep, lock, or logout. restart/shutdown are SCHEDULED a few seconds out by default so the current turn finishes saving before the machine goes down.
     parameters:
       action:
         type: string
         enum: [restart, shutdown, sleep, lock, logout]
         description: Which power action to perform.
+      delaySeconds:
+        type: integer
+        required: false
+        description: Seconds to wait before a restart/shutdown actually runs, 0-600. Defaults to 20 — enough for this turn to be written to disk before the machine goes down. Raise it if background work you started is still running. Pass 0 only if the user explicitly asked to go down immediately. Ignored for sleep/lock/logout.
 danger_patterns:
   - pattern: 'system_power[\s\S]*"action"\s*:\s*"(restart|shutdown|reboot|logout)"'
     level: destructive
@@ -124,7 +128,8 @@ they work without the browser or computer-use automation.
 - `app_list` — list the currently open GUI apps.
 - `open_path` — open a file/folder/URL with the OS default handler; `reveal`
   shows a file in the file manager instead of opening it.
-- `system_power` — `restart` · `shutdown` · `sleep` · `lock` · `logout`.
+- `system_power` — `restart` · `shutdown` · `sleep` · `lock` · `logout`;
+  `delaySeconds` schedules a restart/shutdown instead of firing it now.
 
 ## Rules
 
@@ -134,6 +139,26 @@ they work without the browser or computer-use automation.
 - **`restart`, `shutdown`, and `logout` require confirmation** and will be
   shown to the user for approval before running. Don't call them speculatively;
   only when the user clearly asked. `sleep` and `lock` run without a prompt.
+- **Never take the machine down at zero delay.** A power action is the one tool
+  call whose effect outlives the turn that made it: when the machine goes, this
+  turn is still being written — the answer, the tool cards, the task timeline,
+  and the copy the org has not received yet. `delaySeconds` defaults to 20 for
+  exactly that reason. Leave it alone unless you have a reason to raise it. Pass
+  `0` only if the user explicitly said to go down immediately, and tell them
+  what it costs.
+- **Reboot last, and say so.** Make the power call the FINAL action of the turn
+  — never mid-plan with steps still queued behind it. Before calling it, finish
+  and report the work, then tell the user in one line what happens next: that
+  the machine restarts in N seconds, what it will apply, and (on Windows) that
+  `shutdown /a` cancels. A user who learns about the reboot from the screen
+  going black was not warned.
+- **Give the machine longer when something is still running.** Raise
+  `delaySeconds` if a long write, a download, an upload, or a background job you
+  started is still in flight — the delay is the only window those have to
+  finish. Seconds are cheap; a half-written file is not.
+- **Don't reboot through the shell.** `shutdown /r`, `Restart-Computer`,
+  `reboot`, and `osascript ... to restart` via `shell_exec` skip the approval
+  card AND the delay, which is the whole safety net. Use `system_power`.
 - **Prefer `open_path` over the shell.** To open a file/folder/URL, use
   `open_path`, not `shell_exec` with `open`/`xdg-open`/`start`.
 - **Use the real app name.** On macOS that's the display name ("Visual Studio

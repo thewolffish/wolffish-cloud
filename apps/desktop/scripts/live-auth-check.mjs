@@ -11,7 +11,7 @@
 import os from 'node:os'
 
 const BASE = process.env.API_BASE ?? 'https://api.wolffi.sh'
-const OWNER_PW = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
+const OWNER_PW = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 
 let failures = 0
 const check = (name, cond, extra = '') => {

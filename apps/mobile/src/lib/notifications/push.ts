@@ -302,8 +302,8 @@ const routedResponses = new Set<string>()
  *  found absent or unusable. */
 let launchHref: Href | null | undefined
 
-/** The in-app route a target names. `wolffish://chat?id=X` is `/chat?id=X`,
- *  `wolffish://settings/model` is `/settings/model` — the deeplink table and
+/** The in-app route a target names. `wolffishcloud://chat?id=X` is `/chat?id=X`,
+ *  `wolffishcloud://settings/model` is `/settings/model` — the deeplink table and
  *  this app's own routes are the same list, by construction. */
 function hrefFor(target: DeeplinkTarget): Href {
   if (target.route === 'chat' && target.conversationId) {

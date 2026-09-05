@@ -426,9 +426,10 @@ function renderBlock(
     case 'compaction':
       return <CompactionCard block={block} />
     case 'reasoning':
-      // In-place thinking — always visible like the turn-end reasoning it
-      // supersedes, not verbose-gated: it is the reply's provenance, not
-      // tool mechanics.
+      // In-place thinking — not verbose-gated: it is the reply's provenance,
+      // not tool mechanics. Its own switch is `inapp.reasoning` (off by
+      // default), enforced inside ReasoningCard so the legacy turn_end copy
+      // obeys the same answer.
       return <ReasoningCard content={block.content} />
     case 'turnEnd':
       return <TurnEndCard block={block} />

@@ -16,11 +16,7 @@ import { cn } from '@/lib/utils/cn'
 import { formatRelativeTime } from '@/lib/utils/relativeTime'
 import { factoryResetDevice } from '@/lib/demo/factoryReset'
 import { applyConfigSnapshot } from '@/lib/demo/importer'
-import {
-  getDemoLastSyncAt,
-  reconnectDemoConnection,
-  useDemoConnectionState
-} from '@/lib/demo/connection'
+import { getDemoLastSyncAt, useDemoConnectionState } from '@/lib/demo/connection'
 import { clearAllBadges, unregisterPush } from '@/lib/notifications/push'
 import { beginSync } from '@/lib/sync/activity'
 import { getLastSyncedAt, refreshConfig, refreshSync, refreshUsage } from '@/lib/sync/sync'
@@ -38,12 +34,12 @@ import { Text, View } from 'react-native'
  * Connection — the link to the organization and, through it, to the desktop.
  *
  * The first screen in Settings when paired — and in demo mode, where the
- * same rows describe the tour's made-up link (lib/demo/connection): always
- * connected, a desktop that is always there, counters that move. Two facts
- * are kept visibly apart: whether the org is reachable (everything on this
- * phone comes from there) and whether the desktop is on the bridge (the
- * machine that runs turns). A phone whose desktop is asleep is not broken;
- * this screen says exactly which half is missing.
+ * same rows say the honest thing: nothing is paired, and here is how to pair
+ * something (lib/demo/connection). Two facts are kept visibly apart: whether
+ * the org is reachable (everything on this phone comes from there) and
+ * whether the desktop is on the bridge (the machine that runs turns). A
+ * phone whose desktop is asleep is not broken; this screen says exactly
+ * which half is missing.
  */
 export default function ConnectionScreen(): React.JSX.Element {
   const { t } = useTranslation()
@@ -56,8 +52,10 @@ export default function ConnectionScreen(): React.JSX.Element {
   // rendering — the demo state is a real BridgeState, just an invented one.
   const state = demoMode ? demoState : liveState
   const liveStatus = useBridgeStatus()
+  // Demo mode is genuinely not connected, and says so: the same describe()
+  // the live path uses, over the demo's own (idle) state.
   const { label: statusLabel, tone: statusTone } = demoMode
-    ? describeBridgeStatus('connected', t)
+    ? { label: t('connection.demoNotPaired'), tone: 'idle' as const }
     : liveStatus
   const readLastSyncAt = demoMode ? getDemoLastSyncAt : getLastSyncedAt
   const [busy, setBusy] = useState(false)
@@ -120,10 +118,6 @@ export default function ConnectionScreen(): React.JSX.Element {
    *  returning to the app does, for a link that has gone quiet. Not awaited:
    *  the status row above reports the outcome as it happens. */
   const reconnect = (): void => {
-    if (demoMode) {
-      reconnectDemoConnection()
-      return
-    }
     bridgeClient.refresh()
   }
 
@@ -202,10 +196,16 @@ export default function ConnectionScreen(): React.JSX.Element {
           </View>
           <View className="flex-1 gap-0.5">
             <Text className="text-fg text-left font-sans-medium text-sm">
-              {desktopName ?? t('connection.desktopUnknown')}
+              {demoMode
+                ? t('connection.desktopNone')
+                : (desktopName ?? t('connection.desktopUnknown'))}
             </Text>
             <Text className="text-muted text-left font-sans text-xs leading-relaxed">
-              {state.desktop ? t('connection.desktopOnline') : t('connection.desktopOffline')}
+              {demoMode
+                ? t('connection.desktopNoneHint')
+                : state.desktop
+                  ? t('connection.desktopOnline')
+                  : t('connection.desktopOffline')}
             </Text>
           </View>
           <View className="mt-1">
@@ -243,20 +243,24 @@ export default function ConnectionScreen(): React.JSX.Element {
       </Section>
 
       <Section title={t('connection.manage')}>
-        <ActionRow
-          icon={<Activity04Icon size={18} className="text-muted" />}
-          title={t('connection.reconnect')}
-          description={t('connection.reconnectHint')}
-          action={
-            <Button size="sm" variant="outline" onPress={reconnect} disabled={busy}>
-              {t('connection.reconnectAction')}
-            </Button>
-          }
-        />
+        {/* Reconnect belongs to a link that exists. In demo there is none —
+            the row below, which pairs a real desktop, is the whole offer. */}
+        {!demoMode && (
+          <ActionRow
+            icon={<Activity04Icon size={18} className="text-muted" />}
+            title={t('connection.reconnect')}
+            description={t('connection.reconnectHint')}
+            action={
+              <Button size="sm" variant="outline" onPress={reconnect} disabled={busy}>
+                {t('connection.reconnectAction')}
+              </Button>
+            }
+          />
+        )}
         <ActionRow
           icon={<QrCode01Icon size={18} className="text-muted" />}
           title={t('connection.repair')}
-          description={t('connection.repairHint')}
+          description={t(demoMode ? 'connection.repairDemoHint' : 'connection.repairHint')}
           action={
             <Button
               size="sm"

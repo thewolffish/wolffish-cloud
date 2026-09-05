@@ -64,6 +64,8 @@ export type BrainstemJob = {
   project?: string | null
   /** Emoji (`icon: …` marker) stamped on the run's conversation for the rail badge. */
   icon?: string | null
+  /** Display name (`name: …` marker); absent ⇒ the schedule heading stands in. */
+  name?: string | null
   /** Attached files (`file: …` markers) — listed to the run, never injected. */
   files?: string[]
   /** Working directories (`dir: …` markers) — listed fresh into the run's tail. */
@@ -247,6 +249,11 @@ export type ParsedSchedule = {
   project?: string | null
   /** Emoji from the `icon: …` marker line; absent ⇒ none. */
   icon?: string | null
+  /**
+   * Display name from the `name: …` marker line; absent ⇒ none. The heading
+   * (the schedule) stays the job's IDENTITY — this is only what the UIs show.
+   */
+  name?: string | null
   /** Attached file paths from the repeatable `file: …` marker lines. */
   files?: string[]
   /** Working directory paths from the repeatable `dir: …` marker lines. */
@@ -588,6 +595,7 @@ export class Brainstem {
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
           icon: schedule.icon ?? null,
+          name: schedule.name ?? null,
           files: schedule.files ?? [],
           dirs: schedule.dirs ?? []
         })
@@ -608,6 +616,7 @@ export class Brainstem {
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
           icon: schedule.icon ?? null,
+          name: schedule.name ?? null,
           files: schedule.files ?? [],
           dirs: schedule.dirs ?? []
         })
@@ -637,6 +646,7 @@ export class Brainstem {
         mode: schedule.mode ?? null,
         project: schedule.project ?? null,
         icon: schedule.icon ?? null,
+        name: schedule.name ?? null,
         files: schedule.files ?? [],
         dirs: schedule.dirs ?? []
       })
@@ -701,6 +711,8 @@ export class Brainstem {
     project: string | null
     /** Emoji from the `icon:` marker; null ⇒ none. */
     icon: string | null
+    /** Display name from the `name:` marker; null ⇒ the heading stands in. */
+    name: string | null
     /** Attached file paths (`file:` markers). */
     files: string[]
     /** Working directories (`dir:` markers). */
@@ -722,6 +734,7 @@ export class Brainstem {
       mode: j.mode ?? null,
       project: j.project ?? null,
       icon: j.icon ?? null,
+      name: j.name ?? null,
       files: j.files ?? [],
       dirs: j.dirs ?? [],
       runAt: j.runAt ?? null
@@ -2019,7 +2032,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
     if (!heading) continue
 
     const headingText = heading[1]
-    const { body, mode, project, icon, files, dirs } = splitMarkers(collectBody(lines, i + 1))
+    const { body, mode, project, icon, name, files, dirs } = splitMarkers(collectBody(lines, i + 1))
     const parsed = matchSchedule(headingText)
 
     if (!parsed) continue
@@ -2038,6 +2051,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       mode,
       project,
       icon,
+      name,
       files,
       dirs
     })
@@ -2125,6 +2139,13 @@ export const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 export const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 export const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 /**
+ * The automation's display name. Free text (spaces and all), so it takes
+ * `(.+?)` like the path markers below rather than a single token. The heading
+ * remains the identity the scheduler keys on — this only names the job for
+ * the people reading it.
+ */
+export const NAME_MARKER_RE = /^name:\s*(.+?)\s*$/i
+/**
  * Attached files and working directories, both REPEATABLE — an automation can
  * carry several of each, so these accumulate instead of last-one-wins. Their
  * value is a whole path, spaces and all, which is why they take `(.+?)` where
@@ -2138,6 +2159,7 @@ export function splitMarkers(body: string): {
   mode: 'single' | 'workflow' | null
   project: string | null
   icon: string | null
+  name: string | null
   files: string[]
   dirs: string[]
 } {
@@ -2145,6 +2167,7 @@ export function splitMarkers(body: string): {
   let mode: 'single' | 'workflow' | null = null
   let project: string | null = null
   let icon: string | null = null
+  let name: string | null = null
   const files: string[] = []
   const dirs: string[] = []
   let i = 0
@@ -2172,6 +2195,12 @@ export function splitMarkers(body: string): {
       i++
       continue
     }
+    const nm = line.match(NAME_MARKER_RE)
+    if (nm) {
+      name = nm[1]
+      i++
+      continue
+    }
     const f = line.match(FILE_MARKER_RE)
     if (f) {
       files.push(f[1])
@@ -2186,7 +2215,7 @@ export function splitMarkers(body: string): {
     }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, files, dirs }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, name, files, dirs }
 }
 
 /**

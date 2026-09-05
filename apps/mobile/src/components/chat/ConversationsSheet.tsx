@@ -6,10 +6,13 @@ import {
   Folder01Icon,
   HeartCheckIcon,
   PlayListIcon,
-  Settings02Icon
+  Settings02Icon,
+  UserGroupIcon,
+  type IconProps
 } from '@/components/core/icons'
 import { UnreadBadge } from '@/components/core/UnreadBadge'
 import { groupByRecency } from '@/lib/conversations/grouping'
+import { useAdminAccess } from '@/lib/cloud/useAdminAccess'
 import { useConversationList } from '@/lib/conversations/hooks'
 import { buildConversationRows, type ConversationRow } from '@/lib/conversations/rows'
 import { useBadges } from '@/state/badges'
@@ -80,9 +83,28 @@ const WIDTH_RATIO = 0.86
 /** Enter/exit duration. Short: this sheet is a menu, not a destination. */
 const SLIDE_MS = 200
 
+type NavRowSpec = {
+  key: string
+  href: string
+  Icon: (props: IconProps) => React.JSX.Element
+  labelKey: string
+  /** Shown only to the tiers that have an admin page (see useAdminAccess). */
+  adminOnly?: boolean
+}
+
 /** The pages the sheet links to, in the desktop nav rail's order. */
-const NAV = [
+const NAV: NavRowSpec[] = [
   { key: 'settings', href: '/settings', Icon: Settings02Icon, labelKey: 'settings.title' },
+  // Directly under Settings, beside the other org-wide page. Admin is a
+  // destination an admin reaches for, not a knob inside Settings — same
+  // placement the desktop sheet uses.
+  {
+    key: 'admin',
+    href: '/settings/admin',
+    Icon: UserGroupIcon,
+    labelKey: 'settings.admin.title',
+    adminOnly: true
+  },
   {
     key: 'leaderboard',
     href: '/settings/leaderboard',
@@ -113,7 +135,7 @@ const NAV = [
     Icon: AiBrain01Icon,
     labelKey: 'settings.tabs.customization'
   }
-] as const
+]
 
 /**
  * One conversation. The chip carries the number and the state; the badge hangs
@@ -373,6 +395,15 @@ function SheetBody({
     if (more) setLimit((current) => current + PAGE)
   }, [more])
 
+  // The admin row is presentation only — every endpoint behind it re-checks
+  // the role server-side — but offering a page whose every call would come
+  // back 403 is worse than not offering it at all.
+  const admin = useAdminAccess()
+  const pageRows = useMemo(
+    () => (admin.canRead ? NAV : NAV.filter((row) => !row.adminOnly)),
+    [admin.canRead]
+  )
+
   const select = useCallback(
     (id: string) => {
       onClose()
@@ -401,7 +432,7 @@ function SheetBody({
         className="flex-col gap-0.5 pb-1"
         style={{ paddingTop: insets.top + 12, paddingHorizontal: 10 }}
       >
-        {NAV.map(({ key, href, Icon, labelKey }) => (
+        {pageRows.map(({ key, href, Icon, labelKey }) => (
           <Pressable
             key={key}
             accessibilityRole="button"

@@ -20,7 +20,7 @@ import {
 } from '../src/main/cloud/capabilitySync'
 
 const BASE = process.env.API_BASE ?? 'https://api.wolffi.sh'
-const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
+const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 const EMAIL = process.env.WFC_DEMO_EMAIL ?? 'gate.keeper.50@demo.wolffi.sh'
 const stamp = Date.now().toString(36)
 

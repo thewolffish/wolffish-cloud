@@ -38,7 +38,9 @@ const phone = (connected: boolean, extra: Record<string, unknown> = {}): unknown
   appVersion: '1.0.48',
   pairedAt: Date.now(),
   lastSeenAt: null,
+  pairMethod: 'qr',
   connected,
+  connectedSince: connected ? Date.now() : null,
   ...extra
 })
 

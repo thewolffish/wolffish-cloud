@@ -31,6 +31,14 @@ export default function ChannelsScreen(): React.JSX.Element {
           label={t('settings.channels.runCards')}
           description={t('settings.channels.runCardsDesktopDescription')}
         />
+        {/* Not a desktop-only row despite the section it sits in: like the
+            feed switch at the top, `inapp.reasoning` is the workspace's
+            answer, so this drives this phone's chat as well. */}
+        <ConfigSwitchRow
+          field="inappReasoning"
+          label={t('settings.channels.reasoning')}
+          description={t('settings.channels.reasoningDescription')}
+        />
       </Section>
 
       {/* This device, as the desktop's Mobile panel sees it — the same

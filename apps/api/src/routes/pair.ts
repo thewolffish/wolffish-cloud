@@ -118,7 +118,8 @@ pair.get('/pair/offer/:id', async (c) => {
   if (row.claimed_device_id) {
     device =
       (await c.env.DB.prepare(
-        'SELECT id, platform, name, app_version, created_at, last_seen_at FROM devices WHERE id = ?1'
+        `SELECT id, platform, name, app_version, model, os, os_version, pair_method,
+                created_at, last_seen_at FROM devices WHERE id = ?1`
       )
         .bind(row.claimed_device_id)
         .first<Record<string, unknown>>()) ?? null
@@ -169,12 +170,15 @@ pairClaim.post('/pair/claim', async (c) => {
     return c.json({ error: 'rate_limited' }, 429)
   }
 
-  let lookup: { column: 'code_hash' | 'token_hash'; hash: string } | null = null
-  if (body.token) lookup = { column: 'token_hash', hash: await tokenHash(body.token) }
+  // Which door was used is the server's own observation, not something the
+  // phone tells us — the panel's "paired by" row is trustworthy for that.
+  let lookup: { column: 'code_hash' | 'token_hash'; hash: string; method: 'qr' | 'code' } | null =
+    null
+  if (body.token) lookup = { column: 'token_hash', hash: await tokenHash(body.token), method: 'qr' }
   else if (body.code) {
     const normalized = normalizeCode(body.code)
     if (!normalized) return c.json({ error: 'invalid_code' }, 400)
-    lookup = { column: 'code_hash', hash: await codeHash(normalized) }
+    lookup = { column: 'code_hash', hash: await codeHash(normalized), method: 'code' }
   }
   if (!lookup) return c.json({ error: 'invalid_request', detail: 'code or token required' }, 400)
 
@@ -209,9 +213,19 @@ pairClaim.post('/pair/claim', async (c) => {
   if (!deviceId) {
     deviceId = newId('dev')
     await c.env.DB.prepare(
-      `INSERT INTO devices (id, user_id, platform, name, app_version) VALUES (?1, ?2, 'mobile', ?3, ?4)`
+      `INSERT INTO devices (id, user_id, platform, name, app_version, model, os, os_version, pair_method)
+       VALUES (?1, ?2, 'mobile', ?3, ?4, ?5, ?6, ?7, ?8)`
     )
-      .bind(deviceId, user.id, d.name ?? '', d.app_version ?? '')
+      .bind(
+        deviceId,
+        user.id,
+        d.name ?? '',
+        d.app_version ?? '',
+        d.model ?? '',
+        d.os ?? '',
+        d.os_version ?? '',
+        lookup.method
+      )
       .run()
   }
 
@@ -223,8 +237,26 @@ pairClaim.post('/pair/claim', async (c) => {
     .run()
   if ((claimed.meta.changes ?? 0) === 0) return c.json({ error: 'pairing_not_found' }, 404)
 
-  await c.env.DB.prepare('UPDATE devices SET last_seen_at = ?1, app_version = ?2 WHERE id = ?3')
-    .bind(nowIso(), d.app_version ?? '', deviceId)
+  // A re-used row learns everything again: a phone that upgraded its OS (or
+  // was renamed) must not read as whatever it was at its first pairing.
+  await c.env.DB.prepare(
+    `UPDATE devices SET last_seen_at = ?1, app_version = ?2, pair_method = ?3,
+       name = CASE WHEN ?4 = '' THEN name ELSE ?4 END,
+       model = CASE WHEN ?5 = '' THEN model ELSE ?5 END,
+       os = CASE WHEN ?6 = '' THEN os ELSE ?6 END,
+       os_version = CASE WHEN ?7 = '' THEN os_version ELSE ?7 END
+     WHERE id = ?8`
+  )
+    .bind(
+      nowIso(),
+      d.app_version ?? '',
+      lookup.method,
+      d.name ?? '',
+      d.model ?? '',
+      d.os ?? '',
+      d.os_version ?? '',
+      deviceId
+    )
     .run()
 
   const sessionId = newId('ses')

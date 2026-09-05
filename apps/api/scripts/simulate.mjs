@@ -13,7 +13,7 @@
  * as governance-working, not errors.
  */
 const BASE = process.env.API_BASE ?? 'http://localhost:8787'
-const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
+const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`)
   return i > 0 ? Number(process.argv[i + 1]) : dflt

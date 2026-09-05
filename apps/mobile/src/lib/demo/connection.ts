@@ -1,43 +1,34 @@
 import type { BridgeState } from '@/lib/cloud/bridge'
-import { KEEPALIVE_MS } from '@/lib/bridge/protocol'
 import { useEffect, useState } from 'react'
 
 /**
- * The demo's org link — the connection the tour's Connection screen
- * describes.
+ * The demo's connection state — which is: not connected to anything.
  *
- * Demo mode has no session and no bridge, but a settings list with no
- * Connection row made the tour a different shape from the paired app it is
- * standing in for. So the demo carries a link of its own: made up, and
- * internally consistent — up since before you looked, a desktop that is
- * always there, counters that tick at the real keepalive cadence, a catch-up
- * clock stamped by the same snapshot read a demo entry runs. The values are
- * fiction; the shape is the real `BridgeState`, so the screen renders both
- * without knowing which it holds.
+ * Demo mode has no session and no bridge, and the Connection screen now says
+ * exactly that. It used to invent a link: a desktop that was always there,
+ * an uptime that predated your arrival, counters ticking at the keepalive
+ * cadence. It read well and it was a lie — a phone that appears paired to a
+ * machine that does not exist teaches the wrong thing about the product, and
+ * the one thing a person might want to do from that screen (pair a real
+ * desktop) looked already done.
+ *
+ * So the screen keeps its shape — the same real `BridgeState`, the same rows
+ * — with the honest values: no desktop, no traffic, nothing since. Pairing
+ * for real is one row below, where it always was.
+ *
+ * What stays is the catch-up clock: the demo dataset really is applied to
+ * this phone, and `markDemoConnectionSync` stamps when. That is a local
+ * event, not a claim about a link.
  *
  * In-memory only, like the chat runtime: `resetDemoConnection` drops it with
- * the dataset it described (purgeDemoState), and the next demo entry starts
- * a fresh link.
+ * the dataset it described (purgeDemoState).
  */
 
-/** How long the made-up link has already been up when first looked at —
- *  a lived-in "Connected for 3h", never a suspicious "just now". */
-const BASE_UPTIME_MS = 13_680_000
-
-const BASE_FRAMES_SENT = 1_369
-const BASE_FRAMES_RECEIVED = 2_642
-const BASE_BYTES_SENT = 1_204_566
-const BASE_BYTES_RECEIVED = 58_720_412
-
+/** The org the demo's content belongs to — an address, not a connection. */
 export const DEMO_API_BASE = 'https://api.wolffi.sh'
-export const DEMO_DESKTOP_NAME = 'Sara’s MacBook Pro'
 
 type DemoLink = {
-  startedAt: number
-  connectedAt: number
   lastSyncAt: number | null
-  reconnects: number
-  catchUps: number
 }
 
 let link: DemoLink | null = null
@@ -49,42 +40,24 @@ function emit(): void {
 }
 
 function ensureLink(): DemoLink {
-  if (!link) {
-    const now = Date.now()
-    link = {
-      startedAt: now,
-      connectedAt: now - BASE_UPTIME_MS,
-      lastSyncAt: null,
-      reconnects: 0,
-      catchUps: 0
-    }
-  }
+  if (!link) link = { lastSyncAt: null }
   return link
 }
 
-/** The link right now — computed on every read, so each read is a link
- *  whose traffic has moved. */
+/** Demo mode's connection, stated plainly: there isn't one. */
 export function demoConnectionSnapshot(): BridgeState {
-  const current = ensureLink()
-  const heartbeats = Math.floor((Date.now() - current.startedAt) / KEEPALIVE_MS)
   return {
-    status: 'connected',
-    online: true,
-    desktop: {
-      deviceId: 'dev_demo_desktop',
-      name: DEMO_DESKTOP_NAME,
-      platform: 'darwin',
-      appVersion: '0.1.0',
-      connectedAt: current.connectedAt
-    },
+    status: 'idle',
+    online: false,
+    desktop: null,
     apiBase: DEMO_API_BASE,
-    connectedAt: current.connectedAt,
+    connectedAt: null,
     lastError: null,
-    reconnects: current.reconnects,
-    framesSent: BASE_FRAMES_SENT + heartbeats + current.catchUps * 3,
-    framesReceived: BASE_FRAMES_RECEIVED + heartbeats + current.catchUps * 5,
-    bytesSent: BASE_BYTES_SENT + heartbeats * 44,
-    bytesReceived: BASE_BYTES_RECEIVED + heartbeats * 44
+    reconnects: 0,
+    framesSent: 0,
+    framesReceived: 0,
+    bytesSent: 0,
+    bytesReceived: 0
   }
 }
 
@@ -94,11 +67,9 @@ export function subscribeDemoConnection(listener: () => void): () => void {
 }
 
 /** A catch-up ran — applyConfigSnapshot stamps this on every demo entry and
- *  every Sync press. */
+ *  every Sync press. The one real event this module records. */
 export function markDemoConnectionSync(): void {
-  const current = ensureLink()
-  current.lastSyncAt = Date.now()
-  current.catchUps += 1
+  ensureLink().lastSyncAt = Date.now()
   emit()
 }
 
@@ -106,15 +77,7 @@ export function getDemoLastSyncAt(): number | null {
   return link?.lastSyncAt ?? null
 }
 
-/** The screen's Reconnect, in fiction: the link drops and rebuilds instantly. */
-export function reconnectDemoConnection(): void {
-  const current = ensureLink()
-  current.connectedAt = Date.now()
-  current.reconnects += 1
-  emit()
-}
-
-/** Forget the fiction — purgeDemoState's in-memory step, and the tests'. */
+/** Forget it — purgeDemoState's in-memory step, and the tests'. */
 export function resetDemoConnection(): void {
   link = null
   emit()
@@ -123,10 +86,9 @@ export function resetDemoConnection(): void {
 const DEMO_POLL_MS = 5_000
 
 /**
- * The made-up link for a screen: re-read on every mutation above and on a
- * 5s clock for the keepalive share of the counters. Kept in STATE on
- * purpose — under React Compiler a Date.now() inside a module call is
- * invisible to memoization, and the counters would freeze.
+ * The demo's connection state for a screen. Subscribed and polled like the
+ * live one so the rows below it (the catch-up clock in particular) refresh
+ * on the same cadence in both modes.
  */
 export function useDemoConnectionState(): BridgeState {
   const [state, setState] = useState(demoConnectionSnapshot)

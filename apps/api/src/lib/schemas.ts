@@ -80,7 +80,12 @@ export const PairClaimSchema = z
       .object({
         id: idStr.optional(),
         name: z.string().max(200).optional(),
-        app_version: z.string().max(64).optional()
+        app_version: z.string().max(64).optional(),
+        /** What the phone is, for the desktop's Mobile panel. Descriptive
+         *  only — nothing is authorized by it. */
+        model: z.string().max(120).optional(),
+        os: z.enum(['ios', 'android']).optional(),
+        os_version: z.string().max(60).optional()
       })
       .optional()
   })

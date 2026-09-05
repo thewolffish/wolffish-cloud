@@ -14,7 +14,7 @@
  * blob-by-path lookup, and the per-day usage fold.
  */
 const BASE = process.env.API_BASE ?? 'http://127.0.0.1:8787'
-const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish'
+const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 const OWNER = process.env.WFC_OWNER_EMAIL ?? 'gate.keeper.50@demo.wolffi.sh'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
@@ -129,7 +129,13 @@ check(
 const claim = await api('/auth/pair/claim', {
   body: {
     code: sloppy,
-    device: { name: 'smoke-phone', app_version: '1.0.48' }
+    device: {
+      name: 'smoke-phone',
+      app_version: '1.0.48',
+      model: 'iPhone 16 Pro',
+      os: 'ios',
+      os_version: '26.6'
+    }
   }
 })
 check(
@@ -189,6 +195,19 @@ check(
   mobiles.some((d) => d.id === phoneDeviceId) && mobiles.some((d) => d.id === phone2.device_id),
   JSON.stringify(devices.json)
 )
+// The Mobile panel describes a phone from these fields alone — it must read
+// in full whether or not that phone is awake, so they live on the row.
+const listed = mobiles.find((d) => d.id === phoneDeviceId)
+check(
+  'device row carries what the phone is',
+  listed?.model === 'iPhone 16 Pro' && listed?.os === 'ios' && listed?.os_version === '26.6',
+  JSON.stringify(listed)
+)
+check('device row records the door: typed code', listed?.pair_method === 'code', listed?.pair_method)
+check(
+  'device row records the door: scanned QR',
+  mobiles.find((d) => d.id === phone2.device_id)?.pair_method === 'qr'
+)
 check(
   'own device refuses self-revoke',
   (await api(`/v1/devices/${desktopDeviceId}`, { token: D, method: 'DELETE' })).status === 400
@@ -224,8 +243,12 @@ check(
     status1.json.desktop.name === 'Smoke Desktop'
 )
 
+// The connect carries a DIFFERENT model and OS than the claim did: a phone
+// that was upgraded (or restored onto new hardware) must correct its own row,
+// and that write is best-effort inside the object — silent if it were wrong.
 const phone = socket(
-  `${WS_BASE}/v1/bridge/ws?role=phone&access_token=${P2}&name=iPhone&platform=ios&version=1.0.48`
+  `${WS_BASE}/v1/bridge/ws?role=phone&access_token=${P2}&name=iPhone&platform=ios&version=1.0.48` +
+    `&model=iPhone%2017%20Pro&os=ios&os_version=27.0`
 )
 await phone.opened
 const p1 = await phone.next((f) => f.t === 'presence')
@@ -235,6 +258,16 @@ check(
   'desktop learns the phone arrived',
   p2.phones[0]?.deviceId === phoneDeviceId && p2.phones[0]?.name === 'iPhone'
 )
+{
+  await sleep(150) // the row write rides waitUntil, not the upgrade response
+  const after = await api('/v1/devices', { token: D })
+  const row = (after.json?.devices ?? []).find((d) => d.id === phoneDeviceId)
+  check(
+    'connecting refreshes what the phone is',
+    row?.model === 'iPhone 17 Pro' && row?.os_version === '27.0',
+    JSON.stringify(row)
+  )
+}
 
 // RPC round trip: phone → bridge → desktop → bridge → phone.
 phone.send({
@@ -476,6 +509,21 @@ const days = await api('/v1/usage/days?tz=180', { token: D })
 check(
   'usage days fold',
   days.status === 200 && Array.isArray(days.json?.days) && days.json.tz === 180
+)
+
+// ── 10 · leave nothing paired ────────────────────────────────────────────
+// The first phone was unpaired as a scenario; the second was only ever a way
+// to exercise the QR door, and an account that ends a gate run with a phone
+// on it is an account whose Mobile panel lies to the next person to open it.
+check(
+  'the QR phone is unpaired on the way out',
+  (await api(`/v1/devices/${phone2.device_id}`, { token: D, method: 'DELETE' })).status === 200
+)
+const leftover = await api('/v1/devices', { token: D })
+check(
+  'the run leaves no paired phone behind',
+  !(leftover.json?.devices ?? []).some((d) => d.platform === 'mobile' && d.paired),
+  JSON.stringify((leftover.json?.devices ?? []).filter((d) => d.platform === 'mobile' && d.paired))
 )
 
 console.log(`\n${failures === 0 ? '🎉' : '💥'} ${n - failures}/${n} checks passed`)

@@ -241,6 +241,16 @@ textarea,
   animation-name: wf-sheet-in-rtl;
 }
 
+/* Trailing-edge variant: same motion mirrored, for sheets that open opposite
+   the profile/conversations pair (the chat's logs and files sheets). */
+.wf-sheet-panel-end {
+  animation: wf-sheet-in-rtl 200ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+[dir='rtl'] .wf-sheet-panel-end {
+  animation-name: wf-sheet-in;
+}
+
 @keyframes rainbow-slide {
   0% {
     background-position: 0% 0;

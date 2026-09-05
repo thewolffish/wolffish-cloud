@@ -36,10 +36,15 @@ export type SafetyConfig = {
  * `runCards` (default false) is the separate question of whether a
  * RUNNING automation floats its live card over this app. Compaction and
  * reflection runs have the same switch in their own panels.
+ *
+ * `reasoning` (default false) is whether the model's thinking renders as a
+ * collapsible card. One workspace answer for this app and the phone, and
+ * display-only: the reasoning is still streamed, stored and exported.
  */
 export type InAppConfig = {
   verbose?: boolean
   runCards?: boolean
+  reasoning?: boolean
 }
 
 export type InAppApi = {
@@ -764,6 +769,14 @@ export type ChatApi = {
      * end-of-turn save reconcile with the shell instead of duplicating it.
      */
     userMessageId?: string
+    /**
+     * The feed id of the assistant message this turn will stream into. Main
+     * checkpoints the turn-so-far to disk under this id while it runs, so the
+     * end-of-turn save reconciles with the checkpoint by id instead of leaving
+     * a duplicate — and so a crash or a machine restart mid-run leaves the run
+     * on disk (and on its way to the org) rather than the prompt alone.
+     */
+    assistantMessageId?: string
     /** Active working-folder paths — the agent injects fresh listings into the outbound volatile tail. */
     workingFolders?: string[]
     /**
@@ -1292,6 +1305,12 @@ export type HeartbeatJobView = {
   type: string
   cron: string | null
   label: string
+  /**
+   * The automation's display name (its `name: …` marker); null on a job that
+   * predates the field, where the schedule heading stands in. The heading —
+   * `label` — stays the identity the scheduler and the file grammar key on.
+   */
+  name: string | null
   body: string
   /** The job's own chat mode (its `mode: …` marker); null ⇒ follows global. */
   mode: 'single' | 'workflow' | null
@@ -1767,7 +1786,10 @@ export type MobilePairedPhone = {
   appVersion: string | null
   pairedAt: number
   lastSeenAt: number | null
+  /** Which door it came through, as the org recorded it at the claim. */
+  pairMethod: 'qr' | 'code' | null
   connected: boolean
+  connectedSince: number | null
 }
 
 export type MobileStatus = {
@@ -1862,9 +1884,13 @@ export type ComputerUsePermissions = {
   screenRecording: boolean
 }
 
+/**
+ * No setter: screenshot resolution and format are the agent's to choose per
+ * capture (`max_width` / `format` on computer_screenshot), so the stored
+ * values are a fallback default and nothing in the UI writes them.
+ */
 export type ComputerUseApi = {
   getConfig: () => Promise<ComputerUseConfig>
-  setConfig: (patch: Partial<ComputerUseConfig>) => Promise<{ ok: true; config: ComputerUseConfig }>
   checkPermissions: () => Promise<ComputerUsePermissions>
 }
 
@@ -2402,7 +2428,6 @@ const api: WolffishApi = {
   },
   computerUse: {
     getConfig: () => ipcRenderer.invoke('computerUse:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('computerUse:setConfig', patch),
     checkPermissions: () => ipcRenderer.invoke('computerUse:checkPermissions')
   },
   browserExtension: {

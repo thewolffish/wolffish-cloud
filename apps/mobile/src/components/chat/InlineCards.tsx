@@ -3,6 +3,7 @@ import { ArrowDown01Icon, ArrowRight01Icon, ArrowLeft01Icon } from '@/components
 import type { RenderBlock } from '@/lib/conversations/segments'
 import type { WorkflowSnapshot } from '@/lib/conversations/types'
 import { cn } from '@/lib/utils/cn'
+import { useConfigValue } from '@/state/demoConfig'
 import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { I18nManager, Pressable, Text, View } from 'react-native'
@@ -34,19 +35,27 @@ export const ModelChip = memo(function ModelChip({
  * plain text when open. Renders the in-place `reasoning` blocks at their true
  * position in the stream, and the legacy turn_end copy on conversations
  * persisted before in-place reasoning existed (TurnEndCard below).
+ *
+ * Hidden entirely unless `inapp.reasoning` is on — the workspace's own
+ * setting, edited from Settings → Channels here or the desktop's In-App Chat
+ * panel, and off by default. Gated HERE rather than at each call site so the
+ * in-place blocks and the legacy turn_end copy can never disagree.
  */
 export const ReasoningCard = memo(function ReasoningCard({
   content
 }: {
   content: string
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useTranslation()
+  const show = useConfigValue('inappReasoning')
   const [expanded, setExpanded] = useState(false)
   const Chevron = expanded
     ? ArrowDown01Icon
     : I18nManager.isRTL
       ? ArrowLeft01Icon
       : ArrowRight01Icon
+
+  if (!show) return null
 
   return (
     <View className="bg-surface border-border w-[85%] flex-col gap-2 self-start rounded-xl border px-3 py-2.5">
@@ -76,7 +85,8 @@ export const TurnEndCard = memo(function TurnEndCard({
   block: Extract<RenderBlock, { type: 'turnEnd' }>
 }): React.JSX.Element | null {
   const { t } = useTranslation()
-  const reasoning = block.reasoningContent?.trim()
+  const showReasoning = useConfigValue('inappReasoning')
+  const reasoning = showReasoning ? block.reasoningContent?.trim() : ''
   const failed = block.stopReason === 'error' || block.stopReason === 'no_provider_available'
   // Provider failures render as the desktop's error cards wherever they
   // appear — even on a turn that retried through them and finished, which

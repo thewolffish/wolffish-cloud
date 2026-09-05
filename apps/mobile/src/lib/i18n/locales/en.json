@@ -85,7 +85,10 @@
       "modeLabel": "Chat mode",
       "thinkingLabel": "Thinking",
       "noModel": "No model",
-      "orgNote": "Served through your organization's API. The desktop chooses the model; this device shows it."
+      "orgNote": "Served through your organization's API. Picking a model here changes it on your desktop too — the organization decides which models are on the list.",
+      "contextSpec": "{{value}} ctx",
+      "reasoningSpec": "reasoning",
+      "visionSpec": "vision"
     },
     "channels": {
       "subtitle": "Where Wolffish talks to you.",
@@ -98,7 +101,9 @@
       "runCards": "Run cards",
       "runCardsDesktopDescription": "Show a live card over the desktop app while one of your automations or procedures runs. Off (the default) keeps that screen quiet — the run still happens and still reports on its own page.",
       "runCardsPhoneDescription": "Show a live card on this phone while one of your automations or procedures runs on the desktop. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
-      "enabled": "Enabled"
+      "enabled": "Enabled",
+      "reasoning": "Show reasoning",
+      "reasoningDescription": "Show the model's thinking as a collapsible card in the chat, here and on the desktop. Off (the default) hides it — the model still thinks, and the reasoning is still saved with the conversation."
     },
     "services": {
       "subtitle": "Connections the agent uses.",
@@ -145,6 +150,9 @@
       },
       "tts": {
         "hint": "Kokoro runs locally — voices are English only."
+      },
+      "computerUse": {
+        "agentControlled": "The agent picks each screenshot’s resolution and format itself — sharper when it needs detail, lighter when it is only navigating."
       },
       "desktopOnly": "Managed in the desktop app."
     },
@@ -423,7 +431,6 @@
       "desktopNote": "Servers are added on the desktop."
     },
     "admin": {
-      "rowDescription": "People, plans and the audit log",
       "title": "Admin",
       "subtitle": "Everyone in the deployment: what they spend, and how to help them.",
       "subtitleReadOnly": "Everyone in the deployment and what they spend. Your tier is read-only.",
@@ -616,7 +623,8 @@
         "unlimited": "Unlimited",
         "plansTitle": "Token plans",
         "plansSubtitle": "The three ceilings you can assign. Everyone starts on Standard."
-      }
+      },
+      "rowDescription": "People, plans and the audit log"
     }
   },
   "updates": {
@@ -1223,6 +1231,9 @@
     "editor": {
       "createTitle": "New automation",
       "editTitle": "Edit automation",
+      "name": "Name",
+      "namePlaceholder": "Morning digest",
+      "nameRequired": "Give this automation a name.",
       "schedule": "Schedule",
       "pickIcon": "Choose an icon",
       "project": "Project",
@@ -1364,6 +1375,10 @@
     "account": "Signed in as",
     "organization": "Organization",
     "demoAccount": "demo@wolffish-inc",
+    "demoNotPaired": "Not paired",
+    "desktopNone": "No desktop paired",
+    "desktopNoneHint": "This is the demo — everything here is a saved copy, and nothing is connected. Pair a desktop below to run turns from this phone for real.",
+    "repairDemoHint": "Connect this phone to your desktop.",
     "endpoint": "API",
     "since": "Connected for",
     "lastError": "Last error",

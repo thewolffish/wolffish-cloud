@@ -28,7 +28,7 @@ const toolDefinitions = [
   {
     name: 'automation_create',
     description:
-      'Create a new automation that runs autonomously on a schedule. Writes a new entry to the heartbeat and registers it live. Provide the schedule (one of the exact forms) and the instruction to run when it fires.',
+      'Create a new automation that runs autonomously on a schedule. Writes a new entry to the heartbeat and registers it live. Provide a short name, the schedule (one of the exact forms) and the instruction to run when it fires.',
     parameters: {
       type: 'object',
       properties: {
@@ -37,6 +37,11 @@ const toolDefinitions = [
           enum: ['single', 'workflow'],
           description:
             "Which chat mode the automation runs in — 'single' or 'workflow'. Optional."
+        },
+        name: {
+          type: 'string',
+          description:
+            'A short human name for this automation — what the user will see on its card (e.g. "Morning digest"). Two to four words; describe the job, not the schedule.'
         },
         schedule: {
           type: 'string',
@@ -49,7 +54,7 @@ const toolDefinitions = [
             "The natural-language instruction to run when the job fires. Self-contained (the job has no chat context), with tools available and tool calls auto-approved. No markdown headings (no lines starting with '## ')."
         }
       },
-      required: ['schedule', 'instruction']
+      required: ['name', 'schedule', 'instruction']
     }
   },
   {
@@ -68,6 +73,10 @@ const toolDefinitions = [
         identifier: {
           type: 'string',
           description: 'The automation to edit — its number from automation_list, or its exact schedule label (e.g. "Daily (08:00)").'
+        },
+        name: {
+          type: 'string',
+          description: 'New display name. Omit to keep the current one.'
         },
         schedule: {
           type: 'string',
@@ -145,7 +154,10 @@ async function listAutomations() {
     const timing = valid ? preview.human : '⚠ invalid schedule — will NOT run'
     const runningTag = job && job.running ? ' · **running now**' : ''
     const modeTag = b.mode ? ` · mode: ${b.mode}` : ''
-    lines.push(`${b.index}. **${b.label}** — ${timing}${runningTag}${modeTag}`)
+    // The name is what the user calls it; the heading stays the identifier
+    // `automation_edit`/`_delete`/`_run` take, so both belong on the line.
+    const title = b.name ? `**${b.name}** (${b.label})` : `**${b.label}**`
+    lines.push(`${b.index}. ${title} — ${timing}${runningTag}${modeTag}`)
     if (valid && preview.cron) lines.push(`   cron: \`${preview.cron}\``)
     lines.push(`   ${oneLine(b.body) || '(no instruction)'}`)
     // Attached files and working folders are part of what this automation IS —
@@ -171,7 +183,9 @@ async function createAutomation(args) {
   const instruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
   const modeArg = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
   const iconArg = typeof args?.icon === 'string' ? args.icon.trim() : ''
+  const nameArg = typeof args?.name === 'string' ? args.name.trim() : ''
 
+  if (!nameArg) return { success: false, error: 'automation_create: provide a `name`.' }
   if (!rawSchedule) return { success: false, error: 'automation_create: provide a `schedule`.' }
   if (!instruction) return { success: false, error: 'automation_create: provide an `instruction` to run.' }
   if (modeArg && modeArg !== 'single' && modeArg !== 'workflow') {
@@ -200,7 +214,11 @@ async function createAutomation(args) {
   const mode = modeArg || (automations.getGlobalMode ? await automations.getGlobalMode() : 'single')
 
   const raw = await loadHeartbeat()
-  const next = insertBlock(raw, normalizeHeading(schedule), composeBody({ mode, icon }, instruction))
+  const next = insertBlock(
+    raw,
+    normalizeHeading(schedule),
+    composeBody({ mode, icon, name: nameArg }, instruction)
+  )
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_create: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -213,7 +231,7 @@ async function createAutomation(args) {
   return {
     success: true,
     output: [
-      `Created ${isOnce ? 'one-time ' : ''}automation "${normalizeHeading(schedule)}" — runs ${preview.human}.`,
+      `Created ${isOnce ? 'one-time ' : ''}automation "${nameArg}" (${normalizeHeading(schedule)}) — runs ${preview.human}.`,
       '',
       `It will run this instruction autonomously when it fires:`,
       `> ${oneLine(instruction)}`,
@@ -233,10 +251,11 @@ async function editAutomation(args) {
   const newSchedule = typeof args?.schedule === 'string' ? args.schedule.trim() : ''
   const newInstruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
   const newMode = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
+  const newName = typeof args?.name === 'string' ? args.name.trim() : ''
 
   if (!identifier) return { success: false, error: 'automation_edit: provide an `identifier` (number or label).' }
-  if (!newSchedule && !newInstruction && !newMode) {
-    return { success: false, error: 'automation_edit: provide a new `schedule`, `instruction`, or `mode`.' }
+  if (!newSchedule && !newInstruction && !newMode && !newName) {
+    return { success: false, error: 'automation_edit: provide a new `name`, `schedule`, `instruction`, or `mode`.' }
   }
   if (newMode && newMode !== 'single' && newMode !== 'workflow') {
     return { success: false, error: "automation_edit: `mode` must be 'single' or 'workflow'." }
@@ -278,6 +297,7 @@ async function editAutomation(args) {
         mode,
         project: target.block.project,
         icon: target.block.icon,
+        name: newName || target.block.name,
         files: target.block.files,
         dirs: target.block.dirs
       },
@@ -462,7 +482,7 @@ function parseActiveBlocks(raw) {
       .replace(/^---+\s*$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-    const { body, mode, project, icon, files, dirs } = splitMarkers(rawBody)
+    const { body, mode, project, icon, name, files, dirs } = splitMarkers(rawBody)
     blocks.push({
       index: i + 1,
       label: h.label,
@@ -470,6 +490,7 @@ function parseActiveBlocks(raw) {
       mode,
       project,
       icon,
+      name,
       files,
       dirs,
       headingStart: h.headingStart,
@@ -513,6 +534,9 @@ function tidyOutsideComments(raw) {
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+// The automation's display name — free text, so it takes the rest of the line.
+// The heading stays the identity; this is only what the apps' cards show.
+const NAME_MARKER_RE = /^name:\s*(.+?)\s*$/i
 // Attached files and working directories — REPEATABLE, and their value is a
 // whole path (spaces and all), so these take the rest of the line.
 const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
@@ -523,6 +547,7 @@ function splitMarkers(body) {
   let mode = null
   let project = null
   let icon = null
+  let name = null
   const files = []
   const dirs = []
   let i = 0
@@ -550,6 +575,12 @@ function splitMarkers(body) {
       i++
       continue
     }
+    const nm = NAME_MARKER_RE.exec(line)
+    if (nm) {
+      name = nm[1]
+      i++
+      continue
+    }
     const f = FILE_MARKER_RE.exec(line)
     if (f) {
       files.push(f[1])
@@ -564,7 +595,7 @@ function splitMarkers(body) {
     }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, files, dirs }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, name, files, dirs }
 }
 
 function composeBody(markers, body) {
@@ -572,6 +603,7 @@ function composeBody(markers, body) {
   if (markers.mode) lines.push(`mode: ${markers.mode}`)
   if (markers.project) lines.push(`project: ${markers.project}`)
   if (markers.icon) lines.push(`icon: ${markers.icon}`)
+  if (markers.name) lines.push(`name: ${markers.name}`)
   for (const file of markers.files ?? []) lines.push(`file: ${file}`)
   for (const dir of markers.dirs ?? []) lines.push(`dir: ${dir}`)
   return lines.length > 0 ? `${lines.join('\n')}\n\n${body.trim()}` : body.trim()

@@ -237,7 +237,10 @@ export default function AutomationsScreen(): React.JSX.Element {
           : nextRunMs != null
             ? `${t('heartbeat.nextRun', { time: formatSignedRelative(nextRunMs, now, t) })} · ${formatAbsoluteMoment(nextRunMs, locale)}`
             : t('heartbeat.active')
-      const parts = [schedule]
+      // With a name in the title slot the heading's own syntax would otherwise
+      // vanish from the card — "next run in 21 hours" does not say "weekly".
+      // A block with no name still has it as its title, so don't repeat it.
+      const parts = block.name?.trim() ? [block.label, schedule] : [schedule]
       const edited = data?.stamps[block.label]
       if (edited != null) {
         parts.push(t('heartbeat.editedAt', { time: formatSignedRelative(edited, now, t) }))
@@ -335,14 +338,16 @@ export default function AutomationsScreen(): React.JSX.Element {
                   <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
                     <Text className="text-2xl leading-7">{cardIcon(block)}</Text>
                     <View className="min-w-0 flex-1 flex-col gap-1">
-                      {/* The heading is the schedule syntax — LTR technical
-                          text, even in Arabic. */}
+                      {/* The name is what this automation is CALLED; the
+                          schedule reads on the meta line below. A block with no
+                          name falls back to its heading — schedule syntax, so
+                          it stays LTR technical text even in Arabic. */}
                       <Text
                         numberOfLines={1}
-                        style={{ writingDirection: 'ltr' }}
+                        style={block.name?.trim() ? undefined : { writingDirection: 'ltr' }}
                         className="text-fg font-sans-medium text-left text-sm"
                       >
-                        {block.label}
+                        {block.name?.trim() || block.label}
                       </Text>
                       <View className="flex-row">
                         <Badge label={t(`heartbeat.type.${block.type}`)} variant="primary" />
@@ -477,7 +482,9 @@ export default function AutomationsScreen(): React.JSX.Element {
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t('heartbeat.deleteTitle')}
-        message={t('heartbeat.deleteWarning', { name: deleteTarget?.label ?? '' })}
+        message={t('heartbeat.deleteWarning', {
+          name: deleteTarget?.name?.trim() || deleteTarget?.label || ''
+        })}
         confirmLabel={t('heartbeat.deleteConfirm')}
         cancelLabel={t('heartbeat.deleteCancel')}
         busy={deleting}
@@ -579,6 +586,8 @@ function AutomationEditor({
   const [guideOpen, setGuideOpen] = useState(false)
 
   const [schedule, setSchedule] = useState(block?.label ?? chipSchedule('daily'))
+  /** Required — an automation with no name is never written (see gates below). */
+  const [name, setName] = useState(block?.name ?? '')
   const [prompt, setPrompt] = useState(block?.body ?? '')
   const [icon, setIcon] = useState(block?.icon ?? '')
   const [projectId, setProjectId] = useState(block?.project ?? NO_PROJECT)
@@ -611,6 +620,7 @@ function AutomationEditor({
   const [boundLabel, setBoundLabel] = useState<string | null>(block?.label ?? null)
   const savedRef = useRef({
     schedule: block?.label ?? '',
+    name: block?.name ?? '',
     prompt: block?.body ?? '',
     icon: block?.icon ?? '',
     projectId: block?.project ?? NO_PROJECT
@@ -623,6 +633,7 @@ function AutomationEditor({
   }, [])
 
   const trimmed = schedule.trim()
+  const trimmedName = name.trim()
   const parsed = useMemo(() => parseSchedule(trimmed), [trimmed])
   const duplicate =
     trimmed !== '' &&
@@ -664,7 +675,13 @@ function AutomationEditor({
   const boundProject = projectId ? projects.find((p) => p.id === projectId) : undefined
 
   const persist = useCallback(
-    (draft: { schedule: string; prompt: string; icon: string; projectId: string }): void => {
+    (draft: {
+      schedule: string
+      name: string
+      prompt: string
+      icon: string
+      projectId: string
+    }): void => {
       savedRef.current = draft
       const bound = boundRef.current
       // The binding must move in the SAME tick the write is dispatched: the
@@ -684,35 +701,41 @@ function AutomationEditor({
   )
 
   useEffect(() => {
-    if (invalid || prompt.trim() === '') return
+    if (invalid || trimmedName === '' || prompt.trim() === '') return
     const saved = savedRef.current
     if (
       trimmed === saved.schedule &&
+      trimmedName === saved.name &&
       prompt === saved.prompt &&
       icon === saved.icon &&
       projectId === saved.projectId
     ) {
       return
     }
-    const handle = setTimeout(() => persist({ schedule: trimmed, prompt, icon, projectId }), 600)
+    const handle = setTimeout(
+      () => persist({ schedule: trimmed, name: trimmedName, prompt, icon, projectId }),
+      600
+    )
     return () => clearTimeout(handle)
-  }, [invalid, trimmed, prompt, icon, projectId, persist])
+  }, [invalid, trimmed, trimmedName, prompt, icon, projectId, persist])
 
   const close = useCallback((): void => {
     // Flush whatever the debounce has not dispatched.
     const saved = savedRef.current
     if (
       !invalid &&
+      trimmedName !== '' &&
       prompt.trim() !== '' &&
       (trimmed !== saved.schedule ||
+        trimmedName !== saved.name ||
         prompt !== saved.prompt ||
         icon !== saved.icon ||
         projectId !== saved.projectId)
     ) {
-      persist({ schedule: trimmed, prompt, icon, projectId })
+      persist({ schedule: trimmed, name: trimmedName, prompt, icon, projectId })
     }
     onClose()
-  }, [invalid, trimmed, prompt, icon, projectId, persist, onClose])
+  }, [invalid, trimmed, trimmedName, prompt, icon, projectId, persist, onClose])
 
   /**
    * Splice one marker into (or out of) THIS automation's block.
@@ -888,6 +911,48 @@ function AutomationEditor({
         </View>
       }
     >
+      {/* Identity first: what this automation is CALLED, next to the emoji it
+          wears. The schedule chips and field follow below — the schedule is a
+          setting of the automation, not its name, and the card says the name. */}
+      <Text className="text-muted font-sans-medium text-left text-sm">
+        {t('heartbeat.editor.name')}
+      </Text>
+      <View className="flex-row items-center gap-2">
+        {/* A project-bound automation wears the project's emoji — the button
+            shows it and disables; its own icon returns when the binding goes. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            boundProject ? t('heartbeat.editor.projectIcon') : t('heartbeat.editor.pickIcon')
+          }
+          disabled={boundProject !== undefined}
+          onPress={() => setEmojiOpen(true)}
+          className="bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border-soft"
+        >
+          <Text className="text-lg">
+            {boundProject
+              ? boundProject.icon || DEFAULT_PROJECT_ICON
+              : icon || DEFAULT_AUTOMATION_ICON}
+          </Text>
+        </Pressable>
+        <View className="min-w-0 flex-1">
+          <Input
+            value={name}
+            onChangeText={setName}
+            placeholder={t('heartbeat.editor.namePlaceholder')}
+            autoCapitalize="sentences"
+          />
+        </View>
+      </View>
+      {/* Muted, not red: an empty name on a fresh dialog is where everyone
+          starts, not a mistake. It has to be said all the same — nothing saves
+          without it, so silence here would lose a typed prompt. */}
+      {trimmedName === '' && (
+        <Text className="text-muted text-left font-sans text-xs">
+          {t('heartbeat.editor.nameRequired')}
+        </Text>
+      )}
+
       <View className="flex-row items-center justify-between gap-2">
         <Text className="text-muted font-sans-medium text-left text-sm">
           {t('heartbeat.editor.schedule')}
@@ -920,38 +985,17 @@ function AutomationEditor({
         ))}
       </View>
 
-      <View className="flex-row items-start gap-2">
-        {/* A project-bound automation wears the project's emoji — the button
-            shows it and disables; its own icon returns when the binding goes. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            boundProject ? t('heartbeat.editor.projectIcon') : t('heartbeat.editor.pickIcon')
-          }
-          disabled={boundProject !== undefined}
-          onPress={() => setEmojiOpen(true)}
-          className="bg-bg border-border h-10 w-10 shrink-0 items-center justify-center rounded-lg border active:bg-border-soft"
-        >
-          <Text className="text-lg">
-            {boundProject
-              ? boundProject.icon || DEFAULT_PROJECT_ICON
-              : icon || DEFAULT_AUTOMATION_ICON}
-          </Text>
-        </Pressable>
-        <View className="min-w-0 flex-1">
-          <Input
-            value={schedule}
-            onChangeText={setSchedule}
-            placeholder="Daily (09:00)"
-            autoCapitalize="words"
-            autoCorrect={false}
-            // The schedule is the file's own syntax: LTR and monospaced in
-            // either locale, like every other technical value in the app.
-            style={{ writingDirection: 'ltr' }}
-            className={cn('font-mono', showError && 'border-rose-500/70')}
-          />
-        </View>
-      </View>
+      <Input
+        value={schedule}
+        onChangeText={setSchedule}
+        placeholder="Daily (09:00)"
+        autoCapitalize="words"
+        autoCorrect={false}
+        // The schedule is the file's own syntax: LTR and monospaced in either
+        // locale, like every other technical value in the app.
+        style={{ writingDirection: 'ltr' }}
+        className={cn('font-mono', showError && 'border-rose-500/70')}
+      />
 
       {showError || preview === null ? (
         parsed === null ? (

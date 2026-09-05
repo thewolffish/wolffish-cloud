@@ -131,6 +131,29 @@ tools:
       filePath:
         type: string
         description: Absolute path or workspace-relative path to the audio file.
+  - name: stt_settings_get
+    description: "Read the user's Speech-to-Text settings — the default Whisper model size and the pinned transcription language — plus whether the engine is installed and which models are selectable. Call this before changing a setting or answering a question about one."
+    parameters: {}
+  - name: stt_settings_set
+    description: "Change the user's Speech-to-Text defaults. Applies to every later transcription, including the user's own spoken messages, and updates the Settings → Speech-to-Text panel live. Pass only the fields being changed."
+    parameters:
+      model:
+        type: string
+        required: false
+        description: "New default model size — the accuracy/speed tradeoff. A larger model downloads once on first use."
+        enum:
+          - tiny
+          - base
+          - small
+          - medium
+          - large
+      language:
+        type: string
+        required: false
+        description: "New transcription language: a Whisper ISO 639-1 code (en, ar, fr, zh…), or \"auto\" to detect per file."
+  - name: stt_engine_install
+    description: "Install or repair the local faster-whisper engine — the same install as the button in Settings → Speech-to-Text, with the same progress bar. Only needed when stt_settings_get reports the engine is missing."
+    parameters: {}
 danger_patterns: []
 confirm_patterns: []
 requires:
@@ -158,13 +181,51 @@ requires:
 - User provides an absolute path: **"transcribe /Users/me/recording.wav"** → `stt_transcribe` with that path.
 - **"what language is this?"**, **"what language are they speaking?"** → `stt_detect_language` returns the language without a full transcription.
 
+- **"my voice notes come out in the wrong language"**, **"transcribe in Arabic from now on"**, **"use a more accurate model"** → the settings tools below. This is yours to fix, not something to send the user to Settings for.
+
 When the user uploads an audio file without explicit instruction (no "transcribe", just attaches an MP3 and asks "what's in this?"), suggest transcribing it: "I can transcribe this audio for you — would you like me to?". Don't auto-run a heavy model without consent on a long file.
+
+## Managing the settings for the user
+
+You control this capability's own settings. The user never has to open Settings
+to change their transcription language or model — asking you IS the way.
+
+- `stt_settings_get` — the current model and language, whether the language is
+  pinned or auto-detecting, whether the engine is installed, and the selectable
+  models. **Read before you write.**
+- `stt_settings_set` — writes a new `model` and/or `language`. Pass only what
+  changes. Immediate and permanent until changed again.
+- `stt_engine_install` — provisions the engine on demand.
+
+**These two settings are the fix for the two ways transcription goes wrong**,
+and knowing which is which matters:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Transcript comes out in the **wrong language** (English speech rendered in Arabic script, etc.) | Language detection misfiring on a short clip | Set `language` to the language they actually speak — **not** a bigger model |
+| Words are **wrong but the language is right** | Model too small for the audio | Step `model` up (small → medium → large) |
+| User is genuinely multilingual across files | Language is pinned | Set `language: "auto"`, and say the tradeoff: detection is less reliable on short clips |
+
+**Rules for changing a default:**
+
+- A one-off transcription in another language is the `language` **argument** on
+  that call. Changing the default is for "from now on".
+- Pinning a language beats `auto` for someone who speaks one language. Don't
+  move a user to `auto` to "be safe" — that is the setting that produces the
+  wrong-script failure above.
+- Warn before stepping up to `medium` or `large`: they download once (~1.5 GB /
+  ~3 GB) and transcribe noticeably slower. Say so, then do it.
+- Say what you changed in plain words — "Transcription is now pinned to Arabic" —
+  and remember it also governs the user's own spoken messages, not just files.
+- The panel and the user's phone update the moment you write; don't tell them to
+  restart or reopen anything.
+- Don't change a default the user did not ask you to change.
 
 ## Behavior
 
 - After transcription, present the text naturally. If the user wants a translation, translate it yourself — the model handles translation natively, no extra tool needed.
 - For files >30 minutes warn the user that transcription may take several minutes; suggest the `tiny` or `base` model for speed.
-- The transcription language is PINNED to the configured default (Settings → Speech-to-Text, default English) — detection runs only when that setting (or an explicit `language` argument) says "auto". If a transcript comes out in the wrong language, the fix is that setting, not a bigger model.
+- The transcription language is PINNED to the configured default (Settings → Speech-to-Text, default English) — detection runs only when that setting (or an explicit `language` argument) says "auto". If a transcript comes out in the wrong language, the fix is that setting, not a bigger model — and you can change it yourself with `stt_settings_set`.
 - Report the detected language so the user knows what was heard.
 
 ## Supported formats
@@ -186,6 +247,7 @@ Models download once on first use and cache to `~/.wfc/bin/whisper-models/`.
 ## Setup notes
 
 - faster-whisper installs automatically into a managed Python venv on first use (no system Python, no pip/pipx). The engine is lightweight — **no PyTorch** — so the install is quick; only the chosen model is downloaded (cached after).
+- `stt_engine_install` provisions it up front instead of on first use — worth doing when the user is setting transcription up, or when a first run would otherwise stall with no explanation. `stt_settings_get` reports whether it is already installed.
 - **No ffmpeg required:** faster-whisper decodes audio via PyAV (bundled ffmpeg libraries). There is nothing to install for media decoding.
 - Everything is provisioned managed-first with no admin rights. Do NOT propose `sudo apt` / `brew` / `winget` installs for speech-to-text.
 - All transcription output is saved to `workspace/speech/{conversationDirName}/{originalFileName}.txt` so cortex can index it for later semantic search.

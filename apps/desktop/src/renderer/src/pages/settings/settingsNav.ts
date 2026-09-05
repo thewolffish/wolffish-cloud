@@ -20,7 +20,6 @@ export type TabKey =
   | 'knowledge'
   | 'usage'
   | 'data'
-  | 'admin'
 
 let nextTab: TabKey | null = null
 
@@ -53,3 +52,13 @@ export function requestSettingsTab(tab: TabKey): void {
   if (tabRequestListener) tabRequestListener(tab)
   else preselectSettingsTab(tab)
 }
+
+/**
+ * The tiers that have an admin page. Owner and admin can change things;
+ * support is the read-only tier and still needs the page to look at.
+ *
+ * Lives here rather than in the screen that renders it because two surfaces
+ * gate on it — the sheet's page row and the screen itself — and a second
+ * copy is how one of them ends up offering a page the other hides.
+ */
+export const ADMIN_ROLES: ReadonlySet<string> = new Set(['owner', 'admin', 'support'])

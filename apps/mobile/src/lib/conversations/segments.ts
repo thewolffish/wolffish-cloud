@@ -81,11 +81,38 @@ export type RenderBlock =
       providerErrors?: NoProviderAvailableInfo[]
     }
 
-const WORKSPACE_PREFIX_RE = /^.*?\/\.wolffish\/workspace\//
+/**
+ * The desktop's workspace root as it appears inside a path the desktop wrote.
+ *
+ * `.wfc` is the live one (apps/desktop/src/main/workspace/root.ts —
+ * `~/.wfc/workspace`); `.wolffish` is the pre-rename root, kept because
+ * transcripts and demo bundles recorded under it are still readable and their
+ * cards must not go blank.
+ *
+ * Matching only the old name was a silent, total outage of delivered files on
+ * this phone: send_file resolves EVERY path it delivers to an absolute one
+ * (capabilities/utilities/plugin/index.mjs), and text-to-speech writes its
+ * voice replies the same way, so nothing either produced ever normalized —
+ * every one failed `isServableWorkspacePath` below and was dropped from the
+ * feed, while the desktop, which reads its own absolute paths directly, showed
+ * them all. Hence the drift test in __tests__/segments.test.ts, which reads
+ * the desktop's own constant rather than trusting a literal copied to here.
+ *
+ * Both separators, because the desktop runs on Windows too — the marker there
+ * reads `C:\Users\…\.wfc\workspace\files\report.pdf`.
+ */
+const WORKSPACE_PREFIX_RE = /^.*?[/\\]\.(?:wfc|wolffish)[/\\]workspace[/\\]/
+
+/** `C:\…`, `C:/…`, or a UNC `\\server\…` — absolute, and only Windows says it. */
+const WINDOWS_ABSOLUTE_RE = /^(?:[A-Za-z]:[/\\]|[/\\]{2}[^/\\])/
 
 /** Normalize any absolute desktop workspace path to workspace-relative. */
 export function toWorkspaceRelative(path: string): string {
-  return path.replace(WORKSPACE_PREFIX_RE, '')
+  // Separators are rewritten ONLY for a path Windows must have written. A
+  // POSIX filename may legitimately contain a backslash, and rewriting that
+  // one would split a real name into directories that do not exist.
+  const unified = WINDOWS_ABSOLUTE_RE.test(path) ? path.replace(/\\/g, '/') : path
+  return unified.replace(WORKSPACE_PREFIX_RE, '')
 }
 
 /**
@@ -99,7 +126,12 @@ export function toWorkspaceRelative(path: string): string {
  * card's own output.
  */
 function isServableWorkspacePath(relPath: string): boolean {
-  return relPath.length > 0 && !relPath.startsWith('/')
+  if (relPath.length === 0) return false
+  // Still absolute after normalization: outside the workspace, or under a root
+  // this build does not know. `C:/…` is checked too — a Windows path that did
+  // not normalize passes the leading-slash test and would otherwise become a
+  // card that loads forever against a path the org can never hold.
+  return !relPath.startsWith('/') && !WINDOWS_ABSOLUTE_RE.test(relPath)
 }
 
 /** `[wolffish-output: <path> (<kind>)]` — delivered-file markers, output only. */

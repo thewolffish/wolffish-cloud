@@ -200,7 +200,7 @@ Notifications are **100% model-initiated**: the desktop agent decides to tell yo
 - **In-band** over the live socket when the phone is connected (the phone acks within two seconds), and
 - **Expo push** as the fallback when it isn't.
 
-The phone registers its push token with the bridge on every connection and every foreground, and dedupes by notification id, because both routes can legitimately fire. Where a tap lands is the model's choice, from a fixed list: a deep link must be the app's own `wolffish://` scheme **and** name a screen that exists — the desktop refuses anything else before sending, and the phone ignores a link it cannot resolve rather than navigating somewhere arbitrary.
+The phone registers its push token with the bridge on every connection and every foreground, and dedupes by notification id, because both routes can legitimately fire. Where a tap lands is the model's choice, from a fixed list: a deep link must be the app's own `wolffishcloud://` scheme **and** name a screen that exists — the desktop refuses anything else before sending, and the phone ignores a link it cannot resolve rather than navigating somewhere arbitrary.
 
 ---
 

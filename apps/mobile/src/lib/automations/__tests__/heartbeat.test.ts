@@ -208,6 +208,7 @@ describe('writeDraft with a prompt full of markdown structure', () => {
   it('round-trips the whole prompt — nothing truncates at its `## ` sections', () => {
     const { markdown } = writeDraft(FILE, null, {
       schedule: 'Daily (07:00)',
+      name: 'Checkup',
       prompt: PASTED,
       icon: '🩺',
       projectId: ''
@@ -229,6 +230,7 @@ describe('writeDraft with a prompt full of markdown structure', () => {
     for (let i = 0; i < 3; i++) {
       const result = writeDraft(markdown, bound, {
         schedule: 'Daily (07:00)',
+        name: 'Checkup',
         prompt: PASTED,
         icon: '🩺',
         projectId: ''
@@ -243,6 +245,7 @@ describe('writeDraft with a prompt full of markdown structure', () => {
   it('survives being switched off and back on with its body intact', () => {
     const { markdown } = writeDraft(FILE, null, {
       schedule: 'Daily (07:00)',
+      name: 'Checkup',
       prompt: PASTED,
       icon: '🩺',
       projectId: ''
@@ -263,6 +266,7 @@ describe('writeDraft', () => {
   it('inserts a new automation before the examples comment', () => {
     const { markdown, bound } = writeDraft(FILE, null, {
       schedule: 'Hourly (5)',
+      name: 'Checkup',
       prompt: 'Ping.',
       icon: '🔔',
       projectId: ''
@@ -279,6 +283,7 @@ describe('writeDraft', () => {
   it('always writes an icon marker, so every automation has an emoji', () => {
     const { markdown } = writeDraft('', null, {
       schedule: 'Startup',
+      name: 'Checkup',
       prompt: 'Wake up.',
       icon: '',
       projectId: ''
@@ -292,6 +297,7 @@ describe('writeDraft', () => {
       { label: 'Every (30m)', active: true },
       {
         schedule: 'Every (45m)',
+        name: 'Checkup',
         prompt: 'Check the inbox only.',
         icon: '🔁',
         projectId: 'proj-2'
@@ -320,6 +326,7 @@ describe('writeDraft', () => {
       { label: 'Weekly (Monday 09:30)', active: false },
       {
         schedule: 'Weekly (Tuesday 09:30)',
+        name: 'Checkup',
         prompt: 'Plan the week, properly.',
         icon: '📅',
         projectId: ''
@@ -341,6 +348,7 @@ describe('writeDraft', () => {
     for (let i = 0; i < 3; i++) {
       const result = writeDraft(markdown, bound, {
         schedule: 'Daily (09:00)',
+        name: 'Checkup',
         prompt: `Summarize yesterday. (${i})`,
         icon: '📊',
         projectId: 'proj-1'
@@ -359,6 +367,7 @@ describe('writeDraft', () => {
       { label: 'Gone (00:00)', active: true },
       {
         schedule: 'Daily (07:00)',
+        name: 'Checkup',
         prompt: 'Kept.',
         icon: '🫀',
         projectId: ''

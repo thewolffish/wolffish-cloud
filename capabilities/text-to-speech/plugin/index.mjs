@@ -111,8 +111,75 @@ const VOICES = [
 ]
 const KNOWN_VOICES = new Set(VOICES.map((v) => v.id))
 
+// The voices a user can actually SELECT — the catalog the desktop's
+// Text-to-Speech panel and the phone's Services screen both render, verbatim.
+// It is a strict subset of VOICES above: Kokoro ships six more (af_alloy,
+// af_jessica, af_river, am_echo, am_fenrir, am_santa) that synthesize fine but
+// appear in no picker, and the desktop panel REWRITES a config voice it does
+// not know back to the default the next time it mounts. So they stay usable as
+// an explicit per-call `voice` argument, and stay out of what can be written as
+// the DEFAULT: a default nobody can see, that a visit to Settings silently
+// reverts, is not a setting the agent should be able to leave behind.
+const SELECTABLE_VOICES = [
+  { id: 'af_bella', label: 'Bella', language: 'English (US)', gender: 'female' },
+  { id: 'af_heart', label: 'Heart', language: 'English (US)', gender: 'female' },
+  { id: 'af_nicole', label: 'Nicole', language: 'English (US)', gender: 'female' },
+  { id: 'af_sarah', label: 'Sarah', language: 'English (US)', gender: 'female' },
+  { id: 'af_aoede', label: 'Aoede', language: 'English (US)', gender: 'female' },
+  { id: 'af_kore', label: 'Kore', language: 'English (US)', gender: 'female' },
+  { id: 'af_nova', label: 'Nova', language: 'English (US)', gender: 'female' },
+  { id: 'af_sky', label: 'Sky', language: 'English (US)', gender: 'female' },
+  { id: 'am_adam', label: 'Adam', language: 'English (US)', gender: 'male' },
+  { id: 'am_michael', label: 'Michael', language: 'English (US)', gender: 'male' },
+  { id: 'am_eric', label: 'Eric', language: 'English (US)', gender: 'male' },
+  { id: 'am_liam', label: 'Liam', language: 'English (US)', gender: 'male' },
+  { id: 'am_onyx', label: 'Onyx', language: 'English (US)', gender: 'male' },
+  { id: 'am_puck', label: 'Puck', language: 'English (US)', gender: 'male' },
+  { id: 'bf_emma', label: 'Emma', language: 'English (UK)', gender: 'female' },
+  { id: 'bf_isabella', label: 'Isabella', language: 'English (UK)', gender: 'female' },
+  { id: 'bf_alice', label: 'Alice', language: 'English (UK)', gender: 'female' },
+  { id: 'bf_lily', label: 'Lily', language: 'English (UK)', gender: 'female' },
+  { id: 'bm_george', label: 'George', language: 'English (UK)', gender: 'male' },
+  { id: 'bm_lewis', label: 'Lewis', language: 'English (UK)', gender: 'male' },
+  { id: 'bm_daniel', label: 'Daniel', language: 'English (UK)', gender: 'male' },
+  { id: 'bm_fable', label: 'Fable', language: 'English (UK)', gender: 'male' }
+]
+const SELECTABLE_VOICE_IDS = new Set(SELECTABLE_VOICES.map((v) => v.id))
+
+// The four rates the panels offer, with the labels they show. Same reasoning as
+// the voice list: the panel's Select re-seeds from config and only recognizes
+// these strings, so an arbitrary float written as the default (1.1) would show
+// as a blank/reverted control. Per-call `speed` is still any float 0.5–1.5.
+const SELECTABLE_SPEEDS = [
+  { value: '0.75', label: 'Slow' },
+  { value: '1.0', label: 'Normal' },
+  { value: '1.25', label: 'Fast' },
+  { value: '1.5', label: 'Very fast' }
+]
+const SELECTABLE_SPEED_VALUES = new Set(SELECTABLE_SPEEDS.map((s) => s.value))
+
+// Normalize the shapes a model reasonably writes for a rate — '1', 1.25, '1.50',
+// '1.0x' — onto the exact strings the panels store. Anything that doesn't land
+// on one of the four is rejected by name rather than silently snapped, so the
+// user is told what was set instead of discovering it later.
+function normalizeSpeedValue(value) {
+  if (value == null) return null
+  const raw = String(value).trim().toLowerCase().replace(/x$/, '').trim()
+  if (!raw) return null
+  if (SELECTABLE_SPEED_VALUES.has(raw)) return raw
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return null
+  return SELECTABLE_SPEEDS.find((s) => Number(s.value) === n)?.value ?? null
+}
+
 let workspaceRoot = ''
 let getConversationId = () => null
+// Settings + provisioning seam (PluginContext.voice), wired by the desktop main
+// process over the same setters/installers the Settings panels use. Undefined
+// in a host that never wired one — the settings tools then refuse rather than
+// writing config.json behind the UI's back, which would strand every open
+// surface on a stale value.
+let voiceHost = null
 
 const toolDefinitions = [
   {
@@ -159,6 +226,39 @@ const toolDefinitions = [
   {
     name: 'voice_list',
     description: 'List all voice memo files in the workspace.',
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'voice_settings_get',
+    description:
+      "Read the user's Text-to-Speech settings: the default voice and speed, whether voice replies are on, and whether the Kokoro engine is installed. Also returns every selectable voice and speed, so call this before changing anything.",
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'voice_settings_set',
+    description:
+      "Change the user's Text-to-Speech defaults — the default voice and/or the default speech rate. Applies to every later voice memo and updates the Settings → Text-to-Speech panel live. Pass only the fields you are changing.",
+    parameters: {
+      type: 'object',
+      properties: {
+        voice: {
+          type: 'string',
+          description:
+            'New default Kokoro voice id (e.g. am_onyx). Must be one of the selectable ids from voice_settings_get.'
+        },
+        speed: {
+          type: 'string',
+          description:
+            'New default speech rate: "0.75" (slow), "1.0" (normal), "1.25" (fast) or "1.5" (very fast).'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'voice_engine_install',
+    description:
+      'Install (or repair) the local Kokoro speech engine and its ~310 MB voice model. Runs the same install as the button in Settings → Text-to-Speech, with the same live progress bar. Only needed when voice_settings_get reports the engine is not installed; synthesis otherwise provisions itself on first use.',
     parameters: { type: 'object', properties: {}, required: [] }
   }
 ]
@@ -588,6 +688,143 @@ async function collectFile(filePath, conversationId, sink) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Settings + engine provisioning
+//
+// Everything here goes through the host seam, never through a direct write to
+// config.json: the host is the same setter the Settings panel's own IPC calls,
+// broadcast included, so one act updates the stored default, an open panel and
+// the paired phone together. A raw write would update the first and strand the
+// other two.
+// ---------------------------------------------------------------------------
+
+function describeVoice(id) {
+  const known = SELECTABLE_VOICES.find((v) => v.id === id)
+  if (known) return `${known.label} (${known.language}, ${known.gender})`
+  // A voice outside the picker (the six Kokoro extras) can still be the stored
+  // value if something else wrote it; name it honestly rather than as unknown.
+  const raw = VOICES.find((v) => v.id === id)
+  return raw ? `${id} (${raw.language}, ${raw.gender})` : id || '(unset)'
+}
+
+function describeSpeed(value) {
+  return SELECTABLE_SPEEDS.find((s) => s.value === value)?.label ?? null
+}
+
+function hostUnavailable() {
+  return {
+    success: false,
+    error:
+      'Text-to-speech settings are not editable in this host — no settings surface is wired. Ask the user to change it in Settings → Text-to-Speech.'
+  }
+}
+
+async function readVoiceSettings() {
+  if (!voiceHost) return hostUnavailable()
+  const cfg = await voiceHost.getTts()
+  const voice = cfg.defaultVoice || DEFAULT_VOICE
+  const speed = normalizeSpeedValue(cfg.defaultSpeed) ?? '1.0'
+  const installed = await voiceHost.ttsInstalled().catch(() => false)
+  return {
+    success: true,
+    output: JSON.stringify({
+      defaultVoice: voice,
+      defaultVoiceLabel: describeVoice(voice),
+      defaultSpeed: speed,
+      defaultSpeedLabel: describeSpeed(speed),
+      voiceReplies: cfg.voiceReplies,
+      engineInstalled: installed,
+      engineInstalling: voiceHost.ttsInstalling(),
+      selectableVoices: SELECTABLE_VOICES,
+      selectableSpeeds: SELECTABLE_SPEEDS
+    })
+  }
+}
+
+async function writeVoiceSettings(args) {
+  if (!voiceHost) return hostUnavailable()
+
+  const patch = {}
+  const changes = []
+
+  const wantedVoice = (args?.voice ?? '').toString().trim()
+  if (wantedVoice) {
+    // Case-insensitive so "AF_Bella" lands, but the id written is canonical.
+    const id = SELECTABLE_VOICES.find((v) => v.id === wantedVoice.toLowerCase())?.id
+    if (!id) {
+      // Name the near-miss when the model reached for a real Kokoro voice that
+      // simply isn't selectable — the difference matters and is not guessable.
+      const extra = KNOWN_VOICES.has(wantedVoice.toLowerCase())
+        ? ` "${wantedVoice}" is a real Kokoro voice but is not offered in Settings, so it cannot be the default; pass it as the \`voice\` argument of a single voice_generate call instead.`
+        : ''
+      return {
+        success: false,
+        error: `Unknown voice "${wantedVoice}".${extra} Selectable ids: ${SELECTABLE_VOICES.map((v) => v.id).join(', ')}.`
+      }
+    }
+    patch.defaultVoice = id
+    changes.push(`voice → ${describeVoice(id)}`)
+  }
+
+  if (args?.speed != null && String(args.speed).trim() !== '') {
+    const value = normalizeSpeedValue(args.speed)
+    if (!value) {
+      return {
+        success: false,
+        error: `Unknown speed "${args.speed}". Pick one of: ${SELECTABLE_SPEEDS.map((s) => `${s.value} (${s.label.toLowerCase()})`).join(', ')}.`
+      }
+    }
+    patch.defaultSpeed = value
+    changes.push(`speed → ${value} (${describeSpeed(value)?.toLowerCase()})`)
+  }
+
+  if (changes.length === 0) {
+    return {
+      success: false,
+      error: 'Nothing to change — pass `voice`, `speed`, or both.'
+    }
+  }
+
+  const updated = await voiceHost.setTts(patch)
+  return {
+    success: true,
+    output: JSON.stringify({
+      changed: changes,
+      defaultVoice: updated.defaultVoice,
+      defaultVoiceLabel: describeVoice(updated.defaultVoice),
+      defaultSpeed: updated.defaultSpeed,
+      defaultSpeedLabel: describeSpeed(updated.defaultSpeed),
+      appliesTo: 'every voice memo from now on, until changed again',
+      settingsPanel: 'Settings → Text-to-Speech (updated live)'
+    })
+  }
+}
+
+async function installVoiceEngine() {
+  if (!voiceHost) return hostUnavailable()
+  if (await voiceHost.ttsInstalled().catch(() => false)) {
+    return {
+      success: true,
+      output: JSON.stringify({
+        installed: true,
+        alreadyInstalled: true,
+        message: 'The Kokoro speech engine is already installed.'
+      })
+    }
+  }
+  // Deduped in main: if the user pressed Install a moment ago, this joins that
+  // run rather than starting a second one, and both finish together.
+  const res = await voiceHost.installTts()
+  if (!res.ok) return { success: false, error: `Voice engine install failed: ${res.error}` }
+  return {
+    success: true,
+    output: JSON.stringify({
+      installed: true,
+      message: 'The Kokoro speech engine and its voice model are installed and ready.'
+    })
+  }
+}
+
 const plugin = {
   name: 'text-to-speech',
   tools: toolDefinitions,
@@ -600,9 +837,24 @@ const plugin = {
     if (typeof context.getCurrentConversationId === 'function') {
       getConversationId = context.getCurrentConversationId
     }
+    voiceHost = context.voice ?? null
   },
 
   async execute(toolName, args) {
+    // Settings and provisioning go through the host, not through config.json —
+    // handled before the synthesis defaults are read below, which none of them
+    // need.
+    switch (toolName) {
+      case 'voice_settings_get':
+        return readVoiceSettings()
+      case 'voice_settings_set':
+        return writeVoiceSettings(args)
+      case 'voice_engine_install':
+        return installVoiceEngine()
+      default:
+        break
+    }
+
     // Read user-selected defaults from config.json on each call so changes in
     // Settings take effect without a reload. Best-effort.
     let cfgVoice = ''

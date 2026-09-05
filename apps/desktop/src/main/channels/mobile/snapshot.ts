@@ -20,6 +20,7 @@
  * not error anywhere; it renders a silent default on the phone forever.
  */
 import type { Agent } from '@main/runtime/agent'
+import { catalogModels } from '@main/cloud/catalog'
 import { readViewerFile } from '@main/viewer'
 import { readConfig } from '@main/workspace/workspace'
 import { app } from 'electron'
@@ -97,13 +98,47 @@ const platformLabel = (platform: NodeJS.Platform): string =>
         ? 'Linux'
         : platform
 
-/** Never let one unavailable section fail the whole snapshot. */
+/**
+ * How long any one section may take before the snapshot goes without it.
+ *
+ * Generous on purpose — these are local reads and one cached API status, and
+ * a section that needs longer than this is not slow, it is stuck.
+ */
+const SOURCE_TIMEOUT_MS = 5_000
+
+/**
+ * Never let one unavailable section fail — or STALL — the whole snapshot.
+ *
+ * The timeout is the load-bearing half. Every source here is a promise from
+ * somewhere else in the app (a token refresh, an API status, a workspace
+ * scan, an OS query), and a single one that never settles used to take the
+ * entire snapshot with it: the phone's `configSnapshot` RPC never answered,
+ * the file the phone reads when this desktop is away was never rewritten, and
+ * the in-flight latch below never cleared — so every later config change
+ * coalesced into a promise that would never resolve. Silently, with no error
+ * to log, until the app was restarted. A phone that quietly stops seeing this
+ * machine's settings is the worst possible failure here, and it is exactly
+ * what an unbounded await produces.
+ *
+ * Losing one section costs the phone one card's worth of freshness — the
+ * documented "absent means fall back" contract every optional field already
+ * has — while losing the snapshot costs it every screen at once.
+ */
 async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undefined> {
   if (!fn) return undefined
+  let timer: NodeJS.Timeout | undefined
   try {
-    return await fn()
+    return await Promise.race([
+      fn(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), SOURCE_TIMEOUT_MS)
+        timer.unref?.()
+      })
+    ])
   } catch {
     return undefined
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -115,6 +150,29 @@ async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undef
  * loudly instead of storing junk.
  */
 export const THINKING_MODES = new Set(['off', 'on', 'high', 'max'])
+
+/**
+ * May the phone select this model?
+ *
+ * The catalog it picks from is the one this snapshot sent, so the honest guard
+ * is the same list: a phone that has been asleep since an admin narrowed the
+ * policy would otherwise write a withdrawn model here and leave every turn
+ * failing upstream until someone noticed and re-picked. Refusing is cheap and
+ * self-correcting — applyMobileSettings throws, and the phone answers a
+ * refusal by re-pulling the snapshot, which puts the real model back under the
+ * user's thumb.
+ *
+ * An EMPTY catalog allows anything, deliberately: empty means "not fetched
+ * yet" (a cold cache, a signed-out session), never "nothing is allowed", and
+ * turning a missing local cache into a refusal would break selection on the
+ * one path — a phone driving a desktop that just launched — where it has to
+ * work. The API stays the authority either way; this only stops a write the
+ * desktop can already see is stale.
+ */
+export function modelSelectable(id: string): boolean {
+  const catalog = catalogModels()
+  return catalog.length === 0 || catalog.some((model) => model.id === id)
+}
 
 /**
  * The three hand-written documents that shape the agent — the desktop's Soul,
@@ -191,7 +249,10 @@ async function readCustomizationDocs(): Promise<{
 
 export async function buildConfigSnapshot(sources: SnapshotSources): Promise<ConfigSnapshot> {
   const config = ((await readConfig()) ?? {}) as Cfg
-  const capabilities = await sources.serializeCapabilities().catch(() => [])
+  // Through `attempt` like every other source: the capability serializer walks
+  // the cerebellum's plugins, and at boot it can be mid-load. A `.catch` alone
+  // covers a rejection but not a hang.
+  const capabilities = (await attempt(sources.serializeCapabilities)) ?? []
   const launchAtStartupActive = await attempt(sources.launchAtStartupActive)
 
   const llm = (config.llm ?? {}) as Cfg
@@ -222,6 +283,15 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   // rather than this side inventing a choice the desktop never made.
   const thinkingModes = (llm.thinkingModes ?? {}) as Record<string, unknown>
   const thinkingMode = thinkingModes[str(llm.model)]
+
+  // The org catalog, straight from main's cache (cloud/catalog.ts) — a
+  // synchronous read, never a fetch: a snapshot must not wait 15s behind
+  // /v1/models on a cold start, and it must not fail when the session is
+  // signed out. An empty cache OMITS the list rather than sending [], which
+  // the phone reads as "no catalog yet" and answers with the current model
+  // alone; the refresh that fills the cache fires model:catalogChanged, and
+  // that broadcast rebuilds and re-pushes this snapshot (see index.ts).
+  const catalog = catalogModels()
 
   const snapshot: Record<string, unknown> = {
     capabilities: capabilities.map((capability) => ({
@@ -313,7 +383,10 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         // phone renders and edits it as that machine's setting, exactly as it
         // does the in-app feed switch beside it; its own copy of the question
         // is `mobile.runCards` below.
-        runCards: bool(config.inapp?.runCards)
+        runCards: bool(config.inapp?.runCards),
+        // Whether the thinking card renders at all. One workspace answer for
+        // both surfaces (the phone obeys the same key), off by default.
+        reasoning: bool(config.inapp?.reasoning)
       },
       // The phone's own channel — the two settings the Mobile panel here
       // carries, so the phone can render and edit them rather than being the
@@ -329,14 +402,32 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     },
 
     // One lane: the selected model is an id from the org's catalog. The
-    // phone's Model screen shows it and may pick another (brainModel is the
-    // writable key); there are no provider keys and no local models.
+    // phone's Model screen shows it and picks another from `models` below
+    // (brainModel is the writable key); there are no provider keys and no
+    // local models.
     llm: {
       brainProvider: 'cloud',
       brainModel: str(llm.model),
       chatMode: str(llm.mode, 'single'),
       ...(typeof thinkingMode === 'string' && THINKING_MODES.has(thinkingMode)
         ? { thinkingMode }
+        : {}),
+      // Every model this user is allowed, in the API's own order — the same
+      // list this app's composer picker renders, so the phone's chips and the
+      // desktop's rows can never offer different models. Prices are left out
+      // deliberately: the ledger already carries what a turn actually cost,
+      // and a per-model rate is the one number here that goes stale silently.
+      ...(catalog.length
+        ? {
+            models: catalog.map((model) => ({
+              id: model.id,
+              name: model.name,
+              reasoning: model.reasoning,
+              vision: model.vision,
+              contextWindow: model.contextWindow,
+              default: model.default
+            }))
+          }
         : {})
     },
 

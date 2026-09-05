@@ -1,4 +1,4 @@
-import { MediaLightbox } from '@components/common/media-lightbox/MediaLightbox'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import {
@@ -172,10 +172,10 @@ export type PdfLightboxProps = {
 }
 
 /**
- * The same native PDF viewer, on the same overlay surface as the image and
- * video lightboxes, at 80% of the window. No zoom/pan wrapper: Chromium's
- * viewer already scrolls and zooms, and its frame swallows those events before
- * the stage would ever see them. Dismissed by Escape or a backdrop click.
+ * The same native PDF viewer on the shared trailing-edge sheet, alongside the
+ * code/markdown/html viewers. No zoom/pan wrapper: Chromium's viewer already
+ * scrolls and zooms, and its frame swallows those events before a stage would
+ * ever see them. Dismissed by Escape or the sheet's × button.
  */
 export function PdfLightbox({
   open,
@@ -184,14 +184,8 @@ export function PdfLightbox({
   fileName
 }: PdfLightboxProps): React.JSX.Element | null {
   return (
-    <MediaLightbox
-      open={open}
-      onClose={onClose}
-      label={fileName}
-      zoomable={false}
-      frameStyle={{ width: '80vw', height: '80vh' }}
-    >
+    <ExpandedSheet open={open} onClose={onClose} title={fileName}>
       <iframe src={url} title={fileName} className="h-full w-full border-0" />
-    </MediaLightbox>
+    </ExpandedSheet>
   )
 }
