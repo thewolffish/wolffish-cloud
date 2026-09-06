@@ -1262,7 +1262,6 @@
     "contextCard": {
       "aria": "Context and usage details",
       "noModel": "No model",
-      "empty": "No usage yet — send a message to start measuring.",
       "context": "Context window",
       "usage": "{{used}} of {{max}} ({{percent}}%)",
       "compactAt": "Auto-compacts at {{value}}",

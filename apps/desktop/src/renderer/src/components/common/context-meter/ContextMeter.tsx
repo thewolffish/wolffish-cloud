@@ -413,6 +413,13 @@ export function ContextMeter({
   // One lane: the org's cloud icon heads the card whenever a model ran.
   const HeaderLogo = provider ? CloudIcon : undefined
 
+  // Nothing measured yet — no reading, no turn, no history, no workflow — so
+  // the pill has nothing to report and stays out of the composer footer
+  // entirely, the way the logs and files chips do at zero count. It returns
+  // the moment the first turn starts (that alone sets the elapsed clock).
+  // Every hook above already ran, so this early exit keeps their order.
+  if (!hasAnything) return null
+
   return (
     <span
       ref={rootRef}
@@ -486,304 +493,296 @@ export function ContextMeter({
             </span>
           </div>
 
-          {!hasAnything ? (
-            <p className="text-muted py-2 text-center text-[11px]">{t('chat.contextCard.empty')}</p>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {/* Context window */}
-              <div>
-                <SectionTitle
-                  icon={<Database01Icon size={12} />}
-                  label={t('chat.contextCard.context')}
-                  trailing={
-                    <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
-                      {t('chat.contextCard.usage', {
-                        used: formatCompact(used, locale),
-                        max: formatCompact(budget, locale),
-                        percent
-                      })}
-                    </span>
-                  }
-                />
-                <div className="relative mt-1.5">
-                  <div
-                    className="bg-border/40 flex h-1.5 w-full overflow-hidden rounded-full"
-                    dir="ltr"
-                  >
-                    {segments.map((s, i) => (
-                      <div
-                        key={i}
-                        className="h-full"
-                        style={{
-                          width: `${budget > 0 ? Math.min(100, (s.value / budget) * 100) : 0}%`,
-                          backgroundColor: s.color
-                        }}
-                      />
-                    ))}
-                  </div>
-                  {tickPct !== null && (
-                    <span
-                      className="bg-fg/50 absolute -top-0.5 h-2.5 w-px"
-                      // Physical `left`, not insetInlineStart: the bar it
-                      // annotates is forced dir="ltr", so in Arabic a logical
-                      // inset would mirror the tick to the wrong spot.
-                      style={{ left: `${tickPct}%` }}
-                      title={t('chat.contextCard.compactAt', {
-                        value: formatCompact(compactionAt ?? 0, locale)
-                      })}
+          <div className="flex flex-col gap-3">
+            {/* Context window */}
+            <div>
+              <SectionTitle
+                icon={<Database01Icon size={12} />}
+                label={t('chat.contextCard.context')}
+                trailing={
+                  <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
+                    {t('chat.contextCard.usage', {
+                      used: formatCompact(used, locale),
+                      max: formatCompact(budget, locale),
+                      percent
+                    })}
+                  </span>
+                }
+              />
+              <div className="relative mt-1.5">
+                <div
+                  className="bg-border/40 flex h-1.5 w-full overflow-hidden rounded-full"
+                  dir="ltr"
+                >
+                  {segments.map((s, i) => (
+                    <div
+                      key={i}
+                      className="h-full"
+                      style={{
+                        width: `${budget > 0 ? Math.min(100, (s.value / budget) * 100) : 0}%`,
+                        backgroundColor: s.color
+                      }}
                     />
-                  )}
+                  ))}
                 </div>
-                {segments.length > 1 && (
-                  <div className="text-muted mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px]">
-                    {segments.map((s, i) => (
-                      <span key={i} className="inline-flex items-center gap-1">
-                        <span
-                          className="h-1.5 w-1.5 rounded-full"
-                          style={{ backgroundColor: s.color }}
-                        />
-                        {s.label}
-                        <span className="font-mono tabular-nums" dir="ltr">
-                          {formatCompact(s.value, locale)}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
                 {tickPct !== null && (
-                  <p className="text-muted mt-1 text-[10px]">
-                    {t('chat.contextCard.compactAt', {
+                  <span
+                    className="bg-fg/50 absolute -top-0.5 h-2.5 w-px"
+                    // Physical `left`, not insetInlineStart: the bar it
+                    // annotates is forced dir="ltr", so in Arabic a logical
+                    // inset would mirror the tick to the wrong spot.
+                    style={{ left: `${tickPct}%` }}
+                    title={t('chat.contextCard.compactAt', {
                       value: formatCompact(compactionAt ?? 0, locale)
                     })}
-                  </p>
-                )}
-                {usageUnavailable && (
-                  <p className="mt-1 text-[10px] text-amber-500">
-                    {t('chat.contextCard.usageUnavailable')}
-                  </p>
-                )}
-                {modelMismatch && (
-                  <p className="text-muted mt-1 text-[10px]">
-                    {t('chat.contextCard.measuredUnder', { model: meterModel })}
-                  </p>
+                  />
                 )}
               </div>
-
-              {/* This / last turn */}
-              {hasTurnData && (
-                <div>
-                  <SectionTitle
-                    icon={<Clock01Icon size={12} />}
-                    label={
-                      turnRunning ? t('chat.contextCard.thisTurn') : t('chat.contextCard.lastTurn')
-                    }
-                    trailing={
-                      shownElapsedMs !== null ? (
-                        <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
-                          {formatElapsed(shownElapsedMs)}
-                        </span>
-                      ) : undefined
-                    }
-                  />
-                  <div className="mt-1.5 flex flex-col gap-1">
-                    <StatRow
-                      icon={<ArrowUp02Icon size={12} />}
-                      label={t('chat.contextCard.input')}
-                      value={formatCompact(turnIn, locale)}
-                      frac={turnIn / turnMax}
-                      color={COLOR_FRESH}
-                    />
-                    <StatRow
-                      icon={<ArrowDown02Icon size={12} />}
-                      label={t('chat.contextCard.output')}
-                      value={formatCompact(turnOut, locale)}
-                      frac={turnOut / turnMax}
-                      color="#f59e0b"
-                    />
-                    <StatRow
-                      icon={<Database01Icon size={12} />}
-                      label={t('chat.contextCard.cacheRead')}
-                      value={formatCompact(turnCacheR, locale)}
-                      frac={turnCacheR / turnMax}
-                      color={COLOR_CACHE_READ}
-                    />
-                    <StatRow
-                      icon={<Database02Icon size={12} />}
-                      label={t('chat.contextCard.cacheWrite')}
-                      value={formatCompact(turnCacheW, locale)}
-                      frac={turnCacheW / turnMax}
-                      color={COLOR_CACHE_WRITE}
-                    />
-                    {!showLiveTurn && lastTurn && (
-                      <StatRow
-                        icon={<Activity04Icon size={12} />}
-                        label={t('chat.contextCard.calls')}
-                        value={`${lastTurn.apiCalls} · ${t('chat.contextCard.tools', { count: lastTurn.toolCalls })}`}
+              {segments.length > 1 && (
+                <div className="text-muted mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px]">
+                  {segments.map((s, i) => (
+                    <span key={i} className="inline-flex items-center gap-1">
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: s.color }}
                       />
-                    )}
-                    {turnCost !== null && turnCost > 0 && (
-                      <StatRow
-                        icon={<DollarCircleIcon size={12} />}
-                        label={t('chat.contextCard.cost')}
-                        value={formatCost(turnCost)}
-                      />
-                    )}
-                  </div>
-                  {sideSpend && (
-                    <div className="text-muted mt-1.5 flex flex-col gap-0.5 text-[10px]">
-                      {/* The aggregate agents one-liner is the fallback for
-                          worker spend with no snapshot; the Workflow section
-                          below itemizes the same spend when one exists. */}
-                      {!workflowVisible &&
-                        (sideSpend.workerCalls > 0 || sideSpend.workerTurns > 0) && (
-                          <span dir="ltr" className="font-mono tabular-nums">
-                            {t('chat.contextCard.workers', {
-                              turns: sideSpend.workerTurns,
-                              tokens: formatCompact(sideSpend.workerTokens, locale)
-                            })}
-                            {sideSpend.workerCost > 0
-                              ? ` · ${formatCost(sideSpend.workerCost)}`
-                              : ''}
-                          </span>
-                        )}
-                      {sideSpend.summaryCalls > 0 && (
-                        <span dir="ltr" className="font-mono tabular-nums">
-                          {t('chat.contextCard.summaries', {
-                            calls: sideSpend.summaryCalls,
-                            tokens: formatCompact(sideSpend.summaryTokens, locale)
-                          })}
-                          {sideSpend.summaryCost > 0
-                            ? ` · ${formatCost(sideSpend.summaryCost)}`
-                            : ''}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Workflow (this/last turn's run) — one row per agent, from the
-                  same deterministic snapshot that drives the feed's card. */}
-              {workflowVisible && workflow && (
-                <div>
-                  <SectionTitle
-                    icon={<WorkflowSquare03Icon size={12} />}
-                    label={t('chat.contextCard.workflow')}
-                    trailing={
-                      <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
-                        {wfDone}/{wfAgents.length}
+                      {s.label}
+                      <span className="font-mono tabular-nums" dir="ltr">
+                        {formatCompact(s.value, locale)}
                       </span>
-                    }
-                  />
-                  <div className="mt-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto">
-                    {wfAgents.map((a) => (
-                      <StatRow
-                        key={a.id}
-                        icon={
-                          <span
-                            className={`inline-block h-1.5 w-1.5 rounded-full ${AGENT_DOT[a.status]}`}
-                          />
-                        }
-                        label={a.name}
-                        value={`${formatCompact(agentSpend(a), locale)}${
-                          a.cost > 0 ? ` · ${formatCost(a.cost)}` : ''
-                        }`}
-                        frac={agentSpend(a) / wfMaxSpend}
-                        color={COLOR_AGENT_BAR}
-                      />
-                    ))}
-                  </div>
-                  <p className="text-muted mt-1.5 text-[10px]">
-                    <span dir="ltr" className="font-mono tabular-nums">
-                      {t('chat.contextCard.workflowTotals', {
-                        tools: workflow.totals.toolCalls,
-                        tokens: formatCompact(wfTokens, locale)
-                      })}
-                      {workflow.totals.cost > 0 ? ` · ${formatCost(workflow.totals.cost)}` : ''}
                     </span>
-                  </p>
+                  ))}
                 </div>
               )}
-
-              {/* All time (this conversation) */}
-              {allTime && allTime.turns > 0 && (
-                <div>
-                  <SectionTitle
-                    icon={<HourglassIcon size={12} />}
-                    label={t('chat.contextCard.allTime')}
-                    trailing={
-                      <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
-                        {formatElapsed(allTime.processingMs)}
-                      </span>
-                    }
-                  />
-                  <div className="mt-1.5 flex flex-col gap-1">
-                    <StatRow
-                      icon={<RepeatIcon size={12} />}
-                      label={t('chat.contextCard.turns')}
-                      value={`${allTime.turns}`}
-                    />
-                    <StatRow
-                      icon={<Activity04Icon size={12} />}
-                      label={t('chat.contextCard.apiCalls')}
-                      value={`${allTime.apiCalls}`}
-                    />
-                    <StatRow
-                      icon={<CpuIcon size={12} />}
-                      label={t('chat.contextCard.toolCalls')}
-                      value={`${allTime.toolCalls}`}
-                    />
-                    <StatRow
-                      icon={<ArrowUp02Icon size={12} />}
-                      label={t('chat.contextCard.input')}
-                      value={formatCompact(allTime.inputTokens, locale)}
-                      frac={allTime.inputTokens / allMax}
-                      color={COLOR_FRESH}
-                    />
-                    <StatRow
-                      icon={<ArrowDown02Icon size={12} />}
-                      label={t('chat.contextCard.output')}
-                      value={formatCompact(allTime.outputTokens, locale)}
-                      frac={allTime.outputTokens / allMax}
-                      color="#f59e0b"
-                    />
-                    <StatRow
-                      icon={<Database01Icon size={12} />}
-                      label={t('chat.contextCard.cacheRead')}
-                      value={formatCompact(allTime.cacheReadTokens, locale)}
-                      frac={allTime.cacheReadTokens / allMax}
-                      color={COLOR_CACHE_READ}
-                    />
-                    <StatRow
-                      icon={<Database02Icon size={12} />}
-                      label={t('chat.contextCard.cacheWrite')}
-                      value={formatCompact(allTime.cacheCreationTokens, locale)}
-                      frac={allTime.cacheCreationTokens / allMax}
-                      color={COLOR_CACHE_WRITE}
-                    />
-                    <StatRow
-                      icon={<DollarCircleIcon size={12} />}
-                      label={t('chat.contextCard.cost')}
-                      value={formatCost(allTime.cost)}
-                    />
-                  </div>
-                  {allCachedShare > 0 && (
-                    <p className="text-muted mt-1 text-[10px]">
-                      {t('chat.contextCard.cachedShare', { percent: allCachedShare })}
-                    </p>
-                  )}
-                </div>
+              {tickPct !== null && (
+                <p className="text-muted mt-1 text-[10px]">
+                  {t('chat.contextCard.compactAt', {
+                    value: formatCompact(compactionAt ?? 0, locale)
+                  })}
+                </p>
               )}
-
-              {/* Last call footnote */}
-              {lastCall && (
-                <p className="text-muted border-border/60 border-t pt-2 text-[10px]" dir="ltr">
-                  {t('chat.contextCard.lastCall')}: {lastCall.provider} · {lastCall.model} ·{' '}
-                  {(lastCall.durationMs / 1000).toFixed(1)}s
+              {usageUnavailable && (
+                <p className="mt-1 text-[10px] text-amber-500">
+                  {t('chat.contextCard.usageUnavailable')}
+                </p>
+              )}
+              {modelMismatch && (
+                <p className="text-muted mt-1 text-[10px]">
+                  {t('chat.contextCard.measuredUnder', { model: meterModel })}
                 </p>
               )}
             </div>
-          )}
+
+            {/* This / last turn */}
+            {hasTurnData && (
+              <div>
+                <SectionTitle
+                  icon={<Clock01Icon size={12} />}
+                  label={
+                    turnRunning ? t('chat.contextCard.thisTurn') : t('chat.contextCard.lastTurn')
+                  }
+                  trailing={
+                    shownElapsedMs !== null ? (
+                      <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
+                        {formatElapsed(shownElapsedMs)}
+                      </span>
+                    ) : undefined
+                  }
+                />
+                <div className="mt-1.5 flex flex-col gap-1">
+                  <StatRow
+                    icon={<ArrowUp02Icon size={12} />}
+                    label={t('chat.contextCard.input')}
+                    value={formatCompact(turnIn, locale)}
+                    frac={turnIn / turnMax}
+                    color={COLOR_FRESH}
+                  />
+                  <StatRow
+                    icon={<ArrowDown02Icon size={12} />}
+                    label={t('chat.contextCard.output')}
+                    value={formatCompact(turnOut, locale)}
+                    frac={turnOut / turnMax}
+                    color="#f59e0b"
+                  />
+                  <StatRow
+                    icon={<Database01Icon size={12} />}
+                    label={t('chat.contextCard.cacheRead')}
+                    value={formatCompact(turnCacheR, locale)}
+                    frac={turnCacheR / turnMax}
+                    color={COLOR_CACHE_READ}
+                  />
+                  <StatRow
+                    icon={<Database02Icon size={12} />}
+                    label={t('chat.contextCard.cacheWrite')}
+                    value={formatCompact(turnCacheW, locale)}
+                    frac={turnCacheW / turnMax}
+                    color={COLOR_CACHE_WRITE}
+                  />
+                  {!showLiveTurn && lastTurn && (
+                    <StatRow
+                      icon={<Activity04Icon size={12} />}
+                      label={t('chat.contextCard.calls')}
+                      value={`${lastTurn.apiCalls} · ${t('chat.contextCard.tools', { count: lastTurn.toolCalls })}`}
+                    />
+                  )}
+                  {turnCost !== null && turnCost > 0 && (
+                    <StatRow
+                      icon={<DollarCircleIcon size={12} />}
+                      label={t('chat.contextCard.cost')}
+                      value={formatCost(turnCost)}
+                    />
+                  )}
+                </div>
+                {sideSpend && (
+                  <div className="text-muted mt-1.5 flex flex-col gap-0.5 text-[10px]">
+                    {/* The aggregate agents one-liner is the fallback for
+                          worker spend with no snapshot; the Workflow section
+                          below itemizes the same spend when one exists. */}
+                    {!workflowVisible &&
+                      (sideSpend.workerCalls > 0 || sideSpend.workerTurns > 0) && (
+                        <span dir="ltr" className="font-mono tabular-nums">
+                          {t('chat.contextCard.workers', {
+                            turns: sideSpend.workerTurns,
+                            tokens: formatCompact(sideSpend.workerTokens, locale)
+                          })}
+                          {sideSpend.workerCost > 0 ? ` · ${formatCost(sideSpend.workerCost)}` : ''}
+                        </span>
+                      )}
+                    {sideSpend.summaryCalls > 0 && (
+                      <span dir="ltr" className="font-mono tabular-nums">
+                        {t('chat.contextCard.summaries', {
+                          calls: sideSpend.summaryCalls,
+                          tokens: formatCompact(sideSpend.summaryTokens, locale)
+                        })}
+                        {sideSpend.summaryCost > 0 ? ` · ${formatCost(sideSpend.summaryCost)}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Workflow (this/last turn's run) — one row per agent, from the
+                  same deterministic snapshot that drives the feed's card. */}
+            {workflowVisible && workflow && (
+              <div>
+                <SectionTitle
+                  icon={<WorkflowSquare03Icon size={12} />}
+                  label={t('chat.contextCard.workflow')}
+                  trailing={
+                    <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
+                      {wfDone}/{wfAgents.length}
+                    </span>
+                  }
+                />
+                <div className="mt-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto">
+                  {wfAgents.map((a) => (
+                    <StatRow
+                      key={a.id}
+                      icon={
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${AGENT_DOT[a.status]}`}
+                        />
+                      }
+                      label={a.name}
+                      value={`${formatCompact(agentSpend(a), locale)}${
+                        a.cost > 0 ? ` · ${formatCost(a.cost)}` : ''
+                      }`}
+                      frac={agentSpend(a) / wfMaxSpend}
+                      color={COLOR_AGENT_BAR}
+                    />
+                  ))}
+                </div>
+                <p className="text-muted mt-1.5 text-[10px]">
+                  <span dir="ltr" className="font-mono tabular-nums">
+                    {t('chat.contextCard.workflowTotals', {
+                      tools: workflow.totals.toolCalls,
+                      tokens: formatCompact(wfTokens, locale)
+                    })}
+                    {workflow.totals.cost > 0 ? ` · ${formatCost(workflow.totals.cost)}` : ''}
+                  </span>
+                </p>
+              </div>
+            )}
+
+            {/* All time (this conversation) */}
+            {allTime && allTime.turns > 0 && (
+              <div>
+                <SectionTitle
+                  icon={<HourglassIcon size={12} />}
+                  label={t('chat.contextCard.allTime')}
+                  trailing={
+                    <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
+                      {formatElapsed(allTime.processingMs)}
+                    </span>
+                  }
+                />
+                <div className="mt-1.5 flex flex-col gap-1">
+                  <StatRow
+                    icon={<RepeatIcon size={12} />}
+                    label={t('chat.contextCard.turns')}
+                    value={`${allTime.turns}`}
+                  />
+                  <StatRow
+                    icon={<Activity04Icon size={12} />}
+                    label={t('chat.contextCard.apiCalls')}
+                    value={`${allTime.apiCalls}`}
+                  />
+                  <StatRow
+                    icon={<CpuIcon size={12} />}
+                    label={t('chat.contextCard.toolCalls')}
+                    value={`${allTime.toolCalls}`}
+                  />
+                  <StatRow
+                    icon={<ArrowUp02Icon size={12} />}
+                    label={t('chat.contextCard.input')}
+                    value={formatCompact(allTime.inputTokens, locale)}
+                    frac={allTime.inputTokens / allMax}
+                    color={COLOR_FRESH}
+                  />
+                  <StatRow
+                    icon={<ArrowDown02Icon size={12} />}
+                    label={t('chat.contextCard.output')}
+                    value={formatCompact(allTime.outputTokens, locale)}
+                    frac={allTime.outputTokens / allMax}
+                    color="#f59e0b"
+                  />
+                  <StatRow
+                    icon={<Database01Icon size={12} />}
+                    label={t('chat.contextCard.cacheRead')}
+                    value={formatCompact(allTime.cacheReadTokens, locale)}
+                    frac={allTime.cacheReadTokens / allMax}
+                    color={COLOR_CACHE_READ}
+                  />
+                  <StatRow
+                    icon={<Database02Icon size={12} />}
+                    label={t('chat.contextCard.cacheWrite')}
+                    value={formatCompact(allTime.cacheCreationTokens, locale)}
+                    frac={allTime.cacheCreationTokens / allMax}
+                    color={COLOR_CACHE_WRITE}
+                  />
+                  <StatRow
+                    icon={<DollarCircleIcon size={12} />}
+                    label={t('chat.contextCard.cost')}
+                    value={formatCost(allTime.cost)}
+                  />
+                </div>
+                {allCachedShare > 0 && (
+                  <p className="text-muted mt-1 text-[10px]">
+                    {t('chat.contextCard.cachedShare', { percent: allCachedShare })}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Last call footnote */}
+            {lastCall && (
+              <p className="text-muted border-border/60 border-t pt-2 text-[10px]" dir="ltr">
+                {t('chat.contextCard.lastCall')}: {lastCall.provider} · {lastCall.model} ·{' '}
+                {(lastCall.durationMs / 1000).toFixed(1)}s
+              </p>
+            )}
+          </div>
         </div>
       )}
     </span>

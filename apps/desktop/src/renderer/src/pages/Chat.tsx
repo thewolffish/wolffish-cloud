@@ -72,7 +72,6 @@ import { useSessions, type SessionDescriptor } from '@providers/sessions/useSess
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
-  ArrowExpandIcon,
   ArrowUp02Icon,
   BubbleChatIcon,
   CancelCircleIcon,
@@ -81,6 +80,7 @@ import {
   ComputerTerminal01Icon,
   Delete02Icon,
   Download01Icon,
+  Edit02Icon,
   Files01Icon,
   Folder01Icon,
   Image02Icon,
@@ -3014,10 +3014,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               </>
             )}
             <div className="min-w-0 flex-1" />
-            {/* Expands the draft into the full-height CodeMirror sheet —
-                leads the end-edge cluster; gone while the recorder owns the
-                top zone. It names the sheet it opens, the way the automation,
-                project and procedure editors name theirs. */}
+            {/* Opens the draft in the full-height CodeMirror sheet — leads the
+                end-edge cluster; gone while the recorder owns the top zone. It
+                names the sheet it opens, the way the automation, project and
+                procedure editors name theirs, and now wears the same edit
+                glyph their cards use to open an editor: the four-arrow expand
+                mark belongs to the file, PDF, video and chart viewers, where
+                the act really is "make this bigger", while this button's own
+                label is "Write your message". Sized 16 like every other
+                icon-only control in the cluster — the pencil is a lighter mark
+                than the arrows were, so at 14 it read undersized beside them. */}
             {recPhase === 'idle' && (
               <button
                 type="button"
@@ -3026,7 +3032,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 aria-label={t('chat.expandDraft')}
                 className="text-muted hover:text-fg hover:bg-border/40 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg"
               >
-                <ArrowExpandIcon size={14} />
+                <Edit02Icon size={16} />
               </button>
             )}
             {/* Hidden outright when the chat has nothing printable — an
