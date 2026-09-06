@@ -1952,7 +1952,15 @@ app.whenReady().then(async () => {
       broadcast('conversation:hydrationProgress', progress),
     // A conversation's records reached the org — the phone may read its
     // body from the API now and find the turn it just watched in it.
-    onConversationPushed: (id, updatedAt) => mobileChannel.pushConversationSynced(id, updatedAt)
+    onConversationPushed: (id, updatedAt) => mobileChannel.pushConversationSynced(id, updatedAt),
+    // The catch-up pull applied work done on the user's OTHER machine. The
+    // list re-reads either way; a removed conversation is announced by id
+    // as well, because a chat open on this screen right now has to close
+    // rather than keep rendering a transcript the org no longer has.
+    onConversationsPulled: ({ removed }) => {
+      for (const id of removed) broadcast('conversation:deleted', { id })
+      broadcast('conversation:changed', {})
+    }
   })
   // Avatar cache revalidations land here: updated/removed photos reach
   // every open surface without a refetch.

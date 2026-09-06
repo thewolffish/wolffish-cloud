@@ -726,7 +726,21 @@ export function mergeConversationOnto(
   return merged
 }
 
-export async function deleteConversation(id: string): Promise<void> {
+export async function deleteConversation(
+  id: string,
+  opts?: {
+    /**
+     * Whether this delete arms the cloud tombstone. Defaults true — a user
+     * deleting a chat means the org must forget it too.
+     *
+     * The catch-up pull is the one caller that says false: it is APPLYING a
+     * tombstone the org already holds, and re-sending it would push a
+     * delete back at the server that told us about it — and queue file
+     * tombstones for media another device has already retired.
+     */
+    notifySync?: boolean
+  }
+): Promise<void> {
   await diskWriter.deleteFile(filePathForId(id))
 
   // Clean up the per-conversation media folders so a deleted chat doesn't
@@ -739,7 +753,7 @@ export async function deleteConversation(id: string): Promise<void> {
       // best-effort
     })
   }
-  conversationSyncHook?.('deleted', id)
+  if (opts?.notifySync !== false) conversationSyncHook?.('deleted', id)
 }
 
 export function createConversation(model: string | null): ConversationFile {

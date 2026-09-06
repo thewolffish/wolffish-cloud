@@ -203,6 +203,10 @@ sync.post('/sync/batch', async (c) => {
              channel = CASE WHEN excluded.channel != '' THEN excluded.channel
                             ELSE conversations.channel END
            WHERE conversations.user_id = excluded.user_id
+             -- Deleted stays deleted: a device that has not yet heard about
+             -- the tombstone must not bump the row's stamps and put it back
+             -- through every other device's catch-up feed.
+             AND conversations.deleted_at IS NULL
              AND excluded.updated_at > conversations.updated_at`
         )
         .bind(
@@ -221,6 +225,11 @@ sync.post('/sync/batch', async (c) => {
   }
 
   // 2 · Ownership, once per distinct conversation the records reference.
+  // A TOMBSTONED conversation is not writable: another of this user's
+  // devices still holding the deleted transcript would otherwise re-insert
+  // its records on every launch, resurrecting in the master record exactly
+  // what the nightly purge had removed. Its ids come back in `rejected_ids`,
+  // which the client quarantines.
   const owned = new Set<string>()
   if (records.length) {
     const ids = [...new Set(records.map((r) => r.conversation_id))]
@@ -228,7 +237,7 @@ sync.post('/sync/batch', async (c) => {
       const chunk = ids.slice(i, i + SQL_IN_CHUNK)
       const rows = await db
         .prepare(
-          `SELECT id FROM conversations WHERE user_id = ?1
+          `SELECT id FROM conversations WHERE user_id = ?1 AND deleted_at IS NULL
            AND id IN (${chunk.map((_, k) => `?${k + 2}`).join(', ')})`
         )
         .bind(auth.sub, ...chunk)
@@ -582,14 +591,25 @@ sync.post('/files/delete', async (c) => {
   const auth = c.get('auth')
   const body = await parseJson(c, FilesDeleteSchema)
   if (body instanceof Response) return body
-  const placeholders = body.names.map((_, i) => `?${i + 3}`).join(', ')
-  const res = await c.env.DB.prepare(
-    `UPDATE files SET deleted_at = ?1
-     WHERE user_id = ?2 AND deleted_at IS NULL AND name IN (${placeholders})`
-  )
-    .bind(nowIso(), auth.sub, ...body.names)
-    .run()
-  return c.json({ ok: true, deleted: res.meta.changes })
+  const now = nowIso()
+  // Chunked because D1 caps bound parameters at 100 per statement and the
+  // schema accepts 500 names: a single statement over the whole list threw
+  // at 99 names (2 fixed binds + 99), and the client's retry of an outbox
+  // item that can never succeed never drains — which also means a sign-out
+  // that waits for an empty outbox never purges the local cache.
+  let deleted = 0
+  for (let i = 0; i < body.names.length; i += SQL_IN_CHUNK) {
+    const chunk = body.names.slice(i, i + SQL_IN_CHUNK)
+    const res = await c.env.DB.prepare(
+      `UPDATE files SET deleted_at = ?1
+       WHERE user_id = ?2 AND deleted_at IS NULL
+         AND name IN (${chunk.map((_, k) => `?${k + 3}`).join(', ')})`
+    )
+      .bind(now, auth.sub, ...chunk)
+      .run()
+    deleted += res.meta.changes ?? 0
+  }
+  return c.json({ ok: true, deleted })
 })
 
 /**

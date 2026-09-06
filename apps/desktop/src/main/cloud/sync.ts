@@ -87,6 +87,7 @@ import {
 import { cloudSession } from '@main/cloud/session'
 import {
   conversationDirName,
+  deleteConversation,
   listConversationDigests,
   loadConversation,
   loadConversationWithDigest,
@@ -131,6 +132,17 @@ const RESTORE_CONCURRENCY = 6
 const BLOB_CONCURRENCY = 4
 /** How often a running app folds the org's usage table into the ledger. */
 const USAGE_PULL_MS = 120_000
+/** How often a running app catches up on conversations written elsewhere. */
+const CONV_PULL_MS = 120_000
+/** Index rows per catch-up page (the server's own ceiling for this route). */
+const CONV_PULL_PAGE = 500
+/**
+ * Attempts a single restore item (one conversation, one blob) gets before
+ * it is quarantined and stops holding `restore_done` unset. Generous: the
+ * retry ladder already spans minutes, so reaching this means the item is
+ * genuinely unreadable, not merely unlucky.
+ */
+const RESTORE_MAX_ATTEMPTS = 3
 
 export type CloudSyncDeps = {
   /** Current signed-in user id, for the workspace ownership check. */
@@ -163,6 +175,13 @@ export type CloudSyncDeps = {
    * the turn it just watched to be in it.
    */
   onConversationPushed?: (conversationId: string, updatedAt: number) => void
+  /**
+   * The catch-up pull applied conversations written on another machine —
+   * merged onto disk, or removed because the org says they are gone. The
+   * host tells the renderer so an open list (or the open chat itself)
+   * re-reads instead of showing a transcript the org no longer has.
+   */
+  onConversationsPulled?: (change: { changed: string[]; removed: string[] }) => void
 }
 
 /** Live progress of one conversation's media hydration. `files` lists only
@@ -196,7 +215,10 @@ export type RestoreSummary = {
   configAdopted: boolean
   conversations: number
   files: number
+  /** Items that failed but still have attempts left — what holds `completed` back. */
   failures: number
+  /** Items given up on after RESTORE_MAX_ATTEMPTS; named in the log. */
+  quarantined: number
 }
 
 let deps: CloudSyncDeps = {}
@@ -312,6 +334,22 @@ type SyncState = {
   /** Last usage row id folded into the ledger; null = never reconciled
    *  (the first reconcile walks the whole table). */
   usage_after: number | null
+  /**
+   * The catch-up cursor for the conversation index (see pullConversations).
+   * null = never pulled: the next pull walks the index from the beginning,
+   * which costs a couple of pages and no record fetches for anything this
+   * device is already level on — and heals an install that diverged before
+   * this build existed.
+   */
+  conversations_cursor: string | null
+  /**
+   * Restore attempts that failed, per item (`conv:<id>` / `blob:<path>`).
+   * An item that keeps failing is quarantined at RESTORE_MAX_ATTEMPTS so a
+   * single unreadable record page cannot hold `restore_done` unset forever
+   * — which used to mean a full bootstrap walk on every launch, and the
+   * push memo never persisting.
+   */
+  restore_failures: Record<string, number>
 }
 
 const syncStatePath = (): string => path.join(workspaceRoot(), '.sync-state.json')
@@ -325,7 +363,9 @@ const emptySyncState = (): SyncState => ({
   pending_file_deletes: [],
   synced_paths: [],
   pushed: {},
-  usage_after: null
+  usage_after: null,
+  conversations_cursor: null,
+  restore_failures: {}
 })
 
 let syncStateMemo: SyncState | undefined
@@ -352,6 +392,18 @@ async function loadSyncState(): Promise<SyncState> {
     }
     if (typeof raw.usage_after === 'number' && Number.isFinite(raw.usage_after)) {
       state.usage_after = raw.usage_after
+    }
+    if (typeof raw.conversations_cursor === 'string') {
+      state.conversations_cursor = raw.conversations_cursor
+    }
+    if (
+      raw.restore_failures &&
+      typeof raw.restore_failures === 'object' &&
+      !Array.isArray(raw.restore_failures)
+    ) {
+      for (const [key, count] of Object.entries(raw.restore_failures)) {
+        if (typeof count === 'number' && Number.isFinite(count)) state.restore_failures[key] = count
+      }
     }
   } catch {
     // absent or unreadable — a purge, a first boot, or a torn write; every
@@ -638,6 +690,29 @@ async function drain(): Promise<void> {
         await reconcileUsage('incremental')
       } catch (err) {
         wlog.debug('sync', 'usage reconcile failed — next interval retries:', err)
+      }
+    }
+    // Conversations written on another machine — the catch-up half of sync.
+    // BEFORE the pushes below: a conversation changed on both sides merges
+    // first, so the push that follows sends the union rather than this
+    // device's half of it. Only after restore, and never during one.
+    if ((await loadSyncState()).restore_done && Date.now() - lastConvPullMs >= CONV_PULL_MS) {
+      lastConvPullMs = Date.now()
+      try {
+        const pulled = await pullConversations()
+        if (pulled.changed.length || pulled.removed.length) {
+          wlog.info(
+            'sync',
+            `catch-up: ${pulled.changed.length} changed, ${pulled.removed.length} removed elsewhere`
+          )
+          try {
+            deps.onConversationsPulled?.(pulled)
+          } catch (err) {
+            wlog.warn('sync', 'onConversationsPulled hook failed:', err)
+          }
+        }
+      } catch (err) {
+        wlog.debug('sync', 'conversation catch-up failed — next interval retries:', err)
       }
     }
     for (const id of [...pendingDeletes]) {
@@ -1484,13 +1559,30 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
     configAdopted: false,
     conversations: 0,
     files: 0,
-    failures: 0
+    failures: 0,
+    quarantined: 0
   }
   if (restoring) return none
   const state = await loadSyncState()
   if (state.restore_done) return none
   restoring = true
   const summary: RestoreSummary = { ...none, attempted: true }
+  // Per-item attempt ledger. `completed` used to require literally zero
+  // failures, so one conversation the server could not serve kept
+  // restore_done unset forever: a full bootstrap walk on every launch, the
+  // retry ladder always armed, and — because the memo is only persisted on
+  // a clean pass — the file sweep re-walking and re-uploading each time.
+  // Now an item that has failed RESTORE_MAX_ATTEMPTS times is skipped and
+  // named, and the rest of the restore is allowed to be finished.
+  const attempts = { ...state.restore_failures }
+  const quarantined: string[] = []
+  /** True when this item is spent — skip it, and stop counting it. */
+  const isSpent = (key: string): boolean => (attempts[key] ?? 0) >= RESTORE_MAX_ATTEMPTS
+  const noteFailure = (key: string): void => {
+    attempts[key] = (attempts[key] ?? 0) + 1
+    if (attempts[key]! >= RESTORE_MAX_ATTEMPTS) quarantined.push(key)
+    else summary.failures++
+  }
   try {
     const localCfg = await readConfig()
     const hadStamp = state.config_updated_at !== null
@@ -1563,9 +1655,11 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
         summary.files++
       } catch (err) {
         // A missing blob degrades to a missing file — logged, and the
-        // attempt is NOT marked complete so a later retry heals it.
+        // attempt is NOT marked complete so a later retry heals it. After
+        // RESTORE_MAX_ATTEMPTS it is quarantined instead: a blob the org
+        // has genuinely lost must not cost the user their restore.
         wlog.warn('sync', `blob restore failed (${f.name}):`, err)
-        summary.failures++
+        noteFailure(`blob:${f.name}`)
       }
     }
     for await (const page of filePages(boot.files, boot.files_next)) {
@@ -1579,6 +1673,9 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
         if (!underSyncRoots(name) || name.includes('..') || !syncablePath(name)) continue
         // Conversation media hydrates on open, with progress — never here.
         if (isLazyMediaPath(name)) continue
+        // Spent its attempts on an earlier pass: the manifest row stays
+        // known (it seeded serverFiles above), the download does not repeat.
+        if (isSpent(`blob:${name}`)) continue
         wanted.push({ ...f, name })
       }
       await mapPool(wanted, BLOB_CONCURRENCY, restoreBlob)
@@ -1595,6 +1692,10 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
         // Deleted here while the restore was in flight: the tombstone is on
         // its way to the server — don't materialize it again.
         if (pendingDeletes.has(meta.id)) return
+        // Spent its attempts on earlier passes — skipped so the rest of the
+        // restore can finish. The catch-up pull retries it later anyway:
+        // its next server-side write puts it back in the `since` feed.
+        if (isSpent(`conv:${meta.id}`)) return
         const serverUpdated = Date.parse(meta.updated_at) || 0
         const local = await loadConversation(meta.id)
         if (local && local.messages.length > 0 && local.updatedAt >= serverUpdated) {
@@ -1620,10 +1721,10 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
         // conversation is opened, with visible progress.
         summary.conversations++
       } catch (err) {
-        // One bad conversation never sinks the restore — but it does keep
-        // restore_done unset, so a later pass retries it.
+        // One bad conversation never sinks the restore — and after
+        // RESTORE_MAX_ATTEMPTS it stops holding restore_done unset either.
         wlog.warn('sync', `restore of ${meta.id} failed:`, err)
-        summary.failures++
+        noteFailure(`conv:${meta.id}`)
       }
     }
     for await (const page of conversationPages(boot.conversations, boot.conversations_next)) {
@@ -1641,19 +1742,40 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
       }
     }
 
+    summary.quarantined = quarantined.length
+    if (quarantined.length) {
+      // Loud, and by name: these are the items the org could not serve
+      // three times running, and the reason this restore is allowed to
+      // finish without them.
+      wlog.error(
+        'sync',
+        `restore quarantined ${quarantined.length} item(s) after ${RESTORE_MAX_ATTEMPTS} attempts each: ` +
+          quarantined.join(', ')
+      )
+    }
+    // `failures` now counts only items with attempts still to spend, so a
+    // permanently-unreadable one no longer keeps every launch re-restoring.
     if (summary.failures === 0) {
       summary.completed = true
       await mutateSyncState((s) => {
         s.restore_done = true
         s.synced_paths = [...syncedPaths]
         s.pushed = Object.fromEntries(pushedDigests)
+        s.restore_failures = attempts
       })
       wlog.info(
         'sync',
         `restore complete: ${summary.conversations} conversations, ${summary.files} files` +
-          (summary.configAdopted ? ', config adopted' : '')
+          (summary.configAdopted ? ', config adopted' : '') +
+          (quarantined.length ? `, ${quarantined.length} quarantined` : '')
       )
     } else {
+      // The attempt ledger persists on the FAILING path too — it is what
+      // makes "three attempts" mean three launches rather than three
+      // attempts inside one process that a restart resets.
+      await mutateSyncState((s) => {
+        s.restore_failures = attempts
+      })
       await persistOutbox().catch(() => undefined)
       wlog.warn(
         'sync',
@@ -1665,6 +1787,146 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
   } finally {
     restoring = false
   }
+}
+
+// ── Catch-up pull: conversations written somewhere else ──────────────────
+//
+// Restore is a one-time event; this is the steady state. Without it the
+// desktop is push-only for the two largest data types, and a second signed-in
+// machine diverges permanently: conversations created there never arrive,
+// and a conversation deleted there stays on this screen forever.
+//
+// The server primitive is the one the phone already runs on every foreground
+// (apps/mobile/src/lib/sync/sync.ts): `?since=<cursor>` returns rows whose
+// SERVER stamp moved past the cursor — `synced_at` for writes, `deleted_at`
+// for tombstones — so deletions ride the same feed as edits and no id sweep
+// is needed. `include=meta` is deliberately omitted: the phone needs the
+// envelope to draw a list without a body fetch, this client rebuilds the
+// whole transcript from records anyway, and the meta join carries a
+// per-row message-count subquery worth skipping.
+//
+// Three rules keep it cheap and keep it from fighting the push side:
+//   · our own pushes bump `synced_at`, so this device sees its own writes
+//     come back. A row whose server `updated_at` is not ahead of the local
+//     file costs one local read and no network;
+//   · every record id that arrives is marked acknowledged, so the push that
+//     follows a merge sends only what is genuinely local-only — not the
+//     transcript we just received;
+//   · a conversation with a local tombstone already queued is skipped: that
+//     delete is on its way and must not be undone by the row it will remove.
+
+type WireConversationRow = WireConversationMeta & { deleted_at?: string | null }
+
+let lastConvPullMs = 0
+
+/**
+ * One catch-up pass. Returns what changed so the caller can tell the UI.
+ * A null cursor walks the index from the beginning — a couple of pages, no
+ * record fetches for anything already level, and it heals an install that
+ * diverged before this build.
+ */
+async function pullConversations(): Promise<{ changed: string[]; removed: string[] }> {
+  const changed: string[] = []
+  const removed: string[] = []
+  let cursor = (await loadSyncState()).conversations_cursor
+  // Bounded: 500 rows a page, so this is far more pages than any real
+  // account has and only exists so a server that never stops handing out a
+  // `next` cannot spin here forever.
+  for (let page = 0; page < 2_000; page++) {
+    const query = new URLSearchParams({ since: cursor ?? '', limit: String(CONV_PULL_PAGE) })
+    const res = await apiJson<{
+      conversations: WireConversationRow[]
+      next: string | null
+      cursor: string | null
+    }>('GET', `/v1/conversations?${query.toString()}`)
+    const rows = (res.conversations ?? []).filter(
+      (row): row is WireConversationRow =>
+        Boolean(row) && typeof row === 'object' && typeof row.id === 'string' && row.id.length > 0
+    )
+    for (const row of rows) {
+      try {
+        if (row.deleted_at) {
+          if (await applyRemoteDelete(row.id)) removed.push(row.id)
+        } else if (await applyRemoteConversation(row)) {
+          changed.push(row.id)
+        }
+      } catch (err) {
+        // One row never sinks the pass — but the cursor does NOT advance
+        // past a page that failed, so the next pass retries it.
+        wlog.warn('sync', `catch-up of ${row.id} failed — next pass retries:`, err)
+        return { changed, removed }
+      }
+    }
+    // Advance only after the whole page applied: the cursor is a promise
+    // that everything before it is on disk.
+    if (typeof res.cursor === 'string' && res.cursor && res.cursor !== cursor) {
+      cursor = res.cursor
+      await mutateSyncState((s) => {
+        s.conversations_cursor = cursor
+      })
+    }
+    if (!res.next) break
+  }
+  return { changed, removed }
+}
+
+/** A tombstone from elsewhere, applied locally. False = nothing was here. */
+async function applyRemoteDelete(id: string): Promise<boolean> {
+  if (pendingDeletes.has(id)) return false
+  if (!(await loadConversation(id))) return false
+  // notifySync: false — the org is where this tombstone CAME from; sending
+  // it back would delete-loop and re-tombstone media already retired.
+  await deleteConversation(id, { notifySync: false })
+  pendingConversations.delete(id)
+  pushedDigests.delete(id)
+  ackedRecords.delete(id)
+  ackedSnapshots.delete(id)
+  refusedRecords.delete(id)
+  wireMemo.delete(id)
+  for (const rel of [...syncedPaths]) {
+    if (lazyMediaPrefixes(conversationDirName(id)).some((prefix) => rel.startsWith(prefix))) {
+      syncedPaths.delete(rel)
+    }
+  }
+  await persistOutbox().catch(() => undefined)
+  wlog.info('sync', `catch-up: ${id} was deleted elsewhere — removed locally`)
+  return true
+}
+
+/** A conversation written elsewhere, merged onto disk. False = already level. */
+async function applyRemoteConversation(row: WireConversationRow): Promise<boolean> {
+  if (pendingDeletes.has(row.id)) return false
+  const serverUpdated = Date.parse(row.updated_at) || 0
+  const local = await loadConversation(row.id)
+  // The common case by far — this device's own push echoing back, or a row
+  // it already holds. One local read, no network.
+  if (local && local.messages.length > 0 && local.updatedAt >= serverUpdated) return false
+
+  const records = await pullRecords(row.id)
+  if (records.length === 0) return false
+  const rebuilt = rebuildConversation(row, records)
+  let wroteFresh = false
+  await updateConversation(row.id, (disk) => {
+    if (!disk) wroteFresh = true
+    // Union by message id: a turn this device ran while the other machine
+    // was writing survives the merge, and so does theirs.
+    return disk ? mergeConversationOnto(disk, rebuilt) : rebuilt
+  })
+  // Everything that just arrived is, by definition, already on the server:
+  // acknowledging it here is what makes the push this write schedules send
+  // only local-only messages plus the envelope, instead of the transcript
+  // we were just handed.
+  const acked = ackedRecords.get(row.id) ?? new Set<string>()
+  for (const rec of records) if (rec.kind === 'message') acked.add(rec.id)
+  ackedRecords.set(row.id, acked)
+  if (wroteFresh) {
+    // Nothing local to reconcile — what is on disk IS the server's copy, so
+    // the scheduled push has nothing to say.
+    const written = await loadConversationWithDigest(row.id)
+    if (written) pushedDigests.set(row.id, written.digest)
+    pendingConversations.delete(row.id)
+  }
+  return true
 }
 
 // ── Usage ledger reconcile ───────────────────────────────────────────────

@@ -291,6 +291,7 @@ Everything below the line "device-local" is a cache of the org's record. Delete
 | `logs/extension/*.jsonl` | Blobs | Restored eagerly |
 | `brain/cerebellum/` (capabilities) | The org's capability registry (versioned packages; user-scoped imports sync two-way) | Mirrored on session ready |
 | Deletions | A deleted conversation or file is tombstoned at the org, durably (queued even offline or mid-restore) | Stays deleted |
+| **Another machine's work** | Pulled every ~2 minutes: conversations written (or deleted) on the user's other signed-in desktop arrive here, merged by message id so nothing local is lost | Already applied — the catch-up cursor rides `.sync-state.json` |
 | **Sign-out** | The outbox drains, the session is revoked, and this machine's cache is **purged** (same for a PIN lockout). Offline, the cache is kept and the log says so | The next sign-in restores everything from the org |
 | **Device-local (never synced)** | `runtime/` (session, device id, avatar cache), `mobile/pairing.json`, `brain/cortex.db` (rebuilt), `brain/corpus/` and `brain/prefrontal/.debug/` (diagnostics), `logs/*.log`, `bin/`, `extension/`, `.lock`, `.sync-state.json`, app-managed prompt files (`agents.core.md`, `workflow*.md`) | Regenerated or re-linked |
 

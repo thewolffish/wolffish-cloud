@@ -244,20 +244,32 @@ admin.post('/users/:id/clear-pin', async (c) => {
 })
 
 /**
- * Read a user's pending reset code. Admins already hold reset-password
- * (which mints a temp password outright), so this exposes no new power —
- * it exists so the release gate can prove the emailed-code flow live.
+ * Read a user's pending reset code — off unless ADMIN_RESET_CODE_READ is
+ * set, and never from committed config: it exists so the release gate can
+ * prove the emailed-code flow live, and a deployment has to opt in.
+ *
+ * It carries the SAME two guards reset-password does, because it is the
+ * same power by another route. A code plus the unauthenticated
+ * /auth/reset/confirm sets any password, so without the owner guard an
+ * admin could take an owner's account — the one thing the rest of this
+ * file is built to prevent — and without the audit row it would be the
+ * only account takeover here that leaves no trace.
  */
 admin.get('/users/:id/reset-code', async (c) => {
   const auth = c.get('auth')
   if (c.env.ADMIN_RESET_CODE_READ !== '1') return c.json({ error: 'not_found' }, 404)
   if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
+  const id = c.req.param('id')
+  if (!(await ownerGuard(c.env, auth.role, id))) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can read an owner' }, 403)
+  }
   const entry = await c.env.DB.prepare(
     'SELECT code, attempts FROM password_resets WHERE user_id = ?1 AND expires_at > ?2'
   )
-    .bind(c.req.param('id'), nowIso())
+    .bind(id, nowIso())
     .first<{ code: string; attempts: number }>()
   if (!entry) return c.json({ error: 'not_found' }, 404)
+  await audit(c.env, auth.sub, 'user.read_reset_code', id)
   return c.json({ code: entry.code, attempts: entry.attempts })
 })
 

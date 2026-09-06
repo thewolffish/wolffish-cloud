@@ -22,12 +22,19 @@ import { buildZip } from './lib/zip.mjs'
 
 const stamp = Date.now().toString(36)
 let failures = 0
+let skipped = 0
 let n = 0
 const check = (name, cond, extra = '') => {
   const ok = Boolean(cond)
   n++
   console.log(`${ok ? '✅' : '❌'} ${String(n).padStart(2, '0')} ${name}${ok || !extra ? '' : ` — ${extra}`}`)
   if (!ok) failures++
+}
+/** A scenario this deployment is not configured for. Counted and named in
+ *  the summary — never silent, never a failure. */
+const skip = (name, why) => {
+  skipped++
+  console.log(`⏭️  -- ${name} — SKIPPED: ${why}`)
 }
 const api = async (path, { token, body, method, raw } = {}) => {
   const res = await fetch(`${BASE}${path}`, {
@@ -616,32 +623,44 @@ check(
 )
 const rReq = await api('/auth/reset/request', { body: { email: rEmail } })
 check('reset request sends email', rReq.status === 200, JSON.stringify(rReq.json))
+// Reading the code back needs ADMIN_RESET_CODE_READ, which is no longer a
+// committed var — a deployment opts in with `wrangler secret put`. Without
+// it the confirm half of the flow cannot be driven from here (nothing else
+// may read a live code), so it is SKIPPED rather than failed: the mail
+// itself is already proven by the 200 above.
 const rPeek = await api(`/admin/users/${rId}/reset-code`, { token: O })
-check('admin reads pending code', rPeek.status === 200 && /^[0-9]{6}$/.test(rPeek.json?.code ?? ''))
-const R_CODE = rPeek.json.code
-const R_PW = `reset-pass-${stamp}`
-check(
-  'wrong code rejected',
-  (await api('/auth/reset/confirm', {
-    body: { email: rEmail, code: R_CODE === '000000' ? '000001' : '000000', new_password: R_PW }
-  })).json?.error === 'invalid_code'
-)
-check(
-  'short password rejected',
-  (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: 'short' } })).status === 400
-)
-check(
-  'reset confirm ok',
-  (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: R_PW } })).status === 200
-)
-check(
-  'code dead after use',
-  (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: R_PW } })).json?.error === 'code_expired'
-)
-const rLogin = await api('/auth/login', {
-  body: { email: rEmail, password: R_PW, device: { platform: 'desktop', name: 'reset-probe' } }
-})
-check('login with reset password (invited→active)', rLogin.status === 200 && rLogin.json?.access_token)
+if (rPeek.status === 404) {
+  skip(
+    'emailed-code confirm flow',
+    'ADMIN_RESET_CODE_READ unset — run `echo -n 1 | npx wrangler secret put ADMIN_RESET_CODE_READ` to cover it'
+  )
+} else {
+  check('admin reads pending code', rPeek.status === 200 && /^[0-9]{6}$/.test(rPeek.json?.code ?? ''))
+  const R_CODE = rPeek.json.code
+  const R_PW = `reset-pass-${stamp}`
+  check(
+    'wrong code rejected',
+    (await api('/auth/reset/confirm', {
+      body: { email: rEmail, code: R_CODE === '000000' ? '000001' : '000000', new_password: R_PW }
+    })).json?.error === 'invalid_code'
+  )
+  check(
+    'short password rejected',
+    (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: 'short' } })).status === 400
+  )
+  check(
+    'reset confirm ok',
+    (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: R_PW } })).status === 200
+  )
+  check(
+    'code dead after use',
+    (await api('/auth/reset/confirm', { body: { email: rEmail, code: R_CODE, new_password: R_PW } })).json?.error === 'code_expired'
+  )
+  const rLogin = await api('/auth/login', {
+    body: { email: rEmail, password: R_PW, device: { platform: 'desktop', name: 'reset-probe' } }
+  })
+  check('login with reset password (invited→active)', rLogin.status === 200 && rLogin.json?.access_token)
+}
 check(
   'reset probe suspended (cleanup)',
   (await api(`/admin/users/${rId}`, { token: O, method: 'PATCH', body: { status: 'suspended' } })).status === 200
@@ -983,9 +1002,10 @@ check(
 // owner signs out
 check('owner logout', (await api('/v1/logout', { token: O, body: {} })).status === 200)
 
+const skipNote = skipped ? ` (${skipped} skipped)` : ''
 console.log(
   failures === 0
-    ? `\nLIVE VERIFICATION: ALL ${n} CHECKS PASS against ${BASE}`
-    : `\nLIVE VERIFICATION: ${failures}/${n} FAILURES against ${BASE}`
+    ? `\nLIVE VERIFICATION: ALL ${n} CHECKS PASS against ${BASE}${skipNote}`
+    : `\nLIVE VERIFICATION: ${failures}/${n} FAILURES against ${BASE}${skipNote}`
 )
 process.exit(failures === 0 ? 0 : 1)

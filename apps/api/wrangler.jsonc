@@ -51,10 +51,14 @@
   // the default 30 s CPU budget is plenty, the ceiling is belt and braces.
   "limits": { "cpu_ms": 60000 },
 
-  // Plain vars. ADMIN_RESET_CODE_READ lets the release gate read a pending
-  // reset code through the admin API to prove the e-mailed flow end to end;
-  // a client fork removes it and the route answers 404.
-  "vars": { "ADMIN_RESET_CODE_READ": "1" },
+  // No plain vars. ADMIN_RESET_CODE_READ (see src/routes/admin.ts) is
+  // deliberately NOT here: committed, every fork inherits the flag switched
+  // on, and the route it opens hands an owner-guarded power to anyone who
+  // can reach the admin API. A deployment that wants the release gate to
+  // prove the e-mailed reset flow opts in for itself:
+  //   echo -n 1 | npx wrangler secret put ADMIN_RESET_CODE_READ
+  // Absent — the default everywhere — the route answers 404 and
+  // scripts/verify-live.mjs skips that scenario.
 
   "triggers": { "crons": ["17 3 * * *"] },
 
