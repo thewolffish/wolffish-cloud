@@ -4,6 +4,7 @@ import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { EditorSheet } from '@components/core/EditorSheet'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
@@ -23,7 +24,6 @@ import {
   PlayIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 // The copy-progress card and the attached-files list share one shell and hold
@@ -345,17 +345,6 @@ export function Procedures(): React.JSX.Element {
       : 100
     : 0
 
-  // Escape closes only what is stacked on top; the dialog's own `dismissable`
-  // gate stops Modal from handling it while the prompt sheet is open.
-  useEffect(() => {
-    if (!promptExpanded) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setPromptExpanded(false)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [promptExpanded])
-
   // Auto-save ~600ms after the last keystroke. Title is required, so nothing is
   // persisted until one is typed; the backend stores values verbatim (no trim),
   // so the draft compares exactly against savedRef.
@@ -525,6 +514,17 @@ export function Procedures(): React.JSX.Element {
                 const project = procedure.projectId
                   ? projectsById.get(procedure.projectId)
                   : undefined
+                // One mono line, the automations card's exact contract: facts
+                // joined by " · ", with anything that doesn't apply dropped
+                // rather than printed empty.
+                const metaLine = [
+                  t('procedures.editedAt', {
+                    time: formatFromNow(procedure.updatedAt, now, locale)
+                  }),
+                  project ? project.title.trim() || t('projects.untitled') : null
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
                 return (
                   <li key={procedure.id} className="min-w-0">
                     <div className="bg-surface border-border flex h-full w-full flex-col items-start gap-3 rounded-2xl border p-4 text-start">
@@ -569,24 +569,16 @@ export function Procedures(): React.JSX.Element {
                           </button>
                         </div>
                       </div>
-                      <div className="flex w-full min-w-0 flex-col gap-1">
-                        <span title={name} className="text-fg truncate text-sm font-semibold">
-                          {name}
-                        </span>
-                        <span className="text-muted line-clamp-2 text-xs leading-relaxed">
-                          {t('procedures.editedAt', {
-                            time: formatFromNow(procedure.updatedAt, now, locale)
-                          })}
-                          {project && ` · ${project.title.trim() || t('projects.untitled')}`}
-                        </span>
-                      </div>
                       {/* Mode is a property of the procedure, not of its
-                          prompt — it stays on the card, in the footer the
-                          three pages share. */}
+                          prompt — so it leads the stack rather than trailing
+                          it, held to the card's end edge (`self-end`, which
+                          follows the locale's direction) so every card's
+                          toggle lands on the same column as the action buttons
+                          above it. */}
                       <div
                         role="tablist"
                         aria-label={t('procedures.modeAria')}
-                        className="border-border bg-bg/40 mt-auto inline-flex items-center gap-0.5 rounded-lg border p-0.5"
+                        className="border-border bg-bg/40 inline-flex items-center gap-0.5 self-end rounded-lg border p-0.5"
                       >
                         {(['single', 'workflow'] as const).map((m) => {
                           const active = (procedure.mode ?? globalMode) === m
@@ -614,6 +606,16 @@ export function Procedures(): React.JSX.Element {
                           )
                         })}
                       </div>
+                      <span title={name} className="text-fg w-full truncate text-sm font-semibold">
+                        {name}
+                      </span>
+                      {/* The edit stamp and the bound project — reference
+                          detail, in the mono well the automations cards use,
+                          pinned to the bottom so every card in the row ends on
+                          the same line. */}
+                      <code className="border-border bg-bg text-muted mt-auto line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
+                        {metaLine}
+                      </code>
                     </div>
                   </li>
                 )
@@ -704,6 +706,39 @@ export function Procedures(): React.JSX.Element {
               setEmojiOpen(false)
             }}
           />
+          <span className="text-muted text-xs font-medium">{t('procedures.prompt')}</span>
+          {/* The prompt, in the same CodeMirror editor the expanded sheet
+              runs — editable in place, over the same draft state. Fixed
+              height, filled or empty: the dialog never reflows as the prompt
+              grows, so a long prompt scrolls inside the block and the button
+              below opens the full-height sheet to write comfortably.
+              background="field" sits the block in the same bg-bg well the
+              Select and input fields use. */}
+          <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
+            <CodeEditor
+              value={draftPrompt}
+              language="markdown"
+              background="field"
+              isDark={isDark}
+              onChange={(value) => {
+                setTouched(true)
+                setDraftPrompt(value)
+              }}
+              placeholder={t('procedures.promptPlaceholder')}
+              className="h-full overflow-auto overscroll-contain"
+              spellcheck
+            />
+          </div>
+          {/* Same draft, more room — opens the full-height editor sheet. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPromptExpanded(true)}
+            className="self-start"
+          >
+            {draftPrompt.trim() ? t('procedures.editPrompt') : t('procedures.addPrompt')}
+          </Button>
+
           {/* Files: copied INTO the workspace on attach, exactly like a
               project's, so the procedure can never dangle on a moved
               original. Every run gets the list, never the content. */}
@@ -838,74 +873,35 @@ export function Procedures(): React.JSX.Element {
             </ul>
           )}
 
-          <span className="text-muted text-xs font-medium">{t('procedures.prompt')}</span>
-          {/* The prompt, in the same CodeMirror editor the expanded sheet
-              runs — editable in place, over the same draft state. Fixed
-              height, filled or empty: the dialog never reflows as the prompt
-              grows, so a long prompt scrolls inside the block and the button
-              below opens the full-height sheet to write comfortably.
-              background="field" sits the block in the same bg-bg well the
-              Select and input fields use. */}
-          <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
-            <CodeEditor
-              value={draftPrompt}
-              language="markdown"
-              background="field"
-              isDark={isDark}
-              onChange={(value) => {
-                setTouched(true)
-                setDraftPrompt(value)
-              }}
-              placeholder={t('procedures.promptPlaceholder')}
-              className="h-full overflow-auto overscroll-contain"
-              spellcheck
-            />
-          </div>
-          {/* Same draft, more room — opens the full-height editor sheet. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPromptExpanded(true)}
-            className="self-start"
-          >
-            {draftPrompt.trim() ? t('procedures.editPrompt') : t('procedures.addPrompt')}
-          </Button>
           <p className="text-muted text-xs">{t('procedures.autosaveHint')}</p>
         </div>
       </EditorSheet>
 
-      {/* The expanded prompt editor — the composer's own expand dialog, over
-          the same draft state, so what is typed here autosaves on the dialog's
-          debounce and the preview above reflects it the moment this closes. */}
-      {editing !== null &&
-        promptExpanded &&
-        createPortal(
-          <div
-            role="presentation"
-            onClick={() => setPromptExpanded(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
-            >
-              <CodeEditor
-                value={draftPrompt}
-                language="markdown"
-                background="field"
-                isDark={isDark}
-                onChange={(value) => {
-                  setTouched(true)
-                  setDraftPrompt(value)
-                }}
-                placeholder={t('procedures.promptPlaceholder')}
-                className="min-h-0 flex-1 overflow-auto"
-                spellcheck
-              />
-            </div>
-          </div>,
-          document.body
-        )}
+      {/* The expanded prompt editor — the file viewers' own expand sheet, over
+          the same draft state, so what is typed here autosaves on the editor's
+          debounce and the preview above reflects it the moment this closes.
+          The sheet, not a centered dialog: the form behind it is a sheet too,
+          so expanding the prompt widens the same surface instead of stacking a
+          second shape on top of it. */}
+      <ExpandedSheet
+        open={editing !== null && promptExpanded}
+        onClose={() => setPromptExpanded(false)}
+        title={draftPrompt.trim() ? t('procedures.editPrompt') : t('procedures.addPrompt')}
+      >
+        <CodeEditor
+          value={draftPrompt}
+          language="markdown"
+          background="field"
+          isDark={isDark}
+          onChange={(value) => {
+            setTouched(true)
+            setDraftPrompt(value)
+          }}
+          placeholder={t('procedures.promptPlaceholder')}
+          className="h-full overflow-auto"
+          spellcheck
+        />
+      </ExpandedSheet>
 
       <Modal
         open={deleteTarget !== null}

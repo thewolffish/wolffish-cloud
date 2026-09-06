@@ -26,7 +26,9 @@ import {
   BubbleChatIcon,
   Delete01Icon,
   Delete02Icon,
-  Edit02Icon
+  Edit02Icon,
+  File01Icon,
+  Folder01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -306,6 +308,21 @@ export function Projects(): React.JSX.Element {
               {projects.map((project) => {
                 const name = project.title.trim() || t('projects.untitled')
                 const stats = convStats.get(project.id)
+                const fileCount = project.files.length
+                const dirCount = project.directories?.length ?? 0
+                // One mono line, the automations card's exact contract: facts
+                // joined by " · ", with anything that doesn't apply dropped
+                // rather than printed empty (a project nobody has opened yet
+                // has no "used" moment to report).
+                const metaLine = [
+                  t('projects.editedAt', { time: formatFromNow(project.updatedAt, now, locale) }),
+                  stats
+                    ? t('projects.usedAt', { time: formatFromNow(stats.lastUsed, now, locale) })
+                    : null,
+                  t('projects.conversationCount', { count: stats?.count ?? 0 })
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
                 return (
                   <li key={project.id} className="min-w-0">
                     <div
@@ -367,23 +384,34 @@ export function Projects(): React.JSX.Element {
                           </button>
                         </div>
                       </div>
-                      <div className="flex w-full min-w-0 flex-col gap-1">
-                        <span className="text-fg truncate text-sm font-semibold">{name}</span>
-                        <span className="text-muted line-clamp-2 text-xs leading-relaxed">
-                          {t('projects.editedAt', {
-                            time: formatFromNow(project.updatedAt, now, locale)
-                          })}
-                          {stats
-                            ? ` · ${t('projects.usedAt', {
-                                time: formatFromNow(stats.lastUsed, now, locale)
-                              })}`
-                            : ''}
-                          {' · '}
-                          {t('projects.conversationCount', { count: stats?.count ?? 0 })}
-                          {' · '}
-                          {t('chat.files.fileCount', { count: project.files.length })}
-                        </span>
-                      </div>
+                      <span className="text-fg w-full truncate text-sm font-semibold">{name}</span>
+                      {/* What the project carries into every turn it spawns —
+                          its files and its working folders — as the composer's
+                          own count chips, so the two facts read off the card
+                          instead of only from inside the edit sheet. Each chip
+                          is absent at zero rather than showing "0", the
+                          contract the composer's chips already keep. */}
+                      {(fileCount > 0 || dirCount > 0) && (
+                        <div className="flex w-full flex-wrap items-center gap-1.5">
+                          <CountChip
+                            icon={<File01Icon size={13} />}
+                            count={fileCount}
+                            label={t('projects.files', { count: fileCount })}
+                          />
+                          <CountChip
+                            icon={<Folder01Icon size={13} />}
+                            count={dirCount}
+                            label={t('projects.folders', { count: dirCount })}
+                          />
+                        </div>
+                      )}
+                      {/* Edit stamp, last use and the conversation count —
+                          reference detail, in the mono well the automations
+                          cards use, pinned to the bottom so every card in the
+                          row ends on the same line. */}
+                      <code className="border-border bg-bg text-muted mt-auto line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
+                        {metaLine}
+                      </code>
                     </div>
                   </li>
                 )
@@ -586,5 +614,38 @@ export function Projects(): React.JSX.Element {
         </p>
       </Modal>
     </main>
+  )
+}
+
+/**
+ * A count worn as a chip — the composer's file/log chips, minus the click:
+ * the same 28px bordered frame and 1px `border-border` stroke, static because
+ * the card around it is itself the button. Absent at zero, so a project with
+ * no folders carries no dead "0" chip.
+ */
+function CountChip({
+  icon,
+  count,
+  label
+}: {
+  icon: React.ReactNode
+  count: number
+  /** "Files (3)" — the words the icon stands in for, for tooltip and a11y. */
+  label: string
+}): React.JSX.Element | null {
+  if (count === 0) return null
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className={cn(
+        'border-border text-muted flex h-7 shrink-0 items-center gap-1 rounded-lg border px-1.5'
+      )}
+    >
+      {icon}
+      <span dir="ltr" className="text-[10px] leading-none font-medium tabular-nums">
+        {count}
+      </span>
+    </span>
   )
 }

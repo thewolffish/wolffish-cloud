@@ -2,13 +2,13 @@ import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { EditorSheet } from '@components/core/EditorSheet'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { Project, ProjectCopyProgress, ProjectFileRef } from '@preload/index'
 import { useTheme } from '@providers/theme/useTheme'
 import { Add01Icon, Copy01Icon, Delete02Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 /**
@@ -240,18 +240,6 @@ function ProjectDialogBody({
       : 100
     : 0
   const locked = busy || adding
-
-  // Escape closes only what is stacked on top. The dialog's own `dismissable`
-  // gate stops Modal from handling it while the sheet is open, so this is the
-  // sheet's only way out by keyboard.
-  useEffect(() => {
-    if (!instructionsExpanded) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setInstructionsExpanded(false)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [instructionsExpanded])
 
   const copyInstructions = useCallback(() => {
     void navigator.clipboard
@@ -543,38 +531,34 @@ function ProjectDialogBody({
         <p className="text-muted text-xs">{t('projects.autosaveHint')}</p>
       </div>
 
-      {/* The expanded instructions editor — the composer's own expand dialog,
+      {/* The expanded instructions editor — the file viewers' own expand sheet,
           over the same draft state, so what is typed here autosaves on the
-          dialog's debounce and the preview above reflects it on close. */}
-      {instructionsExpanded &&
-        createPortal(
-          <div
-            role="presentation"
-            onClick={() => setInstructionsExpanded(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
-            >
-              <CodeEditor
-                value={draftInstructions}
-                language="markdown"
-                isDark={isDark}
-                background="field"
-                onChange={(value) => {
-                  setTouched(true)
-                  setDraftInstructions(value)
-                }}
-                placeholder={t('projects.instructionsPlaceholder')}
-                className="min-h-0 flex-1 overflow-auto"
-                spellcheck
-                readOnly={busy}
-              />
-            </div>
-          </div>,
-          document.body
-        )}
+          editor's debounce and the preview above reflects it on close. The
+          sheet, not a centered dialog: the form behind it is a sheet too, so
+          expanding the instructions widens the same surface instead of stacking
+          a second shape on top of it. */}
+      <ExpandedSheet
+        open={instructionsExpanded}
+        onClose={() => setInstructionsExpanded(false)}
+        title={
+          draftInstructions.trim() ? t('projects.editInstructions') : t('projects.addInstructions')
+        }
+      >
+        <CodeEditor
+          value={draftInstructions}
+          language="markdown"
+          isDark={isDark}
+          background="field"
+          onChange={(value) => {
+            setTouched(true)
+            setDraftInstructions(value)
+          }}
+          placeholder={t('projects.instructionsPlaceholder')}
+          className="h-full overflow-auto"
+          spellcheck
+          readOnly={busy}
+        />
+      </ExpandedSheet>
     </EditorSheet>
   )
 }

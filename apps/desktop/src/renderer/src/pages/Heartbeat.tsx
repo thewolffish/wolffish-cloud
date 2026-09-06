@@ -5,6 +5,7 @@ import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { EditorSheet } from '@components/core/EditorSheet'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { escapePromptBody } from '@lib/heartbeat-escape'
@@ -36,7 +37,6 @@ import {
   SourceCodeIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
@@ -1472,18 +1472,6 @@ export function Heartbeat(): React.JSX.Element {
       : 100
     : 0
 
-  // Escape closes only what is stacked on top. The dialog's own `dismissable`
-  // gate stops Modal from handling it while the prompt sheet is open, so this
-  // is the sheet's only way out by keyboard.
-  useEffect(() => {
-    if (!promptExpanded) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setPromptExpanded(false)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [promptExpanded])
-
   const addDraftDirs = useCallback((): void => {
     if (addingDirs) return
     setAddingDirs(true)
@@ -2045,6 +2033,38 @@ export function Heartbeat(): React.JSX.Element {
             }}
           />
 
+          <span className="text-muted text-xs font-medium">{t('heartbeat.editor.prompt')}</span>
+          {/* The prompt, in the same CodeMirror editor the expanded sheet
+              runs — editable in place, over the same draft state. Fixed
+              height, filled or empty: the dialog never reflows as the prompt
+              grows, so the longest prompt scrolls inside the block and the
+              button below opens the full-height sheet to write comfortably.
+              background="field" sits the block in the same bg-bg well the
+              Select and input fields use. */}
+          <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
+            <CodeEditor
+              value={draftPrompt}
+              language="markdown"
+              background="field"
+              isDark={isDark}
+              onChange={setDraftPrompt}
+              placeholder={t('heartbeat.editor.promptPlaceholder')}
+              className="h-full overflow-auto overscroll-contain"
+              spellcheck
+            />
+          </div>
+          {/* Same draft, more room — opens the full-height editor sheet. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPromptExpanded(true)}
+            className="self-start"
+          >
+            {draftPrompt.trim()
+              ? t('heartbeat.editor.editPrompt')
+              : t('heartbeat.editor.addPrompt')}
+          </Button>
+
           {/* Files: copied INTO the workspace on attach, exactly like a
               project's, so the automation can never dangle on a moved
               original. The run gets the list, never the content. */}
@@ -2181,70 +2201,34 @@ export function Heartbeat(): React.JSX.Element {
             </ul>
           )}
 
-          <span className="text-muted text-xs font-medium">{t('heartbeat.editor.prompt')}</span>
-          {/* The prompt, in the same CodeMirror editor the expanded sheet
-              runs — editable in place, over the same draft state. Fixed
-              height, filled or empty: the dialog never reflows as the prompt
-              grows, so the longest prompt scrolls inside the block and the
-              button below opens the full-height sheet to write comfortably.
-              background="field" sits the block in the same bg-bg well the
-              Select and input fields use. */}
-          <div className="border-border h-40 w-full overflow-hidden rounded-lg border">
-            <CodeEditor
-              value={draftPrompt}
-              language="markdown"
-              background="field"
-              isDark={isDark}
-              onChange={setDraftPrompt}
-              placeholder={t('heartbeat.editor.promptPlaceholder')}
-              className="h-full overflow-auto overscroll-contain"
-              spellcheck
-            />
-          </div>
-          {/* Same draft, more room — opens the full-height editor sheet. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPromptExpanded(true)}
-            className="self-start"
-          >
-            {draftPrompt.trim()
-              ? t('heartbeat.editor.editPrompt')
-              : t('heartbeat.editor.addPrompt')}
-          </Button>
           <p className="text-muted text-xs">{t('heartbeat.editor.autosaveHint')}</p>
         </div>
       </EditorSheet>
 
-      {/* The expanded prompt editor — the composer's own expand dialog, over
-          the same draft state, so what is typed here autosaves on the dialog's
-          debounce and the preview above reflects it the moment this closes. */}
-      {editorOpen &&
-        promptExpanded &&
-        createPortal(
-          <div
-            role="presentation"
-            onClick={() => setPromptExpanded(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
-            >
-              <CodeEditor
-                value={draftPrompt}
-                language="markdown"
-                background="field"
-                isDark={isDark}
-                onChange={setDraftPrompt}
-                placeholder={t('heartbeat.editor.promptPlaceholder')}
-                className="min-h-0 flex-1 overflow-auto"
-                spellcheck
-              />
-            </div>
-          </div>,
-          document.body
-        )}
+      {/* The expanded prompt editor — the file viewers' own expand sheet, over
+          the same draft state, so what is typed here autosaves on the editor's
+          debounce and the preview above reflects it the moment this closes.
+          The sheet, not a centered dialog: the form behind it is a sheet too,
+          so expanding the prompt widens the same surface instead of stacking a
+          second shape on top of it. */}
+      <ExpandedSheet
+        open={editorOpen && promptExpanded}
+        onClose={() => setPromptExpanded(false)}
+        title={
+          draftPrompt.trim() ? t('heartbeat.editor.editPrompt') : t('heartbeat.editor.addPrompt')
+        }
+      >
+        <CodeEditor
+          value={draftPrompt}
+          language="markdown"
+          background="field"
+          isDark={isDark}
+          onChange={setDraftPrompt}
+          placeholder={t('heartbeat.editor.promptPlaceholder')}
+          className="h-full overflow-auto"
+          spellcheck
+        />
+      </ExpandedSheet>
 
       <Modal
         open={guideOpen}

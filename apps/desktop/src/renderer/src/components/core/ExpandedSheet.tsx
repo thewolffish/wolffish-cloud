@@ -1,4 +1,5 @@
 import { cn } from '@lib/utils/cn'
+import { isMac } from '@lib/utils/platform'
 import { Cancel01Icon } from 'hugeicons-react'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -16,11 +17,12 @@ export type ExpandedSheetProps = {
 
 /**
  * Trailing-edge side sheet (80% of the viewport wide, full height) for reading
- * a file viewer's content at a larger size — the same surface, mirrored, as the
- * conversations/profile sheets that slide in from the leading edge. Clicking
- * the backdrop does NOT
+ * — or writing — content at a larger size: the file viewers expand into it, and
+ * so do the prompt/instructions editors behind the automation, project and
+ * procedure forms. The same surface, mirrored, as the conversations/profile
+ * sheets that slide in from the leading edge. Clicking the backdrop does NOT
  * dismiss it: only the × button or Escape close it, so a stray click while
- * reading a long document never loses the reader's place.
+ * reading a long document — or drafting a long prompt — never loses the place.
  *
  * Not built on core/Modal because Modal gates Escape and backdrop-click on a
  * single `dismissable` flag, so it can't express "Escape closes but a backdrop
@@ -43,13 +45,26 @@ export function ExpandedSheet({
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
-    // Move focus into the dialog on open so keyboard/screen-reader users land
-    // inside it rather than on the page behind the (non-dismissable) backdrop.
-    closeRef.current?.focus()
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
+  // Move focus into the dialog on open so keyboard/screen-reader users land
+  // inside it rather than on the page behind the (non-dismissable) backdrop.
+  // Keyed on `open` ALONE, and kept out of the Escape effect above: callers
+  // pass `onClose` as an inline arrow, so that effect re-runs on every parent
+  // render — and with the focus call inside it, every keystroke in the sheet's
+  // editor would bounce the caret out to the × button.
+  useEffect(() => {
+    if (!open) return
+    closeRef.current?.focus()
+  }, [open])
+
   if (!open || typeof document === 'undefined') return null
+
+  // macOS draws its traffic lights over the top-left of the webview. At 80vw on
+  // the trailing edge that corner is the sheet's own header under RTL, so it
+  // takes the same clearance the editor sheet uses.
+  const underTrafficLights = isMac && document.documentElement.dir === 'rtl'
 
   return createPortal(
     <div role="presentation" className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
@@ -59,7 +74,12 @@ export function ExpandedSheet({
         aria-labelledby={title ? titleId : undefined}
         className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 end-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
       >
-        <div className="border-border flex shrink-0 items-center gap-2 border-b px-5 py-3">
+        <div
+          className={cn(
+            'border-border flex shrink-0 items-center gap-2 border-b px-5 py-3',
+            underTrafficLights && 'pt-12'
+          )}
+        >
           <span
             id={titleId}
             className="text-fg min-w-0 flex-1 truncate text-sm font-semibold"
