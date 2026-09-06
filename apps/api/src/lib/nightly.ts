@@ -36,7 +36,7 @@ export async function runNightly(env: Env, now: number): Promise<NightlyReport> 
       .run()
     return { deleted: r.meta.changes ?? 0 }
   })
-  await step(report, 'gc_blobs', () => collectOrphanBlobs(env, now))
+  await step(report, 'gc_blobs', () => collectOrphanBlobs(env, now, Date.now() + 2 * MINUTE_MS))
   await step(report, 'purge_deleted', () =>
     purgeDeletedConversationRecords(env, now, Date.now() + 2 * MINUTE_MS)
   )
@@ -121,36 +121,54 @@ export async function purgeDeletedConversationRecords(
  * whose blob lives on elsewhere are dropped after 30 days. Bounded per run;
  * the backlog drains over successive nights.
  */
-export async function collectOrphanBlobs(env: Env, now: number): Promise<{ collected: number }> {
+const ORPHAN_PAGE = 500
+
+export async function collectOrphanBlobs(
+  env: Env,
+  now: number,
+  deadline: number = Date.now() + MINUTE_MS
+): Promise<{ collected: number }> {
   const grace = new Date(now - DAY_MS).toISOString()
-  const orphans = await env.DB.prepare(
-    `SELECT sha256 FROM files GROUP BY sha256
-     HAVING SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) = 0 AND MAX(deleted_at) < ?1
-     LIMIT 500`
-  )
-    .bind(grace)
-    .all<{ sha256: string }>()
+  let collected = 0
+  // Loops for the same reason the archive does: a hard 500 a night meant R2
+  // grew for good whenever more than that were orphaned in a day, and an
+  // orphan is by definition a blob nothing can ever reference again.
   const avatars = new Set(
     ((await env.DB.prepare('SELECT avatar_key FROM users WHERE avatar_key IS NOT NULL').all<{
       avatar_key: string
     }>()).results ?? []).map((r) => r.avatar_key)
   )
-  const doomed = (orphans.results ?? []).map((r) => r.sha256).filter((s) => !avatars.has(s))
-  if (doomed.length) {
-    await env.BLOBS.delete(doomed.map((s) => `files/${s}`))
-    for (let i = 0; i < doomed.length; i += 90) {
-      const chunk = doomed.slice(i, i + 90)
-      await env.DB.prepare(
-        `DELETE FROM files WHERE deleted_at IS NOT NULL
-         AND sha256 IN (${chunk.map((_, k) => `?${k + 1}`).join(', ')})`
-      )
-        .bind(...chunk)
-        .run()
+  while (Date.now() < deadline) {
+    const orphans = await env.DB.prepare(
+      `SELECT sha256 FROM files GROUP BY sha256
+       HAVING SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) = 0 AND MAX(deleted_at) < ?1
+       LIMIT ?2`
+    )
+      .bind(grace, ORPHAN_PAGE)
+      .all<{ sha256: string }>()
+    const page = orphans.results ?? []
+    const doomed = page.map((r) => r.sha256).filter((s) => !avatars.has(s))
+    if (doomed.length) {
+      await env.BLOBS.delete(doomed.map((s) => `files/${s}`))
+      for (let i = 0; i < doomed.length; i += 90) {
+        const chunk = doomed.slice(i, i + 90)
+        await env.DB.prepare(
+          `DELETE FROM files WHERE deleted_at IS NOT NULL
+           AND sha256 IN (${chunk.map((_, k) => `?${k + 1}`).join(', ')})`
+        )
+          .bind(...chunk)
+          .run()
+      }
     }
+    collected += doomed.length
+    // A short page is a drained backlog. A FULL page where everything was an
+    // avatar (doomed empty) deletes nothing, so the identical page would come
+    // back forever — stop on that too rather than spin until the deadline.
+    if (page.length < ORPHAN_PAGE || doomed.length === 0) break
   }
   const stale = new Date(now - 30 * DAY_MS).toISOString()
   await env.DB.prepare('DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < ?1')
     .bind(stale)
     .run()
-  return { collected: doomed.length }
+  return { collected }
 }

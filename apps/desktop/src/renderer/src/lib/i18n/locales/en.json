@@ -1055,6 +1055,12 @@
         "created": "{{email}} was added.",
         "tempHint": "Shown once. Give it to them directly — they must change it at first sign-in."
       }
+    },
+    "orgManaged": {
+      "title": "Managed by your organization",
+      "body": "Your organization sets these for everyone. Changes you make to them are replaced by the organization's value.",
+      "one": "1 setting",
+      "many": "{{count}} settings"
     }
   },
   "chat": {

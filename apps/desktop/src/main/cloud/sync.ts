@@ -498,7 +498,10 @@ function noteLockedKeys(keys: unknown): void {
   const next = Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : []
   if (next.length === orgLockedKeys.length && next.every((k, i) => k === orgLockedKeys[i])) return
   orgLockedKeys = next
-  wlog.info('sync', `org owns ${next.length} config path(s)${next.length ? `: ${next.join(', ')}` : ''}`)
+  wlog.info(
+    'sync',
+    `org owns ${next.length} config path(s)${next.length ? `: ${next.join(', ')}` : ''}`
+  )
   try {
     deps.onLockedKeysChanged?.(next)
   } catch (err) {

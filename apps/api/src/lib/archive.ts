@@ -143,48 +143,64 @@ export async function archiveIdleConversations(
   deadline: number
 ): Promise<{ archived: number; records: number }> {
   const idleBefore = new Date(now - ARCHIVE_IDLE_DAYS * DAY_MS).toISOString()
-  const candidates = await env.DB.prepare(
-    `SELECT c.id, c.user_id, c.archive_key FROM conversations c
-     WHERE c.deleted_at IS NULL AND c.updated_at < ?1
-       AND EXISTS (SELECT 1 FROM conversation_records r
-                   WHERE r.conversation_id = c.id AND r.kind != 'snapshot')
-     ORDER BY c.updated_at LIMIT ?2`
-  )
-    .bind(idleBefore, CONVERSATIONS_PER_RUN)
-    .all<{ id: string; user_id: string; archive_key: string | null }>()
-
   let archived = 0
   let records = 0
-  for (const row of candidates.results ?? []) {
-    if (Date.now() > deadline) break
-    const live = await readAllRecords(env, row.id)
-    // The envelope stays a live row: the phone's conversation index reads
-    // model/icon/project/stats straight off it (one JOIN per page), and an
-    // archived conversation must keep answering there. The blob carries a
-    // copy too, and the read path prefers the live one.
-    const movable = live.filter((r) => r.kind !== 'snapshot')
-    if (movable.length === 0) continue
-    const previous = row.archive_key ? await readArchive(env, row.archive_key) : null
-    const key = archiveKey(row.user_id, row.id)
-    const blob: ArchiveBlob = {
-      version: 1,
-      conversation_id: row.id,
-      user_id: row.user_id,
-      archived_at: new Date().toISOString(),
-      records: mergeRecords(previous?.records ?? [], live)
+  // LOOPS under the deadline, like retireUsageRows beside it. This used to
+  // take ONE page of CONVERSATIONS_PER_RUN and stop, called once by a daily
+  // cron — so the ceiling was that many conversations a DAY, org-wide. Above
+  // that arrival rate the backlog only ever grew, and this job is the entire
+  // reason D1 stays under its hard 10 GB limit: the mechanism that bounds the
+  // database was itself bounded below the rate it had to keep up with.
+  // The page size stays (one query is still bounded work); the deadline
+  // decides when to stop, not an arbitrary count.
+  while (Date.now() < deadline) {
+    const candidates = await env.DB.prepare(
+      `SELECT c.id, c.user_id, c.archive_key FROM conversations c
+       WHERE c.deleted_at IS NULL AND c.updated_at < ?1
+         AND EXISTS (SELECT 1 FROM conversation_records r
+                     WHERE r.conversation_id = c.id AND r.kind != 'snapshot')
+       ORDER BY c.updated_at LIMIT ?2`
+    )
+      .bind(idleBefore, CONVERSATIONS_PER_RUN)
+      .all<{ id: string; user_id: string; archive_key: string | null }>()
+    const page = candidates.results ?? []
+    if (page.length === 0) break
+
+    for (const row of page) {
+      if (Date.now() > deadline) break
+      const live = await readAllRecords(env, row.id)
+      // The envelope stays a live row: the phone's conversation index reads
+      // model/icon/project/stats straight off it (one JOIN per page), and an
+      // archived conversation must keep answering there. The blob carries a
+      // copy too, and the read path prefers the live one.
+      const movable = live.filter((r) => r.kind !== 'snapshot')
+      if (movable.length === 0) continue
+      const previous = row.archive_key ? await readArchive(env, row.archive_key) : null
+      const key = archiveKey(row.user_id, row.id)
+      const blob: ArchiveBlob = {
+        version: 1,
+        conversation_id: row.id,
+        user_id: row.user_id,
+        archived_at: new Date().toISOString(),
+        records: mergeRecords(previous?.records ?? [], live)
+      }
+      await env.BLOBS.put(key, await gzip(JSON.stringify(blob)))
+      await deleteRecordsById(
+        env,
+        movable.map((r) => r.id)
+      )
+      await env.DB.prepare(
+        'UPDATE conversations SET archived_at = ?1, archive_key = ?2 WHERE id = ?3'
+      )
+        .bind(blob.archived_at, key, row.id)
+        .run()
+      archived++
+      records += movable.length
     }
-    await env.BLOBS.put(key, await gzip(JSON.stringify(blob)))
-    await deleteRecordsById(
-      env,
-      movable.map((r) => r.id)
-    )
-    await env.DB.prepare(
-      'UPDATE conversations SET archived_at = ?1, archive_key = ?2 WHERE id = ?3'
-    )
-      .bind(blob.archived_at, key, row.id)
-      .run()
-    archived++
-    records += movable.length
+    // A short page means the backlog is drained. Otherwise the next query
+    // picks up where this one stopped: the rows just archived no longer
+    // match, so the window slides forward on its own.
+    if (page.length < CONVERSATIONS_PER_RUN) break
   }
   return { archived, records }
 }

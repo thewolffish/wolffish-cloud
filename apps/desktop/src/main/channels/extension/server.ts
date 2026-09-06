@@ -54,6 +54,47 @@ async function debug(level: string, msg: string): Promise<void> {
   }
 }
 
+/**
+ * The handshake gate: no web page may speak to this socket.
+ *
+ * The server binds to loopback, and that was the ONLY control — anything that
+ * could reach 127.0.0.1 was accepted, including a page in a browser the user
+ * simply visited. WebSocket is not subject to CORS, so `new WebSocket('ws://
+ * localhost:23152')` from any site reached this protocol: enough to read the
+ * conversation list and the browsing trail (get_conversations,
+ * get_conversation_events), and enough to register as a browser and answer
+ * the agent's own commands with fabricated page content — tool-result
+ * injection straight into the model's reasoning.
+ *
+ * Origin is the one thing a page cannot lie about: the browser sets it and no
+ * script can override it. A page always carries http(s); an extension carries
+ * its own scheme; a native client carries none. So refusing http(s) closes
+ * the drive-by completely and cannot refuse a real extension — which is why
+ * the rule is written as a denial of the web rather than an allowlist of
+ * schemes we happen to know about today.
+ *
+ * It does not stop a local process that forges the header. That needs a
+ * shared secret in the extension bundle, which needs an extension rebuild;
+ * a process already running as this user can read the workspace anyway, so
+ * the page is the attack worth closing first.
+ */
+export function verifyExtensionOrigin(info: {
+  origin?: string
+  req: { headers: Record<string, unknown> }
+}): boolean {
+  const origin = info.origin ?? (info.req.headers.origin as string | undefined) ?? ''
+  if (!origin) return true // a native client (the CLI, a test) sends none
+  if (/^https?:\/\//i.test(origin)) {
+    void debug('WARN', `refused a web-page connection from origin=${origin.slice(0, 120)}`)
+    wlog.warn(
+      TAG,
+      `refused a browser page trying to speak the extension protocol: ${origin.slice(0, 120)}`
+    )
+    return false
+  }
+  return true
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 'error'
@@ -171,7 +212,11 @@ export class ExtensionServer {
 
     return new Promise((resolve) => {
       try {
-        this.wss = new WebSocketServer({ port: config.port, host: '127.0.0.1' })
+        this.wss = new WebSocketServer({
+          port: config.port,
+          host: '127.0.0.1',
+          verifyClient: verifyExtensionOrigin
+        })
         void debug('INFO', `WebSocketServer created on 127.0.0.1:${config.port}`)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)

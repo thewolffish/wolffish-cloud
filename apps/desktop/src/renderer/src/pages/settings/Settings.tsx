@@ -18,6 +18,7 @@ import { MobilePanel } from '@pages/settings/MobilePanel'
 import { UsagePanel } from '@pages/settings/UsagePanel'
 import { VariablesPanel } from '@pages/settings/VariablesPanel'
 import { WolffishPanel } from '@pages/settings/WolffishPanel'
+import { OrgManagedNotice } from '@pages/settings/OrgManagedNotice'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
@@ -301,6 +302,11 @@ export function Settings(): React.JSX.Element {
       </aside>
 
       <div className="flex-1 overflow-y-auto">
+        {/* Above every panel, not inside one: the org's overlay can claim a
+            path belonging to any of them, and a notice that only appeared on
+            the tab you happened to open would be the same silence in a
+            smaller room. Renders nothing while the org claims nothing. */}
+        <OrgManagedNotice className="mx-6 mt-6" />
         <TabPanel active={active === 'appearance'}>
           <AppearancePanel />
         </TabPanel>

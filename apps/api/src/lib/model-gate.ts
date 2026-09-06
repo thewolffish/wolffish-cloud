@@ -515,8 +515,7 @@ export class ModelGate extends DurableObject<Env> {
   }
 
   /** The host a conversation prefers: stable over the hosts serving its model, by weight. */
-  private preferred(cacheKey: string, model: string): string | null {
-    const serving = [...this.pools.values()].filter((p) => wireModel(p, model) !== null)
+  private preferred(cacheKey: string, serving: Pool[]): string | null {
     if (serving.length === 0) return null
     const total = serving.reduce((a, p) => a + p.weight, 0)
     let slot = hash32(cacheKey) % total
@@ -527,21 +526,39 @@ export class ModelGate extends DurableObject<Env> {
     return serving[0]!.id
   }
 
-  private pick(w: Waiter, now: number): { pool: Pool; wire: string } | null {
-    const serving = [...this.pools.values()].filter((p) => wireModel(p, w.model) !== null)
+  /**
+   * `serving` is passed in rather than derived: dispatch computes it ONCE per
+   * model per pass. It used to be rebuilt here, twice (and a third time
+   * inside preferred), for every waiter on every dispatch — three array
+   * allocations and three filters per queued call, on a single-threaded
+   * object, at exactly the moment the queue is deepest and the object is
+   * busiest.
+   */
+  private pick(w: Waiter, now: number, serving: Pool[]): { pool: Pool; wire: string } | null {
     // A host that just failed this call is skipped — unless it is the only one.
-    const candidates = serving.filter((p) => !w.avoid.has(p.id))
-    const eligible = (candidates.length ? candidates : serving).filter(
-      (p) => p.cooldownUntil <= now && this.free(p, w.model) > 0
-    )
-    if (eligible.length === 0) return null
-    const pref = this.preferred(w.cacheKey, w.model)
-    const sticky = eligible.find((p) => p.id === pref)
-    const pool =
-      sticky ??
-      eligible.reduce((best, p) =>
-        this.free(p, w.model) / p.concurrency > this.free(best, w.model) / best.concurrency ? p : best
-      )
+    const candidates = w.avoid.size === 0 ? serving : serving.filter((p) => !w.avoid.has(p.id))
+    const usable = candidates.length ? candidates : serving
+    let best: Pool | null = null
+    let bestFree = -1
+    let sticky: Pool | null = null
+    const pref = this.preferred(w.cacheKey, serving)
+    // One pass instead of a filter, a find and a reduce over three arrays.
+    for (const p of usable) {
+      if (p.cooldownUntil > now) continue
+      const free = this.free(p, w.model)
+      if (free <= 0) continue
+      if (p.id === pref) {
+        sticky = p
+        break
+      }
+      const share = free / p.concurrency
+      if (share > bestFree) {
+        bestFree = share
+        best = p
+      }
+    }
+    const pool = sticky ?? best
+    if (!pool) return null
     return { pool, wire: wireModel(pool, w.model)! }
   }
 
@@ -578,15 +595,39 @@ export class ModelGate extends DurableObject<Env> {
         w.resolve('busy')
       }
     }
+    // Two memos, both per-pass, both for the same reason: this walks the
+    // WHOLE queue on every admit and every release, and the queue is deepest
+    // exactly when the object is busiest. 500 employees at the per-user cap
+    // is 4,000 waiters; at 20 releases a second that was 80,000 waiter
+    // iterations a second, each allocating three arrays inside pick().
+    //   servingByModel — the pools that serve a model, built once, not once
+    //                    per waiter (models are few, waiters are many);
+    //   dry            — models with no free slot anywhere right now. The
+    //                    first waiter to find one proves it for every other
+    //                    waiter on that model, so they are skipped without a
+    //                    pick() at all. Only a waiter with an empty `avoid`
+    //                    set may declare it: one that skipped hosts might
+    //                    have failed where its neighbour would succeed.
+    const servingByModel = new Map<string, Pool[]>()
+    const servingFor = (model: string): Pool[] => {
+      let list = servingByModel.get(model)
+      if (!list) {
+        list = [...this.pools.values()].filter((p) => wireModel(p, model) !== null)
+        servingByModel.set(model, list)
+      }
+      return list
+    }
+    const dry = new Set<string>()
     let i = 0
     while (i < this.queue.length) {
       const w = this.queue[i]!
-      if ((this.userInflight.get(w.userId) ?? 0) >= PER_USER_INFLIGHT) {
+      if (dry.has(w.model) || (this.userInflight.get(w.userId) ?? 0) >= PER_USER_INFLIGHT) {
         i++
         continue
       }
-      const picked = this.pick(w, now)
+      const picked = this.pick(w, now, servingFor(w.model))
       if (!picked) {
+        if (w.avoid.size === 0) dry.add(w.model)
         i++
         continue
       }
