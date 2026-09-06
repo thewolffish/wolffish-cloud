@@ -25,6 +25,7 @@ import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Markdown } from '@components/core/Markdown'
 import { useToast } from '@components/core/toast/useToast'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
@@ -3013,13 +3014,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               </>
             )}
             <div className="min-w-0 flex-1" />
-            {/* Expands the draft into the full-screen CodeMirror editor —
+            {/* Expands the draft into the full-height CodeMirror sheet —
                 leads the end-edge cluster; gone while the recorder owns the
-                top zone. */}
+                top zone. It names the sheet it opens, the way the automation,
+                project and procedure editors name theirs. */}
             {recPhase === 'idle' && (
               <button
                 type="button"
                 onClick={() => setDraftExpanded(true)}
+                title={t('chat.expandDraft')}
+                aria-label={t('chat.expandDraft')}
                 className="text-muted hover:text-fg hover:bg-border/40 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg"
               >
                 <ArrowExpandIcon size={14} />
@@ -3149,32 +3153,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           </div>
         </div>
       </form>
-      {visible &&
-        draftExpanded &&
-        createPortal(
-          <div
-            role="presentation"
-            onClick={() => setDraftExpanded(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
-            >
-              <CodeEditor
-                value={draft}
-                language="markdown"
-                background="field"
-                isDark={isDark}
-                onChange={setDraft}
-                className="flex-1 overflow-auto"
-                placeholder={t('chat.placeholder')}
-                spellcheck
-              />
-            </div>
-          </div>,
-          document.body
-        )}
+      {/* The expanded composer — the file viewers' own expand sheet, over the
+          same draft state, so what is written here is what the composer sends
+          once this closes. The sheet, not a centered dialog: the automation,
+          project and procedure editors expand the same way, so "give me more
+          room" has one shape everywhere in the app. Still gated on `visible`,
+          for the reason the portals below are — it mounts to <body>, so a
+          hidden session's sheet would otherwise paint over whatever screen is
+          actually in front. */}
+      <ExpandedSheet
+        open={visible && draftExpanded}
+        onClose={() => setDraftExpanded(false)}
+        title={t('chat.expandDraft')}
+      >
+        <CodeEditor
+          value={draft}
+          language="markdown"
+          background="field"
+          isDark={isDark}
+          onChange={setDraft}
+          className="h-full overflow-auto"
+          placeholder={t('chat.placeholder')}
+          spellcheck
+        />
+      </ExpandedSheet>
       {/* Gated on visibility: these portal to <body>, so without this they would
           escape the hidden wrapper and paint over another screen (or another
           session's view). */}

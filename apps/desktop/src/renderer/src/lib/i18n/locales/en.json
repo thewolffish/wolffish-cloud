@@ -1059,6 +1059,7 @@
   },
   "chat": {
     "placeholder": "Message Wolffish",
+    "expandDraft": "Write your message",
     "send": "Send",
     "stop": "Stop",
     "empty": {

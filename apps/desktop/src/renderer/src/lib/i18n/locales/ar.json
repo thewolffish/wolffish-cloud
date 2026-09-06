@@ -1063,6 +1063,7 @@
   },
   "chat": {
     "placeholder": "اكتب لوولف‌ فيش",
+    "expandDraft": "اكتب رسالتك",
     "send": "إرسال",
     "stop": "إيقاف",
     "empty": {
