@@ -99,6 +99,7 @@ import {
   initCloudSync,
   markWorkspaceReset,
   flushOutbox,
+  lockedConfigKeys,
   wipeCloudData,
   type HydrationProgress,
   type RestoreSummary,
@@ -1957,6 +1958,7 @@ app.whenReady().then(async () => {
     // list re-reads either way; a removed conversation is announced by id
     // as well, because a chat open on this screen right now has to close
     // rather than keep rendering a transcript the org no longer has.
+    onLockedKeysChanged: (keys) => broadcast('workspace:lockedConfigKeys', { keys }),
     onConversationsPulled: ({ removed }) => {
       for (const id of removed) broadcast('conversation:deleted', { id })
       broadcast('conversation:changed', {})
@@ -2700,6 +2702,10 @@ app.whenReady().then(async () => {
 
   // Workspace
   handle('workspace:getStatus', (): Promise<WorkspaceStatus> => getStatus())
+  // Which config paths the organization owns. The values are already
+  // enforced server-side; this is what lets a settings control render as
+  // "set by your organization" instead of silently reverting.
+  handle('workspace:lockedConfigKeys', (): string[] => lockedConfigKeys())
   handle('workspace:completeOnboarding', () => markOnboardingComplete())
 
   // Wipe all data on disk but preserve API keys, model selection, locale,

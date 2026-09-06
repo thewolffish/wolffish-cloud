@@ -41,6 +41,9 @@ export type ArchivedRecord = {
   /** The JSON payload exactly as stored (a string in D1). */
   content: string
   created_at: string
+  /** Record identity as columns (migration 0017); absent in older blobs. */
+  base_id?: string | null
+  version_hash?: string | null
 }
 
 export type ArchiveBlob = {
@@ -103,7 +106,8 @@ async function readAllRecords(env: Env, conversationId: string): Promise<Archive
   let cursor = 0
   while (true) {
     const rows = await env.DB.prepare(
-      `SELECT rowid AS rid, id, seq, kind, content, created_at FROM conversation_records
+      `SELECT rowid AS rid, id, seq, kind, content, created_at, base_id, version_hash
+       FROM conversation_records
        WHERE conversation_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`
     )
       .bind(conversationId, cursor, RECORD_PAGE)

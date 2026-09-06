@@ -286,7 +286,12 @@ export type WireRecord = {
   kind: string
   content: unknown
   created_at: string
+  /** Record identity as fields (api migration 0017). Null on snapshots, and
+   *  on message rows older than the columns — hence baseIdOf's fallback. */
+  base_id?: string | null
+  version_hash?: string | null
 }
+
 
 export async function conversationRecords(
   accessToken: string,

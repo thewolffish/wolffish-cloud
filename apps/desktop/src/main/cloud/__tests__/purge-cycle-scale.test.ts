@@ -1204,7 +1204,7 @@ async function orchestrate(): Promise<void> {
   )
   let exact = 0
   const mismatches: string[] = []
-  let lossyNote: string | null = null
+  let overflowNote: string | null = null
   for (let n = 1; n < CONV_COUNT; n++) {
     try {
       const file = JSON.parse(
@@ -1242,19 +1242,19 @@ async function orchestrate(): Promise<void> {
         const g = file.messages[i]
         const w = want.messages[i]
         if (n === 82 && i === 1) {
-          // Over the slim threshold: the engine ships a truncated copy that
-          // SAYS so — the first half of the text, a visible marker naming
-          // the original length, and a syncTruncated flag.
-          const gm = g as (typeof g & { syncTruncated?: boolean }) | undefined
-          const marker = `[… truncated for cloud sync: ${w.content.length.toLocaleString('en-US')} characters in the original message]`
-          if (
-            !gm ||
-            !gm.content.startsWith(w.content.slice(0, MAX_RECORD_BYTES / 2)) ||
-            !gm.content.endsWith(marker) ||
-            gm.syncTruncated !== true
-          )
-            good = false
-          lossyNote = `c82 message 2 (${w.content.length} chars) restored as ${gm?.content.length} chars with a visible truncation marker (messages over 300 KB)`
+          // Over the record ceiling: the engine SPILLS the whole message to a
+          // content-addressed blob and the record carries a pointer, so a
+          // restore gets every character back. It used to ship half the text
+          // plus a marker — the one lossy path in the sync engine, and the
+          // reason this branch exists at all.
+          const gm = g as (typeof g & { syncTruncated?: boolean; syncOverflow?: unknown }) | undefined
+          if (!gm || gm.content !== w.content || gm.syncTruncated === true) good = false
+          // And the pointer is gone once the body is back — a restored
+          // message must not still claim it lives somewhere else.
+          if (gm?.syncOverflow !== undefined) good = false
+          overflowNote =
+            `c82 message 2 (${w.content.length.toLocaleString('en-US')} chars, past the ${MAX_RECORD_BYTES.toLocaleString('en-US')}-byte record ceiling) ` +
+            `spilled to a blob and restored ${gm?.content === w.content ? 'byte-exact' : 'WRONG'}`
           continue
         }
         if (g?.id !== w.id || g?.content !== w.content || g?.role !== w.role) good = false
@@ -1276,7 +1276,7 @@ async function orchestrate(): Promise<void> {
     exact === CONV_COUNT - 1,
     mismatches.slice(0, 5).join(', ')
   )
-  if (lossyNote) finding(lossyNote)
+  if (overflowNote) finding(overflowNote)
   const c1 = JSON.parse((await read(`brain/conversations/${convDir(1)}.json`)).toString()) as {
     messages: Array<{ id?: string }>
     stats?: { allTime?: { turns?: number } }

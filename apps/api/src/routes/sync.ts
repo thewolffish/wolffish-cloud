@@ -14,6 +14,7 @@ import type { z } from 'zod'
 import { newId, toHex } from '@/lib/crypto'
 import { readRecordsPage, RECORDS_PAGE_MAX } from '@/lib/records'
 import { openConfig, sealConfig } from '@/lib/config-crypto'
+import { apply as applyOverlay, getOrgConfigOverlay, withOverlay } from '@/lib/org-config'
 import { BatchItemSchema, BatchSchema, ConfigPutSchema, FilesDeleteSchema } from '@/lib/schemas'
 import { issuesOf, parseJson, parseValue } from '@/lib/validate'
 import { requireAuth, type AuthVars } from '@/middleware/auth'
@@ -31,9 +32,13 @@ sync.get('/config', async (c) => {
   const row = await c.env.DB.prepare('SELECT config, updated_at FROM settings WHERE user_id = ?1')
     .bind(auth.sub)
     .first<{ config: string; updated_at: string }>()
-  const config = await openConfig(c.env, row?.config)
-  if (config === null) return c.json({ error: 'config_unreadable' }, 500)
-  return c.json({ config, updated_at: row?.updated_at ?? null })
+  const stored = await openConfig(c.env, row?.config)
+  if (stored === null) return c.json({ error: 'config_unreadable' }, 500)
+  // The org's overlay is applied on the way out, and `locked_keys` names the
+  // paths it owns so a settings screen can show them as the org's rather
+  // than letting someone edit a value that will not survive the next write.
+  const { config, locked_keys } = await withOverlay(c.env, stored)
+  return c.json({ config, locked_keys, updated_at: row?.updated_at ?? null })
 })
 
 sync.put('/config', async (c) => {
@@ -41,13 +46,22 @@ sync.put('/config', async (c) => {
   const body = await parseJson(c, ConfigPutSchema)
   if (body instanceof Response) return body
   const now = nowIso()
+  // Applied again on the way IN: a client that does not honour the lock —
+  // an older build, a hand-rolled request, a config.json edited on disk —
+  // must not be able to store anything else under an org-owned path.
+  const overlay = await getOrgConfigOverlay(c.env)
+  const enforced = applyOverlay(body.config, overlay)
   await c.env.DB.prepare(
     `INSERT INTO settings (user_id, config, updated_at) VALUES (?1, ?2, ?3)
      ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at`
   )
-    .bind(auth.sub, await sealConfig(c.env, body.config), now)
+    .bind(auth.sub, await sealConfig(c.env, enforced), now)
     .run()
-  return c.json({ ok: true, updated_at: now })
+  return c.json({
+    ok: true,
+    updated_at: now,
+    locked_keys: Object.keys(overlay)
+  })
 })
 
 // ── The outbox drain ─────────────────────────────────────────────────────
@@ -70,6 +84,23 @@ const MAX_BATCH_BYTES = 32 * 1024 * 1024
 const MAX_REJECTED_IDS = 200
 
 type Planned = { stmt: D1PreparedStatement; bytes: number; silent?: boolean; id?: string }
+
+/**
+ * The LAST parser of the `<base_id>.<version_hash>` record-id convention.
+ *
+ * It exists only for clients that predate base_id/version_hash on the wire;
+ * everything else — the message counts, the desktop's restore, the phone's
+ * rebuild — now reads the columns. Keep it here and nowhere else: the whole
+ * point of migration 0017 is that this string is parsed in one place, by
+ * code, rather than in two SQL queries and two client regexes.
+ */
+export function splitRecordId(id: string): { baseId: string; versionHash: string | null } {
+  const dot = id.length - 9
+  if (dot > 0 && id[dot] === '.' && /^[0-9a-f]{8}$/.test(id.slice(dot + 1))) {
+    return { baseId: id.slice(0, dot), versionHash: id.slice(dot + 1) }
+  }
+  return { baseId: id, versionHash: null }
+}
 
 /**
  * Run planned statements through D1 batches — one round trip per chunk,
@@ -294,16 +325,31 @@ sync.post('/sync/batch', async (c) => {
           .bind(item.conversation_id, item.id, item.seq)
       })
     } else {
+      // Identity as columns, from the client when it sends them and from
+      // the one surviving parser when it does not.
+      const derived = splitRecordId(item.id)
+      const baseId = item.base_id ?? derived.baseId
+      const versionHash = item.version_hash ?? derived.versionHash
       planned.push({
         bytes: content.length,
         id: item.id,
         stmt: db
           .prepare(
             `INSERT OR IGNORE INTO conversation_records
-               (id, conversation_id, user_id, seq, kind, content, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+               (id, conversation_id, user_id, seq, kind, content, created_at, base_id, version_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
           )
-          .bind(item.id, item.conversation_id, auth.sub, item.seq, kind, content, item.created_at)
+          .bind(
+            item.id,
+            item.conversation_id,
+            auth.sub,
+            item.seq,
+            kind,
+            content,
+            item.created_at,
+            baseId,
+            versionHash
+          )
       })
     }
   }
@@ -367,7 +413,7 @@ sync.get('/conversations', async (c) => {
            json_extract(s.content, '$.summary') AS summary,
            json_extract(s.content, '$.stats') AS stats,
            COALESCE(json_extract(s.content, '$.messageCount'),
-             (SELECT COUNT(DISTINCT substr(r.id, 1, length(r.id) - 9)) FROM conversation_records r
+             (SELECT COUNT(DISTINCT COALESCE(r.base_id, r.id)) FROM conversation_records r
                WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count`
       : ''
     const joinSnapshot = meta
@@ -767,10 +813,12 @@ sync.get('/sync/bootstrap', async (c) => {
   ])
   const convRows = conversations.results ?? []
   const fileRows = files.results ?? []
-  const config = await openConfig(c.env, settings?.config)
-  if (config === null) return c.json({ error: 'config_unreadable' }, 500)
+  const stored = await openConfig(c.env, settings?.config)
+  if (stored === null) return c.json({ error: 'config_unreadable' }, 500)
+  const { config, locked_keys } = await withOverlay(c.env, stored)
   return c.json({
     config,
+    locked_keys,
     config_updated_at: settings?.updated_at ?? null,
     conversations: convRows.map(({ rid: _rid, ...rest }) => rest),
     conversations_next:

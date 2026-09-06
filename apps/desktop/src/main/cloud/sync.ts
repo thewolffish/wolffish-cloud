@@ -121,6 +121,9 @@ const DEBOUNCE_MS = 2_500
 /** Above this serialized size a message record sheds segment detail. The
  *  server accepts 400 KB record content, so 300 KB always fits whole. */
 const MAX_RECORD_BYTES = 300_000
+/** Characters of a spilled message left readable in the record itself, for
+ *  clients that do not fetch its body blob (an older build, the phone). */
+const OVERFLOW_PREVIEW_CHARS = 4_000
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 const RECORDS_PAGE = 200
 /** Restore retry backoff, capped — a transient bootstrap failure must never
@@ -182,6 +185,12 @@ export type CloudSyncDeps = {
    * re-reads instead of showing a transcript the org no longer has.
    */
   onConversationsPulled?: (change: { changed: string[]; removed: string[] }) => void
+  /**
+   * The set of config paths the org owns changed (see lockedConfigKeys).
+   * The host relays it so the settings screens can mark those controls as
+   * the organization's rather than the employee's.
+   */
+  onLockedKeysChanged?: (lockedKeys: string[]) => void
 }
 
 /** Live progress of one conversation's media hydration. `files` lists only
@@ -471,6 +480,33 @@ async function persistOutbox(): Promise<void> {
 // ── Config adoption (row-level LWW) ──────────────────────────────────────
 
 /**
+ * Config paths the ORG owns, as the API last reported them.
+ *
+ * The org's values are already IN the config this client adopts — the server
+ * applies its overlay on the way out and forces it again on the way in, so
+ * enforcement never depends on the client behaving. This list exists so the
+ * settings UI can say WHY a value cannot be changed, instead of letting
+ * someone edit a field that silently reverts two minutes later.
+ */
+let orgLockedKeys: string[] = []
+
+export function lockedConfigKeys(): string[] {
+  return orgLockedKeys
+}
+
+function noteLockedKeys(keys: unknown): void {
+  const next = Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : []
+  if (next.length === orgLockedKeys.length && next.every((k, i) => k === orgLockedKeys[i])) return
+  orgLockedKeys = next
+  wlog.info('sync', `org owns ${next.length} config path(s)${next.length ? `: ${next.join(', ')}` : ''}`)
+  try {
+    deps.onLockedKeysChanged?.(next)
+  } catch (err) {
+    wlog.warn('sync', 'onLockedKeysChanged hook failed:', err)
+  }
+}
+
+/**
  * A config row stamped by someone else replaces the local copy wholesale —
  * row-level LWW, the mirror of the push. Sparse or empty blobs (an admin
  * reset) are healed by migrateConfig's default-merge at next boot, and
@@ -504,8 +540,10 @@ async function pullForeignConfig(): Promise<'adopted' | 'none'> {
   if (!stamp) return 'none'
   const remote = await apiJson<{
     config: Record<string, unknown> | null
+    locked_keys?: string[]
     updated_at: string | null
   }>('GET', '/v1/config')
+  noteLockedKeys(remote.locked_keys)
   if (remote.updated_at && remote.updated_at !== stamp) {
     await adoptServerConfig(remote.config ?? {}, remote.updated_at)
     return 'adopted'
@@ -577,7 +615,7 @@ export function scheduleConversationDelete(id: string): void {
   // (absent from synced_paths, so the sweep's deletion propagation would
   // never see it). The server's newest rows under the conversation's media
   // directories are tombstoned by name.
-  const prefixes = lazyMediaPrefixes(conversationDirName(id))
+  const prefixes = [...lazyMediaPrefixes(conversationDirName(id)), overflowPrefix(id)]
   for (const rel of [...serverFiles.keys()]) {
     if (prefixes.some((prefix) => rel.startsWith(prefix))) queueFileDelete(rel)
   }
@@ -817,9 +855,58 @@ export async function ensureFileUploaded(relPath: string, mime: string): Promise
   }
 }
 
-/** Message copy bound for the wire: attachments carry their blob sha, and
- *  a transcript too big for one record sheds its segment detail. */
-async function wireMessage(msg: ConversationMessage): Promise<Record<string, unknown>> {
+/**
+ * Where a message too big for one record goes.
+ *
+ * NOT under a sync root and NOT a lazy-media path, so restore never
+ * materializes it on disk, the on-open hydration never downloads it, and the
+ * workspace sweep never walks it — it is a blob the RECORD owns, addressed
+ * by content like every other, and read back through GET /v1/files/<sha>.
+ * The conversation-delete paths tombstone this prefix alongside the media.
+ */
+export const overflowPrefix = (conversationId: string): string =>
+  `.records/${conversationDirName(conversationId)}/`
+
+/** Raw bytes to a content-addressed blob under a name of our choosing. */
+async function uploadBlob(name: string, bytes: Buffer, mime: string): Promise<string> {
+  const sha = sha256(bytes)
+  if (serverFiles.get(name)?.sha === sha) return sha
+  await cloudSession.withAccessToken(async (token) => {
+    const res = await fetch(
+      `${API_BASE}/v1/files/upload?sha256=${sha}&name=${encodeURIComponent(name.slice(0, 500))}&mime=${encodeURIComponent(mime)}`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: new Uint8Array(bytes),
+        signal: AbortSignal.timeout(120_000)
+      }
+    )
+    if (!res.ok) throw new SyncHttpError(res.status, `HTTP ${res.status}: overflow upload`)
+  })
+  serverFiles.set(name, { sha, size: bytes.byteLength })
+  return sha
+}
+
+/**
+ * Message copy bound for the wire: attachments carry their blob sha, and a
+ * message too big for one record SPILLS rather than losing anything.
+ *
+ * The old behaviour replaced `segments` with a placeholder and then halved
+ * `content` — so a long tool result, or a pasted document, survived on the
+ * machine that produced it and nowhere else. A purge-and-restore silently
+ * returned a shorter message than the one the user wrote, which is the only
+ * lossy path this sync engine had.
+ *
+ * Now the whole message is uploaded as a blob and the record carries a
+ * pointer. The record still holds a readable prefix and the same flag, so a
+ * client that does not know about overflow (an older build, the phone)
+ * renders something honest instead of nothing — and this client swaps the
+ * full body back in at pull time (see hydrateOverflow).
+ */
+async function wireMessage(
+  msg: ConversationMessage,
+  conversationId: string
+): Promise<Record<string, unknown>> {
   const copy = JSON.parse(JSON.stringify(msg)) as ConversationMessage & {
     attachments?: Array<Record<string, unknown>>
   }
@@ -832,23 +919,47 @@ async function wireMessage(msg: ConversationMessage): Promise<Record<string, unk
       if (sha) att.sha256 = sha
     }
   }
-  let json = JSON.stringify(copy)
-  if (json.length > MAX_RECORD_BYTES) {
-    const slim = { ...copy } as Record<string, unknown>
-    slim.segments = [{ kind: 'text', text: '[segment detail elided for sync — too large]' }]
-    json = JSON.stringify(slim)
-    if (json.length > MAX_RECORD_BYTES) {
-      // Never silently: the restored transcript says what was cut and how
-      // much, and carries a flag a UI can render.
-      const full = String(slim.content ?? '')
-      slim.content =
-        full.slice(0, MAX_RECORD_BYTES / 2) +
-        `\n\n[… truncated for cloud sync: ${full.length.toLocaleString('en-US')} characters in the original message]`
-      slim.syncTruncated = true
-    }
-    return slim
+  const json = JSON.stringify(copy)
+  if (json.length <= MAX_RECORD_BYTES) return copy as unknown as Record<string, unknown>
+
+  const bytes = Buffer.from(json, 'utf8')
+  const baseId = String((copy as { id?: unknown }).id ?? `m_${Math.round(Date.now())}`)
+  const name = `${overflowPrefix(conversationId)}${baseId}.json`
+  let sha: string
+  try {
+    sha = await uploadBlob(name, bytes, 'application/json')
+  } catch (err) {
+    // The blob did not land, so the record must not claim it does. Fall back
+    // to the old lossy shape rather than sending a dangling pointer — and say
+    // so, because this is the one case where the org's copy is incomplete.
+    wlog.error('sync', `overflow blob upload failed for ${baseId} — syncing truncated:`, err)
+    return truncatedMessage(copy)
   }
-  return copy as unknown as Record<string, unknown>
+  const slim = { ...copy } as Record<string, unknown>
+  const full = typeof slim.content === 'string' ? slim.content : ''
+  slim.content =
+    full.slice(0, OVERFLOW_PREVIEW_CHARS) +
+    (full.length > OVERFLOW_PREVIEW_CHARS
+      ? `\n\n[… ${full.length.toLocaleString('en-US')} characters; the full message is synced alongside this record]`
+      : '')
+  slim.segments = [{ kind: 'text', text: '[full segment detail in the message body blob]' }]
+  slim.syncOverflow = { sha256: sha, bytes: bytes.byteLength, name }
+  return slim
+}
+
+/** The pre-spill shape, kept for the one path that still needs it: an
+ *  overflow blob that could not be uploaded at all. */
+function truncatedMessage(copy: ConversationMessage): Record<string, unknown> {
+  const slim = { ...copy } as Record<string, unknown>
+  slim.segments = [{ kind: 'text', text: '[segment detail elided for sync — too large]' }]
+  if (JSON.stringify(slim).length > MAX_RECORD_BYTES) {
+    const full = String(slim.content ?? '')
+    slim.content =
+      full.slice(0, MAX_RECORD_BYTES / 2) +
+      `\n\n[… truncated for cloud sync: ${full.length.toLocaleString('en-US')} characters in the original message]`
+    slim.syncTruncated = true
+  }
+  return slim
 }
 
 /** path → last seen {mtimeMs,size}, so unchanged files cost one stat. */
@@ -1123,7 +1234,7 @@ async function pushConversation(id: string): Promise<boolean> {
       (acked.has(known.recordId) || refused.has(known.recordId))
     )
       continue
-    const content = await wireMessage(msg)
+    const content = await wireMessage(msg, conv.id)
     const recordId = `${baseId}.${sha256(JSON.stringify(content)).slice(0, 8)}`
     memo.set(baseId, { rawHash, recordId })
     if (acked.has(recordId) || refused.has(recordId)) continue
@@ -1134,6 +1245,11 @@ async function pushConversation(id: string): Promise<boolean> {
       conversation_id: conv.id,
       seq: Math.max(0, Math.round(ts)),
       kind: 'message',
+      // The id still composes the two, for every reader that already knows
+      // the convention; sending them as fields is what lets the org, this
+      // client's restore and the phone's rebuild stop taking it apart.
+      base_id: baseId,
+      version_hash: recordId.slice(baseId.length + 1),
       content,
       created_at: iso(ts)
     })
@@ -1211,7 +1327,46 @@ async function pullRecords(conversationId: string): Promise<WireRecord[]> {
     if (typeof next !== 'number' || res.records.length === 0 || !(next > after)) break
     after = next
   }
-  return all
+  return hydrateOverflow(all)
+}
+
+type OverflowRef = { sha256?: unknown; bytes?: unknown }
+
+/**
+ * Put spilled message bodies back (see wireMessage).
+ *
+ * A record whose content carries `syncOverflow` holds only a readable
+ * prefix; the real message is a blob. Swapping it back here — rather than in
+ * rebuildConversation — is what keeps restore.ts pure and Electron-free, and
+ * it covers BOTH readers, since restore and the catch-up pull share this
+ * function. A blob that cannot be fetched leaves the prefix in place: a
+ * shorter message beats a failed restore, and the next pull tries again.
+ */
+async function hydrateOverflow(records: WireRecord[]): Promise<WireRecord[]> {
+  const spilled = records.filter((r) => {
+    const c = r.content as { syncOverflow?: OverflowRef } | null
+    return typeof c?.syncOverflow?.sha256 === 'string'
+  })
+  if (spilled.length === 0) return records
+  await mapPool(spilled, BLOB_CONCURRENCY, async (rec) => {
+    const ref = (rec.content as { syncOverflow?: OverflowRef }).syncOverflow!
+    const sha = String(ref.sha256)
+    try {
+      const body = await cloudSession.withAccessToken(async (token) => {
+        const res = await fetch(`${API_BASE}/v1/files/${sha}`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(120_000)
+        })
+        if (!res.ok) throw new SyncHttpError(res.status, `HTTP ${res.status}: overflow fetch`)
+        return res.text()
+      })
+      const parsed = JSON.parse(body) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) rec.content = parsed
+    } catch (err) {
+      wlog.warn('sync', `overflow body ${sha.slice(0, 12)} unavailable — keeping the preview:`, err)
+    }
+  })
+  return records
 }
 
 /**
@@ -1606,12 +1761,14 @@ export async function restoreFromCloud(): Promise<RestoreSummary> {
 
     const boot = await apiJson<{
       config: Record<string, unknown>
+      locked_keys?: string[]
       config_updated_at: string | null
       conversations: WireConversationMeta[]
       conversations_next?: number | null
       files: WireFileRow[]
       files_next?: string | null
     }>('GET', '/v1/sync/bootstrap')
+    noteLockedKeys(boot.locked_keys)
 
     // Config: a stampless client adopts the existing server row (see
     // pushConfig for why this direction is the only safe one).
@@ -1883,10 +2040,12 @@ async function applyRemoteDelete(id: string): Promise<boolean> {
   ackedSnapshots.delete(id)
   refusedRecords.delete(id)
   wireMemo.delete(id)
+  const prefixes = [...lazyMediaPrefixes(conversationDirName(id)), overflowPrefix(id)]
   for (const rel of [...syncedPaths]) {
-    if (lazyMediaPrefixes(conversationDirName(id)).some((prefix) => rel.startsWith(prefix))) {
-      syncedPaths.delete(rel)
-    }
+    if (prefixes.some((prefix) => rel.startsWith(prefix))) syncedPaths.delete(rel)
+  }
+  for (const rel of [...serverFiles.keys()]) {
+    if (prefixes.some((prefix) => rel.startsWith(prefix))) serverFiles.delete(rel)
   }
   await persistOutbox().catch(() => undefined)
   wlog.info('sync', `catch-up: ${id} was deleted elsewhere — removed locally`)

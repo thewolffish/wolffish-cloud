@@ -107,11 +107,32 @@ export const UserPatchSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     role: z.enum(ROLES).optional(),
-    status: z.enum(['active', 'suspended']).optional()
+    status: z.enum(['active', 'suspended']).optional(),
+    /** The group this person's spend and activity roll up under. '' clears
+     *  it — free text, because an org's own names are the only ones that
+     *  will ever be right. */
+    team: z.string().max(80).optional()
   })
-  .refine((b) => b.name !== undefined || b.role !== undefined || b.status !== undefined, {
-    message: 'at least one of name, role, status required'
-  })
+  .refine(
+    (b) =>
+      b.name !== undefined || b.role !== undefined || b.status !== undefined || b.team !== undefined,
+    { message: 'at least one of name, role, status, team required' }
+  )
+
+/**
+ * Who an org capability reaches. An empty list opens it to the whole org —
+ * the state every capability is in until an admin narrows it.
+ */
+export const CapabilityGrantsPutSchema = z.object({
+  grants: z
+    .array(
+      z.object({
+        kind: z.enum(['role', 'team', 'user']),
+        subject: z.string().min(1).max(128)
+      })
+    )
+    .max(200)
+})
 
 export const ClearPinSchema = z.object({ device_id: idStr.optional() }).nullable().optional()
 
@@ -129,6 +150,21 @@ export const PolicyPutSchema = z.object({
 /** The plan on its own — the one control the admin UI reaches for most. */
 export const PlanPutSchema = z.object({
   token_plan: z.enum(TOKEN_PLANS)
+})
+
+/**
+ * The org's config overlay: dot-path → value. Every path present is
+ * org-owned — forced on read and on write (see lib/org-config.ts). An empty
+ * object hands every path back to the employees.
+ */
+export const OrgConfigPutSchema = z.object({
+  overlay: z
+    .custom<Record<string, unknown>>(
+      (v) => typeof v === 'object' && v !== null && !Array.isArray(v),
+      'must be a plain object of dot-path -> value'
+    )
+    .refine((v) => Object.keys(v).length <= 200, 'at most 200 paths')
+    .refine((v) => JSON.stringify(v).length <= 65_536, 'must serialize to <= 65536 bytes')
 })
 
 export const OrgPatchSchema = z
@@ -218,6 +254,15 @@ export const BatchItemSchema = z.discriminatedUnion('type', [
     conversation_id: idStr,
     seq: z.number().int().min(0),
     kind: z.string().max(64).optional(),
+    /**
+     * The message this record is a version OF, and which version it is.
+     * The id has always encoded both as `<base_id>.<version_hash>`; sending
+     * them explicitly is what lets the server — and every reader — stop
+     * parsing that string. Absent on older clients: derived server-side
+     * from the id (see splitRecordId in routes/sync.ts).
+     */
+    base_id: idStr.optional(),
+    version_hash: z.string().max(64).optional(),
     // 400 KB: comfortably above the client's 300 KB slim threshold, so a
     // message it chose to send whole is never rejected for size.
     content: boundedJson(409_600),

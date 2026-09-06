@@ -36,16 +36,36 @@ export type WireRecord = {
   kind: string
   content: unknown
   created_at: string
+  /**
+   * Which message this is a version of, and which version — the two facts
+   * the id used to encode as one string. Served as fields so no client has
+   * to parse it (see migration 0017). Null on snapshot rows, and on message
+   * rows written before the columns existed that the backfill could not
+   * shape; a client falls back to the id itself, which is what the old
+   * regex produced for exactly those rows anyway.
+   */
+  base_id: string | null
+  version_hash: string | null
 }
 
-type Row = { id: string; seq: number; kind: string; content: string; created_at: string }
+type Row = {
+  id: string
+  seq: number
+  kind: string
+  content: string
+  created_at: string
+  base_id?: string | null
+  version_hash?: string | null
+}
 
 const wire = (r: Row | ArchivedRecord): WireRecord => ({
   id: r.id,
   seq: r.seq,
   kind: r.kind,
   content: typeof r.content === 'string' ? JSON.parse(r.content) : r.content,
-  created_at: r.created_at
+  created_at: r.created_at,
+  base_id: r.base_id ?? null,
+  version_hash: r.version_hash ?? null
 })
 
 /**
@@ -135,7 +155,8 @@ export async function readRecordsPage(
   while (page.length < limit && !exhausted) {
     const want = limit - page.length
     const rows = await env.DB.prepare(
-      `SELECT rowid AS rid, id, seq, kind, content, created_at FROM conversation_records
+      `SELECT rowid AS rid, id, seq, kind, content, created_at, base_id, version_hash
+       FROM conversation_records
        WHERE conversation_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`
     )
       .bind(conversationId, liveCursor, want + 1)

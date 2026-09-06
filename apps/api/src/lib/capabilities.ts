@@ -17,6 +17,33 @@ import type { Context } from 'hono'
 import { newId, toHex } from '@/lib/crypto'
 import type { Env } from '@/index'
 
+/** Who is asking for an org capability — matched against capability_grants. */
+export type CapabilitySubject = { userId: string; role: string; team: string }
+
+/**
+ * Grant semantics: a capability with NO grant rows is open to the whole org
+ * (which is what every row meant before grants existed, so nothing changes
+ * until an admin says otherwise); one with grants reaches only the subjects
+ * they name. The manifest applies the same rule in SQL — keep them in step.
+ */
+export async function isGranted(
+  env: Env,
+  slug: string,
+  who: CapabilitySubject
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM capability_grants WHERE slug = ?1) AS total,
+       (SELECT COUNT(*) FROM capability_grants WHERE slug = ?1 AND (
+            (subject_kind = 'role' AND subject = ?2)
+         OR (subject_kind = 'team' AND subject = ?3 AND ?3 != '')
+         OR (subject_kind = 'user' AND subject = ?4))) AS mine`
+  )
+    .bind(slug, who.role, who.team, who.userId)
+    .first<{ total: number; mine: number }>()
+  return (row?.total ?? 0) === 0 || (row?.mine ?? 0) > 0
+}
+
 export const MAX_PACKAGE_BYTES = 50 * 1024 * 1024
 const MAX_PACKAGE_ENTRIES = 5000
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -207,7 +234,10 @@ export async function servePackage<E extends { Bindings: Env }>(
   c: Context<E>,
   scope: CapabilityScope,
   ownerUserId: string,
-  slug: string
+  slug: string,
+  /** For org scope: who is asking, so a grant can be checked. Omitted =
+   *  no grant check (the admin's own reads). */
+  reader?: CapabilitySubject
 ): Promise<Response> {
   const row = await c.env.DB.prepare(
     `SELECT * FROM capabilities
@@ -216,6 +246,11 @@ export async function servePackage<E extends { Bindings: Env }>(
     .bind(scope, ownerUserId, slug)
     .first<CapabilityRow>()
   if (!row) return c.json({ error: 'not_found' }, 404)
+  // A capability the manifest would not list must not be downloadable by
+  // guessing its slug — the grant is the gate, not the listing.
+  if (scope === 'org' && reader && !(await isGranted(c.env, slug, reader))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
   const obj = await c.env.BLOBS.get(packageKey(scope, ownerUserId, slug, row.version))
   if (!obj) return c.json({ error: 'blob_missing' }, 404)
   return new Response(obj.body, {

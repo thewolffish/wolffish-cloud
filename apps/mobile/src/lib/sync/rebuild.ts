@@ -1,4 +1,19 @@
 import type { WireRecord } from '@/lib/cloud/api'
+
+/**
+ * Which message a record is a version of. The org serves this as a column
+ * (api migration 0017); the regex survives only for records that predate it,
+ * and is the last id-parsing on the phone — apps/desktop/src/main/cloud/
+ * restore.ts and apps/api/src/routes/sync.ts hold the matching two.
+ *
+ * It lives HERE rather than beside the wire type in cloud/api.ts because it
+ * is record shaping, not a request: api.ts is mocked wholesale by the sync
+ * tests, and a pure helper hiding inside a mocked HTTP module disappears
+ * exactly when the code under test needs it.
+ */
+export function baseIdOf(rec: WireRecord): string {
+  return rec.base_id ?? rec.id.replace(/\.[0-9a-f]{8}$/, '')
+}
 import type { ConversationMessage } from '@/lib/conversations/types'
 
 /**
@@ -44,7 +59,7 @@ export function rebuildConversation(records: WireRecord[]): RebuiltConversation 
     if (rec.kind === 'snapshot') {
       envelope = (rec.content as Record<string, unknown>) ?? {}
     } else if (rec.kind === 'message') {
-      const base = rec.id.replace(/\.[0-9a-f]{8}$/, '')
+      const base = baseIdOf(rec)
       // A message keeps the map slot of its first version; the value is the
       // version seen last.
       byMessage.set(base, rec)
@@ -66,7 +81,7 @@ export function rebuildConversation(records: WireRecord[]): RebuiltConversation 
             ? rec.seq
             : Date.parse(rec.created_at) || Date.now()
       const { id: rawId, role: rawRole, content: rawContent, text, timestamp: _ts, ...rest } = raw
-      const id = typeof rawId === 'string' && rawId ? rawId : rec.id.replace(/\.[0-9a-f]{8}$/, '')
+      const id = typeof rawId === 'string' && rawId ? rawId : baseIdOf(rec)
       return {
         id,
         role: rawRole === 'assistant' ? 'assistant' : 'user',

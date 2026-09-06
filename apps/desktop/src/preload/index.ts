@@ -517,6 +517,15 @@ export type SystemApi = {
 export type WorkspaceApi = {
   getStatus: () => Promise<WorkspaceStatus>
   completeOnboarding: () => Promise<WorkspaceConfig>
+  /**
+   * Config paths the organization owns, as dot paths ("channels.telegram.
+   * enabled"). The API applies the org's values on read and forces them on
+   * write, so these are already reflected in the config the app holds — the
+   * list is here so a settings control can say so rather than accepting an
+   * edit that reverts at the next pull.
+   */
+  lockedConfigKeys: () => Promise<string[]>
+  onLockedConfigKeysChanged: (listener: (keys: string[]) => void) => () => void
 }
 
 // ── Cloud auth ────────────────────────────────────────────────────────────
@@ -2143,7 +2152,14 @@ const api: WolffishApi = {
   },
   workspace: {
     getStatus: () => ipcRenderer.invoke('workspace:getStatus'),
-    completeOnboarding: () => ipcRenderer.invoke('workspace:completeOnboarding')
+    completeOnboarding: () => ipcRenderer.invoke('workspace:completeOnboarding'),
+    /** Config paths the organization owns — enforced server-side; a settings
+     *  control on one of these belongs to the org, not the employee. */
+    lockedConfigKeys: (): Promise<string[]> => ipcRenderer.invoke('workspace:lockedConfigKeys'),
+    onLockedConfigKeysChanged: (listener: (keys: string[]) => void) =>
+      subscribe('workspace:lockedConfigKeys', (payload: { keys?: string[] }) =>
+        listener(payload?.keys ?? [])
+      )
   },
   auth: {
     getState: () => ipcRenderer.invoke('auth:getState'),

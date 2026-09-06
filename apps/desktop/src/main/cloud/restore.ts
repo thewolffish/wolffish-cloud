@@ -25,6 +25,23 @@ export type WireRecord = {
   kind: string
   content: unknown
   created_at: string
+  /** Record identity as fields (api migration 0017). Null on snapshots, and
+   *  on message rows older than the columns — hence baseIdOf's fallback. */
+  base_id?: string | null
+  version_hash?: string | null
+}
+
+/**
+ * Which message a record is a version of.
+ *
+ * The org serves this as a column now; the regex survives only for a record
+ * that predates it (an archive blob written before migration 0017, or a
+ * server not yet carrying the field). It is the last id-parsing in this
+ * client and it should be deleted once no such rows can be served —
+ * apps/api/src/routes/sync.ts holds the matching one.
+ */
+export function baseIdOf(rec: WireRecord): string {
+  return rec.base_id ?? rec.id.replace(/\.[0-9a-f]{8}$/, '')
 }
 
 export type WireConversationMeta = {
@@ -56,7 +73,7 @@ export function normalizeRestoredMessage(rec: WireRecord): ConversationMessage {
   const content =
     typeof raw.content === 'string' ? raw.content : typeof raw.text === 'string' ? raw.text : ''
   const role: ConversationMessage['role'] = raw.role === 'assistant' ? 'assistant' : 'user'
-  const id = typeof raw.id === 'string' && raw.id ? raw.id : rec.id.replace(/\.[0-9a-f]{8}$/, '')
+  const id = typeof raw.id === 'string' && raw.id ? raw.id : baseIdOf(rec)
   return { ...raw, id, role, content, timestamp } as ConversationMessage
 }
 
@@ -70,7 +87,7 @@ export function rebuildConversation(
     if (rec.kind === 'snapshot') {
       envelope = (rec.content as Record<string, unknown>) ?? {}
     } else if (rec.kind === 'message') {
-      const base = rec.id.replace(/\.[0-9a-f]{8}$/, '')
+      const base = baseIdOf(rec)
       // Re-set on every version so a message's place in the map is where
       // it was FIRST seen; the value is the version seen LAST.
       byMessage.set(base, rec)

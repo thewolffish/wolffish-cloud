@@ -13,11 +13,22 @@ import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import { ceilingsFor, normalizePlan, PLAN_CEILINGS, TOKEN_PLANS } from '@/lib/plans'
 import { policyCacheKey } from '@/lib/policy'
+import { isConfigPath, ORG_CONFIG_CACHE_KEY } from '@/lib/org-config'
+import {
+  can,
+  canAssignRole,
+  isSelfPrivilegeChange,
+  type Action,
+  type Role
+} from '@/lib/permissions'
 import { readRecordsPage, RECORDS_PAGE_MAX } from '@/lib/records'
 import {
   ClearPinSchema,
   ConfigPutSchema,
+  CapabilityGrantsPutSchema,
   InviteSchema,
+  ROLES,
+  OrgConfigPutSchema,
   OrgPatchSchema,
   PlanPutSchema,
   PolicyPutSchema,
@@ -58,20 +69,32 @@ async function audit(
     .run()
 }
 
-/** Only an owner may act on an owner (or mint one). */
-async function ownerGuard(
-  env: Env,
-  actorRole: string,
-  targetUserId: string | null,
-  requestedRole?: string
-): Promise<boolean> {
-  if (actorRole === 'owner') return true
-  if (requestedRole === 'owner') return false
-  if (!targetUserId) return true
-  const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?1')
-    .bind(targetUserId)
-    .first<{ role: string }>()
-  return target?.role !== 'owner'
+/**
+ * The one gate every handler goes through. Loads the target's role (the
+ * only fact the rule table cannot know on its own) and asks lib/permissions
+ * for the decision — so what support may do, and what may be aimed at an
+ * owner, is stated once in ACTIONS rather than re-derived per handler.
+ *
+ * Returns a Response to send, or null to proceed.
+ */
+async function gate(
+  c: Context<{ Bindings: Env; Variables: AuthVars }>,
+  action: Action,
+  targetUserId?: string | null
+): Promise<Response | null> {
+  const auth = c.get('auth')
+  const actor = { id: auth.sub, role: auth.role as Role }
+  let target: { id: string; role: Role } | null = null
+  if (targetUserId) {
+    const row = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?1')
+      .bind(targetUserId)
+      .first<{ id: string; role: Role }>()
+    if (!row) return c.json({ error: 'not_found' }, 404)
+    target = row
+  }
+  const decision = can(actor, action, target)
+  if (!decision.ok) return c.json({ error: 'forbidden', detail: decision.detail }, 403)
+  return null
 }
 
 async function revokeSessions(env: Env, sessionIds: string[], revokedBy: string): Promise<void> {
@@ -103,7 +126,9 @@ admin.post('/users', async (c) => {
   const email = body.email.trim().toLowerCase()
   const name = body.name.trim()
   const role = body.role
-  if (!(await ownerGuard(c.env, auth.role, null, role))) {
+  const denied = await gate(c, 'user.invite')
+  if (denied) return denied
+  if (!canAssignRole({ id: auth.sub, role: auth.role as Role }, role)) {
     return c.json({ error: 'forbidden', detail: 'only an owner can mint owners' }, 403)
   }
 
@@ -130,7 +155,7 @@ admin.post('/users', async (c) => {
 
 admin.get('/users', async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT id, email, name, role, status, must_change_password, created_at, last_login_at
+    `SELECT id, email, name, role, status, team, must_change_password, created_at, last_login_at
      FROM users ORDER BY created_at`
   ).all()
   return c.json({ users: rows.results ?? [] })
@@ -139,7 +164,7 @@ admin.get('/users', async (c) => {
 admin.get('/users/:id', async (c) => {
   const id = c.req.param('id')
   const user = await c.env.DB.prepare(
-    `SELECT id, email, name, role, status, must_change_password, created_at, updated_at, last_login_at
+    `SELECT id, email, name, role, status, team, must_change_password, created_at, updated_at, last_login_at
      FROM users WHERE id = ?1`
   )
     .bind(id)
@@ -173,25 +198,28 @@ admin.patch('/users/:id', async (c) => {
   const id = c.req.param('id')
   const body = await parseJson(c, UserPatchSchema)
   if (body instanceof Response) return body
-  if (id === auth.sub && (body.role || body.status)) {
+  const actor = { id: auth.sub, role: auth.role as Role }
+  if (isSelfPrivilegeChange(actor, id, body)) {
     return c.json({ error: 'forbidden', detail: 'cannot change own role or status' }, 403)
   }
-  if (!(await ownerGuard(c.env, auth.role, id, body.role))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
+  // The gate resolves the target (404 when there is none), so the existence
+  // check the handler used to do separately is now part of authorization.
+  const denied = await gate(c, 'user.update', id)
+  if (denied) return denied
+  if (body.role && !canAssignRole(actor, body.role)) {
+    return c.json({ error: 'forbidden', detail: 'only an owner can mint owners' }, 403)
   }
-
-  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!existing) return c.json({ error: 'not_found' }, 404)
 
   await c.env.DB.prepare(
     `UPDATE users SET
        name = COALESCE(?1, name),
        role = COALESCE(?2, role),
        status = COALESCE(?3, status),
+       team = COALESCE(?6, team),
        updated_at = ?4
      WHERE id = ?5`
   )
-    .bind(body.name ?? null, body.role ?? null, body.status ?? null, nowIso(), id)
+    .bind(body.name ?? null, body.role ?? null, body.status ?? null, nowIso(), id, body.team ?? null)
     .run()
 
   // Suspension is a security event: kill every live session immediately.
@@ -205,11 +233,8 @@ admin.patch('/users/:id', async (c) => {
 admin.post('/users/:id/reset-password', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
-  }
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!user) return c.json({ error: 'not_found' }, 404)
+  const denied = await gate(c, 'user.reset_password', id)
+  if (denied) return denied
 
   const temp = tempPassword()
   const salt = randomHex(16)
@@ -231,6 +256,10 @@ admin.post('/users/:id/clear-pin', async (c) => {
   const id = c.req.param('id')
   const body = await parseJson(c, ClearPinSchema)
   if (body instanceof Response) return body
+  // This one had no owner guard at all while every neighbouring mutation
+  // did — the kind of gap a table makes impossible to leave open.
+  const denied = await gate(c, 'user.clear_pin', id)
+  if (denied) return denied
   const result = await c.env.DB.prepare(
     body?.device_id
       ? 'UPDATE devices SET pin_clear_requested = 1 WHERE user_id = ?1 AND id = ?2'
@@ -258,11 +287,9 @@ admin.post('/users/:id/clear-pin', async (c) => {
 admin.get('/users/:id/reset-code', async (c) => {
   const auth = c.get('auth')
   if (c.env.ADMIN_RESET_CODE_READ !== '1') return c.json({ error: 'not_found' }, 404)
-  if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
   const id = c.req.param('id')
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can read an owner' }, 403)
-  }
+  const denied = await gate(c, 'user.read_reset_code', id)
+  if (denied) return denied
   const entry = await c.env.DB.prepare(
     'SELECT code, attempts FROM password_resets WHERE user_id = ?1 AND expires_at > ?2'
   )
@@ -276,9 +303,8 @@ admin.get('/users/:id/reset-code', async (c) => {
 admin.post('/users/:id/revoke-sessions', async (c) => {
   const auth = c.get('auth')
   const id = c.req.param('id')
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
-  }
+  const denied = await gate(c, 'user.revoke_sessions', id)
+  if (denied) return denied
   const sessions = await activeSessionIds(c.env, id)
   await revokeSessions(c.env, sessions, auth.sub)
   await audit(c.env, auth.sub, 'user.revoke_sessions', id, { count: sessions.length })
@@ -292,8 +318,8 @@ admin.put('/users/:id/policy', async (c) => {
   const id = c.req.param('id')
   const body = await parseJson(c, PolicyPutSchema)
   if (body instanceof Response) return body
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!user) return c.json({ error: 'not_found' }, 404)
+  const denied = await gate(c, 'policy.write', id)
+  if (denied) return denied
 
   // `token_plan` absent means "leave it alone" — an admin editing only the
   // search cap must not silently reset someone off `high` — so the plan
@@ -339,13 +365,9 @@ admin.put('/users/:id/policy', async (c) => {
  */
 admin.get('/users/:id/config', async (c) => {
   const auth = c.get('auth')
-  if (auth.role === 'support') return c.json({ error: 'forbidden' }, 403)
   const id = c.req.param('id')
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can view an owner' }, 403)
-  }
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!user) return c.json({ error: 'not_found' }, 404)
+  const denied = await gate(c, 'config.read', id)
+  if (denied) return denied
   const row = await c.env.DB.prepare('SELECT config, updated_at FROM settings WHERE user_id = ?1')
     .bind(id)
     .first<{ config: string; updated_at: string }>()
@@ -369,11 +391,8 @@ admin.put('/users/:id/config', async (c) => {
   const id = c.req.param('id')
   const body = await parseJson(c, ConfigPutSchema)
   if (body instanceof Response) return body
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
-  }
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!user) return c.json({ error: 'not_found' }, 404)
+  const denied = await gate(c, 'config.write', id)
+  if (denied) return denied
   const serialized = JSON.stringify(body.config)
   const now = nowIso()
   await c.env.DB.prepare(
@@ -411,7 +430,7 @@ admin.get('/roster', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT
        u.id, u.email, u.name, u.role, u.status, u.must_change_password,
-       u.created_at, u.last_login_at,
+       u.team, u.created_at, u.last_login_at,
        COALESCE(p.token_plan, 'standard') AS token_plan,
        p.daily_token_cap, p.daily_search_cap,
        COALESCE(w.requests, 0) AS requests,
@@ -462,7 +481,7 @@ admin.get('/roster', async (c) => {
        SELECT user_id, COUNT(*) AS conversations
        FROM conversations WHERE deleted_at IS NULL GROUP BY user_id
      ) cv ON cv.user_id = u.id
-     ORDER BY u.name COLLATE NOCASE, u.email COLLATE NOCASE`
+     ORDER BY u.team COLLATE NOCASE, u.name COLLATE NOCASE, u.email COLLATE NOCASE`
   )
     .bind(since, monthStart)
     .all<Record<string, unknown>>()
@@ -502,7 +521,7 @@ admin.get('/users/:id/overview', async (c) => {
   const monthStart = new Date().toISOString().slice(0, 7) + '-01'
 
   const user = await c.env.DB.prepare(
-    `SELECT id, email, name, role, status, must_change_password, phone, position, bio,
+    `SELECT id, email, name, role, status, team, must_change_password, phone, position, bio,
        created_at, updated_at, last_login_at, temp_password_expires_at
      FROM users WHERE id = ?1`
   )
@@ -603,11 +622,8 @@ admin.put('/users/:id/plan', async (c) => {
   const id = c.req.param('id')
   const body = await parseJson(c, PlanPutSchema)
   if (body instanceof Response) return body
-  if (!(await ownerGuard(c.env, auth.role, id))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can modify an owner' }, 403)
-  }
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?1').bind(id).first()
-  if (!user) return c.json({ error: 'not_found' }, 404)
+  const denied = await gate(c, 'policy.write', id)
+  if (denied) return denied
 
   await c.env.DB.prepare(
     `INSERT INTO model_policies (user_id, token_plan, updated_at) VALUES (?1, ?2, ?3)
@@ -621,6 +637,47 @@ admin.put('/users/:id/plan', async (c) => {
     ceilings: ceilingsFor(body.token_plan)
   })
   return c.json({ ok: true, token_plan: body.token_plan, ceilings: ceilingsFor(body.token_plan) })
+})
+
+/**
+ * The org by team — the question a 500-person deployment asks first and
+ * could not ask at all before: "what is marketing spending?"
+ *
+ * Same rollup the roster reads, grouped one level up. People with no team
+ * fall under '' rather than disappearing, because a total that quietly
+ * omits the unassigned is worse than one that names them.
+ */
+admin.get('/teams', async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query('days') ?? '30', 10) || 30, 1), 365)
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  const monthStart = new Date().toISOString().slice(0, 7) + '-01'
+  const rows = await c.env.DB.prepare(
+    `SELECT u.team,
+       COUNT(*) AS people,
+       SUM(CASE WHEN u.status = 'active' THEN 1 ELSE 0 END) AS active,
+       COALESCE(SUM(w.tokens_in), 0) AS tokens_in,
+       COALESCE(SUM(w.tokens_out), 0) AS tokens_out,
+       COALESCE(SUM(w.cost_microusd), 0) AS cost_microusd,
+       COALESCE(SUM(w.requests), 0) AS requests,
+       COALESCE(SUM(w.searches), 0) AS searches,
+       COALESCE(SUM(m.cost_microusd), 0) AS month_cost_microusd
+     FROM users u
+     LEFT JOIN (
+       SELECT user_id, SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out,
+         SUM(cost_microusd) AS cost_microusd, SUM(requests) AS requests,
+         SUM(CASE WHEN kind = 'search' THEN requests - denied ELSE 0 END) AS searches
+       FROM usage_daily WHERE day >= ?1 GROUP BY user_id
+     ) w ON w.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id, SUM(cost_microusd) AS cost_microusd
+       FROM usage_daily WHERE day >= ?2 GROUP BY user_id
+     ) m ON m.user_id = u.id
+     WHERE u.status != 'removed'
+     GROUP BY u.team ORDER BY cost_microusd DESC, u.team COLLATE NOCASE`
+  )
+    .bind(since, monthStart)
+    .all<Record<string, unknown>>()
+  return c.json({ since, days, month_start: monthStart, teams: rows.results ?? [] })
 })
 
 /** The plan catalogue, so a client never hard-codes a ceiling. */
@@ -655,14 +712,7 @@ admin.get('/users/:id/audit', async (c) => {
 type AdminContext = Context<{ Bindings: Env; Variables: AuthVars }>
 
 async function readableUser(c: AdminContext, userId: string): Promise<Response | null> {
-  const auth = c.get('auth')
-  if (auth.role === 'support') {
-    return c.json({ error: 'forbidden', detail: 'support cannot read conversations' }, 403)
-  }
-  if (!(await ownerGuard(c.env, auth.role, userId))) {
-    return c.json({ error: 'forbidden', detail: 'only an owner can view an owner' }, 403)
-  }
-  return null
+  return gate(c, 'conversation.read', userId)
 }
 
 /**
@@ -700,7 +750,7 @@ admin.get('/users/:id/conversations', async (c) => {
        json_extract(s.content, '$.summary') AS summary,
        json_extract(s.content, '$.stats') AS stats,
        COALESCE(json_extract(s.content, '$.messageCount'),
-         (SELECT COUNT(DISTINCT substr(r.id, 1, length(r.id) - 9)) FROM conversation_records r
+         (SELECT COUNT(DISTINCT COALESCE(r.base_id, r.id)) FROM conversation_records r
            WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count
      FROM conversations c
      LEFT JOIN conversation_records s ON s.conversation_id = c.id AND s.kind = 'snapshot'
@@ -791,6 +841,67 @@ admin.get('/conversations/:id/records', async (c) => {
 })
 
 // ── Org settings ─────────────────────────────────────────────────────────
+
+/**
+ * The org's config overlay — what the organization decides ON BEHALF of
+ * every employee, as opposed to what it merely pays for.
+ *
+ * Read it to see which paths the org owns and what it forces them to; write
+ * it to change that. `{"overlay": {}}` hands every path back. The write is
+ * audited by path (never by value: an overlay may legitimately carry an
+ * endpoint or an identifier, and the audit log is read by more people than
+ * the config is).
+ */
+admin.get('/org/config', async (c) => {
+  const row = await c.env.DB.prepare(
+    'SELECT overlay, updated_at, updated_by FROM org_config_policy WHERE id = 1'
+  ).first<{ overlay: string; updated_at: string; updated_by: string }>()
+  let overlay: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(row?.overlay ?? '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      overlay = parsed as Record<string, unknown>
+    }
+  } catch {
+    // a row we cannot parse is an empty overlay, not a 500
+  }
+  return c.json({
+    overlay,
+    locked_keys: Object.keys(overlay).filter(isConfigPath),
+    updated_at: row?.updated_at ?? null,
+    updated_by: row?.updated_by ?? ''
+  })
+})
+
+admin.put('/org/config', async (c) => {
+  const auth = c.get('auth')
+  const body = await parseJson(c, OrgConfigPutSchema)
+  if (body instanceof Response) return body
+  const bad = Object.keys(body.overlay).filter((p) => !isConfigPath(p))
+  if (bad.length) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        detail: `not config paths: ${bad.slice(0, 5).join(', ')}`,
+        issues: bad.slice(0, 10).map((p) => ({ path: `overlay.${p}`, message: 'must be a dot path' }))
+      },
+      400
+    )
+  }
+  const now = nowIso()
+  await c.env.DB.prepare(
+    `INSERT INTO org_config_policy (id, overlay, updated_at, updated_by) VALUES (1, ?1, ?2, ?3)
+     ON CONFLICT(id) DO UPDATE SET overlay = excluded.overlay,
+       updated_at = excluded.updated_at, updated_by = excluded.updated_by`
+  )
+    .bind(JSON.stringify(body.overlay), now, auth.sub)
+    .run()
+  // The config read path caches this; drop the copy so the change lands
+  // within the edge window rather than at the next hour.
+  await c.env.CONFIG_KV.delete(ORG_CONFIG_CACHE_KEY)
+  await audit(c.env, auth.sub, 'org.config_overlay', 'org', { paths: Object.keys(body.overlay) })
+  return c.json({ ok: true, locked_keys: Object.keys(body.overlay), updated_at: now })
+})
 
 admin.get('/org', async (c) => {
   const org = await c.env.DB.prepare('SELECT * FROM org WHERE id = 1').first()
@@ -885,6 +996,62 @@ admin.put('/capabilities/:slug', async (c) => {
     await audit(c.env, auth.sub, 'capability.put', slug, { sha256: c.req.query('sha256') })
   }
   return res
+})
+
+/**
+ * Who an org capability reaches. Empty = the whole org, which is where every
+ * capability starts and where they all were before grants existed.
+ *
+ * The registry had exactly two scopes — 'org' (materialized on every device)
+ * and 'user' (yourself) — so "the finance tool, for finance" had no
+ * expression, even though model policy has carried per-user allowlists all
+ * along. Grants are matched in the manifest AND on the package download, so
+ * a capability someone cannot see is also one they cannot fetch by guessing
+ * its slug.
+ */
+admin.get('/capabilities/:slug/grants', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT subject_kind AS kind, subject, created_at, created_by
+     FROM capability_grants WHERE slug = ?1 ORDER BY subject_kind, subject`
+  )
+    .bind(c.req.param('slug'))
+    .all<Record<string, unknown>>()
+  const grants = rows.results ?? []
+  return c.json({ slug: c.req.param('slug'), grants, open_to_org: grants.length === 0 })
+})
+
+admin.put('/capabilities/:slug/grants', async (c) => {
+  const auth = c.get('auth')
+  const slug = c.req.param('slug')
+  const body = await parseJson(c, CapabilityGrantsPutSchema)
+  if (body instanceof Response) return body
+  const cap = await c.env.DB.prepare(
+    `SELECT slug FROM capabilities WHERE scope = 'org' AND slug = ?1 AND deleted_at IS NULL`
+  )
+    .bind(slug)
+    .first<{ slug: string }>()
+  if (!cap) return c.json({ error: 'not_found' }, 404)
+  // A role subject must be a real role, or the grant silently matches nobody.
+  const badRole = body.grants.find((g) => g.kind === 'role' && !ROLES.includes(g.subject as never))
+  if (badRole) {
+    return c.json({ error: 'invalid_request', detail: `not a role: ${badRole.subject}` }, 400)
+  }
+  const now = nowIso()
+  const statements = [
+    c.env.DB.prepare('DELETE FROM capability_grants WHERE slug = ?1').bind(slug),
+    ...body.grants.map((g) =>
+      c.env.DB.prepare(
+        `INSERT OR REPLACE INTO capability_grants (slug, subject_kind, subject, created_at, created_by)
+         VALUES (?1, ?2, ?3, ?4, ?5)`
+      ).bind(slug, g.kind, g.subject, now, auth.sub)
+    )
+  ]
+  await c.env.DB.batch(statements)
+  await audit(c.env, auth.sub, 'capability.grants', slug, {
+    grants: body.grants,
+    open_to_org: body.grants.length === 0
+  })
+  return c.json({ ok: true, slug, grants: body.grants, open_to_org: body.grants.length === 0 })
 })
 
 admin.delete('/capabilities/:slug', async (c) => {
