@@ -6,7 +6,7 @@
  * closed on the spot, and its push registration is dropped.
  */
 import { Hono } from 'hono'
-import { killKey, REFRESH_IDLE_DAYS, requireAuth, type AuthVars } from '@/middleware/auth'
+import { requireAuth, type AuthVars } from '@/middleware/auth'
 import { closeBridgeDevice, notifyBridge } from '@/routes/bridge'
 import type { Env } from '@/index'
 
@@ -90,11 +90,6 @@ devices.delete('/devices/:id', async (c) => {
     ).bind(now, auth.sub, id)
   ]
   await c.env.DB.batch(statements)
-  for (const row of sessions.results ?? []) {
-    await c.env.AUTH_KV.put(killKey(row.id), '1', {
-      expirationTtl: REFRESH_IDLE_DAYS * 86_400
-    })
-  }
   await closeBridgeDevice(c.env, auth.sub, id)
   // Every desktop of the user re-lists — the one that unpaired already
   // does, but another signed-in desktop would otherwise keep the phone.
