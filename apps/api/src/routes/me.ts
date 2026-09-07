@@ -6,7 +6,7 @@
  */
 import { Hono } from 'hono'
 import { toHex } from '@/lib/crypto'
-import { requireAuth, killKey, REFRESH_IDLE_DAYS, type AuthVars } from '@/middleware/auth'
+import { requireAuth, type AuthVars } from '@/middleware/auth'
 import { getEffectivePolicy, getOrgConfig } from '@/lib/policy'
 import { modelMeta } from '@/lib/models'
 import { DevicePinSchema, ProfilePatchSchema } from '@/lib/schemas'
@@ -209,7 +209,6 @@ me.post('/logout', async (c) => {
   )
     .bind(new Date().toISOString(), auth.sub, auth.sid)
     .run()
-  await c.env.AUTH_KV.put(killKey(auth.sid), '1', { expirationTtl: REFRESH_IDLE_DAYS * 86_400 })
   // The device's live link and push registration go with the session: a
   // signed-out phone must stop receiving the moment it signs out — and the
   // desktop is told, so its paired-phone list does not keep a phone that

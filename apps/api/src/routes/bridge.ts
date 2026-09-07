@@ -10,7 +10,7 @@
  */
 import { Hono } from 'hono'
 import { verifyJwt, type AccessClaims } from '@/lib/jwt'
-import { killKey, requireAuth, type AuthVars } from '@/middleware/auth'
+import { requireAuth, sessionRevoked, type AuthVars } from '@/middleware/auth'
 import type { Env } from '@/index'
 
 const bridge = new Hono<{ Bindings: Env; Variables: AuthVars }>()
@@ -58,7 +58,7 @@ bridge.get('/bridge/ws', async (c) => {
   const token = header.startsWith('Bearer ') ? header.slice(7) : (c.req.query('access_token') ?? '')
   const claims: AccessClaims | null = token ? await verifyJwt(token, c.env.JWT_SECRET) : null
   if (!claims || claims.scope !== 'session') return c.json({ error: 'unauthorized' }, 401)
-  if ((await c.env.AUTH_KV.get(killKey(claims.sid))) !== null) {
+  if (await sessionRevoked(c.env, claims.sid)) {
     return c.json({ error: 'session_revoked' }, 401)
   }
   const role = c.req.query('role') === 'desktop' ? 'desktop' : 'phone'
