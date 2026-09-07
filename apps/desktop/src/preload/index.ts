@@ -586,6 +586,15 @@ export type AuthApi = {
     code: string,
     newPassword: string
   ) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  /** Emailed-code account activation — an invited account's first password. */
+  activateRequest: (
+    email: string
+  ) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
+  activateConfirm: (
+    email: string,
+    code: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; code?: string; detail?: string | null }>
   /** Avatar travels as a data URL; null means none set. */
   getAvatar: () => Promise<string | null>
   setAvatar: (
@@ -1228,12 +1237,33 @@ export type AdminOrgSettings = {
   updated_at: string
 }
 
+/**
+ * What adding a person returns. No credential: the account's only key is
+ * the code that was mailed to the address. `email_sent` is the one field
+ * the UI must act on — false means nobody received anything, and the
+ * activation code is echoed back ONLY where the server has no mail
+ * configured at all (a local API), never from a deployment whose send
+ * merely failed.
+ */
 export type AdminInviteResult = {
   user_id: string
   email: string
   role: AdminRole
-  temp_password: string
-  temp_password_expires_at: string
+  activation_expires_at: string
+  email_sent: boolean
+  email_error?: string
+  email_error_detail?: string | null
+  activation_code?: string
+}
+
+export type AdminActivationResult = {
+  user_id: string
+  email: string
+  activation_expires_at: string
+  email_sent: boolean
+  email_error?: string
+  email_error_detail?: string | null
+  activation_code?: string
 }
 
 export type AdminResetResult = {
@@ -1274,6 +1304,8 @@ export type AdminApi = {
     }
   ) => Promise<{ ok: true }>
   resetPassword: (userId: string) => Promise<AdminResetResult>
+  /** Re-send the invite email: a fresh code, a fresh 7 days, old one dead. */
+  resendActivation: (userId: string) => Promise<AdminActivationResult>
   clearPin: (userId: string, deviceId?: string) => Promise<{ ok: true }>
   revokeSessions: (userId: string) => Promise<{ ok: true; revoked: number }>
   patchOrg: (patch: {
@@ -2175,6 +2207,9 @@ const api: WolffishApi = {
     resetRequest: (email) => ipcRenderer.invoke('auth:resetRequest', email),
     resetConfirm: (email, code, newPassword) =>
       ipcRenderer.invoke('auth:resetConfirm', email, code, newPassword),
+    activateRequest: (email) => ipcRenderer.invoke('auth:activateRequest', email),
+    activateConfirm: (email, code, newPassword) =>
+      ipcRenderer.invoke('auth:activateConfirm', email, code, newPassword),
     getAvatar: () => ipcRenderer.invoke('auth:avatarGet'),
     setAvatar: (bytes, mime) => ipcRenderer.invoke('auth:avatarSet', bytes, mime),
     removeAvatar: () => ipcRenderer.invoke('auth:avatarRemove'),
@@ -2343,6 +2378,7 @@ const api: WolffishApi = {
     setPlan: (userId, plan) => ipcRenderer.invoke('admin:setPlan', userId, plan),
     setPolicy: (userId, policy) => ipcRenderer.invoke('admin:setPolicy', userId, policy),
     resetPassword: (userId) => ipcRenderer.invoke('admin:resetPassword', userId),
+    resendActivation: (userId) => ipcRenderer.invoke('admin:resendActivation', userId),
     clearPin: (userId, deviceId) => ipcRenderer.invoke('admin:clearPin', userId, deviceId),
     revokeSessions: (userId) => ipcRenderer.invoke('admin:revokeSessions', userId),
     patchOrg: (patch) => ipcRenderer.invoke('admin:patchOrg', patch)

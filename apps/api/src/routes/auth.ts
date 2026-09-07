@@ -1,10 +1,13 @@
 /**
- * Auth: password login, forced first-login reset, refresh rotation, logout.
+ * Auth: password login, account activation, forced first-login reset,
+ * refresh rotation, logout.
  *
  * Sessions: access JWT (15 min) + rotating refresh token `<sid>.<secret>`
  * whose secret is stored only as a SHA-256 hash. A presented refresh
  * secret that doesn't match the current hash is treated as reuse (possible
- * theft) and kills the session. Revocation = D1 truth + KV kill marker.
+ * theft) and kills the session. Revocation is D1 alone: every path here
+ * writes `device_sessions.revoked_at`, and that row is what the auth
+ * middleware reads on each request (see middleware/auth.ts).
  */
 import { Hono } from 'hono'
 import {
@@ -12,11 +15,21 @@ import {
   newId,
   randomHex,
   sha256Hex,
+  sixDigitCode,
   timingSafeEqualHex
 } from '@/lib/crypto'
 import { signJwt, verifyJwt, type AccessClaims } from '@/lib/jwt'
-import { sendSystemEmail } from '@/lib/email'
 import {
+  ACTIVATION_MAX_ATTEMPTS,
+  dropActivation,
+  issueActivation,
+  sendActivationEmail
+} from '@/lib/activation'
+import { sendSystemEmail } from '@/lib/email'
+import { getOrgConfig } from '@/lib/policy'
+import {
+  ActivateConfirmSchema,
+  ActivateRequestSchema,
   LoginSchema,
   PasswordChangeSchema,
   RefreshSchema,
@@ -24,7 +37,7 @@ import {
   ResetRequestSchema
 } from '@/lib/schemas'
 import { parseJson } from '@/lib/validate'
-import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS, killKey } from '@/middleware/auth'
+import { ACCESS_TTL_SECONDS, REFRESH_IDLE_DAYS } from '@/middleware/auth'
 import type { Env } from '@/index'
 
 type UserRow = {
@@ -228,6 +241,7 @@ auth.post('/password', async (c) => {
   )
     .bind(hash, salt, nowIso(), claims.sub)
     .run()
+  await dropActivation(c.env, claims.sub)
   return c.json({ ok: true })
 })
 
@@ -263,9 +277,6 @@ auth.post('/refresh', async (c) => {
     )
       .bind(nowIso(), 'reuse_detection', sessionId)
       .run()
-    await c.env.AUTH_KV.put(killKey(sessionId), '1', {
-      expirationTtl: REFRESH_IDLE_DAYS * 86_400
-    })
     return c.json({ error: 'refresh_reuse_detected' }, 401)
   }
 
@@ -320,15 +331,6 @@ auth.post('/refresh', async (c) => {
 // replayed with a different password for up to a minute after use.
 
 export const RESET_TTL_SECONDS = 600
-
-function sixDigitCode(): string {
-  const buf = new Uint32Array(1)
-  // Rejection-sample so all 1e6 codes stay equally likely.
-  do {
-    crypto.getRandomValues(buf)
-  } while ((buf[0] ?? 0) >= 4_294_000_000)
-  return String((buf[0] ?? 0) % 1_000_000).padStart(6, '0')
-}
 
 auth.post('/reset/request', async (c) => {
   const body = await parseJson(c, ResetRequestSchema)
@@ -422,6 +424,7 @@ auth.post('/reset/confirm', async (c) => {
   )
     .bind(hash, salt, nowIso(), user.id)
     .run()
+  await dropActivation(c.env, user.id)
 
   // A reset is a "someone else may know my password" event: every existing
   // session dies with it.
@@ -436,9 +439,107 @@ auth.post('/reset/confirm', async (c) => {
     )
       .bind(nowIso(), 'password_reset', row.id)
       .run()
-    await c.env.AUTH_KV.put(killKey(row.id), '1', { expirationTtl: REFRESH_IDLE_DAYS * 86_400 })
   }
   return c.json({ ok: true })
+})
+
+// ── Account activation: the emailed invite code, then a password ─────────
+// An invited account has no password anyone holds — the code IS the only
+// way in, and entering it is what proves the address belongs to the person.
+// Mechanically identical to the reset flow (D1 row, single use, attempt
+// capped) with one extra precondition: the account must still be 'invited'.
+// A longer window (7 days) and a looser attempt cap live in lib/activation.
+
+auth.post('/activate/request', async (c) => {
+  const body = await parseJson(c, ActivateRequestSchema)
+  if (body instanceof Response) return body
+  const email = body.email.trim().toLowerCase()
+  const ip = c.req.header('cf-connecting-ip') ?? 'local'
+  if (
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:activate:${email}`, 3, 900)) ||
+    !(await bumpRateLimit(c.env.AUTH_KV, `rl:activateip:${ip}`, 30, 900))
+  ) {
+    return c.json({ error: 'rate_limited' }, 429)
+  }
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?1')
+    .bind(email)
+    .first<UserRow>()
+  if (!user) return c.json({ error: 'email_not_found' }, 401)
+  if (user.status === 'suspended' || user.status === 'removed') {
+    return c.json({ error: 'account_disabled' }, 403)
+  }
+  // Nothing to activate — this account already has a password, so the way
+  // back in is a reset. Saying so beats a code that would never work.
+  if (user.status !== 'invited') return c.json({ error: 'already_active' }, 409)
+
+  const { code } = await issueActivation(c.env, user.id)
+  const org = await getOrgConfig(c.env)
+  const sent = await sendActivationEmail(
+    c.env,
+    { email: user.email, name: user.name },
+    code,
+    org?.name || 'Wolffish Cloud'
+  )
+  if (!sent.ok) return c.json({ error: sent.code, detail: sent.detail }, 502)
+  return c.json({ ok: true })
+})
+
+auth.post('/activate/confirm', async (c) => {
+  const body = await parseJson(c, ActivateConfirmSchema)
+  if (body instanceof Response) return body
+  const email = body.email.trim().toLowerCase()
+  const ip = c.req.header('cf-connecting-ip') ?? 'local'
+  if (!(await bumpRateLimit(c.env.AUTH_KV, `rl:activatec:${ip}`, 60, 900))) {
+    return c.json({ error: 'rate_limited' }, 429)
+  }
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE email = ?1')
+    .bind(email)
+    .first<UserRow>()
+  if (!user) return c.json({ error: 'email_not_found' }, 401)
+  if (user.status === 'suspended' || user.status === 'removed') {
+    return c.json({ error: 'account_disabled' }, 403)
+  }
+  if (user.status !== 'invited') return c.json({ error: 'already_active' }, 409)
+
+  const entry = await c.env.DB.prepare(
+    'SELECT code, attempts, expires_at FROM account_activations WHERE user_id = ?1'
+  )
+    .bind(user.id)
+    .first<{ code: string; attempts: number; expires_at: string }>()
+  if (!entry) return c.json({ error: 'code_expired' }, 401)
+  if (entry.expires_at < nowIso() || entry.attempts >= ACTIVATION_MAX_ATTEMPTS) {
+    await dropActivation(c.env, user.id)
+    return c.json({ error: 'code_expired' }, 401)
+  }
+  if (!timingSafeEqualHex(entry.code, body.code)) {
+    await c.env.DB.prepare(
+      'UPDATE account_activations SET attempts = attempts + 1 WHERE user_id = ?1'
+    )
+      .bind(user.id)
+      .run()
+    return c.json({ error: 'invalid_code' }, 401)
+  }
+  // Single use, enforced by a consistent store: the row is gone before the
+  // password exists, so the same code can never mint a second one.
+  const consumed = await c.env.DB.prepare(
+    'DELETE FROM account_activations WHERE user_id = ?1'
+  )
+    .bind(user.id)
+    .run()
+  if ((consumed.meta.changes ?? 0) === 0) return c.json({ error: 'code_expired' }, 401)
+
+  const salt = randomHex(16)
+  const hash = await hashPassword(body.new_password, salt)
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?1, password_salt = ?2, must_change_password = 0,
+       temp_password_expires_at = NULL, status = 'active', updated_at = ?3
+     WHERE id = ?4`
+  )
+    .bind(hash, salt, nowIso(), user.id)
+    .run()
+  return c.json({ ok: true, email: user.email, name: user.name })
 })
 
 export default auth

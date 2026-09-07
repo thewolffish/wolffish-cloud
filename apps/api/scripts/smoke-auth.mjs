@@ -13,7 +13,7 @@ import { pbkdf2Sync } from 'node:crypto'
 
 const BASE = process.env.API_BASE ?? 'http://localhost:8787'
 const stamp = Date.now().toString(36)
-const email = `smoke-${stamp}@wolffi.sh`
+const email = `fares.almuhaisen+${stamp}@wolffi.sh`
 const TEMP = 'wf-temp-pass1'
 const REAL = 'correct-horse-battery'
 
@@ -25,7 +25,7 @@ const sql = [
    VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
   `INSERT INTO users (id, email, name, role, status, password_hash, password_salt,
      must_change_password, temp_password_expires_at)
-   VALUES ('usr_smoke_${stamp}', '${email}', 'Smoke Test', 'employee', 'invited',
+   VALUES ('usr_smoke_${stamp}', '${email}', 'Fares Almuhaisen', 'employee', 'invited',
      '${hash}', '${salt}', 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+7 days'));`
 ].join(' ')
 execSync(`npx wrangler d1 execute wfc-master --local --command "${sql.replace(/"/g, '\\"')}"`, {
@@ -108,7 +108,7 @@ check('refresh reuse detected', reuse.status === 401 && reuse.json?.error === 'r
 const afterReuse = await api('/auth/refresh', { body: { refresh_token: r1.json.refresh_token } })
 check('session dead after reuse', afterReuse.status === 401)
 
-// 10 — fresh login, then logout kills the access token via the kill marker
+// 10 — fresh login, then logout kills the access token on the spot
 const login2 = await api('/auth/login', { body: { email, password: REAL } })
 check('second login ok', login2.status === 200 && login2.json?.access_token)
 const out = await api('/v1/logout', { token: login2.json.access_token, body: {} })

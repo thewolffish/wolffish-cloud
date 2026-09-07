@@ -56,7 +56,7 @@ jest.mock('@/lib/cloud/session', () => ({
     get current() {
       return mockRole === null
         ? null
-        : { session: { user: { id: 'u', email: 'me@wolffi.sh', name: 'Me', role: mockRole } } }
+        : { session: { user: { id: 'u', email: 'younes@wolffi.sh', name: 'Younes Alturkey', role: mockRole } } }
     },
     subscribe: () => () => undefined
   }

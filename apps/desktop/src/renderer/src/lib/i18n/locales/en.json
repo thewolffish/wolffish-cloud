@@ -881,8 +881,12 @@
         "tokens": "Tokens",
         "cost": "Cost",
         "daysActive": "Days active",
-        "lastActive": "Last active {{day}}",
+        "lastActive": "Last active {{when}}",
         "neverActive": "No activity yet",
+        "refreshed": "People updated.",
+        "copyEmail": "Copy email address",
+        "emailCopied": "Email copied.",
+        "emailCopyFailed": "Couldn't copy the email address.",
         "conversations": "{{count}} conversations",
         "conversations_one": "{{count}} conversation",
         "searches": "{{count}} searches",
@@ -960,7 +964,13 @@
         "sessionsRevoked": "Signed out {{count}} sessions.",
         "sessionsRevoked_one": "Signed out {{count}} session.",
         "ownerOnly": "Only an owner can change an owner.",
-        "readOnly": "Your tier can view this page but not change it."
+        "readOnly": "Your tier can view this page but not change it.",
+        "invitation": "Invitation",
+        "invitationHint": "They have not signed in yet. Sends a new code and retires the old one.",
+        "resendInvitation": "Send new invitation",
+        "invitationSent": "New invitation sent to {{email}}.",
+        "invitationNotSent": "The email did not go out.",
+        "invitationNotSentHint": "No email is configured on this server — give them this code directly."
       },
       "devices": {
         "title": "Devices",
@@ -1021,7 +1031,10 @@
           "org.update": "Changed org settings",
           "capability.put": "Published a capability",
           "capability.delete": "Removed a capability",
-          "maintenance.run": "Ran maintenance"
+          "maintenance.run": "Ran maintenance",
+          "user.resend_activation": "Sent a new invitation",
+          "user.read_activation_code": "Read an activation code",
+          "user.read_reset_code": "Read a reset code"
         }
       },
       "org": {
@@ -1050,10 +1063,30 @@
         "name": "Name",
         "email": "Email",
         "role": "Role",
-        "submit": "Send invite",
+        "submit": "Send invitation",
         "done": "Done",
-        "created": "{{email}} was added.",
-        "tempHint": "Shown once. Give it to them directly — they must change it at first sign-in."
+        "namePlaceholder": "Full name",
+        "emailPlaceholder": "name@company.com",
+        "emailHint": "The activation code goes here, so it has to be an inbox they can open.",
+        "roleHint": {
+          "employee": "Uses the assistant. Sees nothing but their own work.",
+          "support": "Everything an admin sees, but cannot change anything.",
+          "admin": "Adds and manages people, sets plans and org settings."
+        },
+        "how": {
+          "title": "How an invitation works",
+          "send": "We email a 6-digit code to the address you enter — no password is created.",
+          "enter": "They open Wolffish Cloud, choose “Have an activation code?”, and enter it.",
+          "secure": "They set their own password and a device PIN, and they are in.",
+          "footer": "The code is good for 7 days. You can send a new one any time from their page."
+        },
+        "sent": "Invitation sent to {{email}}.",
+        "sentHint": "The code they need is in that inbox, good until {{date}}.",
+        "notSent": "Added, but the email to {{email}} did not go out.",
+        "notSentHint": "Nothing reached them yet — send a new invitation from their page once mail is working.",
+        "codeLabel": "Activation code",
+        "codeHint": "This server has no email configured. Give this code to them directly.",
+        "notSentNoMail": "Nothing was emailed — use the code below."
       }
     },
     "orgManaged": {
@@ -1881,7 +1914,8 @@
       "invalid_code": "Wrong code — check the email and try again.",
       "code_expired": "That code expired or was used up. Request a new one.",
       "email_send_failed": "Couldn't send the email. Try again.",
-      "email_not_configured": "Email is not configured on the server yet."
+      "email_not_configured": "Email is not configured on the server yet.",
+      "already_active": "This account is already active — sign in, or reset your password."
     },
     "showPassword": "Show password",
     "hidePassword": "Hide password",
@@ -1896,6 +1930,15 @@
       "submit": "Reset password",
       "done": "Password reset — sign in with your new password",
       "resend": "Send a new code"
+    },
+    "activate": {
+      "link": "Have an activation code?",
+      "title": "Activate your account",
+      "subtitle": "Enter the code from your invitation email, then choose your password.",
+      "submit": "Activate account",
+      "resend": "Email me a new code",
+      "resent": "A new code is on its way.",
+      "done": "Account activated — sign in with your new password"
     }
   },
   "profile": {

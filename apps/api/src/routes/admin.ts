@@ -8,11 +8,12 @@
  * Every mutation writes an audit_log row.
  */
 import { Hono, type Context } from 'hono'
+import { dropActivation, issueActivation, sendActivationEmail } from '@/lib/activation'
 import { deleteCapability, putCapability } from '@/lib/capabilities'
 import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
 import { ceilingsFor, normalizePlan, PLAN_CEILINGS, TOKEN_PLANS } from '@/lib/plans'
-import { policyCacheKey } from '@/lib/policy'
+import { getOrgConfig, policyCacheKey } from '@/lib/policy'
 import { isConfigPath, ORG_CONFIG_CACHE_KEY } from '@/lib/org-config'
 import {
   can,
@@ -40,14 +41,17 @@ import {
   requireAuth,
   requireAdmin,
   requireRole,
-  killKey,
-  REFRESH_IDLE_DAYS,
   type AuthVars
 } from '@/middleware/auth'
 import type { Env } from '@/index'
 
 const admin = new Hono<{ Bindings: Env; Variables: AuthVars }>()
 const nowIso = () => new Date().toISOString()
+
+/** What the system emails call the company. Falls back to the product name
+ *  rather than an empty sentence when the org row is somehow unreadable. */
+const orgName = async (env: Env): Promise<string> =>
+  (await getOrgConfig(env))?.name || 'Wolffish Cloud'
 
 admin.use('*', requireAuth)
 admin.use('*', requireRole('owner', 'admin', 'support'))
@@ -104,7 +108,6 @@ async function revokeSessions(env: Env, sessionIds: string[], revokedBy: string)
     )
       .bind(nowIso(), revokedBy, sid)
       .run()
-    await env.AUTH_KV.put(killKey(sid), '1', { expirationTtl: REFRESH_IDLE_DAYS * 86_400 })
   }
 }
 
@@ -132,25 +135,98 @@ admin.post('/users', async (c) => {
     return c.json({ error: 'forbidden', detail: 'only an owner can mint owners' }, 403)
   }
 
-  const temp = tempPassword()
+  // The account is created with NO usable password: a random one nobody
+  // holds, so the only way in is the emailed code. `must_change_password`
+  // stays 1 because it is still true — this person has never chosen one —
+  // and it keeps the admin escape hatch (reset-password) coherent.
   const salt = randomHex(16)
-  const hash = await hashPassword(temp, salt)
+  const hash = await hashPassword(randomHex(32), salt)
   const id = newId('usr')
-  const expiry = new Date(Date.now() + 7 * 86_400_000).toISOString()
   try {
     await c.env.DB.prepare(
       `INSERT INTO users (id, email, name, role, status, password_hash, password_salt,
          must_change_password, temp_password_expires_at)
-       VALUES (?1, ?2, ?3, ?4, 'invited', ?5, ?6, 1, ?7)`
+       VALUES (?1, ?2, ?3, ?4, 'invited', ?5, ?6, 1, NULL)`
     )
-      .bind(id, email, name, role, hash, salt, expiry)
+      .bind(id, email, name, role, hash, salt)
       .run()
   } catch {
     return c.json({ error: 'email_taken' }, 409)
   }
-  await audit(c.env, auth.sub, 'user.invite', id, { email, role })
-  // The temp password appears exactly once, here, for the admin to convey.
-  return c.json({ user_id: id, email, role, temp_password: temp, temp_password_expires_at: expiry })
+
+  const { code, expiresAt } = await issueActivation(c.env, id)
+  const sent = await sendActivationEmail(c.env, { email, name }, code, await orgName(c.env))
+  await audit(c.env, auth.sub, 'user.invite', id, { email, role, email_sent: sent.ok })
+  return c.json({
+    user_id: id,
+    email,
+    role,
+    activation_expires_at: expiresAt,
+    email_sent: sent.ok,
+    ...(sent.ok ? {} : { email_error: sent.code, email_error_detail: sent.detail ?? null }),
+    // The code comes back ONLY where the platform cannot mail it at all
+    // (no RESEND_API_KEY — a local `wrangler dev`, where the alternative is
+    // an API that cannot onboard anyone). It is not an escalation: this
+    // admin just created the account, and role assignment is guarded
+    // separately, so the code opens nothing they did not already hold.
+    // A configured deployment whose send FAILS gets no code — it gets the
+    // failure, and re-sends once mail is working.
+    ...(sent.ok || sent.code !== 'email_not_configured' ? {} : { activation_code: code })
+  })
+})
+
+/**
+ * Re-send the invite: a fresh code, a fresh 7 days, the old one dead. The
+ * ordinary fix for a bounced address, a code that expired over a holiday,
+ * or an email nobody can find.
+ */
+admin.post('/users/:id/activation', async (c) => {
+  const auth = c.get('auth')
+  const id = c.req.param('id')
+  const denied = await gate(c, 'user.resend_activation', id)
+  if (denied) return denied
+  const user = await c.env.DB.prepare('SELECT email, name, status FROM users WHERE id = ?1')
+    .bind(id)
+    .first<{ email: string; name: string; status: string }>()
+  if (!user) return c.json({ error: 'not_found' }, 404)
+  // Only an account that has never been used has an invite to re-send;
+  // anything else is a password reset, which is a different button.
+  if (user.status !== 'invited') return c.json({ error: 'already_active' }, 409)
+
+  const { code, expiresAt } = await issueActivation(c.env, id)
+  const sent = await sendActivationEmail(c.env, user, code, await orgName(c.env))
+  await audit(c.env, auth.sub, 'user.resend_activation', id, { email_sent: sent.ok })
+  return c.json({
+    user_id: id,
+    email: user.email,
+    activation_expires_at: expiresAt,
+    email_sent: sent.ok,
+    ...(sent.ok ? {} : { email_error: sent.code, email_error_detail: sent.detail ?? null }),
+    ...(sent.ok || sent.code !== 'email_not_configured' ? {} : { activation_code: code })
+  })
+})
+
+/**
+ * Read a pending activation code — the same opt-in switch, guard and audit
+ * row as the reset-code peek beside it, for the same reason: a code plus
+ * the unauthenticated /auth/activate/confirm sets a password on that
+ * account. It exists so the release gate can prove the emailed invite end
+ * to end without a mailbox.
+ */
+admin.get('/users/:id/activation-code', async (c) => {
+  const auth = c.get('auth')
+  if (c.env.ADMIN_RESET_CODE_READ !== '1') return c.json({ error: 'not_found' }, 404)
+  const id = c.req.param('id')
+  const denied = await gate(c, 'user.read_activation_code', id)
+  if (denied) return denied
+  const entry = await c.env.DB.prepare(
+    'SELECT code, attempts, expires_at FROM account_activations WHERE user_id = ?1 AND expires_at > ?2'
+  )
+    .bind(id, nowIso())
+    .first<{ code: string; attempts: number; expires_at: string }>()
+  if (!entry) return c.json({ error: 'not_found' }, 404)
+  await audit(c.env, auth.sub, 'user.read_activation_code', id)
+  return c.json({ code: entry.code, attempts: entry.attempts, expires_at: entry.expires_at })
 })
 
 admin.get('/users', async (c) => {
@@ -246,6 +322,9 @@ admin.post('/users/:id/reset-password', async (c) => {
   )
     .bind(hash, salt, expiry, nowIso(), id)
     .run()
+  // Two live ways into one account is one too many: handing over a temp
+  // password supersedes any invite still outstanding.
+  await dropActivation(c.env, id)
   await revokeSessions(c.env, await activeSessionIds(c.env, id), auth.sub)
   await audit(c.env, auth.sub, 'user.reset_password', id)
   return c.json({ user_id: id, temp_password: temp, temp_password_expires_at: expiry })

@@ -35,6 +35,7 @@ const KNOWN_ERRORS = new Set([
   'wrong_password',
   'invalid_code',
   'code_expired',
+  'already_active',
   'email_send_failed',
   'email_not_configured',
   'rate_limited',
@@ -199,7 +200,10 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
   const [localError, setLocalError] = useState<string | null>(null)
   const [errorDismissed, setErrorDismissed] = useState(false)
   const [localErrorDetail, setLocalErrorDetail] = useState<string | null>(null)
-  const [resetStage, setResetStage] = useState<null | 'request' | 'confirm'>(null)
+  // The one "which unauthenticated flow am I in" switch: the two reset
+  // steps and the invited person's activation, which is the same act from
+  // the other side — a code from an inbox, and the password it buys.
+  const [stage, setStage] = useState<null | 'reset-request' | 'reset-confirm' | 'activate'>(null)
   const [resetCode, setResetCode] = useState('')
   const toast = useToast()
 
@@ -239,7 +243,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
     setLocalError(null)
     setLocalErrorDetail(null)
     setErrorDismissed(false)
-    setResetStage(null)
+    setStage(null)
     setResetCode('')
     setBusy(false)
     setPin('')
@@ -488,7 +492,128 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
     setLocalErrorDetail(detail ?? null)
   }
 
-  if (auth.status === 'loggedOut' && resetStage === 'request') {
+  if (auth.status === 'loggedOut' && stage === 'activate') {
+    const mismatched = confirmPassword.length > 0 && newPassword !== confirmPassword
+    const canActivate =
+      email.trim().length > 3 &&
+      resetCode.length === 6 &&
+      newPassword.length >= 10 &&
+      newPassword === confirmPassword &&
+      !busy
+    const submit = (): void => {
+      void run(async () => {
+        const r = await window.api.auth.activateConfirm(email.trim(), resetCode, newPassword)
+        if (!r.ok) return failToCard(r.code, r.detail)
+        // The password it just set is the first honest test that it took —
+        // and it lands the person on the PIN step rather than back at a
+        // sign-in form asking for what they typed ten seconds ago.
+        const next = await window.api.auth.login(email.trim(), newPassword)
+        setResetCode('')
+        setNewPassword('')
+        setConfirmPassword('')
+        if (next.status === 'needsPin' || next.status === 'ready') {
+          toast.show({
+            tone: 'success',
+            message: t('auth.signedInToast', { name: next.user?.name ?? '' })
+          })
+          return
+        }
+        // Activated, but the sign-in itself did not land (a throttle, a
+        // dropped connection). The password is real — say so and let them
+        // use it.
+        toast.show({ tone: 'success', message: t('auth.activate.done') })
+        setStage(null)
+        setPassword('')
+      })
+    }
+    const resend = (): void => {
+      void run(async () => {
+        const r = await window.api.auth.activateRequest(email.trim())
+        if (!r.ok) return failToCard(r.code, r.detail)
+        toast.show({ tone: 'success', message: t('auth.activate.resent') })
+      })
+    }
+    return (
+      <Shell title={t('auth.activate.title')} subtitle={t('auth.activate.subtitle')}>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (canActivate) submit()
+          }}
+        >
+          <input
+            type="email"
+            className={fieldClass}
+            placeholder={t('auth.signIn.email')}
+            value={email}
+            autoFocus
+            autoComplete="username"
+            onChange={(e) => setEmail(e.target.value)}
+            dir="ltr"
+          />
+          <input
+            inputMode="numeric"
+            maxLength={6}
+            className={cn(fieldClass, 'text-center text-lg tracking-[0.5em]')}
+            placeholder={t('auth.reset.codePlaceholder')}
+            value={resetCode}
+            onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            dir="ltr"
+          />
+          <PasswordInput
+            value={newPassword}
+            onChange={setNewPassword}
+            placeholder={t('auth.change.newPassword')}
+            autoComplete="new-password"
+            invalid={newPassword.length > 0 && newPassword.length < 10}
+          />
+          <PasswordInput
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            placeholder={t('auth.change.confirmPassword')}
+            autoComplete="new-password"
+            invalid={mismatched}
+          />
+          <p className="text-muted text-xs leading-relaxed">{t('auth.change.policy')}</p>
+          {mismatched && <ErrorLine text={t('auth.change.mismatch')} />}
+          {!errorDismissed && (
+            <ErrorCard
+              text={localError}
+              detail={localErrorDetail}
+              onDismiss={() => setErrorDismissed(true)}
+            />
+          )}
+          <Button size="lg" type="submit" className="w-full" disabled={!canActivate}>
+            {t('auth.activate.submit')}
+          </Button>
+        </form>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            disabled={email.trim().length < 4 || busy}
+            className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={resend}
+          >
+            {t('auth.activate.resend')}
+          </button>
+          <button
+            type="button"
+            className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
+            onClick={() => {
+              setStage(null)
+              setLocalError(null)
+              setLocalErrorDetail(null)
+            }}
+          >
+            {t('auth.backToSignIn')}
+          </button>
+        </div>
+      </Shell>
+    )
+  }
+
+  if (auth.status === 'loggedOut' && stage === 'reset-request') {
     const canSend = email.trim().length > 3 && !busy
     const send = (): void => {
       void run(async () => {
@@ -497,7 +622,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
         setResetCode('')
         setNewPassword('')
         setConfirmPassword('')
-        setResetStage('confirm')
+        setStage('reset-confirm')
       })
     }
     return (
@@ -534,7 +659,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
           type="button"
           className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
           onClick={() => {
-            setResetStage(null)
+            setStage(null)
             setLocalError(null)
             setLocalErrorDetail(null)
           }}
@@ -545,7 +670,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
     )
   }
 
-  if (auth.status === 'loggedOut' && resetStage === 'confirm') {
+  if (auth.status === 'loggedOut' && stage === 'reset-confirm') {
     const mismatched = confirmPassword.length > 0 && newPassword !== confirmPassword
     const canReset =
       resetCode.length === 6 && newPassword.length >= 10 && newPassword === confirmPassword && !busy
@@ -554,7 +679,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
         const r = await window.api.auth.resetConfirm(email, resetCode, newPassword)
         if (!r.ok) return failToCard(r.code, r.detail)
         toast.show({ tone: 'success', message: t('auth.reset.done') })
-        setResetStage(null)
+        setStage(null)
         setResetCode('')
         setNewPassword('')
         setConfirmPassword('')
@@ -614,7 +739,7 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
           type="button"
           className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
           onClick={() => {
-            setResetStage('request')
+            setStage('reset-request')
             setLocalError(null)
             setLocalErrorDetail(null)
           }}
@@ -676,18 +801,36 @@ export function AuthGate({ auth }: { auth: AuthState }): React.JSX.Element {
         <Button size="lg" type="submit" className="w-full" disabled={!canSignIn}>
           {t('auth.signIn.submit')}
         </Button>
-        <button
-          type="button"
-          className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
-          onClick={() => {
-            setResetStage('request')
-            setLocalError(null)
-            setLocalErrorDetail(null)
-            setErrorDismissed(false)
-          }}
-        >
-          {t('auth.reset.link')}
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
+            onClick={() => {
+              setStage('reset-request')
+              setLocalError(null)
+              setLocalErrorDetail(null)
+              setErrorDismissed(false)
+            }}
+          >
+            {t('auth.reset.link')}
+          </button>
+          {/* The invited person's way in: they have a code, not a password. */}
+          <button
+            type="button"
+            className="text-muted hover:text-fg cursor-pointer text-xs underline-offset-2 hover:underline"
+            onClick={() => {
+              setStage('activate')
+              setResetCode('')
+              setNewPassword('')
+              setConfirmPassword('')
+              setLocalError(null)
+              setLocalErrorDetail(null)
+              setErrorDismissed(false)
+            }}
+          >
+            {t('auth.activate.link')}
+          </button>
+        </div>
       </form>
     </Shell>
   )

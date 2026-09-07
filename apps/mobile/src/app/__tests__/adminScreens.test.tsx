@@ -41,7 +41,7 @@ jest.mock('@/lib/cloud/admin', () => ({
   adminClearPin: (...a: unknown[]) => mockClearPin(...a)
 }))
 
-const mockUser = { id: 'usr_me', email: 'me@wolffi.sh', name: 'Me', role: 'owner' }
+const mockUser = { id: 'usr_me', email: 'younes@wolffi.sh', name: 'Younes Alturkey', role: 'owner' }
 jest.mock('@/lib/cloud/session', () => ({
   cloudSession: {
     withAccessToken: (fn: (token: string) => Promise<unknown>) => fn('token'),
@@ -89,8 +89,8 @@ import '@/lib/i18n'
 
 const person = (over: Record<string, unknown> = {}) => ({
   id: 'usr_1',
-  email: 'sam@wolffi.sh',
-  name: 'Sam Employee',
+  email: 'reem.alyami@wolffi.sh',
+  name: 'Reem Alyami',
   role: 'employee',
   status: 'active',
   must_change_password: 0,
@@ -138,8 +138,8 @@ const overview = ({
 }: Record<string, unknown> = {}) => ({
   user: {
     id: 'usr_1',
-    email: 'sam@wolffi.sh',
-    name: 'Sam Employee',
+    email: 'reem.alyami@wolffi.sh',
+    name: 'Reem Alyami',
     role: 'employee',
     status: 'active',
     must_change_password: 0,
@@ -243,22 +243,22 @@ describe('the people list', () => {
     mockRoster.mockResolvedValue(roster([person()]))
     draw(<AdminPeopleScreen />)
 
-    await waitFor(() => expect(screen.getByText('Sam Employee')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Reem Alyami')).toBeTruthy())
     // The row's second line is the phone's whole summary of a person.
     expect(screen.getByText(/Standard · 1\.6m · 6 days active/)).toBeTruthy()
 
-    fireEvent.press(screen.getByText('Sam Employee'))
+    fireEvent.press(screen.getByText('Reem Alyami'))
     expect(mockPush).toHaveBeenCalledWith('/settings/admin/person/usr_1')
   })
 
   it('filters by name without asking the org again', async () => {
-    mockRoster.mockResolvedValue(roster([person(), person({ id: 'usr_2', name: 'Dana Admin' })]))
+    mockRoster.mockResolvedValue(roster([person(), person({ id: 'usr_2', name: 'Dana Alturki' })]))
     draw(<AdminPeopleScreen />)
-    await waitFor(() => expect(screen.getByText('Dana Admin')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Dana Alturki')).toBeTruthy())
 
     fireEvent.changeText(screen.getByPlaceholderText('Search people'), 'dana')
-    await waitFor(() => expect(screen.queryByText('Sam Employee')).toBeNull())
-    expect(screen.getByText('Dana Admin')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('Reem Alyami')).toBeNull())
+    expect(screen.getByText('Dana Alturki')).toBeTruthy()
     // The roster is already here — filtering must not re-fetch the company.
     expect(mockRoster).toHaveBeenCalledTimes(1)
   })
@@ -278,7 +278,7 @@ describe('one person', () => {
     mockOverview.mockResolvedValue(overview())
     draw(<AdminPersonScreen />)
 
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
     // 90M of the 100M standard input ceiling — read from the GATE, which is
     // what the ceiling is actually enforced against, not from the rollup.
     expect(screen.getByText('90m / 100m')).toBeTruthy()
@@ -288,7 +288,7 @@ describe('one person', () => {
   it('sends the plan the admin picked', async () => {
     mockOverview.mockResolvedValue(overview())
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     fireEvent.press(screen.getByText('High'))
     await waitFor(() => expect(mockSetPlan).toHaveBeenCalledWith('token', 'usr_1', 'high'))
@@ -297,7 +297,7 @@ describe('one person', () => {
   it('confirms before disabling, and cancelling reaches the org with nothing', async () => {
     mockOverview.mockResolvedValue(overview())
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     fireEvent.press(screen.getByText('Disable'))
     // The consequence is spelled out before the tap that causes it.
@@ -313,7 +313,7 @@ describe('one person', () => {
   it('disables only after the confirmation is accepted', async () => {
     mockOverview.mockResolvedValue(overview())
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     fireEvent.press(screen.getByText('Disable'))
     await waitFor(() => expect(screen.getByText('Disable access?')).toBeTruthy())
@@ -332,7 +332,7 @@ describe('one person', () => {
       temp_password_expires_at: '2026-09-11T00:00:00.000Z'
     })
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     fireEvent.press(screen.getByText('Reset'))
     await waitFor(() => expect(screen.getByText('Reset password?')).toBeTruthy())
@@ -347,7 +347,7 @@ describe('one person', () => {
     mockUser.role = 'support'
     mockOverview.mockResolvedValue(overview())
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     expect(screen.getByText('Your tier can view this page but not change it.')).toBeTruthy()
     fireEvent.press(screen.getByText('Disable'))
@@ -361,7 +361,7 @@ describe('one person', () => {
     mockUser.role = 'admin'
     mockOverview.mockResolvedValue(overview({ user: { role: 'owner' } }))
     draw(<AdminPersonScreen />)
-    await waitFor(() => expect(screen.getByText('sam@wolffi.sh')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('reem.alyami@wolffi.sh')).toBeTruthy())
 
     expect(screen.getByText('Only an owner can change an owner.')).toBeTruthy()
     fireEvent.press(screen.getByText('Disable'))

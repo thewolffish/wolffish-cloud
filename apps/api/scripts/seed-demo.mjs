@@ -7,14 +7,22 @@
  *
  * Deterministic: user ids, emails, names, roles, salts, policies and the
  * 7-day usage history are pure functions of the roster — reseeding
- * produces identical rows. Passwords are NOT deterministic by default:
- * one password for all seeded people is WFC_DEMO_PASSWORD or the fixed
- * randomly generated and printed ONCE, so a public repo never contains a
- * live credential. A fork deletes this file and its rows (--wipe).
+ * produces identical rows.
  *
- * Cast: 1 owner + 2 admins + 2 support + 45 employees = 50.
- * emp-049 stays 'invited' forever — the live demo of the invite flow.
- * emp-048 is suspended — the live demo of suspension.
+ * The people are named. A written-down cast of fifty Saudi names, each at
+ * `first.last@wolffi.sh`, because an org whose staff read as fixtures makes
+ * every surface built on top of them read as one too. What marks a row as
+ * seeded is its id (`usr_demo_NNN`) — the thing --wipe and the sweeps below
+ * already match on, and the only place that job belongs.
+ *
+ * The password is one fixed string for the whole cast (WFC_DEMO_PASSWORD
+ * overrides it) — a deliberate POC-master choice, see USERS.md. A fork
+ * rotates it, or deletes this file and its rows (--wipe).
+ *
+ * Cast: 2 owners (000 human, 050 the release gate) + 2 admins + 2 support
+ * + 45 employees = 51.
+ * 049 stays 'invited' forever — the live demo of the invite flow.
+ * 048 is suspended — the live demo of suspension.
  */
 import { execSync } from 'node:child_process'
 import { pbkdf2Sync, randomBytes, createHash } from 'node:crypto'
@@ -52,17 +60,68 @@ const FULL_CATALOG = [DEFAULT_MODEL, PRO_MODEL, VISION_MODEL]
 const visionPilot = (n) => n >= 21 && n <= 30
 const hasVision = (n) => n === 0 || n === 50 || n === 1 || n === 2 || visionPilot(n)
 
-const FIRST = [
-  'Sara', 'Omar', 'Lina', 'Faisal', 'Nora', 'Khalid', 'Maha', 'Ziyad', 'Reem', 'Tariq',
-  'Dana', 'Majed', 'Alia', 'Hassan', 'Joud', 'Rakan', 'Layla', 'Badr', 'Hana', 'Saad',
-  'Amal', 'Yazid', 'Ghada', 'Nawaf', 'Rania', 'Sultan', 'Farah', 'Anas', 'Lubna', 'Meshal',
-  'Aya', 'Fahad', 'Noura', 'Talal', 'Shahad', 'Waleed', 'Jana', 'Salman', 'Dalia', 'Nayef',
-  'Ruba', 'Hamad', 'Wafa', 'Osama', 'Latifa', 'Bandar', 'Muna', 'Yousef', 'Abrar'
-]
-const LAST = [
-  'Alharbi', 'Alqahtani', 'Alotaibi', 'Alshehri', 'Alghamdi', 'Alzahrani', 'Almutairi',
-  'Aldossari', 'Alsubaie', 'Aljuhani', 'Nakamura', 'Petrov', 'Garcia', 'Okafor', 'Kim',
-  'Haddad', 'Demir', 'Rossi', 'Iyer', 'Novak'
+/**
+ * The cast, written down rather than drawn from two pools. Fifty Saudi
+ * names, every `first last` pair distinct — which is what lets the address
+ * below be `first.last@wolffi.sh` with no index glued on to keep it unique.
+ * Surnames repeat the way they do in a real Riyadh office (three Alharbis,
+ * two Alotaibis) but never twice under the same first name.
+ *
+ * Order is the roster order: 01-02 administer, 03-04 support, 05-49 are
+ * staff, and 50 is the release gate's service owner — a person's name like
+ * everyone else, with the job it actually does named in `position`.
+ */
+const CAST = [
+  ['Shahad', 'Alotaibi'],
+  ['Abdulaziz', 'Alqahtani'],
+  ['Saad', 'Alharbi'],
+  ['Alia', 'Alghamdi'],
+  ['Hamad', 'Alshehri'],
+  ['Amal', 'Alzahrani'],
+  ['Sara', 'Almutairi'],
+  ['Faisal', 'Aldossari'],
+  ['Lina', 'Alsubaie'],
+  ['Khalid', 'Aljuhani'],
+  ['Bandar', 'Alanazi'],
+  ['Yousef', 'Alshammari'],
+  ['Lubna', 'Alrashidi'],
+  ['Waleed', 'Albalawi'],
+  ['Noura', 'Alamri'],
+  ['Turki', 'Almalki'],
+  ['Reem', 'Alyami'],
+  ['Saad', 'Alharthi'],
+  ['Sultan', 'Alqurashi'],
+  ['Ziyad', 'Alhazmi'],
+  ['Maha', 'Alruwaili'],
+  ['Anas', 'Alenezi'],
+  ['Dana', 'Alturki'],
+  ['Meshal', 'Altamimi'],
+  ['Shahad', 'Alharbi'],
+  ['Salman', 'Alrajhi'],
+  ['Osama', 'Alqahtani'],
+  ['Nawaf', 'Alotaibi'],
+  ['Jana', 'Alnasser'],
+  ['Norah', 'Alghamdi'],
+  ['Rakan', 'Alrasheed'],
+  ['Joud', 'Aldakhil'],
+  ['Ghada', 'Alzamil'],
+  ['Abdullah', 'Alolayan'],
+  ['Layla', 'Alsuwailem'],
+  ['Fahad', 'Almutairi'],
+  ['Wafa', 'Alhamdan'],
+  ['Majed', 'Alsudairi'],
+  ['Rania', 'Albishi'],
+  ['Yazeed', 'Aloraini'],
+  ['Farah', 'Alhussain'],
+  ['Tariq', 'Alsahli'],
+  ['Hana', 'Alfaraj'],
+  ['Badr', 'Aldawood'],
+  ['Latifa', 'Alshaya'],
+  ['Mohammed', 'Alharbi'],
+  ['Abrar', 'Almogbel'],
+  ['Talal', 'Alkhathlan'],
+  ['Ruba', 'Alsanea'],
+  ['Nasser', 'Alowais']
 ]
 
 /** FNV-1a → xorshift32, the house PRNG (mirrors mobile's provider-keys). */
@@ -147,23 +206,37 @@ const bioFor = (i, position) => {
 
 const roster = []
 roster.push({ n: 0, email: 'younes@wolffi.sh', name: 'Younes Alturkey', role: 'owner' })
-for (let i = 1; i < 50; i++) {
-  const rnd = drawer(`wolffish-inc-${i}`)
-  const first = FIRST[Math.floor(rnd() * FIRST.length)]
-  const last = LAST[Math.floor(rnd() * LAST.length)]
-  const role = i <= 2 ? 'admin' : i <= 4 ? 'support' : 'employee'
+CAST.forEach(([first, last], idx) => {
+  const n = idx + 1
+  const role = n <= 2 ? 'admin' : n <= 4 ? 'support' : n === 50 ? 'owner' : 'employee'
   roster.push({
-    n: i,
-    email: `${first.toLowerCase()}.${last.toLowerCase()}.${String(i).padStart(2, '0')}@demo.wolffi.sh`,
+    n,
+    // The address a real employer would mint: given name, family name, the
+    // company's own domain. Nothing in it says "seed" — the demo rows are
+    // told apart by their `usr_demo_*` ids, which is where that belongs.
+    email: `${first}.${last}@wolffi.sh`.toLowerCase(),
     name: `${first} ${last}`,
     role
   })
+})
+
+// `users.email` is UNIQUE: a duplicated pair in CAST would not be a slightly
+// wrong roster, it would be a seed that dies halfway through with the org
+// row written and half the people missing. Catch it here, by name, before a
+// single statement is sent.
+const dupes = roster.map((p) => p.email).filter((e, i, all) => all.indexOf(e) !== i)
+if (dupes.length > 0) {
+  console.error(`duplicate seeded address: ${[...new Set(dupes)].join(', ')}`)
+  process.exit(1)
+}
+if (roster.length !== 51) {
+  console.error(`roster is ${roster.length}, expected 51 (1 human owner + 50 cast)`)
+  process.exit(1)
 }
 
-// The release gate's service owner: a stable second owner so automated
-// verification never signs in as a person, and a human account's own
-// sessions are never the ones a gate run revokes.
-roster.push({ n: 50, email: 'gate.keeper.50@demo.wolffi.sh', name: 'Gate Keeper', role: 'owner' })
+/** The release gate's own account — every script that signs in as the
+ *  service owner reads this address out of USERS.md, so print it below. */
+const GATE = roster[50]
 
 const uid = (n) => `usr_demo_${String(n).padStart(3, '0')}`
 const saltOf = (email) => createHash('sha256').update(`wfc-salt:${email}`).digest('hex').slice(0, 32)
@@ -183,7 +256,8 @@ if (WIPE) {
   lines.push(`DELETE FROM users WHERE id LIKE 'usr_demo_%';`)
 }
 
-// No seeded account ships with a phone attached.
+// No seeded account ships with a phone attached, and no account keeps a
+// phone it is not actually holding.
 //
 // Pairing is something a person does — the QR is two taps — and a demo that
 // arrives already paired to a handset nobody owns teaches the wrong thing and
@@ -192,9 +266,21 @@ if (WIPE) {
 // the sweep for both. Runs on every seed, not only a wipe: the invariant is
 // "no fake phones", not "no fake phones once".
 //
-// The human owner (000) is excluded — that account's phone is a real one,
-// paired by hand, and the same carve-out the password upsert makes below.
-const NO_SEEDED_PHONES = `platform = 'mobile' AND user_id LIKE 'usr_demo_%' AND user_id <> 'usr_demo_000'`
+// The condition is "holds no live session" rather than "is not the human
+// owner". The old carve-out exempted 000 whole, to protect the one real
+// phone on the roster — and so that account quietly collected the others:
+// a device row still marked active whose sessions had all expired months
+// ago sits in the admin's device list as a SECOND handset, on the one
+// account where a second handset looks plausible. Only one phone may be
+// paired at a time (the desktop's Mobile panel withdraws the pairing
+// control the moment one is listed, `SINGLE_PHONE`), so a row nobody is
+// signed in on is not a phone — it is a ghost of one, and it goes. The
+// phone someone is genuinely using has a live session and survives this
+// on every account, 000's included.
+const LIVE_SESSION = `SELECT device_id FROM device_sessions
+     WHERE revoked_at IS NULL AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+const NO_SEEDED_PHONES = `platform = 'mobile' AND user_id LIKE 'usr_demo_%'
+   AND id NOT IN (${LIVE_SESSION})`
 lines.push(
   `DELETE FROM device_sessions WHERE device_id IN (SELECT id FROM devices WHERE ${NO_SEEDED_PHONES});`
 )
@@ -211,6 +297,11 @@ lines.push(
      user_daily_token_cap = 0, org_monthly_token_cap = 0, user_daily_search_cap = 0, org_monthly_search_cap = 0;`
 )
 
+// The id is the key an upsert has to aim at, not the email. Ids are fixed
+// (`usr_demo_NNN`) while an address can be rewritten — the move to
+// `first.last@wolffi.sh` rewrote all fifty — and an ON CONFLICT(email) that
+// misses lands on the primary key instead, where nothing handles it: the
+// seed would die on its first person with the org row already written.
 for (const person of roster) {
   const salt = saltOf(person.email)
   const hash = pbkdf2Sync(password, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').toString('hex')
@@ -223,7 +314,8 @@ for (const person of roster) {
     `INSERT INTO users (id, email, name, role, status, password_hash, password_salt, must_change_password, temp_password_expires_at, position, bio, phone)
      VALUES ('${uid(person.n)}', '${esc(person.email)}', '${esc(person.name)}', '${person.role}', '${status}', '${hash}', '${salt}', ${mustChange},
        ${person.n === 49 ? "strftime('%Y-%m-%dT%H:%M:%fZ','now','+365 days')" : 'NULL'}, '${esc(position)}', '${esc(bio)}', '${esc(phone)}')
-     ON CONFLICT(email) DO UPDATE SET
+     ON CONFLICT(id) DO UPDATE SET
+       email = excluded.email, name = excluded.name,
        password_hash = excluded.password_hash, password_salt = excluded.password_salt,
        role = excluded.role, status = excluded.status,
        position = excluded.position, bio = excluded.bio, phone = excluded.phone;`
@@ -356,6 +448,7 @@ console.log(`   admins:  ${roster[1].email}, ${roster[2].email}`)
 console.log(`   support: ${roster[3].email}, ${roster[4].email}`)
 console.log(`   invited (never logged in): ${roster[49].email}`)
 console.log(`   suspended: ${roster[48].email}`)
+console.log(`   release gate (service owner, 050): ${GATE.email}`)
 console.log(
   `   vision (${VISION_MODEL.split('/').pop()}): owners 000/050, admins 001-002, pilot 021-030` +
     ` — ${roster.filter((p) => hasVision(p.n)).length} of ${roster.length}`

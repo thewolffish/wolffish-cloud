@@ -2691,6 +2691,10 @@ app.whenReady().then(async () => {
     cloudSession.changePasswordSelf(currentPassword, newPassword)
   )
   handle('auth:resetRequest', (_e, email: string) => cloudSession.requestPasswordReset(email))
+  handle('auth:activateRequest', (_e, email: string) => cloudSession.requestActivation(email))
+  handle('auth:activateConfirm', (_e, email: string, code: string, newPassword: string) =>
+    cloudSession.confirmActivation(email, code, newPassword)
+  )
   handle('auth:resetConfirm', (_e, email: string, code: string, newPassword: string) =>
     cloudSession.confirmPasswordReset(email, code, newPassword)
   )

@@ -63,6 +63,20 @@ export function timingSafeEqualHex(a: string, b: string): boolean {
 }
 
 /**
+ * The 6-digit code the system emails — password resets and account
+ * activations both. Rejection-sampled so all 1e6 codes stay equally likely;
+ * a modulo over the raw range would make the low codes fractionally more
+ * common, which is exactly the wrong bias for a guessed secret.
+ */
+export function sixDigitCode(): string {
+  const buf = new Uint32Array(1)
+  do {
+    crypto.getRandomValues(buf)
+  } while ((buf[0] ?? 0) >= 4_294_000_000)
+  return String((buf[0] ?? 0) % 1_000_000).padStart(6, '0')
+}
+
+/**
  * Readable one-time password for invites: wf-XXXX-XXXX over an alphabet
  * with no ambiguous glyphs. ~41 bits — plenty for a short-lived,
  * single-use, rate-limited credential.

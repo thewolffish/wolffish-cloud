@@ -7,7 +7,7 @@
  *
  *   WFC_DEMO_PASSWORD=... node scripts/seed-capabilities.mjs
  *     --base   https://api.wolffi.sh     (default; API_BASE also works)
- *     --email  gate.keeper.50@demo.wolffi.sh  (an owner/admin account)
+ *     --email  nasser.alowais@wolffi.sh  (an owner/admin account)
  *     --dir    <capability sources>      (default: <repo>/capabilities,
  *                                         falling back to the old bundled path)
  *     --only   slug1,slug2               (subset; default: every folder)
@@ -40,7 +40,7 @@ const argOf = (flag, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback
 }
 const BASE = argOf('--base', process.env.API_BASE ?? 'https://api.wolffi.sh')
-const EMAIL = argOf('--email', 'gate.keeper.50@demo.wolffi.sh')
+const EMAIL = argOf('--email', 'nasser.alowais@wolffi.sh')
 const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
 const ONLY = argOf('--only', '')
   .split(',')

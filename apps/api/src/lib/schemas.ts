@@ -57,6 +57,12 @@ export const ResetConfirmSchema = z.object({
   new_password: z.string().min(10, 'min 10 characters').max(128)
 })
 
+/** Activation is the same wire shape as a reset — a code from an inbox and
+ *  the password it buys — because to the person typing it, it is the same
+ *  act. What differs is which side the account starts on. */
+export const ActivateRequestSchema = ResetRequestSchema
+export const ActivateConfirmSchema = ResetConfirmSchema
+
 export const PasswordChangeSchema = z.object({
   new_password: z.string().min(10, 'min 10 characters').max(128),
   // Required when the caller holds a normal session (voluntary change);

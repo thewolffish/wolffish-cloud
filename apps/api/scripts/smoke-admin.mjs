@@ -3,7 +3,7 @@
  * Admin-layer smoke test against `wrangler dev` (:8787). Seeds an owner,
  * then exercises the enterprise controls end to end:
  *
- *   owner invites employee (temp password from the API) → employee onboards
+ *   owner invites employee (emailed activation code) → employee activates
  *   → role gates (employee/support vs admin) → policy set → suspend kills
  *   live session → reactivate → reset-password revokes + re-onboards →
  *   revoke-sessions → org settings → usage read → audit trail populated.
@@ -57,24 +57,54 @@ const owner = await login(ownerEmail, OWNER_PW)
 check('owner login', owner.status === 200 && owner.json?.user?.role === 'owner')
 const ownerTok = owner.json.access_token
 
-// Invite an employee — temp password comes back exactly once
-const empEmail = `emp-${stamp}@wolffi.sh`
+// Invite an employee — an activation code is mailed, not a password.
+// `wrangler dev` has no RESEND_API_KEY, so the API reports email_sent:false
+// and hands the code back (see routes/admin.ts) — the only way a local run
+// can drive the real flow.
+const empEmail = `deema.alsalem+${stamp}@wolffi.sh`
 const invite = await api('/admin/users', {
   token: ownerTok,
-  body: { email: empEmail, name: 'Emp Loyee', role: 'employee' }
+  body: { email: empEmail, name: 'Deema Alsalem', role: 'employee' }
 })
-check('invite returns temp password', invite.status === 200 && invite.json?.temp_password)
+check('invite issues an activation code', invite.status === 200 && /^[0-9]{6}$/.test(invite.json?.activation_code ?? ''))
+check('invite hands back no password', !invite.json?.temp_password)
 check('duplicate invite refused', (await api('/admin/users', {
   token: ownerTok,
-  body: { email: empEmail, name: 'Dup', role: 'employee' }
+  body: { email: empEmail, name: 'Deema Alsalem', role: 'employee' }
 })).status === 409)
 
-// Employee onboards: temp login → change → real login
+/** Invite → activate → sign in, the whole onboarding as one step. */
+const onboard = async (email, name, role, password) => {
+  const inv = await api('/admin/users', { token: ownerTok, body: { email, name, role } })
+  await api('/auth/activate/confirm', {
+    body: { email, code: inv.json.activation_code, new_password: password }
+  })
+  return login(email, password)
+}
+
+// Employee activates: wrong code, then the real one, then sign in.
 const EMP_PW = 'employee-real-pw-1'
-const t = await login(empEmail, invite.json.temp_password)
-check('employee temp login demands change', t.json?.must_change_password === true)
-const ch = await api('/auth/password', { token: t.json.change_token, body: { new_password: EMP_PW } })
-check('employee sets real password', ch.status === 200)
+check(
+  'invited account cannot sign in',
+  (await login(empEmail, EMP_PW)).status === 401
+)
+const A_CODE = invite.json.activation_code
+check(
+  'wrong activation code rejected',
+  (await api('/auth/activate/confirm', {
+    body: { email: empEmail, code: A_CODE === '000000' ? '000001' : '000000', new_password: EMP_PW }
+  })).json?.error === 'invalid_code'
+)
+check(
+  'short password rejected',
+  (await api('/auth/activate/confirm', { body: { email: empEmail, code: A_CODE, new_password: 'short' } })).status === 400
+)
+const act = await api('/auth/activate/confirm', { body: { email: empEmail, code: A_CODE, new_password: EMP_PW } })
+check('activation ok', act.status === 200)
+check(
+  'code dead after use',
+  (await api('/auth/activate/confirm', { body: { email: empEmail, code: A_CODE, new_password: EMP_PW } })).json?.error === 'already_active'
+)
 const emp = await login(empEmail, EMP_PW)
 check('employee active login', emp.status === 200 && emp.json?.user?.role === 'employee')
 const empTok = emp.json.access_token
@@ -84,19 +114,13 @@ const empId = emp.json.user.id
 check('employee blocked from admin', (await api('/admin/users', { token: empTok })).status === 403)
 
 // Support: read yes, write no
-const supInvite = await api('/admin/users', {
-  token: ownerTok,
-  body: { email: `sup-${stamp}@wolffi.sh`, name: 'Sup Port', role: 'support' }
-})
-const st = await login(`sup-${stamp}@wolffi.sh`, supInvite.json.temp_password)
-await api('/auth/password', { token: st.json.change_token, body: { new_password: 'support-pw-1234' } })
-const sup = await login(`sup-${stamp}@wolffi.sh`, 'support-pw-1234')
+const sup = await onboard(`sup-${stamp}@wolffi.sh`, 'Sup Port', 'support', 'support-pw-1234')
 check('support can read users', (await api('/admin/users', { token: sup.json.access_token })).status === 200)
 check(
   'support cannot mutate',
   (await api('/admin/users', {
     token: sup.json.access_token,
-    body: { email: `x-${stamp}@wolffi.sh`, name: 'X', role: 'employee' }
+    body: { email: `ammar.alsuhaimi+${stamp}@wolffi.sh`, name: 'Ammar Alsuhaimi', role: 'employee' }
   })).status === 403
 )
 
@@ -179,13 +203,7 @@ check(
 )
 
 // Admin tier can serve employees but never open an owner's secrets.
-const admInvite = await api('/admin/users', {
-  token: ownerTok,
-  body: { email: `adm-${stamp}@wolffi.sh`, name: 'Ad Min', role: 'admin' }
-})
-const at = await login(`adm-${stamp}@wolffi.sh`, admInvite.json.temp_password)
-await api('/auth/password', { token: at.json.change_token, body: { new_password: 'admin-pw-1234' } })
-const adm = await login(`adm-${stamp}@wolffi.sh`, 'admin-pw-1234')
+const adm = await onboard(`adm-${stamp}@wolffi.sh`, 'Ad Min', 'admin', 'admin-pw-1234')
 check(
   'admin views employee config',
   (await api(`/admin/users/${empId}/config`, { token: adm.json.access_token })).status === 200
@@ -193,6 +211,42 @@ check(
 check(
   'admin cannot view owner config',
   (await api(`/admin/users/${owner.json.user.id}/config`, { token: adm.json.access_token })).status === 403
+)
+
+// Re-sending an invite: a new code, the old one dead, and only while the
+// account is still waiting to be used.
+const rsEmail = `ibtisam.alrumaih+${stamp}@wolffi.sh`
+const rsInvite = await api('/admin/users', {
+  token: ownerTok,
+  body: { email: rsEmail, name: 'Ibtisam Alrumaih', role: 'employee' }
+})
+const rsId = rsInvite.json.user_id
+const rsAgain = await api(`/admin/users/${rsId}/activation`, { token: ownerTok, body: {} })
+check('resend issues a fresh code', rsAgain.status === 200 && /^[0-9]{6}$/.test(rsAgain.json?.activation_code ?? ''))
+check('resend supersedes the old code', rsAgain.json.activation_code !== rsInvite.json.activation_code)
+check(
+  'superseded code refused',
+  (await api('/auth/activate/confirm', {
+    body: { email: rsEmail, code: rsInvite.json.activation_code, new_password: 'resend-pw-12345' }
+  })).json?.error === 'invalid_code'
+)
+check(
+  'fresh code activates',
+  (await api('/auth/activate/confirm', {
+    body: { email: rsEmail, code: rsAgain.json.activation_code, new_password: 'resend-pw-12345' }
+  })).status === 200
+)
+check(
+  'resend refused once active',
+  (await api(`/admin/users/${rsId}/activation`, { token: ownerTok, body: {} })).status === 409
+)
+check(
+  'self-serve resend refused once active',
+  (await api('/auth/activate/request', { body: { email: rsEmail } })).status === 409
+)
+check(
+  'support cannot resend an invite',
+  (await api(`/admin/users/${empId}/activation`, { token: sup.json.access_token, body: {} })).status === 403
 )
 
 // Self-protection & owner guard

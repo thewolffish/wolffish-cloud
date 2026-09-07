@@ -250,12 +250,31 @@ export type OrgSettings = {
   updated_at: string
 }
 
+/**
+ * Adding a person hands back NO credential — the account's only key is the
+ * 6-digit code mailed to the address. `email_sent` is what the UI acts on;
+ * `activation_code` comes back only from an API with no mail configured
+ * (a local worker), never from a deployment whose send failed.
+ */
 export type InviteResult = {
   user_id: string
   email: string
   role: AdminRole
-  temp_password: string
-  temp_password_expires_at: string
+  activation_expires_at: string
+  email_sent: boolean
+  email_error?: string
+  email_error_detail?: string | null
+  activation_code?: string
+}
+
+export type ActivationResult = {
+  user_id: string
+  email: string
+  activation_expires_at: string
+  email_sent: boolean
+  email_error?: string
+  email_error_detail?: string | null
+  activation_code?: string
 }
 
 export type ResetResult = {
@@ -350,6 +369,9 @@ export const setPolicy = (
     token_plan?: TokenPlan | null
   }
 ): Promise<{ ok: true }> => call('PUT', `/admin/users/${encodeURIComponent(userId)}/policy`, policy)
+
+export const resendActivation = (userId: string): Promise<ActivationResult> =>
+  call('POST', `/admin/users/${encodeURIComponent(userId)}/activation`, {})
 
 export const resetPassword = (userId: string): Promise<ResetResult> =>
   call('POST', `/admin/users/${encodeURIComponent(userId)}/reset-password`, {})

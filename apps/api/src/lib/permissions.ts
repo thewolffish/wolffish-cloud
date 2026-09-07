@@ -35,6 +35,8 @@ export type Action =
   | 'user.update'
   | 'user.reset_password'
   | 'user.read_reset_code'
+  | 'user.resend_activation'
+  | 'user.read_activation_code'
   | 'user.revoke_sessions'
   | 'user.clear_pin'
   // Governance
@@ -71,6 +73,12 @@ export const ACTIONS: Record<Action, Rule> = {
   'user.update': { tier: 'admin' },
   'user.reset_password': { tier: 'admin' },
   'user.read_reset_code': { tier: 'admin' },
+  // Re-sending an invite is the same power as minting one, aimed at an
+  // existing row; reading a live activation code is the same power as
+  // reading a live reset code — both take a code plus one unauthenticated
+  // endpoint to own the account, so both carry the owner guard.
+  'user.resend_activation': { tier: 'admin' },
+  'user.read_activation_code': { tier: 'admin' },
   'user.revoke_sessions': { tier: 'admin' },
   'user.clear_pin': { tier: 'admin' },
 

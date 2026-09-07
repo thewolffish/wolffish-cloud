@@ -12,7 +12,9 @@ import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
 import {
+  armContentFreeReplyNotice,
   armControlTokenNotice,
+  contentFreeReply,
   drainControlTokenNotice,
   trailingControlToken
 } from '@main/runtime/agent/control-token-guard'
@@ -1420,6 +1422,15 @@ export class Agent {
         if (turn.role !== 'agent') {
           const leakedToken = trailingControlToken(parsed.text)
           if (leakedToken) armControlTokenNotice(turn.conversationId ?? null, leakedToken)
+          else {
+            // Same failure, the other shape: a reply that is punctuation and
+            // nothing else — the model meaning "nothing to add" and typing a
+            // lone `.` because it cannot emit an empty content channel. The
+            // control-token check runs first and wins; a token contains
+            // letters, so the two can never both match one reply.
+            const contentFree = contentFreeReply(parsed.text)
+            if (contentFree) armContentFreeReplyNotice(turn.conversationId ?? null, contentFree)
+          }
         }
 
         if (parsed.toolCalls.length === 0) {

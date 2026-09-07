@@ -97,6 +97,7 @@ export function UserDetail({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [tempPassword, setTempPassword] = useState<string | null>(null)
+  const [resent, setResent] = useState<{ code?: string; sent: boolean } | null>(null)
   const [conversations, setConversations] = useState<AdminConversationRow[] | null>(null)
   const [convCursor, setConvCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -592,6 +593,61 @@ export function UserDetail({
               </button>
             }
           />
+          {/* An account nobody has signed into yet is still waiting on its
+              invite, so the control it needs is a re-send, not a password. */}
+          {data?.user.status === 'invited' ? (
+            <>
+              <div className="border-border/60 border-t" />
+              <ControlRow
+                label={t('settings.admin.controls.invitation')}
+                hint={t('settings.admin.controls.invitationHint')}
+                action={
+                  <button
+                    type="button"
+                    disabled={!canMutate || data === null || busy !== null}
+                    onClick={() =>
+                      void run('activation', async () => {
+                        const res = await window.api.admin.resendActivation(userId)
+                        setResent({ code: res.activation_code, sent: res.email_sent })
+                        if (res.email_sent) {
+                          toast.show({
+                            message: t('settings.admin.controls.invitationSent', {
+                              email: res.email
+                            }),
+                            tone: 'success'
+                          })
+                        }
+                      })
+                    }
+                    className="border-border text-fg hover:bg-border/40 shrink-0 cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {t('settings.admin.controls.resendInvitation')}
+                  </button>
+                }
+              />
+              {resent && !resent.sent ? (
+                <div className="border-amber-500/40 bg-amber-500/10 flex items-center gap-3 rounded-xl border px-4 py-3">
+                  <Alert02Icon size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="text-fg text-xs font-medium">
+                      {t('settings.admin.controls.invitationNotSent')}
+                    </span>
+                    {resent.code ? (
+                      <code className="text-fg font-mono text-sm tracking-[0.3em]" dir="ltr">
+                        {resent.code}
+                      </code>
+                    ) : null}
+                    <span className="text-muted text-[11px]">
+                      {t('settings.admin.controls.invitationNotSentHint')}
+                    </span>
+                  </div>
+                  {resent.code ? (
+                    <CopyButton text={resent.code} variant="inline" ariaLabelKey="common.copy" />
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
           <div className="border-border/60 border-t" />
           <ControlRow
             label={t('settings.admin.controls.password')}

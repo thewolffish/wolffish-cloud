@@ -595,7 +595,10 @@
           "org.update": "غيّر إعدادات المنشأة",
           "capability.put": "نشر قدرة",
           "capability.delete": "أزال قدرة",
-          "maintenance.run": "شغّل الصيانة"
+          "maintenance.run": "شغّل الصيانة",
+          "user.resend_activation": "أرسل دعوة جديدة",
+          "user.read_activation_code": "اطّلع على رمز تفعيل",
+          "user.read_reset_code": "اطّلع على رمز إعادة تعيين"
         }
       },
       "org": {

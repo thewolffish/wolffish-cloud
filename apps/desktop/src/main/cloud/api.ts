@@ -222,6 +222,24 @@ export async function confirmPasswordReset(
   })
 }
 
+/** Re-send the emailed activation code for an account still awaiting it. */
+export async function requestActivation(email: string): Promise<void> {
+  await post<{ ok: true }>('/auth/activate/request', { email })
+}
+
+/** Turn the emailed code into the account's first password. */
+export async function confirmActivation(
+  email: string,
+  code: string,
+  newPassword: string
+): Promise<void> {
+  await post<{ ok: true }>('/auth/activate/confirm', {
+    email,
+    code,
+    new_password: newPassword
+  })
+}
+
 /** Raw-byte avatar calls — the one non-JSON corner of the wire. */
 export async function uploadAvatar(
   accessToken: string,

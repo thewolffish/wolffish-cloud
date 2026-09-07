@@ -40,19 +40,25 @@ const stamp = Date.now().toString(36)
 
 // Owner mints the throwaway employee (the admin side of the invite flow).
 const owner = await api('/auth/login', {
-  body: { email: 'gate.keeper.50@demo.wolffi.sh', password: OWNER_PW, device }
+  body: { email: 'nasser.alowais@wolffi.sh', password: OWNER_PW, device }
 })
 check('owner login', owner.status === 200)
 const O = owner.json.access_token
+const email = `delivered+wfc-authcheck-${stamp}@resend.dev`
 const invite = await api('/admin/users', {
   token: O,
-  body: { email: `authcheck-${stamp}@demo.wolffi.sh`, name: 'Auth Check', role: 'employee' }
+  body: { email, name: 'Rayan Alkhudair', role: 'employee' }
 })
-check('invite minted', invite.status === 200 && invite.json?.temp_password)
-const email = `authcheck-${stamp}@demo.wolffi.sh`
+check('invite minted', invite.status === 200 && invite.json?.activation_expires_at)
+// An invite now mails a code and hands back no credential, and reading that
+// code needs an opt-in flag this script does not require. What is under test
+// here is the DESKTOP's forced-change sequence, which an admin password
+// reset drives identically — so the temp password comes from there.
+const seed = await api(`/admin/users/${invite.json.user_id}/reset-password`, { token: O, body: {} })
+check('temp password issued', seed.status === 200 && seed.json?.temp_password)
 
 // 1 — the app's first sign-in: temp password → must_change_password
-const t1 = await api('/auth/login', { body: { email, password: invite.json.temp_password, device } })
+const t1 = await api('/auth/login', { body: { email, password: seed.json.temp_password, device } })
 check('temp login demands change', t1.status === 200 && t1.json?.must_change_password === true)
 
 // 2 — forced change with the scoped token, then the real login (the exact
@@ -102,7 +108,7 @@ check('token dead after logout', (await api('/v1/me', { token: ACCESS })).status
 const bad = await api('/auth/login', { body: { email, password: 'wrong-wrong-wrong', device } })
 check('wrong_password code', bad.status === 401 && bad.json?.error === 'wrong_password')
 const ghost = await api('/auth/login', {
-  body: { email: 'nobody-here@demo.wolffi.sh', password: 'whatever-at-all', device }
+  body: { email: 'haya.almuhanna@wolffi.sh', password: 'whatever-at-all', device }
 })
 check('email_not_found code', ghost.status === 401 && ghost.json?.error === 'email_not_found')
 

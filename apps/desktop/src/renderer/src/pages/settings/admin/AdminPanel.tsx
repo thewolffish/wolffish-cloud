@@ -6,15 +6,14 @@ import type {
   AdminAccess,
   AdminConversationRow,
   AdminAuditEntry,
-  AdminRole,
   AdminRoster
 } from '@preload/index'
-import { Add01Icon, Alert02Icon, Refresh01Icon } from 'hugeicons-react'
+import { Add01Icon, Refresh01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CopyButton } from '@components/core/CopyButton'
 import { AuditList } from '@pages/settings/admin/AuditList'
 import { ConversationViewer } from '@pages/settings/admin/ConversationViewer'
+import { InviteSheet } from '@pages/settings/admin/InviteSheet'
 import { OrgPanel } from '@pages/settings/admin/OrgPanel'
 import { PeopleGrid } from '@pages/settings/admin/PeopleGrid'
 import { UserDetail } from '@pages/settings/admin/UserDetail'
@@ -62,19 +61,35 @@ export function AdminPanel(): React.JSX.Element {
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [audit, setAudit] = useState<AdminAuditEntry[] | null>(null)
   const [inviting, setInviting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     void window.api.admin.getAccess().then(setAccess)
   }, [])
 
-  const loadRoster = useCallback(async (): Promise<void> => {
+  // Reports whether it worked: the refresh button confirms with a toast, and
+  // a swallowed failure would confirm a fetch that never landed.
+  const loadRoster = useCallback(async (): Promise<boolean> => {
     try {
       setRoster(await window.api.admin.roster(30))
       setRosterError(null)
+      return true
     } catch (err) {
       setRosterError((err as Error).message)
+      return false
     }
   }, [])
+
+  // The explicit press, as opposed to the silent refetch a mutation deeper
+  // in asks for: it locks the button for the round trip and says so when the
+  // roster is back. A failure is already on screen as the error banner, so
+  // there is no toast for it.
+  const refresh = useCallback(async (): Promise<void> => {
+    setRefreshing(true)
+    const ok = await loadRoster()
+    setRefreshing(false)
+    if (ok) toast.show({ message: t('settings.admin.people.refreshed'), tone: 'success' })
+  }, [loadRoster, toast, t])
 
   useEffect(() => {
     if (access?.canRead !== true) return
@@ -140,22 +155,24 @@ export function AdminPanel(): React.JSX.Element {
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => void loadRoster()}
+              onClick={() => void refresh()}
+              disabled={refreshing}
               aria-label={t('common.refresh')}
-              className="border-border text-muted hover:text-fg hover:bg-border/40 cursor-pointer rounded-lg border p-2"
+              className={cn(
+                'border-border text-muted hover:text-fg hover:bg-border/40 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border',
+                'disabled:hover:text-muted disabled:hover:bg-transparent disabled:cursor-not-allowed disabled:opacity-60'
+              )}
             >
-              <Refresh01Icon size={14} />
+              <Refresh01Icon size={14} className={cn(refreshing && 'animate-spin')} />
             </button>
             {access.canWrite ? (
               <button
                 type="button"
                 onClick={() => setInviting(true)}
-                className="bg-primary text-primary-fg cursor-pointer rounded-lg px-4 py-2 text-sm font-medium shadow-sm"
+                className="bg-primary text-primary-fg inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-4 text-sm font-medium shadow-sm"
               >
-                <span className="inline-flex items-center gap-1.5">
-                  <Add01Icon size={14} />
-                  {t('settings.admin.invite.open')}
-                </span>
+                <Add01Icon size={14} />
+                {t('settings.admin.invite.open')}
               </button>
             ) : null}
           </div>
@@ -167,7 +184,7 @@ export function AdminPanel(): React.JSX.Element {
       {view.kind === 'people' ? (
         <div
           role="tablist"
-          className="border-border bg-bg/40 inline-flex w-fit items-center rounded-lg border p-0.5"
+          className="border-border bg-bg/40 flex w-full items-stretch rounded-lg border p-0.5"
         >
           {SECTIONS.map((key) => (
             <button
@@ -177,7 +194,7 @@ export function AdminPanel(): React.JSX.Element {
               aria-selected={section === key}
               onClick={() => setSection(key)}
               className={cn(
-                'rounded-md px-4 py-1.5 text-xs font-medium',
+                'flex flex-1 items-center justify-center rounded-md px-4 py-1.5 text-xs font-medium',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 section === key
                   ? 'bg-primary text-primary-fg shadow-sm'
@@ -249,15 +266,14 @@ export function AdminPanel(): React.JSX.Element {
         />
       ) : null}
 
-      {inviting ? (
-        <InviteDialog
-          onClose={() => setInviting(false)}
-          onInvited={() => {
-            void loadRoster()
-            toast.show({ message: t('settings.admin.invite.done'), tone: 'success' })
-          }}
-        />
-      ) : null}
+      <InviteSheet
+        open={inviting}
+        onClose={() => setInviting(false)}
+        onInvited={() => {
+          void loadRoster()
+          toast.show({ message: t('settings.admin.invite.done'), tone: 'success' })
+        }}
+      />
     </Shell>
   )
 }
@@ -320,145 +336,6 @@ function OrgSummary({
   )
 }
 
-const ROLES: AdminRole[] = ['employee', 'support', 'admin']
-
-/**
- * Inviting someone. The temp password comes back exactly once — the server
- * never stores it in the clear — so the dialog stays open on success with
- * the password and a copy button, rather than closing and losing it.
- */
-function InviteDialog({
-  onClose,
-  onInvited
-}: {
-  onClose: () => void
-  onInvited: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState<AdminRole>('employee')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ email: string; temp: string } | null>(null)
-
-  const submit = async (): Promise<void> => {
-    if (busy || !name.trim() || !email.trim()) return
-    setBusy(true)
-    setError(null)
-    try {
-      const res = await window.api.admin.invite({ email: email.trim(), name: name.trim(), role })
-      setResult({ email: res.email, temp: res.temp_password })
-      onInvited()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
-      <div className="bg-surface border-border flex w-full max-w-md flex-col gap-4 rounded-2xl border p-6 shadow-xl">
-        <h2 className="text-fg text-sm font-semibold">{t('settings.admin.invite.title')}</h2>
-        {result ? (
-          <>
-            <div className="border-amber-500/40 bg-amber-500/10 flex items-start gap-3 rounded-xl border px-4 py-3">
-              <Alert02Icon
-                size={16}
-                className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400"
-              />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="text-fg text-xs font-medium">
-                  {t('settings.admin.invite.created', { email: result.email })}
-                </span>
-                <code className="text-fg truncate font-mono text-sm" dir="ltr">
-                  {result.temp}
-                </code>
-                <span className="text-muted text-[11px]">
-                  {t('settings.admin.invite.tempHint')}
-                </span>
-              </div>
-              <CopyButton text={result.temp} variant="inline" ariaLabelKey="common.copy" />
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="bg-primary text-primary-fg cursor-pointer rounded-lg px-4 py-2 text-sm font-medium"
-            >
-              {t('common.done')}
-            </button>
-          </>
-        ) : (
-          <>
-            <label className="flex flex-col gap-1">
-              <span className="text-muted text-xs">{t('settings.admin.invite.name')}</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="bg-bg text-fg border-border h-9 rounded-lg border px-3 text-sm focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-muted text-xs">{t('settings.admin.invite.email')}</span>
-              <input
-                value={email}
-                type="email"
-                dir="ltr"
-                onChange={(e) => setEmail(e.target.value)}
-                className="bg-bg text-fg border-border h-9 rounded-lg border px-3 text-sm focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              />
-            </label>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted text-xs">{t('settings.admin.invite.role')}</span>
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex items-center rounded-lg border p-0.5"
-              >
-                {ROLES.map((r) => (
-                  <button
-                    key={r}
-                    role="tab"
-                    type="button"
-                    aria-selected={role === r}
-                    onClick={() => setRole(r)}
-                    className={cn(
-                      'rounded-md px-3 py-1 text-xs font-medium',
-                      role === r
-                        ? 'bg-primary text-primary-fg shadow-sm'
-                        : 'text-muted hover:text-fg cursor-pointer'
-                    )}
-                  >
-                    {t(`settings.admin.roles.${r}`)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="border-border text-fg hover:bg-border/40 cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void submit()}
-                disabled={busy || !name.trim() || !email.trim()}
-                className="bg-primary text-primary-fg cursor-pointer rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {t('settings.admin.invite.submit')}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /**
  * The whole page while the access check is in flight. Same header block,
  * same section nav, same summary strip and the same card grid the People
@@ -478,7 +355,7 @@ function AdminPanelSkeleton(): React.JSX.Element {
             <SkeletonBar className="w-96" />
           </p>
         </header>
-        <SkeletonBar className="h-8 w-56 rounded-lg" />
+        <SkeletonBar className="h-[34px] w-full rounded-lg" />
         <section className="bg-surface border-border grid grid-cols-4 gap-4 rounded-2xl border p-5">
           {['people', 'tokens', 'cost', 'searches'].map((k) => (
             <div key={k} className="flex min-w-0 flex-col gap-1">

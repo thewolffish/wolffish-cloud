@@ -1,5 +1,6 @@
 import { Avatar } from '@components/common/profile/Avatar'
 import { SkeletonBar } from '@components/core/Skeleton'
+import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import { useLocale } from '@providers/locale/useLocale'
 import type { AdminRoster, RosterPerson } from '@preload/index'
@@ -7,6 +8,7 @@ import { CalendarCheckOut02Icon, Search01Icon, SmartPhone01Icon } from 'hugeicon
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  formatDayFromNow,
   formatTokens,
   formatUsd,
   planStanding,
@@ -93,7 +95,7 @@ export function PeopleGrid({
         </div>
         <div
           role="tablist"
-          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+          className="border-border bg-bg/40 inline-flex h-10 shrink-0 items-stretch rounded-lg border p-0.5"
         >
           {(['spend', 'active', 'name'] as SortKey[]).map((key) => (
             <button
@@ -103,7 +105,7 @@ export function PeopleGrid({
               aria-selected={sort === key}
               onClick={() => setSort(key)}
               className={cn(
-                'rounded-md px-3 py-1 text-xs font-medium',
+                'flex items-center rounded-md px-3 text-xs font-medium',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 sort === key
                   ? 'bg-primary text-primary-fg shadow-sm'
@@ -158,16 +160,37 @@ function PersonCard({
   onOpen: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const toast = useToast()
   const standing = planStanding(
     person.token_plan,
     person.ceilings,
     person.month_tokens_in,
     person.month_tokens_out
   )
+  const copyEmail = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(person.email)
+      toast.show({ message: t('settings.admin.people.emailCopied'), tone: 'success' })
+    } catch {
+      toast.show({ message: t('settings.admin.people.emailCopyFailed'), tone: 'error' })
+    }
+  }
+
+  // A div rather than a button, the same shape the project and procedure
+  // cards use: the card is one big click target that has to CONTAIN a
+  // control (the email), and a button inside a button is not markup a
+  // browser or a screen reader can make sense of.
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
       className={cn(
         'bg-surface border-border hover:border-muted flex h-full w-full cursor-pointer flex-col gap-3 rounded-2xl border p-4 text-start',
         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -177,22 +200,33 @@ function PersonCard({
       <span className="flex w-full items-start gap-3">
         <Avatar name={person.name} size={36} />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex items-center gap-1.5">
+          <span className="flex min-w-0 items-center gap-1.5">
             <span className="text-fg truncate text-sm font-semibold">{person.name}</span>
             {isSelf ? (
               <span className="text-muted shrink-0 text-[10px]">
                 {t('settings.admin.people.you')}
               </span>
             ) : null}
+            <RoleBadge role={person.role} />
           </span>
-          <span className="text-muted truncate text-xs" dir="ltr">
+          <button
+            type="button"
+            dir="ltr"
+            onClick={(e) => {
+              e.stopPropagation()
+              void copyEmail()
+            }}
+            aria-label={t('settings.admin.people.copyEmail')}
+            title={t('settings.admin.people.copyEmail')}
+            className={cn(
+              'bg-border/40 text-muted hover:bg-border/70 hover:text-fg block w-fit max-w-full cursor-pointer truncate rounded px-1 py-0.5 text-start font-mono text-[11px]',
+              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+            )}
+          >
             {person.email}
-          </span>
+          </button>
         </span>
-        <span className="flex shrink-0 flex-col items-end gap-1">
-          <StatusBadge status={person.status} />
-          <RoleBadge role={person.role} />
-        </span>
+        <StatusBadge status={person.status} />
       </span>
 
       {/* The glance row: spend, activity, reach. */}
@@ -217,7 +251,9 @@ function PersonCard({
           <PlanBadge plan={person.token_plan} />
           <span className="text-muted truncate text-[11px]">
             {person.last_active_day
-              ? t('settings.admin.people.lastActive', { day: person.last_active_day })
+              ? t('settings.admin.people.lastActive', {
+                  when: formatDayFromNow(person.last_active_day, locale)
+                })
               : t('settings.admin.people.neverActive')}
           </span>
         </span>
@@ -243,7 +279,7 @@ function PersonCard({
           </>
         ) : null}
       </span>
-    </button>
+    </div>
   )
 }
 
@@ -281,17 +317,15 @@ function PersonCardSkeleton(): React.JSX.Element {
       <div className="flex w-full items-start gap-3">
         <span className="bg-border/60 size-9 shrink-0 animate-pulse rounded-full" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm font-semibold">
+          <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
             <SkeletonBar className="w-28" />
+            <SkeletonBar className="w-14 shrink-0 rounded-full text-[10px]" />
           </span>
           <span className="text-xs">
             <SkeletonBar className="w-36" />
           </span>
         </span>
-        <span className="flex shrink-0 flex-col items-end gap-1">
-          <SkeletonBar className="w-16 rounded-full text-[10px]" />
-          <SkeletonBar className="w-14 rounded-full text-[10px]" />
-        </span>
+        <SkeletonBar className="w-16 shrink-0 rounded-full text-[10px]" />
       </div>
 
       <div className="grid grid-cols-3 gap-2">

@@ -192,6 +192,11 @@ export function registerAdminIpc(): void {
     }
   )
 
+  handle('admin:resendActivation', (_e, userId: string) => {
+    assertWrite()
+    return admin.resendActivation(userId)
+  })
+
   handle('admin:resetPassword', (_e, userId: string) => {
     assertWrite()
     return admin.resetPassword(userId)

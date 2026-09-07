@@ -6,16 +6,19 @@
  *   node scripts/smoke-bridge.mjs
  *
  * Owner signs in as the "desktop", offers a pairing; a "phone" claims it
- * with the typed code (and a second offer with the QR token), receives a
- * session, reads presence, opens both bridge sockets, round-trips an RPC
- * through the desktop, receives an event, registers for push, and is cut
- * off the moment the desktop unpairs it. Also covers the phone-facing sync
- * additions: the `since` index with envelope fields and tombstones, the
- * blob-by-path lookup, and the per-day usage fold.
+ * with the typed code, receives a session, reads presence, opens both bridge
+ * sockets, round-trips an RPC through the desktop, receives an event,
+ * registers for push, and is cut off the moment the desktop unpairs it.
+ * Only then does a second offer exercise the QR door, so the account never
+ * holds two phones at once — one at a time is what the desktop's Mobile
+ * panel allows, and a gate run must not leave the demo org somewhere the
+ * product cannot go. Also covers the phone-facing sync additions: the
+ * `since` index with envelope fields and tombstones, the blob-by-path
+ * lookup, and the per-day usage fold.
  */
 const BASE = process.env.API_BASE ?? 'http://127.0.0.1:8787'
 const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
-const OWNER = process.env.WFC_OWNER_EMAIL ?? 'gate.keeper.50@demo.wolffi.sh'
+const OWNER = process.env.WFC_OWNER_EMAIL ?? 'nasser.alowais@wolffi.sh'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
 let failures = 0
@@ -98,7 +101,7 @@ const login = await api('/auth/login', {
     password: PASSWORD,
     device: {
       platform: 'desktop',
-      name: 'smoke-desktop',
+      name: 'nasser-macbook-pro',
       app_version: 'smoke'
     }
   }
@@ -130,7 +133,7 @@ const claim = await api('/auth/pair/claim', {
   body: {
     code: sloppy,
     device: {
-      name: 'smoke-phone',
+      name: 'iPhone',
       app_version: '1.0.48',
       model: 'iPhone 16 Pro',
       os: 'ios',
@@ -172,27 +175,12 @@ const refreshed = await api('/auth/refresh', {
 check('phone refresh rotates', refreshed.status === 200 && refreshed.json?.access_token)
 const P2 = refreshed.json.access_token
 
-// ── 3 · the QR token route ───────────────────────────────────────────────
-const offer2 = await api('/v1/pair/offer', { token: D, body: {} })
-const payload = JSON.parse(
-  Buffer.from(offer2.json.qr.slice('wolffish-pair:v2:'.length), 'base64url').toString('utf8')
-)
-check(
-  'QR payload carries api + token',
-  payload.v === 2 && typeof payload.api === 'string' && typeof payload.token === 'string'
-)
-const claim2 = await api('/auth/pair/claim', {
-  body: { token: payload.token, device: { name: 'smoke-phone-2' } }
-})
-check('token claim mints a session', claim2.status === 200 && claim2.json?.device_id)
-const phone2 = claim2.json
-
 // ── 4 · devices ──────────────────────────────────────────────────────────
 const devices = await api('/v1/devices', { token: D })
 const mobiles = (devices.json?.devices ?? []).filter((d) => d.platform === 'mobile' && d.paired)
 check(
-  'desktop lists both paired phones',
-  mobiles.some((d) => d.id === phoneDeviceId) && mobiles.some((d) => d.id === phone2.device_id),
+  'desktop lists the one paired phone',
+  mobiles.length === 1 && mobiles[0].id === phoneDeviceId,
   JSON.stringify(devices.json)
 )
 // The Mobile panel describes a phone from these fields alone — it must read
@@ -204,10 +192,6 @@ check(
   JSON.stringify(listed)
 )
 check('device row records the door: typed code', listed?.pair_method === 'code', listed?.pair_method)
-check(
-  'device row records the door: scanned QR',
-  mobiles.find((d) => d.id === phone2.device_id)?.pair_method === 'qr'
-)
 check(
   'own device refuses self-revoke',
   (await api(`/v1/devices/${desktopDeviceId}`, { token: D, method: 'DELETE' })).status === 400
@@ -227,7 +211,7 @@ check(
 )
 
 const desk = socket(
-  `${WS_BASE}/v1/bridge/ws?role=desktop&access_token=${D}&name=Smoke%20Desktop&platform=darwin`
+  `${WS_BASE}/v1/bridge/ws?role=desktop&access_token=${D}&name=nasser-macbook-pro&platform=darwin`
 )
 await desk.opened
 const p0 = await desk.next((f) => f.t === 'presence')
@@ -240,7 +224,7 @@ const status1 = await api('/v1/bridge/status', { token: P2 })
 check(
   'phone sees the desktop up via REST',
   status1.json?.desktop?.deviceId === desktopDeviceId &&
-    status1.json.desktop.name === 'Smoke Desktop'
+    status1.json.desktop.name === 'nasser-macbook-pro'
 )
 
 // The connect carries a DIFFERENT model and OS than the claim did: a phone
@@ -365,6 +349,39 @@ check(
     })
   ).status === 401
 )
+
+// ── 5.5 · the QR token route, on an account with no phone on it ─────────
+// Deliberately here and not before the unpair: only one phone may be paired
+// at a time. The backend would hold two — it is the desktop's Mobile panel
+// that withdraws the pairing control the moment a phone is listed — so a run
+// that stood up two at once would leave the demo org in a state the product
+// itself cannot produce, and an admin reading that account's devices would
+// see a second handset nobody can explain.
+const offer2 = await api('/v1/pair/offer', { token: D, body: {} })
+const payload = JSON.parse(
+  Buffer.from(offer2.json.qr.slice('wolffish-pair:v2:'.length), 'base64url').toString('utf8')
+)
+check(
+  'QR payload carries api + token',
+  payload.v === 2 && typeof payload.api === 'string' && typeof payload.token === 'string'
+)
+const claim2 = await api('/auth/pair/claim', {
+  body: {
+    token: payload.token,
+    device: { name: 'iPhone', app_version: '1.0.48', model: 'iPhone 17 Pro', os: 'ios', os_version: '27.0' }
+  }
+})
+check('token claim mints a session', claim2.status === 200 && claim2.json?.device_id)
+const phone2 = claim2.json
+const afterQr = ((await api('/v1/devices', { token: D })).json?.devices ?? []).filter(
+  (d) => d.platform === 'mobile' && d.paired
+)
+check(
+  'the scanned phone is the only one paired',
+  afterQr.length === 1 && afterQr[0]?.id === phone2.device_id,
+  JSON.stringify(afterQr)
+)
+check('device row records the door: scanned QR', afterQr[0]?.pair_method === 'qr')
 
 // Logout from the phone side closes its own socket.
 const phone2ws = socket(`${WS_BASE}/v1/bridge/ws?role=phone&access_token=${phone2.access_token}`)

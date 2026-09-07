@@ -1,13 +1,16 @@
 /**
- * Behavior tests for the control-token guard — the trailing-control-token
- * detector that surfaces (never strips) a "you sent the user a literal
- * tokenizer token" signal.
+ * Behavior tests for the control-token guard — the two detectors that surface
+ * (never strip) a model faking silence: a trailing tokenizer control token,
+ * and a reply that is punctuation and nothing else.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/control-token-guard.test.ts
  */
 import assert from 'node:assert/strict'
 import {
+  armContentFreeReplyNotice,
   armControlTokenNotice,
+  contentFreeReply,
+  contentFreeReplyNotice,
   controlTokenNotice,
   drainControlTokenNotice,
   trailingControlToken
@@ -79,12 +82,63 @@ function testArmAndDrainPerConversation(): void {
   console.log('ok: arm/drain is per-conversation, once-only, null-safe, latest-wins')
 }
 
+function testContentFreeDetectsFakedSilence(): void {
+  // The observed leak (2026-09-06, deepseek-v4): a lone period as the whole reply.
+  assert.equal(contentFreeReply('.'), '.')
+  assert.equal(contentFreeReply('...'), '...')
+  assert.equal(contentFreeReply('…'), '…')
+  assert.equal(contentFreeReply('-'), '-')
+  // Surrounding whitespace and invisible format chars are not content either.
+  assert.equal(contentFreeReply('  .\n'), '.')
+  assert.equal(contentFreeReply('\u200b.'), '.')
+  console.log('ok: punctuation-only replies are detected as faked silence')
+}
+
+function testContentFreeNeverTripsOnContent(): void {
+  // Truly empty is the empty-turn guard's job — nothing has reached the user yet.
+  assert.equal(contentFreeReply(''), null)
+  assert.equal(contentFreeReply('   \n'), null)
+  // Real replies, however short, in any script.
+  assert.equal(contentFreeReply('Done.'), null)
+  assert.equal(contentFreeReply('Yes'), null)
+  assert.equal(contentFreeReply('42'), null)
+  assert.equal(contentFreeReply('نعم'), null)
+  // Emoji are symbols, not punctuation — a thumbs-up IS a reply.
+  assert.equal(contentFreeReply('👍'), null)
+  assert.equal(contentFreeReply('✅'), null)
+  // A long punctuation run is plausibly the content asked for; the guard defers.
+  assert.equal(contentFreeReply('-----------'), null)
+  console.log('ok: content, emoji, empty text and long rules never trip')
+}
+
+function testContentFreeNoticeEchoesAndDefers(): void {
+  const notice = contentFreeReplyNotice('.')
+  assert.match(notice, /`\.`/, 'the notice echoes the characters the user saw')
+  assert.match(notice, /zero characters/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /disregard/, 'the notice defers to deliberate punctuation')
+  console.log('ok: the content-free notice echoes, offers the silent exit, and defers')
+}
+
+function testContentFreeSharesTheNoticeSlot(): void {
+  armContentFreeReplyNotice('conv-d', '.')
+  const drained = drainControlTokenNotice('conv-d')
+  assert.ok(drained && drained.includes('CONTENT-FREE'), 'drains through the shared slot')
+  assert.equal(drainControlTokenNotice('conv-d'), undefined, 'drain clears')
+  armContentFreeReplyNotice(null, '.')
+  assert.equal(drainControlTokenNotice(null), undefined, 'null conversation id is a no-op')
+  console.log('ok: the content-free notice rides the same per-conversation slot')
+}
+
 function main(): void {
   testCleanTextNeverTrips()
   testObservedLeakShapesTrip()
   testKnownTokenListTrips()
   testNoticeNamesTokenAndDefers()
   testArmAndDrainPerConversation()
+  testContentFreeDetectsFakedSilence()
+  testContentFreeNeverTripsOnContent()
+  testContentFreeNoticeEchoesAndDefers()
+  testContentFreeSharesTheNoticeSlot()
   console.log('\nAll control-token-guard tests passed.')
 }
 

@@ -105,7 +105,7 @@ check('health', health.status === 200 && health.json?.ok === true)
 
 // ── 1 · owner + seeded employee sign in ─────────────────────────────────
 const owner = await api('/auth/login', {
-  body: { email: 'gate.keeper.50@demo.wolffi.sh', password: PASSWORD, device: { platform: 'desktop', name: 'verify' } }
+  body: { email: 'nasser.alowais@wolffi.sh', password: PASSWORD, device: { platform: 'desktop', name: 'verify' } }
 })
 check('owner login', owner.status === 200 && owner.json?.user?.role === 'owner')
 const O = owner.json.access_token
@@ -122,32 +122,79 @@ check('seeded employee login', empLogin.status === 200)
 const E = empLogin.json.access_token
 
 // ── 2 · invite flow, end to end ──────────────────────────────────────────
-const vEmail = `verify-${stamp}@demo.wolffi.sh`
+// Adding a person mails a 6-digit code and hands the admin no credential at
+// all. Reading that code back needs ADMIN_RESET_CODE_READ (the same opt-in
+// the reset peek uses); without it the activation half is SKIPPED and the
+// throwaway employee is onboarded through the admin reset-password escape
+// hatch instead, so the rest of the gate still has a user to drive.
+// Resend's own safe test inbox, like the reset/invite probes below: an
+// invite now really does send mail, and a run must not bounce a message off
+// the org's live domain every time.
+const vEmail = `delivered+wfc-verify-${stamp}@resend.dev`
 const invite = await api('/admin/users', {
   token: O,
-  body: { email: vEmail, name: 'Verify User', role: 'employee' }
+  body: { email: vEmail, name: 'Nouf Alqadi', role: 'employee' }
 })
-check('invite issues temp password', invite.status === 200 && invite.json?.temp_password)
+check('invite creates the account', invite.status === 200 && invite.json?.activation_expires_at)
+check('invite hands back no credential', !invite.json?.temp_password && !invite.json?.activation_code)
+check('invite emails the code', invite.json?.email_sent === true, JSON.stringify(invite.json))
 check(
   'duplicate invite 409',
-  (await api('/admin/users', { token: O, body: { email: vEmail, name: 'Dup', role: 'employee' } })).status === 409
+  (await api('/admin/users', { token: O, body: { email: vEmail, name: 'Nouf Alqadi', role: 'employee' } })).status === 409
 )
-const t = await api('/auth/login', { body: { email: vEmail, password: invite.json.temp_password } })
-check('temp login demands change, no session', t.json?.must_change_password === true && !t.json?.access_token)
-check(
-  'weak password refused',
-  (await api('/auth/password', { token: t.json.change_token, body: { new_password: 'short' } })).status === 400
-)
+const vId0 = invite.json.user_id
 let V_PW = `verify-pass-${stamp}`
-check(
-  'password change ok',
-  (await api('/auth/password', { token: t.json.change_token, body: { new_password: V_PW } })).status === 200
-)
-check('temp password dead', (await api('/auth/login', { body: { email: vEmail, password: invite.json.temp_password } })).status === 401)
+const aPeek = await api(`/admin/users/${vId0}/activation-code`, { token: O })
+if (aPeek.status === 404) {
+  skip(
+    'emailed activation flow',
+    'ADMIN_RESET_CODE_READ unset — run `echo -n 1 | npx wrangler secret put ADMIN_RESET_CODE_READ` to cover it'
+  )
+  const seed = await api(`/admin/users/${vId0}/reset-password`, { token: O, body: {} })
+  const t = await api('/auth/login', { body: { email: vEmail, password: seed.json.temp_password } })
+  check('temp login demands change, no session', t.json?.must_change_password === true && !t.json?.access_token)
+  check(
+    'weak password refused',
+    (await api('/auth/password', { token: t.json.change_token, body: { new_password: 'short' } })).status === 400
+  )
+  check(
+    'password change ok',
+    (await api('/auth/password', { token: t.json.change_token, body: { new_password: V_PW } })).status === 200
+  )
+} else {
+  check('admin reads pending activation code', aPeek.status === 200 && /^[0-9]{6}$/.test(aPeek.json?.code ?? ''))
+  const A_CODE = aPeek.json.code
+  check(
+    'invited account cannot sign in',
+    (await api('/auth/login', { body: { email: vEmail, password: V_PW } })).status === 401
+  )
+  check(
+    'wrong activation code rejected',
+    (await api('/auth/activate/confirm', {
+      body: { email: vEmail, code: A_CODE === '000000' ? '000001' : '000000', new_password: V_PW }
+    })).json?.error === 'invalid_code'
+  )
+  check(
+    'weak password refused',
+    (await api('/auth/activate/confirm', { body: { email: vEmail, code: A_CODE, new_password: 'short' } })).status === 400
+  )
+  check(
+    'activation ok',
+    (await api('/auth/activate/confirm', { body: { email: vEmail, code: A_CODE, new_password: V_PW } })).status === 200
+  )
+  check(
+    'code dead after use',
+    (await api('/auth/activate/confirm', { body: { email: vEmail, code: A_CODE, new_password: V_PW } })).json?.error === 'already_active'
+  )
+  check(
+    'activation code gone from the peek',
+    (await api(`/admin/users/${vId0}/activation-code`, { token: O })).status === 404
+  )
+}
 const v = await api('/auth/login', {
   body: { email: vEmail, password: V_PW, device: { platform: 'desktop', name: 'verify-dev' } }
 })
-check('verify user login', v.status === 200)
+check('new hire login', v.status === 200)
 let VT = v.json.access_token
 const vId = v.json.user.id
 const me1 = await api('/v1/me', { token: VT })
@@ -569,7 +616,7 @@ const prof = await api('/v1/profile', {
   token: VT,
   method: 'PATCH',
   body: {
-    name: 'Verify User Jr',
+    name: 'Nouf S. Alqadi',
     phone: '+966 50 000 0000',
     position: 'QA Engineer',
     bio: 'Breaks the release gate for a living.'
@@ -579,7 +626,7 @@ check('profile patch ok', prof.status === 200 && prof.json?.user?.phone === '+96
 const meProf = await api('/v1/me', { token: VT })
 check(
   'me carries profile edits',
-  meProf.json?.user?.name === 'Verify User Jr' &&
+  meProf.json?.user?.name === 'Nouf S. Alqadi' &&
     meProf.json?.user?.phone === '+966 50 000 0000' &&
     meProf.json?.user?.position === 'QA Engineer' &&
     meProf.json?.user?.bio === 'Breaks the release gate for a living.'
@@ -613,10 +660,18 @@ check(
 const rEmail = `delivered+wfc-reset-${stamp}@resend.dev`
 const rInvite = await api('/admin/users', {
   token: O,
-  body: { email: rEmail, name: 'Reset Probe', role: 'employee' }
+  body: { email: rEmail, name: 'Mishari Alduhaim', role: 'employee' }
 })
 check('reset probe invited', rInvite.status === 200)
 const rId = rInvite.json?.user_id
+// A reset is for an account that HAS a password; the probe gets one the
+// short way (the admin escape hatch), then proves the emailed reset.
+const rSeed = await api(`/admin/users/${rId}/reset-password`, { token: O, body: {} })
+const rSeedLogin = await api('/auth/login', { body: { email: rEmail, password: rSeed.json.temp_password } })
+await api('/auth/password', {
+  token: rSeedLogin.json.change_token,
+  body: { new_password: `reset-seed-${stamp}` }
+})
 check(
   'reset request for unknown email 401',
   (await api('/auth/reset/request', { body: { email: `ghost-${stamp}@resend.dev` } })).json?.error === 'email_not_found'
@@ -661,6 +716,29 @@ if (rPeek.status === 404) {
   })
   check('login with reset password (invited→active)', rLogin.status === 200 && rLogin.json?.access_token)
 }
+// ── 6.56 · re-sending an invite ─────────────────────────────────────────
+const sEmail = `delivered+wfc-invite-${stamp}@resend.dev`
+const sInvite = await api('/admin/users', {
+  token: O,
+  body: { email: sEmail, name: 'Bushra Alhumaidi', role: 'employee' }
+})
+check('invite probe emailed', sInvite.status === 200 && sInvite.json?.email_sent === true)
+const sId = sInvite.json?.user_id
+const sAgain = await api(`/admin/users/${sId}/activation`, { token: O, body: {} })
+check('re-send emails a new invite', sAgain.status === 200 && sAgain.json?.email_sent === true)
+check(
+  'self-serve re-send works',
+  (await api('/auth/activate/request', { body: { email: sEmail } })).status === 200
+)
+check(
+  'activate request for unknown email 401',
+  (await api('/auth/activate/request', { body: { email: `ghost-${stamp}@resend.dev` } })).json?.error === 'email_not_found'
+)
+check(
+  'invite probe suspended (cleanup)',
+  (await api(`/admin/users/${sId}`, { token: O, method: 'PATCH', body: { status: 'suspended' } })).status === 200
+)
+
 check(
   'reset probe suspended (cleanup)',
   (await api(`/admin/users/${rId}`, { token: O, method: 'PATCH', body: { status: 'suspended' } })).status === 200

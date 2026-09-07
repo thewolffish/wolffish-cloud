@@ -35,6 +35,8 @@ import {
   updateProfile as apiUpdateProfile,
   requestPasswordReset as apiRequestReset,
   confirmPasswordReset as apiConfirmReset,
+  requestActivation as apiRequestActivation,
+  confirmActivation as apiConfirmActivation,
   uploadAvatar as apiUploadAvatar,
   fetchAvatar as apiFetchAvatar,
   deleteAvatar as apiDeleteAvatar,
@@ -405,6 +407,44 @@ class CloudSession {
   ): Promise<{ ok: boolean; code?: string; detail?: string | null }> {
     try {
       await apiConfirmReset(email.trim(), code, newPassword)
+      return { ok: true }
+    } catch (err) {
+      return {
+        ok: false,
+        code: this.codeOf(err),
+        detail: err instanceof ApiError ? (err.detail ?? null) : null
+      }
+    }
+  }
+
+  /** Re-send the invite code — for the person whose email never arrived. */
+  async requestActivation(
+    email: string
+  ): Promise<{ ok: boolean; code?: string; detail?: string | null }> {
+    try {
+      await apiRequestActivation(email.trim())
+      return { ok: true }
+    } catch (err) {
+      return {
+        ok: false,
+        code: this.codeOf(err),
+        detail: err instanceof ApiError ? (err.detail ?? null) : null
+      }
+    }
+  }
+
+  /**
+   * Activation: the emailed code buys the account's first password. No
+   * session comes back — the caller signs in with the password it just set,
+   * which is also the first honest test that it took.
+   */
+  async confirmActivation(
+    email: string,
+    code: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; code?: string; detail?: string | null }> {
+    try {
+      await apiConfirmActivation(email.trim(), code, newPassword)
       return { ok: true }
     } catch (err) {
       return {

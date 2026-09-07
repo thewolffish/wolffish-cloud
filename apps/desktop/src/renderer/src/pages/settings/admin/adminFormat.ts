@@ -137,6 +137,24 @@ export function formatWhen(iso: string | null | undefined, locale?: string): str
 }
 
 /**
+ * A day stamp (YYYY-MM-DD) as a phrase relative to now — "today",
+ * "yesterday", "3 days ago".
+ *
+ * The comparison is made in UTC on BOTH sides, because that is the frame
+ * the stamp was written in (usage_daily.day is `toISOString().slice(0,10)`
+ * on the server). Diffing a UTC midnight against a local one would report a
+ * row written minutes ago as a whole day old for every admin east of
+ * Greenwich.
+ */
+export function formatDayFromNow(day: string, locale?: string): string {
+  const then = Date.parse(`${day}T00:00:00Z`)
+  if (Number.isNaN(then)) return day
+  const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)
+  const days = Math.round((then - today) / 86_400_000)
+  return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(days, 'day')
+}
+
+/**
  * Days since a timestamp, or null when there is none. Used for "last active"
  * where the exact minute matters less than the shape of the gap.
  */

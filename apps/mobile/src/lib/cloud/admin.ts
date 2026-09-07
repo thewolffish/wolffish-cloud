@@ -358,6 +358,12 @@ export const adminRevokeSessions = (
 ): Promise<{ ok: true; revoked: number }> =>
   send(token, 'POST', `/admin/users/${encodeURIComponent(userId)}/revoke-sessions`, {})
 
+/**
+ * Adding a person mails them a 6-digit activation code; no credential comes
+ * back. `activation_code` is present only against an API with no mail
+ * configured at all (a local worker). The phone has no invite screen — this
+ * exists so the mobile client's admin surface stays wire-accurate.
+ */
 export const adminInvite = (
   token: string,
   input: { email: string; name: string; role: AdminRole }
@@ -365,8 +371,11 @@ export const adminInvite = (
   user_id: string
   email: string
   role: AdminRole
-  temp_password: string
-  temp_password_expires_at: string
+  activation_expires_at: string
+  email_sent: boolean
+  email_error?: string
+  email_error_detail?: string | null
+  activation_code?: string
 }> => send(token, 'POST', '/admin/users', input)
 
 export const adminPatchOrg = (

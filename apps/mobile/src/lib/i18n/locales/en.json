@@ -601,7 +601,10 @@
           "org.update": "Changed org settings",
           "capability.put": "Published a capability",
           "capability.delete": "Removed a capability",
-          "maintenance.run": "Ran maintenance"
+          "maintenance.run": "Ran maintenance",
+          "user.resend_activation": "Sent a new invitation",
+          "user.read_activation_code": "Read an activation code",
+          "user.read_reset_code": "Read a reset code"
         }
       },
       "org": {

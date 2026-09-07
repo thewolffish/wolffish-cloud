@@ -18,6 +18,14 @@ export type EditorSheetProps = {
    * another overlay is stacked on top, so Escape closes only that one.
    */
   dismissable?: boolean
+  /**
+   * Whether the header carries its close X (default true). A form with
+   * unsaved input sets it false alongside `dismissable`, so every quiet way
+   * out is gone and the only exit is the labelled one in the footer — and
+   * gone rather than inert, because a button that does nothing when pressed
+   * is worse than no button.
+   */
+  closable?: boolean
 }
 
 /**
@@ -38,11 +46,13 @@ export function EditorSheet({
   title,
   children,
   footer,
-  dismissable = true
+  dismissable = true,
+  closable = true
 }: EditorSheetProps): React.JSX.Element | null {
   const { t } = useTranslation()
   const titleId = useId()
   const closeRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     if (!open || !dismissable) return
@@ -59,7 +69,10 @@ export function EditorSheet({
   // mid-typing on every parent tick.
   useEffect(() => {
     if (!open) return
-    closeRef.current?.focus()
+    // The close button is the landing spot when there is one; without it the
+    // panel itself takes focus, so the tab ring still starts inside the sheet.
+    if (closeRef.current) closeRef.current.focus()
+    else panelRef.current?.focus()
   }, [open])
 
   if (!open || typeof document === 'undefined') return null
@@ -76,6 +89,8 @@ export function EditorSheet({
       className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
     >
       <aside
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
@@ -95,19 +110,26 @@ export function EditorSheet({
           <h2 id={titleId} className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
             {title}
           </h2>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label={t('chat.fileCard.close')}
-            title={t('chat.fileCard.close')}
-            className={cn(
-              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
-              'focus-visible:ring-2 focus-visible:ring-accent'
+          {/* The close button's own box, kept whether or not the button is
+              in it — otherwise the header loses 4px the moment a form turns
+              dirty, and the whole sheet shifts under the cursor. */}
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+            {closable && (
+              <button
+                ref={closeRef}
+                type="button"
+                onClick={onClose}
+                aria-label={t('chat.fileCard.close')}
+                title={t('chat.fileCard.close')}
+                className={cn(
+                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded p-1',
+                  'focus-visible:ring-2 focus-visible:ring-accent'
+                )}
+              >
+                <Cancel01Icon size={16} />
+              </button>
             )}
-          >
-            <Cancel01Icon size={16} />
-          </button>
+          </span>
         </div>
         {/* The only scroller: however tall the form grows, the header above and
             the action bar below stay put. */}

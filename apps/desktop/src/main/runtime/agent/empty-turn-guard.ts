@@ -28,6 +28,14 @@ export const MAX_EMPTY_TURN_NUDGES = 2
  * closed the turn by typing the text `(no output)`, which was delivered to
  * the user as a reply (observed live, 2026-08-30). Placeholder text that
  * DESCRIBES silence is still output.
+ *
+ * Naming `(no output)` alone was not enough either: on 2026-09-06 deepseek-v4
+ * reasoned "so I end silently with zero characters" and then sent a lone `.`,
+ * which reached the user as its own message bubble. A bare punctuation mark
+ * does not read as a "placeholder that describes the silence", so it has to
+ * be named outright. The stray character itself is caught after the fact by
+ * the content-free half of the control-token guard — a nudge cannot help
+ * there, because the text has already streamed to the user by then.
  */
 const EMPTY_TURN_NUDGE_TEXT =
   '[System: You ended your turn without any output or tool call. If the task is ' +
@@ -35,7 +43,8 @@ const EMPTY_TURN_NUDGE_TEXT =
   'was already delivered earlier this turn and there is genuinely nothing left to ' +
   'say, end with an entirely empty response again — zero characters — and the ' +
   'turn will close cleanly. Do NOT type a placeholder that describes the silence, ' +
-  'such as "(no output)" or "(nothing to add)", and no control tokens: anything ' +
+  'such as "(no output)" or "(nothing to add)", no bare punctuation such as "." or ' +
+  '"…", and no control tokens: anything ' +
   'you write is delivered to the user verbatim as a reply. Otherwise, continue the ' +
   'next step now — either call the appropriate tool(s) or give your final answer.]'
 

@@ -50,7 +50,7 @@ loader._load = function (this: unknown, ...args: unknown[]): unknown {
 
 /** What /v1/me currently answers. The "admin changed something" knob. */
 let liveRole = 'employee'
-let liveName = 'Sam'
+let liveName = 'Reem Alyami'
 let meCalls = 0
 
 const json = (body: unknown, status = 200): Response =>
@@ -65,7 +65,7 @@ globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
       refresh_token: 'refresh-1',
       session_id: 'sess_1',
       device_id: 'dev_1',
-      user: { id: 'usr_1', email: 'sam@wolffi.sh', name: 'Sam', role: 'employee' }
+      user: { id: 'usr_1', email: 'reem.alyami@wolffi.sh', name: 'Reem Alyami', role: 'employee' }
     })
   }
   if (url.endsWith('/v1/me')) {
@@ -73,7 +73,7 @@ globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     return json({
       user: {
         id: 'usr_1',
-        email: 'sam@wolffi.sh',
+        email: 'reem.alyami@wolffi.sh',
         name: liveName,
         role: liveRole,
         phone: '',
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   })
 
   // Sign in, then set a PIN — the app is "ready" only past both.
-  const afterLogin = await cloudSession.login('sam@wolffi.sh', 'password')
+  const afterLogin = await cloudSession.login('reem.alyami@wolffi.sh', 'password')
   check(
     'login established a session',
     afterLogin.status !== 'loggedOut',
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
     announced.includes('owner'),
     announced.join(',')
   )
-  check('the email is untouched', promoted.user?.email === 'sam@wolffi.sh')
+  check('the email is untouched', promoted.user?.email === 'reem.alyami@wolffi.sh')
 
   // It has to survive a relaunch too, or the tab flickers back off at launch
   // and only returns after the first tick.
