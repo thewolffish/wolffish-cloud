@@ -1247,7 +1247,9 @@ async function orchestrate(): Promise<void> {
           // restore gets every character back. It used to ship half the text
           // plus a marker — the one lossy path in the sync engine, and the
           // reason this branch exists at all.
-          const gm = g as (typeof g & { syncTruncated?: boolean; syncOverflow?: unknown }) | undefined
+          const gm = g as
+            | (typeof g & { syncTruncated?: boolean; syncOverflow?: unknown })
+            | undefined
           if (!gm || gm.content !== w.content || gm.syncTruncated === true) good = false
           // And the pointer is gone once the body is back — a restored
           // message must not still claim it lives somewhere else.

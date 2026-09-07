@@ -4,8 +4,7 @@ import './assets/main.css'
 import { InviteSheet } from '@pages/settings/admin/InviteSheet'
 import { LocaleContext } from '@providers/locale/useLocale'
 import { createRoot } from 'react-dom/client'
-import { useState } from 'react'
-
+import { useEffect, useState } from 'react'
 ;(window as unknown as { api: unknown }).api = {
   admin: {
     invite: async (input: { email: string }) => {
@@ -21,13 +20,19 @@ import { useState } from 'react'
   }
 }
 
-function Harness(): React.JSX.Element {
+export function Harness(): React.JSX.Element {
   const [open, setOpen] = useState(true)
-  ;(window as unknown as { __open: boolean }).__open = open
+  // The browser-driven check reads this to assert the sheet's state.
+  useEffect(() => {
+    ;(window as unknown as { __open: boolean }).__open = open
+  }, [open])
   return (
     <div className="bg-bg text-fg min-h-screen p-10">
       <p className="text-muted text-sm">sheet open: {String(open)}</p>
-      <button className="border-border mt-4 rounded-lg border px-4 py-2 text-sm" onClick={() => setOpen(true)}>
+      <button
+        className="border-border mt-4 rounded-lg border px-4 py-2 text-sm"
+        onClick={() => setOpen(true)}
+      >
         Add person
       </button>
       <LocaleContext.Provider value={{ locale: 'en', setLocale: async () => undefined }}>
