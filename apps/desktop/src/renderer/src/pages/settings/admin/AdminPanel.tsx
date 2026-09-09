@@ -18,6 +18,8 @@ import { OrgPanel } from '@pages/settings/admin/OrgPanel'
 import { PeopleGrid } from '@pages/settings/admin/PeopleGrid'
 import { UserDetail } from '@pages/settings/admin/UserDetail'
 import { formatUsd, formatTokens } from '@pages/settings/admin/adminFormat'
+import { ADMIN_SECTIONS, isSection } from '@pages/settings/admin/adminNav'
+import type { AdminNav } from '@pages/settings/admin/useAdminNav'
 
 /**
  * The admin page — everything an owner or admin needs to run the deployment,
@@ -28,7 +30,12 @@ import { formatUsd, formatTokens } from '@pages/settings/admin/adminFormat'
  * more into the transcript. Organization holds the settings that apply to
  * everybody, and Log is the audit trail.
  *
- * Two decisions worth stating.
+ * WHERE IT IS comes from outside. The screen (pages/Admin.tsx) owns the
+ * history of pages and hands it down as `nav`, because the screen's Back
+ * button has to pop the same stack this panel's drill links do. Every
+ * navigation here is a push; every way back is the same pop.
+ *
+ * Two more decisions worth stating.
  *
  * THE ROSTER IS FETCHED ONCE and kept while the screen is open, because it
  * is one call for the whole company and the people grid is what every drill
@@ -41,22 +48,13 @@ import { formatUsd, formatTokens } from '@pages/settings/admin/adminFormat'
  * Settings is the end of it.
  */
 
-type Section = 'people' | 'org' | 'audit'
-type View =
-  | { kind: 'people' }
-  | { kind: 'user'; userId: string }
-  | { kind: 'conversation'; userId: string; conversationId: string; title: string }
-
-const SECTIONS: Section[] = ['people', 'org', 'audit']
-
-export function AdminPanel(): React.JSX.Element {
+export function AdminPanel({ nav }: { nav: AdminNav }): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const toast = useToast()
+  const view = nav.current
 
   const [access, setAccess] = useState<AdminAccess | null>(null)
-  const [section, setSection] = useState<Section>('people')
-  const [view, setView] = useState<View>({ kind: 'people' })
   const [roster, setRoster] = useState<AdminRoster | null>(null)
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [audit, setAudit] = useState<AdminAuditEntry[] | null>(null)
@@ -111,12 +109,12 @@ export function AdminPanel(): React.JSX.Element {
   }, [access?.canRead])
 
   useEffect(() => {
-    if (access?.canRead !== true || section !== 'audit' || audit !== null) return
+    if (access?.canRead !== true || view.kind !== 'audit' || audit !== null) return
     void window.api.admin
       .audit(150)
       .then((res) => setAudit(res.entries))
       .catch(() => setAudit([]))
-  }, [access?.canRead, section, audit])
+  }, [access?.canRead, view.kind, audit])
 
   // A role change while the window is open must not leave the admin screen
   // standing: the server would refuse every call, and the screen would look
@@ -137,8 +135,7 @@ export function AdminPanel(): React.JSX.Element {
     )
   }
 
-  const openUser = (userId: string): void => setView({ kind: 'user', userId })
-  const backToPeople = (): void => setView({ kind: 'people' })
+  const openUser = (userId: string): void => nav.push({ kind: 'user', userId })
 
   return (
     <Shell>
@@ -151,7 +148,7 @@ export function AdminPanel(): React.JSX.Element {
             {access.canWrite ? t('settings.admin.subtitle') : t('settings.admin.subtitleReadOnly')}
           </p>
         </div>
-        {view.kind === 'people' && section === 'people' ? (
+        {view.kind === 'people' ? (
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -180,23 +177,25 @@ export function AdminPanel(): React.JSX.Element {
       </header>
 
       {/* The section nav only makes sense at the top level; a drill replaces
-          the whole body, and its own back link is the way out. */}
-      {view.kind === 'people' ? (
+          the whole body, and its own back link is the way out. A tab switch
+          is a push like any other move, so Back returns to the section the
+          admin came from. */}
+      {isSection(view) ? (
         <div
           role="tablist"
           className="border-border bg-bg/40 flex w-full items-stretch rounded-lg border p-0.5"
         >
-          {SECTIONS.map((key) => (
+          {ADMIN_SECTIONS.map((key) => (
             <button
               key={key}
               role="tab"
               type="button"
-              aria-selected={section === key}
-              onClick={() => setSection(key)}
+              aria-selected={view.kind === key}
+              onClick={() => nav.push({ kind: key })}
               className={cn(
                 'flex flex-1 items-center justify-center rounded-md px-4 py-1.5 text-xs font-medium',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                section === key
+                view.kind === key
                   ? 'bg-primary text-primary-fg shadow-sm'
                   : 'text-muted hover:text-fg cursor-pointer'
               )}
@@ -207,24 +206,22 @@ export function AdminPanel(): React.JSX.Element {
         </div>
       ) : null}
 
-      {rosterError !== null && view.kind === 'people' && section === 'people' ? (
+      {rosterError !== null && view.kind === 'people' ? (
         <p className="border-border text-muted rounded-xl border border-dashed px-4 py-6 text-center text-xs">
           {rosterError}
         </p>
       ) : null}
 
-      {view.kind === 'people' && section === 'people' ? (
+      {view.kind === 'people' ? (
         <>
           <OrgSummary roster={roster} locale={locale} />
           <PeopleGrid roster={roster} selfEmail={access.email} onOpen={openUser} />
         </>
       ) : null}
 
-      {view.kind === 'people' && section === 'org' ? (
-        <OrgPanel access={access} plans={roster?.plans ?? null} />
-      ) : null}
+      {view.kind === 'org' ? <OrgPanel access={access} plans={roster?.plans ?? null} /> : null}
 
-      {view.kind === 'people' && section === 'audit' ? (
+      {view.kind === 'audit' ? (
         <div className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
           <header className="flex flex-col gap-1">
             <h2 className="text-fg text-sm font-semibold">{t('settings.admin.audit.title')}</h2>
@@ -244,10 +241,10 @@ export function AdminPanel(): React.JSX.Element {
           key={view.userId}
           userId={view.userId}
           access={access}
-          onBack={backToPeople}
+          onBack={nav.back}
           onChanged={() => void loadRoster()}
           onOpenConversation={(row: AdminConversationRow) =>
-            setView({
+            nav.push({
               kind: 'conversation',
               userId: view.userId,
               conversationId: row.id,
@@ -262,7 +259,7 @@ export function AdminPanel(): React.JSX.Element {
           key={view.conversationId}
           conversationId={view.conversationId}
           title={view.title}
-          onBack={() => setView({ kind: 'user', userId: view.userId })}
+          onBack={nav.back}
         />
       ) : null}
 
