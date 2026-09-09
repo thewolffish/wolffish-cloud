@@ -800,6 +800,14 @@ async function readableUser(c: AdminContext, userId: string): Promise<Response |
  * pushes with every conversation (its envelope minus the messages), so the
  * list already knows which SURFACE each conversation came from and how many
  * tool calls it ran, without opening any of them.
+ *
+ * The batch route keeps one snapshot per conversation (newer seq wins,
+ * older rows retired on the next push) — but a conversation not pushed
+ * since that rule arrived still carries its legacy hash-id snapshot rows,
+ * one per push it ever made. The join must pick ONE, by the same rule the
+ * server applies when it retires them (newest seq, insert order breaking
+ * ties): joining on every snapshot row repeated such a conversation once
+ * per row, and a busy one showed up three times in the list.
  */
 admin.get('/users/:id/conversations', async (c) => {
   const id = c.req.param('id')
@@ -832,7 +840,10 @@ admin.get('/users/:id/conversations', async (c) => {
          (SELECT COUNT(DISTINCT COALESCE(r.base_id, r.id)) FROM conversation_records r
            WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count
      FROM conversations c
-     LEFT JOIN conversation_records s ON s.conversation_id = c.id AND s.kind = 'snapshot'
+     LEFT JOIN conversation_records s ON s.rowid = (
+       SELECT r.rowid FROM conversation_records r
+        WHERE r.conversation_id = c.id AND r.kind = 'snapshot'
+        ORDER BY r.seq DESC, r.rowid DESC LIMIT 1)
      WHERE c.user_id = ?1 AND c.deleted_at IS NULL
        AND (c.updated_at < ?2 OR (c.updated_at = ?2 AND c.rowid < ?3))
      ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ?4`
@@ -915,6 +926,49 @@ admin.get('/conversations/:id/records', async (c) => {
       user_id: conv.user_id,
       user_name: conv.user_name,
       user_email: conv.user_email
+    }
+  })
+})
+
+/**
+ * One blob of the conversation's owner, for the transcript above.
+ *
+ * A message too big for one record is synced as a pointer to a
+ * content-addressed blob (apps/desktop/src/main/cloud/sync.ts, wireMessage),
+ * and the record itself carries only a readable prefix. The owner's client
+ * swaps the body back in through GET /v1/files/<sha>, which serves the
+ * CALLER's files only — so an admin reading the transcript got the prefix
+ * and a placeholder segment, never the message. This is the same read, gated
+ * the way the transcript is: the blob must belong to the conversation's owner
+ * and the caller must be allowed to read that person's conversations. Not
+ * audited on its own — opening the transcript already was, and a long
+ * conversation would otherwise write a row per spilled message.
+ */
+admin.get('/conversations/:id/files/:sha256', async (c) => {
+  const id = c.req.param('id')
+  const sha256 = c.req.param('sha256').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(sha256)) return c.json({ error: 'invalid_request' }, 400)
+  const conv = await c.env.DB.prepare(
+    'SELECT user_id FROM conversations WHERE id = ?1 AND deleted_at IS NULL'
+  )
+    .bind(id)
+    .first<{ user_id: string }>()
+  if (!conv) return c.json({ error: 'not_found' }, 404)
+  const denied = await readableUser(c, conv.user_id)
+  if (denied) return denied
+  const owns = await c.env.DB.prepare(
+    'SELECT mime FROM files WHERE user_id = ?1 AND sha256 = ?2 AND deleted_at IS NULL LIMIT 1'
+  )
+    .bind(conv.user_id, sha256)
+    .first<{ mime: string }>()
+  if (!owns) return c.json({ error: 'not_found' }, 404)
+  const obj = await c.env.BLOBS.get(`files/${sha256}`)
+  if (!obj) return c.json({ error: 'blob_missing' }, 404)
+  return new Response(obj.body, {
+    headers: {
+      'content-type': owns.mime,
+      'content-length': String(obj.size),
+      etag: sha256
     }
   })
 })

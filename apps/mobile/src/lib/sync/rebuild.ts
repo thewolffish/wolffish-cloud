@@ -25,7 +25,8 @@ import type { ConversationMessage } from '@/lib/conversations/types'
  * complete while dropping a version of a message.
  *
  * apps/desktop/src/main/cloud/restore.ts holds the third copy of the same
- * contract; change them together.
+ * contract — version selection, segment coercion, overflow hydration —
+ * change them together.
  */
 
 export type RebuiltConversation = {
@@ -82,6 +83,7 @@ export function rebuildConversation(records: WireRecord[]): RebuiltConversation 
             : Date.parse(rec.created_at) || Date.now()
       const { id: rawId, role: rawRole, content: rawContent, text, timestamp: _ts, ...rest } = raw
       const id = typeof rawId === 'string' && rawId ? rawId : baseIdOf(rec)
+      if (Array.isArray(rest.segments)) rest.segments = rest.segments.map(normalizeSegment)
       return {
         id,
         role: rawRole === 'assistant' ? 'assistant' : 'user',
@@ -95,6 +97,83 @@ export function rebuildConversation(records: WireRecord[]): RebuiltConversation 
       ? envelope.updatedAt
       : null
   return { updatedAt, messages }
+}
+
+/**
+ * A streamed segment's text lives in `delta` (the desktop's broca contract,
+ * and what buildRenderBlocks concatenates). A record written by another
+ * author may carry it as `text` instead — the overflow placeholder the
+ * desktop wrote before 2026-09-08 did, and those rows are versions: they
+ * stay on the server as written. A text segment with no string `delta`
+ * rendered as the literal word "undefined" in place of every spilled
+ * message. Coerced here, once, for every reader of a record — the owner's
+ * catch-up and the admin transcript alike.
+ */
+function normalizeSegment(seg: unknown): unknown {
+  if (!seg || typeof seg !== 'object' || Array.isArray(seg)) return seg
+  const s = seg as Record<string, unknown>
+  if (s.kind !== 'text' && s.kind !== 'reasoning') return seg
+  if (typeof s.delta === 'string') return seg
+  const delta = typeof s.text === 'string' ? s.text : typeof s.content === 'string' ? s.content : ''
+  return {
+    ...s,
+    delta,
+    turnId: typeof s.turnId === 'string' ? s.turnId : '',
+    segmentId: typeof s.segmentId === 'string' ? s.segmentId : `seg_${delta.length}`
+  }
+}
+
+/** Where a spilled message's body lives (desktop sync.ts wireMessage). */
+export type OverflowRef = { sha256?: unknown; bytes?: unknown; name?: unknown }
+
+export type OverflowBodyFetch = (sha: string) => Promise<string>
+
+/**
+ * Put spilled message bodies back.
+ *
+ * A record whose content carries `syncOverflow` holds only a readable
+ * prefix and a placeholder segment; the real message is a blob under the
+ * owner's files. The fetch is injected so this stays a pure transform (and
+ * so an admin reader can reach the blob its own way). A blob that cannot be
+ * fetched leaves the prefix in place: a shorter message beats a failed
+ * catch-up, the placeholder renders as prose, and the next pull tries
+ * again. `onMiss` is that report.
+ *
+ * Only the SURVIVING version of a message is fetched — the one
+ * rebuildConversation keeps, the last the org received. Every version of
+ * a message uploads its body under the same blob name, so the older shas
+ * are gone from the store by the time the newer one exists: fetching them
+ * is a 404 per superseded version, and on a phone each one is a round trip
+ * and a warning about a body nobody was going to render.
+ */
+export async function hydrateOverflow(
+  records: WireRecord[],
+  fetchBody: OverflowBodyFetch,
+  opts: { concurrency?: number; onMiss?: (sha: string, err: unknown) => void } = {}
+): Promise<WireRecord[]> {
+  const surviving = new Map<string, WireRecord>()
+  for (const rec of records) if (rec.kind === 'message') surviving.set(baseIdOf(rec), rec)
+  const spilled = [...surviving.values()].filter((r) => {
+    const c = r.content as { syncOverflow?: OverflowRef } | null
+    return typeof c?.syncOverflow?.sha256 === 'string'
+  })
+  if (spilled.length === 0) return records
+  const concurrency = Math.max(1, opts.concurrency ?? 2)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < spilled.length) {
+      const rec = spilled[next++]!
+      const sha = String((rec.content as { syncOverflow: OverflowRef }).syncOverflow.sha256)
+      try {
+        const parsed = JSON.parse(await fetchBody(sha)) as unknown
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) rec.content = parsed
+      } catch (err) {
+        opts.onMiss?.(sha, err)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, spilled.length) }, worker))
+  return records
 }
 
 /**

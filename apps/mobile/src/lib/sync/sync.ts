@@ -1,4 +1,4 @@
-import { rebuildConversation, type RebuiltConversation } from '@/lib/sync/rebuild'
+import { hydrateOverflow, rebuildConversation, type RebuiltConversation } from '@/lib/sync/rebuild'
 import { coalesceTextSegments, messageFilePaths } from '@/lib/conversations/segments'
 import type { ConversationMessage, Segment } from '@/lib/conversations/types'
 import { getDb, withExclusiveTransaction } from '@/lib/db/database'
@@ -8,6 +8,7 @@ import { cloudSession } from '@/lib/cloud/session'
 import {
   conversationRecords,
   conversationsSince,
+  fileTextBySha,
   usageDays as fetchUsageDays,
   type WireConversationRow,
   type WireRecord
@@ -629,7 +630,6 @@ export function fetchConversationBody(id: string): Promise<boolean> {
 
 const bodyFetches = new Map<string, { again: boolean; run: Promise<boolean> }>()
 
-
 async function pullRecords(conversationId: string): Promise<WireRecord[] | null> {
   const all: WireRecord[] = []
   let after = 0
@@ -643,8 +643,23 @@ async function pullRecords(conversationId: string): Promise<WireRecord[] | null>
     if (typeof next !== 'number' || page.records.length === 0 || !(next > after)) break
     after = next
   }
-  return all
+  // Spilled bodies come back here, through the owner's own blob route, so
+  // the phone holds the same message the desktop holds — not the 4,000-char
+  // preview the record carries. A body that will not come — the blob gone,
+  // the network gone, the token unrefreshable — keeps its preview and is
+  // tried again on the next pull (hydrateOverflow); it never fails a pull
+  // whose pages already landed.
+  return hydrateOverflow(all, ownerOverflowBody, {
+    onMiss: (sha, err) =>
+      console.warn(
+        `[sync] overflow body ${sha.slice(0, 12)} unavailable — keeping the preview:`,
+        err
+      )
+  })
 }
+
+const ownerOverflowBody = (sha: string): Promise<string> =>
+  cloudSession.withAccessToken((token) => fileTextBySha(token, sha))
 
 async function fetchConversationBodyOnce(id: string): Promise<boolean> {
   if (!cloudSession.isSignedIn) return false

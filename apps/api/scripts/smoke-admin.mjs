@@ -9,6 +9,7 @@
  *   revoke-sessions → org settings → usage read → audit trail populated.
  */
 import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { pbkdf2Sync } from 'node:crypto'
 
 const BASE = process.env.API_BASE ?? 'http://localhost:8787'
@@ -34,8 +35,17 @@ const check = (name, cond, extra = '') => {
   console.log(`${ok ? '✅' : '❌'} ${name}${ok || !extra ? '' : ` — ${extra}`}`)
   if (!ok) failures++
 }
+// One transport-only retry: a wrangler CLI call mid-run closes the dev
+// server's keep-alive socket, and the NEXT fetch gets ECONNRESET.
+const fetchRetry = async (url, init) => {
+  try {
+    return await fetch(url, init)
+  } catch {
+    return fetch(url, init)
+  }
+}
 const api = async (path, { token, body, method } = {}) => {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchRetry(`${BASE}${path}`, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: {
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -341,8 +351,24 @@ check(
 await api(`/admin/users/${empId}/plan`, { token: ownerTok, method: 'PUT', body: { token_plan: 'standard' } })
 
 // The employee does some work: one conversation with a snapshot envelope
-// (the provenance the admin list reads) and two messages.
+// (the provenance the admin list reads) and two messages — then a re-push
+// (second snapshot) and one message that spilled to a blob.
 const convId = `conv_smoke_${stamp}`
+const spilledBody = {
+  id: `m_${stamp}_3`,
+  role: 'assistant',
+  content: 'Here is the itinerary in full',
+  timestamp: 1_700_000_000_003,
+  segments: [{ kind: 'text', turnId: 't', segmentId: 's', delta: 'Here is the itinerary in full' }]
+}
+const spilledBytes = Buffer.from(JSON.stringify(spilledBody), 'utf8')
+const spilledSha = createHash('sha256').update(spilledBytes).digest('hex')
+const spilledName = `.records/conv-${convId}/m_${stamp}_3.json`
+const upload = await fetch(
+  `${BASE}/v1/files/upload?sha256=${spilledSha}&name=${encodeURIComponent(spilledName)}&mime=application/json`,
+  { method: 'POST', headers: { authorization: `Bearer ${empTok3}` }, body: spilledBytes }
+)
+check('employee uploaded a spilled message body', upload.status === 200)
 const batch = await api('/v1/sync/batch', {
   token: empTok3,
   body: {
@@ -387,11 +413,40 @@ const batch = await api('/v1/sync/batch', {
         kind: 'message',
         content: { id: `m_${stamp}_2`, role: 'assistant', content: 'Booked.', timestamp: 1_700_000_000_002 },
         created_at: new Date().toISOString()
+      },
+      // A message too big for its record: preview + pointer to the blob
+      // uploaded below (the desktop's wireMessage shape).
+      {
+        type: 'record',
+        id: `m_${stamp}_3.cccccccc`,
+        conversation_id: convId,
+        seq: 1_700_000_000_003,
+        kind: 'message',
+        content: {
+          id: `m_${stamp}_3`,
+          role: 'assistant',
+          content: 'Here is the itinerary\n\n[… 300,000 characters; the full message is synced alongside this record]',
+          timestamp: 1_700_000_000_003,
+          segments: [{ kind: 'text', turnId: '', segmentId: 'sync-overflow', delta: '[full segment detail in the message body blob]' }],
+          syncOverflow: { sha256: spilledSha, bytes: spilledBytes.byteLength, name: spilledName }
+        },
+        created_at: new Date().toISOString()
       }
     ]
   }
 })
-check('employee pushed a conversation', batch.status === 200 && batch.json?.accepted === 4, JSON.stringify(batch.json))
+check('employee pushed a conversation', batch.status === 200 && batch.json?.accepted === 5, JSON.stringify(batch.json))
+
+// A legacy snapshot row — the hash-id kind every push wrote before the
+// batch route kept one per conversation. Nothing retires it until the next
+// push, so a conversation last synced before that rule carries several. It
+// goes straight into D1 because the API no longer produces one; its
+// figures are wrong on purpose, so a list that reads it is caught.
+const legacySql = `INSERT INTO conversation_records (id, conversation_id, user_id, seq, kind, content, created_at)
+  VALUES ('snap.legacy${stamp}', '${convId}', '${empId}', 1600000000000, 'snapshot',
+    '{"id":"${convId}","title":"Booking the flights","channel":"cli","messageCount":9,"stats":{"allTime":{"toolCalls":1}}}',
+    '${new Date().toISOString()}');`
+execSync(`npx wrangler d1 execute wfc-master --local --command "${legacySql.replace(/"/g, '\\"')}"`, { stdio: 'pipe' })
 
 // Roster: one call, every employee, with the glance numbers on the card.
 const roster = await api('/admin/roster', { token: ownerTok })
@@ -430,15 +485,26 @@ check('overview 404s for a stranger', (await api('/admin/users/usr_nobody/overvi
 const convs = await api(`/admin/users/${empId}/conversations`, { token: ownerTok })
 const row = (convs.json?.conversations ?? []).find((x) => x.id === convId)
 check('admin lists a user conversation', convs.status === 200 && row !== undefined)
+check(
+  'a conversation pushed twice is listed once',
+  (convs.json?.conversations ?? []).filter((x) => x.id === convId).length === 1,
+  JSON.stringify((convs.json?.conversations ?? []).map((x) => x.id))
+)
 check('conversation list carries surface provenance', row?.channel === 'mobile')
-check('conversation list carries message count', row?.message_count === 2)
-check('conversation list carries tool-call stats', row?.stats?.allTime?.toolCalls === 3)
+check('conversation list reads the LATEST snapshot: message count', row?.message_count === 2)
+check('conversation list reads the LATEST snapshot: tool-call stats', row?.stats?.allTime?.toolCalls === 3)
+// The owner's own list (the phone's) joins the same table and had the same
+// duplicate.
+const ownList = await api('/v1/conversations?since=&include=meta', { token: empTok3 })
+const ownRows = (ownList.json?.conversations ?? []).filter((x) => x.id === convId)
+check('the employee\'s own list shows the conversation once', ownList.status === 200 && ownRows.length === 1, JSON.stringify(ownList.json).slice(0, 300))
+check('the employee\'s own list reads the latest snapshot', ownRows[0]?.stats?.allTime?.toolCalls === 3 && ownRows[0]?.channel === 'mobile', JSON.stringify(ownRows[0]))
 
 // The transcript itself — the same records the employee's own client gets.
 const recs = await api(`/admin/conversations/${convId}/records`, { token: ownerTok })
 const kinds = (recs.json?.records ?? []).map((r) => r.kind)
-check('admin reads the transcript', recs.status === 200 && recs.json?.records?.length === 3, JSON.stringify((recs.json?.records ?? []).map((r) => [r.id, r.kind])))
-check('transcript has the envelope and the messages', kinds.includes('snapshot') && kinds.filter((k) => k === 'message').length === 2)
+check('admin reads the transcript', recs.status === 200 && recs.json?.records?.length === 5, JSON.stringify((recs.json?.records ?? []).map((r) => [r.id, r.kind])))
+check('transcript has the envelopes and the messages', kinds.filter((k) => k === 'snapshot').length === 2 && kinds.filter((k) => k === 'message').length === 3)
 check('transcript names its owner', recs.json?.conversation?.user_id === empId)
 const mine = await api(`/v1/conversations/${convId}/records`, { token: empTok3 })
 check(
@@ -464,6 +530,32 @@ check(
 check(
   'admin cannot list an owner\'s conversations',
   (await api(`/admin/users/${owner.json.user.id}/conversations`, { token: adm.json.access_token })).status === 403
+)
+// The spilled body: the admin fetches it through the conversation, gated
+// like the transcript; anyone else's blob, or a blob the owner never had,
+// is not there.
+const blob = await fetch(`${BASE}/admin/conversations/${convId}/files/${spilledSha}`, {
+  headers: { authorization: `Bearer ${ownerTok}` }
+})
+check(
+  'owner reads a spilled message body through the conversation',
+  blob.status === 200 && (await blob.text()) === spilledBytes.toString('utf8')
+)
+check(
+  'admin reads the spilled body too',
+  (await api(`/admin/conversations/${convId}/files/${spilledSha}`, { token: adm.json.access_token })).status === 200
+)
+check(
+  'support cannot read the spilled body',
+  (await api(`/admin/conversations/${convId}/files/${spilledSha}`, { token: sup.json.access_token })).status === 403
+)
+check(
+  'a blob the owner never uploaded is not served through their conversation',
+  (await api(`/admin/conversations/${convId}/files/${'f'.repeat(64)}`, { token: ownerTok })).status === 404
+)
+check(
+  'a malformed sha is refused',
+  (await api(`/admin/conversations/${convId}/files/nope`, { token: ownerTok })).status === 400
 )
 check(
   'unknown conversation 404s',

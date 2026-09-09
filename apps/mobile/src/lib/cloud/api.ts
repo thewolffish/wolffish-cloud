@@ -292,7 +292,6 @@ export type WireRecord = {
   version_hash?: string | null
 }
 
-
 export async function conversationRecords(
   accessToken: string,
   conversationId: string,
@@ -335,6 +334,32 @@ export function fileUrlByPath(name: string): string {
 
 export function fileUrlBySha(sha256: string): string {
   return `${apiBase}/v1/files/${sha256}`
+}
+
+/**
+ * One content-addressed blob, read as text — a spilled message body on its
+ * way back into the catch-up (lib/sync/rebuild.ts hydrateOverflow). Small
+ * JSON, so it comes through fetch rather than the file cache: it is part
+ * of a transcript, not a file the user will open, and must never land in
+ * the workspace cache as one. 404 is an outcome here (a superseded version's
+ * blob is gone), not a bug — the caller keeps the preview.
+ */
+export async function fileTextBySha(accessToken: string, sha256: string): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60_000)
+  try {
+    const res = await fetch(fileUrlBySha(sha256), {
+      headers: { authorization: `Bearer ${accessToken}` },
+      signal: controller.signal
+    })
+    if (!res.ok) throw new ApiError(`http_${res.status}`, res.status)
+    return await res.text()
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    throw new ApiError('network', 0)
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export function uploadUrl(sha256: string, name: string, mime: string): string {

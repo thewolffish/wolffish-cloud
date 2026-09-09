@@ -416,8 +416,15 @@ sync.get('/conversations', async (c) => {
              (SELECT COUNT(DISTINCT COALESCE(r.base_id, r.id)) FROM conversation_records r
                WHERE r.conversation_id = c.id AND r.kind = 'message')) AS message_count`
       : ''
+    // ONE snapshot per conversation, by the batch route's own rule (newest
+    // seq wins): a conversation not pushed since that rule arrived still
+    // holds its legacy hash-id snapshot rows, and joining on all of them
+    // listed the conversation once per row.
     const joinSnapshot = meta
-      ? `LEFT JOIN conversation_records s ON s.conversation_id = c.id AND s.kind = 'snapshot'`
+      ? `LEFT JOIN conversation_records s ON s.rowid = (
+           SELECT r.rowid FROM conversation_records r
+            WHERE r.conversation_id = c.id AND r.kind = 'snapshot'
+            ORDER BY r.seq DESC, r.rowid DESC LIMIT 1)`
       : ''
     const rows = await c.env.DB.prepare(
       `SELECT c.rowid AS rid, c.id, c.title, c.device_id, c.created_at, c.updated_at, c.deleted_at,

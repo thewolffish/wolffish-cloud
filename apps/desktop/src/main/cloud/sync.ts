@@ -80,6 +80,7 @@
  */
 import { API_BASE } from '@main/cloud/api'
 import {
+  hydrateOverflow,
   rebuildConversation,
   type WireConversationMeta,
   type WireRecord
@@ -945,16 +946,33 @@ async function wireMessage(
     (full.length > OVERFLOW_PREVIEW_CHARS
       ? `\n\n[… ${full.length.toLocaleString('en-US')} characters; the full message is synced alongside this record]`
       : '')
-  slim.segments = [{ kind: 'text', text: '[full segment detail in the message body blob]' }]
+  slim.segments = [placeholderSegment('[full segment detail in the message body blob]')]
   slim.syncOverflow = { sha256: sha, bytes: bytes.byteLength, name }
   return slim
 }
+
+/**
+ * The one segment a spilled record carries, in broca's text-segment shape
+ * (`delta`, not `text`): every renderer concatenates `delta`, so a
+ * placeholder written any other way showed the literal word "undefined" to
+ * a reader that never fetched the body — which is every reader the owner's
+ * own client is not. (Records already on the server keep the old shape;
+ * restore.ts coerces those on the way in.)
+ */
+const placeholderSegment = (
+  delta: string
+): { kind: 'text'; turnId: string; segmentId: string; delta: string } => ({
+  kind: 'text',
+  turnId: '',
+  segmentId: 'sync-overflow',
+  delta
+})
 
 /** The pre-spill shape, kept for the one path that still needs it: an
  *  overflow blob that could not be uploaded at all. */
 function truncatedMessage(copy: ConversationMessage): Record<string, unknown> {
   const slim = { ...copy } as Record<string, unknown>
-  slim.segments = [{ kind: 'text', text: '[segment detail elided for sync — too large]' }]
+  slim.segments = [placeholderSegment('[segment detail elided for sync — too large]')]
   if (JSON.stringify(slim).length > MAX_RECORD_BYTES) {
     const full = String(slim.content ?? '')
     slim.content =
@@ -1330,47 +1348,26 @@ async function pullRecords(conversationId: string): Promise<WireRecord[]> {
     if (typeof next !== 'number' || res.records.length === 0 || !(next > after)) break
     after = next
   }
-  return hydrateOverflow(all)
-}
-
-type OverflowRef = { sha256?: unknown; bytes?: unknown }
-
-/**
- * Put spilled message bodies back (see wireMessage).
- *
- * A record whose content carries `syncOverflow` holds only a readable
- * prefix; the real message is a blob. Swapping it back here — rather than in
- * rebuildConversation — is what keeps restore.ts pure and Electron-free, and
- * it covers BOTH readers, since restore and the catch-up pull share this
- * function. A blob that cannot be fetched leaves the prefix in place: a
- * shorter message beats a failed restore, and the next pull tries again.
- */
-async function hydrateOverflow(records: WireRecord[]): Promise<WireRecord[]> {
-  const spilled = records.filter((r) => {
-    const c = r.content as { syncOverflow?: OverflowRef } | null
-    return typeof c?.syncOverflow?.sha256 === 'string'
-  })
-  if (spilled.length === 0) return records
-  await mapPool(spilled, BLOB_CONCURRENCY, async (rec) => {
-    const ref = (rec.content as { syncOverflow?: OverflowRef }).syncOverflow!
-    const sha = String(ref.sha256)
-    try {
-      const body = await cloudSession.withAccessToken(async (token) => {
-        const res = await fetch(`${API_BASE}/v1/files/${sha}`, {
-          headers: { authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(120_000)
-        })
-        if (!res.ok) throw new SyncHttpError(res.status, `HTTP ${res.status}: overflow fetch`)
-        return res.text()
-      })
-      const parsed = JSON.parse(body) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) rec.content = parsed
-    } catch (err) {
+  // Spilled bodies come back here (see wireMessage), through the owner's
+  // own blob route, for both readers that share this pull — restore and the
+  // catch-up. The admin transcript reads the same records through
+  // apps/desktop/src/main/admin-ipc.ts with its own fetch.
+  return hydrateOverflow(all, ownerOverflowBody, {
+    concurrency: BLOB_CONCURRENCY,
+    onMiss: (sha, err) =>
       wlog.warn('sync', `overflow body ${sha.slice(0, 12)} unavailable — keeping the preview:`, err)
-    }
   })
-  return records
 }
+
+const ownerOverflowBody = (sha: string): Promise<string> =>
+  cloudSession.withAccessToken(async (token) => {
+    const res = await fetch(`${API_BASE}/v1/files/${sha}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(120_000)
+    })
+    if (!res.ok) throw new SyncHttpError(res.status, `HTTP ${res.status}: overflow fetch`)
+    return res.text()
+  })
 
 /**
  * Stream one content-addressed blob straight to disk: scratch file first,

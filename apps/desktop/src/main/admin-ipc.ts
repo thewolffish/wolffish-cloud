@@ -24,9 +24,10 @@
  * identical code, identical picture; it simply never reaches the disk.
  */
 import * as admin from '@main/cloud/admin'
-import { rebuildConversation } from '@main/cloud/restore'
+import { hydrateOverflow, rebuildConversation } from '@main/cloud/restore'
 import { cloudSession } from '@main/cloud/session'
 import { handle } from '@main/ipc-registry'
+import { wlog } from '@main/workspace/logger'
 import type { ConversationFile } from '@main/conversations'
 
 /** Roles the admin screen exists for. Advisory — the server re-checks. */
@@ -107,10 +108,25 @@ export function registerAdminIpc(): void {
    * One conversation, rebuilt into exactly the file the employee's own
    * client holds. `rebuildConversation` needs the conversation's metadata
    * alongside its records, and the records endpoint returns both.
+   *
+   * Spilled messages come first: a message too big for one record is a
+   * pointer to a blob plus a preview, and the owner's client swaps the body
+   * back in before rebuilding — so must this one, or the admin reads a
+   * placeholder where the employee reads the message. Same function, the
+   * admin's blob route. A blob that will not come keeps its preview, exactly
+   * as it would on the owner's machine.
    */
   handle('admin:readConversation', async (_e, conversationId: string): Promise<AdminTranscript> => {
     assertRead()
     const { records, conversation, truncated } = await admin.readTranscript(conversationId)
+    await hydrateOverflow(records, (sha) => admin.readConversationBlob(conversationId, sha), {
+      onMiss: (sha, err) =>
+        wlog.warn(
+          'admin',
+          `overflow body ${sha.slice(0, 12)} unavailable — showing the preview:`,
+          err
+        )
+    })
     const file = rebuildConversation(
       {
         id: conversation.id,

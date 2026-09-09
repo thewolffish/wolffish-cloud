@@ -209,6 +209,8 @@ export type AdminRecord = {
   kind: string
   content: unknown
   created_at: string
+  base_id?: string | null
+  version_hash?: string | null
 }
 
 export type AdminRecordsPage = {
@@ -405,6 +407,27 @@ export const readRecords = (
     'GET',
     `/admin/conversations/${encodeURIComponent(conversationId)}/records${q({ after: opts.after ?? 0, limit: opts.limit ?? 200 })}`
   )
+
+/**
+ * One blob of the conversation's owner, as text — the body of a message that
+ * was too big for its record (see hydrateOverflow in cloud/restore.ts). Read
+ * through the conversation's own admin route, because GET /v1/files serves
+ * the caller's files and these are someone else's.
+ */
+export const readConversationBlob = (conversationId: string, sha256: string): Promise<string> =>
+  cloudSession.withAccessToken(async (token) => {
+    let res: Response
+    try {
+      res = await fetch(
+        `${API_BASE}/admin/conversations/${encodeURIComponent(conversationId)}/files/${encodeURIComponent(sha256)}`,
+        { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(120_000) }
+      )
+    } catch {
+      throw new ApiError('network', 0)
+    }
+    if (!res.ok) throw new ApiError(`http_${res.status}`, res.status)
+    return res.text()
+  })
 
 /**
  * Every record of one conversation, paged to exhaustion. A transcript is
