@@ -7,22 +7,13 @@ import { EditorSheet } from '@components/core/EditorSheet'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
-import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { pageTopPadding } from '@lib/utils/platform'
 import type { Procedure, ProcedureCopyProgress, ProcedureFileRef, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions } from '@providers/sessions/useSessions'
 import { useTheme } from '@providers/theme/useTheme'
-import {
-  Add01Icon,
-  ArrowLeft02Icon,
-  ArrowRight02Icon,
-  Delete02Icon,
-  Edit02Icon,
-  PlayIcon
-} from 'hugeicons-react'
+import { Add01Icon, Delete02Icon, Edit02Icon, PlayIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -80,12 +71,11 @@ const iconButtonClass = cn(
 /** Card emoji fallback for procedures that never picked one. */
 const DEFAULT_PROCEDURE_ICON = '📋'
 
+/** Procedures — one tab of the Library page, which owns the chrome around it. */
 export function Procedures(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const { isDark } = useTheme()
-  const isRtl = RTL_LOCALES.has(locale)
-  const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
   const { goTo, status } = useFlow()
   const { newSession } = useSessions()
   // Rows without a stamp follow the global mode — the pill shows that
@@ -458,22 +448,7 @@ export function Procedures(): React.JSX.Element {
   )
 
   return (
-    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
-      <header className="border-border flex items-center justify-between gap-2 border-b px-6 py-3">
-        <button
-          type="button"
-          onClick={() => goTo('chat')}
-          aria-label={t('common.back')}
-          className={cn(
-            'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-          )}
-        >
-          <BackIcon size={16} />
-          <span>{t('common.back')}</span>
-        </button>
-      </header>
-
+    <>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
           <header className="flex items-start justify-between gap-3">
@@ -934,6 +909,6 @@ export function Procedures(): React.JSX.Element {
           })}
         </p>
       </Modal>
-    </main>
+    </>
   )
 }

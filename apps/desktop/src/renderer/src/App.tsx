@@ -20,9 +20,7 @@ import { Chat } from '@pages/Chat'
 import { Settings } from '@pages/settings/Settings'
 import { ViewerPage } from '@pages/ViewerPage'
 import { History } from '@pages/History'
-import { Heartbeat } from '@pages/Heartbeat'
-import { Procedures } from '@pages/Procedures'
-import { Projects } from '@pages/Projects'
+import { Library } from '@pages/Library'
 import { Customization } from '@pages/Customization'
 import { Admin } from '@pages/Admin'
 import { Leaderboard } from '@pages/Leaderboard'
@@ -67,9 +65,7 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'settings',
   'viewer',
   'history',
-  'heartbeat',
-  'procedures',
-  'projects',
+  'library',
   'customization',
   'leaderboard',
   'admin'
@@ -100,12 +96,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <ViewerPage />
     case 'history':
       return <History />
-    case 'heartbeat':
-      return <Heartbeat />
-    case 'procedures':
-      return <Procedures />
-    case 'projects':
-      return <Projects />
+    case 'library':
+      return <Library />
     case 'customization':
       return <Customization />
     case 'leaderboard':

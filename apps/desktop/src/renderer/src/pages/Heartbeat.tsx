@@ -9,9 +9,7 @@ import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { escapePromptBody } from '@lib/heartbeat-escape'
-import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { pageTopPadding } from '@lib/utils/platform'
 import type {
   AutomationCopyProgress,
   HeartbeatJobView,
@@ -23,18 +21,14 @@ import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import {
   Add01Icon,
-  ArrowLeft02Icon,
-  ArrowRight02Icon,
   Clock01Icon,
   Delete02Icon,
   Edit02Icon,
   FloppyDiskIcon,
-  GridViewIcon,
   HelpCircleIcon,
   InformationCircleIcon,
   PlayIcon,
-  Refresh01Icon,
-  SourceCodeIcon
+  Refresh01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -597,19 +591,25 @@ function parseSidebarJobs(
   return result
 }
 
-export function Heartbeat(): React.JSX.Element {
+/** The two ways the Automations tab shows heartbeat.md: cards, or the file itself. */
+export type HeartbeatView = 'cards' | 'markdown'
+
+/**
+ * Automations — one tab of the Library page. The page owns the chrome (back
+ * button, tab strip) and the cards/markdown toggle, so `view` arrives as a
+ * prop rather than living here: the toggle sits in the Library header beside
+ * the tabs, where this page's own header used to put it.
+ */
+export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const { isDark } = useTheme()
-  const isRtl = RTL_LOCALES.has(locale)
-  const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo, status } = useFlow()
+  const { status } = useFlow()
   // Jobs without a marker follow the global mode — show that as the effective
   // selection; clicking a tab stamps an explicit marker.
   const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const toast = useToast()
 
-  const [view, setView] = useState<'cards' | 'markdown'>('cards')
   const [jobs, setJobs] = useState<HeartbeatJobView[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [deleteTarget, setDeleteTarget] = useState<SidebarJob | null>(null)
@@ -1525,37 +1525,7 @@ export function Heartbeat(): React.JSX.Element {
   )
 
   return (
-    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
-      <header className="border-border flex items-center justify-between gap-2 border-b px-6 py-3">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => goTo('chat')}
-            aria-label={t('common.back')}
-            className={cn(
-              'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-            )}
-          >
-            <BackIcon size={16} />
-            <span>{t('common.back')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setView((v) => (v === 'cards' ? 'markdown' : 'cards'))}
-            aria-label={view === 'cards' ? t('heartbeat.markdownMode') : t('heartbeat.cardsMode')}
-            className={cn(
-              'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-            )}
-          >
-            {view === 'cards' ? <SourceCodeIcon size={16} /> : <GridViewIcon size={16} />}
-            <span>{view === 'cards' ? t('heartbeat.markdownMode') : t('heartbeat.cardsMode')}</span>
-          </button>
-        </div>
-        <div className="flex items-center gap-2" />
-      </header>
-
+    <>
       {view === 'cards' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
@@ -2300,6 +2270,6 @@ export function Heartbeat(): React.JSX.Element {
           </p>
         </Modal>
       )}
-    </main>
+    </>
   )
 }

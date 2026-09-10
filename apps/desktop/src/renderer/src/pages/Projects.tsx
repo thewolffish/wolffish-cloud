@@ -12,17 +12,13 @@ import {
   runPhaseKey,
   type ConversationRow
 } from '@lib/conversation-rows'
-import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { pageTopPadding } from '@lib/utils/platform'
 import type { ConversationMeta, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions } from '@providers/sessions/useSessions'
 import {
   Add01Icon,
-  ArrowLeft02Icon,
-  ArrowRight02Icon,
   BubbleChatIcon,
   Delete01Icon,
   Delete02Icon,
@@ -54,7 +50,9 @@ const iconButtonClass = cn(
 )
 
 /**
- * Projects — glorified conversations: instructions + a maintained file list,
+ * Projects — one tab of the Library page, which owns the chrome around it.
+ *
+ * Glorified conversations: instructions + a maintained file list,
  * from which fresh conversations are spawned. Opening a card activates the
  * project and drops into chat's project mode; everything else (create, edit,
  * delete, cards, autosave) mirrors the Procedures page.
@@ -62,8 +60,6 @@ const iconButtonClass = cn(
 export function Projects(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
-  const isRtl = RTL_LOCALES.has(locale)
-  const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
   const { goTo } = useFlow()
   const {
     newSession,
@@ -255,22 +251,7 @@ export function Projects(): React.JSX.Element {
   }, [convDeleteTarget, closeConversation])
 
   return (
-    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
-      <header className="border-border flex items-center justify-between gap-2 border-b px-6 py-3">
-        <button
-          type="button"
-          onClick={() => goTo('chat')}
-          aria-label={t('common.back')}
-          className={cn(
-            'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-          )}
-        >
-          <BackIcon size={16} />
-          <span>{t('common.back')}</span>
-        </button>
-      </header>
-
+    <>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
           <header className="flex items-start justify-between gap-3">
@@ -613,7 +594,7 @@ export function Projects(): React.JSX.Element {
           })}
         </p>
       </Modal>
-    </main>
+    </>
   )
 }
 

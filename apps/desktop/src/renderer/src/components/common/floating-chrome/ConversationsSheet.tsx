@@ -21,12 +21,10 @@ import {
   ChampionIcon,
   Clock01Icon,
   FileEditIcon,
-  Folder01Icon,
-  HeartCheckIcon,
-  PlayListIcon,
+  LibraryIcon,
   Settings02Icon,
-  UserGroupIcon,
-  SquareLock01Icon
+  SquareLock01Icon,
+  UserGroupIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -63,9 +61,7 @@ const NAV: {
     icon: ChampionIcon,
     labelKey: 'chat.leaderboard'
   },
-  { key: 'heartbeat', screen: 'heartbeat', icon: HeartCheckIcon, labelKey: 'chat.heartbeat' },
-  { key: 'projects', screen: 'projects', icon: Folder01Icon, labelKey: 'chat.projects' },
-  { key: 'procedures', screen: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' },
+  { key: 'library', screen: 'library', icon: LibraryIcon, labelKey: 'chat.library' },
   {
     key: 'customization',
     screen: 'customization',

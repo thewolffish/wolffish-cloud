@@ -1266,6 +1266,7 @@
     "conversationsUntitled": "بدون عنوان",
     "workspace": "مساحة العمل",
     "customization": "التخصيص",
+    "library": "المكتبة",
     "soul": "الروح",
     "user": "المستخدم",
     "agents": "الوكلاء",
@@ -1611,6 +1612,9 @@
       "error": "فشل التسجيل"
     },
     "admin": "الإدارة"
+  },
+  "library": {
+    "title": "المكتبة"
   },
   "customization": {
     "title": "التخصيص",
