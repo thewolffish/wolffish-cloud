@@ -1210,8 +1210,6 @@
     "nextRun": "Next run {{time}}",
     "onLaunch": "Runs when the app starts",
     "promptEmpty": "No prompt yet — edit this automation to add one.",
-    "markdownMode": "Markdown",
-    "cardsMode": "Cards",
     "edit": "Edit automation",
     "active": "Active",
     "inactive": "Inactive",

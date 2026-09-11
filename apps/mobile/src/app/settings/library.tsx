@@ -1,12 +1,6 @@
-import {
-  Folder01Icon,
-  GridViewIcon,
-  HeartCheckIcon,
-  PlayListIcon,
-  SourceCodeIcon
-} from '@/components/core/icons'
+import { Folder01Icon, HeartCheckIcon, PlayListIcon } from '@/components/core/icons'
 import { SegmentedTabs } from '@/components/core/SegmentedTabs'
-import { AutomationsTab, type AutomationsView } from '@/components/library/AutomationsTab'
+import { AutomationsTab } from '@/components/library/AutomationsTab'
 import { ProceduresTab } from '@/components/library/ProceduresTab'
 import { ProjectsTab } from '@/components/library/ProjectsTab'
 import { PanelScreen } from '@/components/settings/SettingsUI'
@@ -14,7 +8,6 @@ import { useFreshConfig } from '@/lib/sync/useFreshConfig'
 import { useLocalSearchParams } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pressable } from 'react-native'
 
 type Tab = 'automations' | 'projects' | 'procedures'
 
@@ -75,11 +68,6 @@ let lastTab: Tab = 'automations'
  * per tab is what keeps Projects from opening halfway down where Automations
  * was left.
  *
- * The cards/markdown toggle Automations used to keep beside its own heading
- * sits at the trailing end of the header while that tab is active, exactly
- * where the desktop's Library puts it; `view` lives here because the header
- * does.
- *
  * The old routes (settings/projects, settings/automations, settings/procedures)
  * still exist as redirects into this one with the tab preselected: they are on
  * the two-repo deep-link allowlist, and a notification the desktop sends
@@ -93,7 +81,6 @@ export default function LibraryScreen(): React.JSX.Element {
   // every other screen rendering desktop-owned values.
   useFreshConfig()
   const [active, setActive] = useState<Tab>(() => (isTab(params.tab) ? params.tab : lastTab))
-  const [view, setView] = useState<AutomationsView>('cards')
   useEffect(() => {
     lastTab = active
   }, [active])
@@ -113,31 +100,9 @@ export default function LibraryScreen(): React.JSX.Element {
           onChange={setActive}
         />
       }
-      trailing={
-        active === 'automations' ? (
-          /* Cards ↔ markdown, the desktop's own pair of icons: the file is the
-             store, so being able to read and edit it directly is not a power
-             feature here, it is the store. */
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              view === 'cards' ? t('heartbeat.markdownMode') : t('heartbeat.cardsMode')
-            }
-            hitSlop={6}
-            onPress={() => setView((v) => (v === 'cards' ? 'markdown' : 'cards'))}
-            className="h-9 w-9 items-center justify-center rounded-lg active:bg-border-soft"
-          >
-            {view === 'cards' ? (
-              <SourceCodeIcon size={18} className="text-fg" />
-            ) : (
-              <GridViewIcon size={18} className="text-fg" />
-            )}
-          </Pressable>
-        ) : null
-      }
     >
       {active === 'automations' ? (
-        <AutomationsTab view={view} />
+        <AutomationsTab />
       ) : active === 'projects' ? (
         <ProjectsTab />
       ) : (

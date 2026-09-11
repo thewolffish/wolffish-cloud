@@ -123,8 +123,6 @@ const KEYS = [
   'heartbeat.nextRun',
   'heartbeat.onLaunch',
   'heartbeat.promptEmpty',
-  'heartbeat.markdownMode',
-  'heartbeat.cardsMode',
   'heartbeat.edit',
   'heartbeat.active',
   'heartbeat.inactive',

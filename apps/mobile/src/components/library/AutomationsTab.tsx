@@ -62,20 +62,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native'
 
-/** The two ways the Automations tab shows heartbeat.md: cards, or the file itself. */
-export type AutomationsView = 'cards' | 'markdown'
-
 /**
  * Automations — one tab of the Library screen; the desktop's Automations page
  * on one column.
  *
- * The store is a markdown file, so both views the desktop offers are here: the
- * CARDS, which is what the file means, and the MARKDOWN, which is what the file
- * is. The screen owns the chrome (back button, tab strip) and with it the
- * cards/markdown toggle, so `view` arrives as a prop rather than living here:
- * the toggle sits at the trailing end of the Library header, where the desktop
- * puts it, instead of beside this tab's own heading. Every card action (switch on/off, change mode, delete, save the editor) is
- * a splice of that one file, and all of the splicing lives in
+ * The store is a markdown file, but the phone shows only what the file MEANS —
+ * the cards. The desktop's raw-markdown view is not here: on a phone the file
+ * is read through the cards and edited through their editor, and a second
+ * surface for the same store is a second place to get it wrong. Every card
+ * action (switch on/off, change mode, delete, save the editor) is a splice of
+ * that one file, and all of the splicing lives in
  * lib/automations/heartbeat.ts — a direct port of the desktop's own, so the two
  * screens can never write the file in incompatible ways.
  *
@@ -84,7 +80,7 @@ export type AutomationsView = 'cards' | 'markdown'
  * served, never computed here — except in the editor's preview of a schedule
  * that has not been saved yet, which has no desktop answer to ask for.
  */
-export function AutomationsTab({ view }: { view: AutomationsView }): React.JSX.Element {
+export function AutomationsTab(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const toast = useToast()
@@ -97,7 +93,6 @@ export function AutomationsTab({ view }: { view: AutomationsView }): React.JSX.E
   const [creating, setCreating] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AutomationBlock | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [fileOpen, setFileOpen] = useState(false)
 
   useFocusEffect(
     useCallback(() => {
@@ -266,47 +261,21 @@ export function AutomationsTab({ view }: { view: AutomationsView }): React.JSX.E
           </Text>
           {!isLoading && <Badge label={String(blocks.length)} />}
         </View>
-        {view === 'cards' && (
-          <Button
-            size="sm"
-            disabled={!writable}
-            onPress={() => setCreating(true)}
-            className="shrink-0"
-          >
-            <PlusSignIcon size={14} className="text-primary-fg" />
-            {t('heartbeat.new')}
-          </Button>
-        )}
+        <Button
+          size="sm"
+          disabled={!writable}
+          onPress={() => setCreating(true)}
+          className="shrink-0"
+        >
+          <PlusSignIcon size={14} className="text-primary-fg" />
+          {t('heartbeat.new')}
+        </Button>
       </View>
 
       {isLoading ? (
         <Text className="text-muted py-10 text-center font-sans text-sm">
           {t('common.loading')}
         </Text>
-      ) : view === 'markdown' ? (
-        <View className="flex-col gap-2">
-          <View className="flex-row items-center justify-between gap-2">
-            <Text
-              style={{ writingDirection: 'ltr' }}
-              className="text-fg font-sans-medium text-left text-sm"
-            >
-              heartbeat.md
-            </Text>
-            {writable && (
-              <Button variant="outline" size="sm" onPress={() => setFileOpen(true)}>
-                {t('heartbeat.edit')}
-              </Button>
-            )}
-          </View>
-          {/* The file itself, in the same recessed mono block the prompts use —
-              tall, because this is the whole store rather than one prompt. */}
-          <PromptPreview
-            value={markdown}
-            empty={t('heartbeat.empty')}
-            maxHeight={420}
-            onPress={writable ? () => setFileOpen(true) : undefined}
-          />
-        </View>
       ) : blocks.length === 0 ? (
         <View className="border-border rounded-2xl border border-dashed px-6 py-12">
           <Text className="text-muted text-center font-sans text-sm">{t('heartbeat.empty')}</Text>
@@ -454,19 +423,6 @@ export function AutomationsTab({ view }: { view: AutomationsView }): React.JSX.E
           }}
         />
       )}
-
-      {/* The whole file in the expanded editor. Saved as one write, exactly as
-          the desktop's markdown view saves it. */}
-      <PromptSheet
-        open={fileOpen}
-        title="heartbeat.md"
-        initialValue={markdown}
-        onDone={(value) => {
-          setFileOpen(false)
-          if (value === markdown) return
-          void applyEdit(() => value)
-        }}
-      />
 
       <ConfirmDialog
         open={deleteTarget !== null}

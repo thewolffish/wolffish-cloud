@@ -240,7 +240,7 @@ describe('Procedures screen', () => {
 
 describe('Automations screen', () => {
   it('renders active and inactive automations, with the type chip and the next run', async () => {
-    draw(<AutomationsTab view="cards" />)
+    draw(<AutomationsTab />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     // The switched-off one never reaches the scheduler — its card is parsed
     // from the file, which is the whole reason the parser lives on this side.
@@ -257,7 +257,7 @@ describe('Automations screen', () => {
   })
 
   it('keeps the meta line to next run and edit stamp — the project shows as the emoji', async () => {
-    draw(<AutomationsTab view="cards" />)
+    draw(<AutomationsTab />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     // The binding is worn, not written: the card takes the project's emoji …
     expect(screen.getByText('📊')).toBeTruthy()
@@ -267,27 +267,17 @@ describe('Automations screen', () => {
   })
 
   it('offers the project as a chip row in the editor', async () => {
-    draw(<AutomationsTab view="cards" />)
+    draw(<AutomationsTab />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     fireEvent.press(screen.getAllByLabelText('Edit automation')[0])
     await waitFor(() => expect(screen.getByText('No project')).toBeTruthy())
     // The bound chip is lit, exactly as the chat controls light theirs.
     expect(screen.getByText('Quarterly report').props.className).toContain('text-primary-fg')
   })
-
-  it('offers the markdown view of the file the store actually is', async () => {
-    // The toggle rides the Library header rather than the tab, so it is the
-    // whole screen under test here — Automations is its first tab.
-    draw(<LibraryScreen />)
-    await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
-    fireEvent.press(screen.getByLabelText('Markdown'))
-    await waitFor(() => expect(screen.getByText('heartbeat.md')).toBeTruthy())
-    expect(screen.getByText(HEARTBEAT)).toBeTruthy()
-  })
 })
 
 describe('Library screen', () => {
-  it('opens on Automations with the three tabs, and the markdown toggle for that tab only', async () => {
+  it('opens on Automations with the three tabs', async () => {
     draw(<LibraryScreen />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     expect(screen.getByText('Library')).toBeTruthy()
@@ -295,7 +285,8 @@ describe('Library screen', () => {
       expect(screen.getByLabelText(label)).toBeTruthy()
     }
     expect(screen.getByLabelText('Automations').props.accessibilityState.selected).toBe(true)
-    expect(screen.getByLabelText('Markdown')).toBeTruthy()
+    // Cards only: the desktop's raw heartbeat.md view has no phone counterpart.
+    expect(screen.queryByLabelText('Markdown')).toBeNull()
     expect(screen.queryByText('Quarterly report')).toBeNull()
   })
 
@@ -306,8 +297,6 @@ describe('Library screen', () => {
     await waitFor(() => expect(screen.getByText('Quarterly report')).toBeTruthy())
     expect(screen.queryByText('Daily (09:00)')).toBeNull()
     expect(screen.getByLabelText('Projects').props.accessibilityState.selected).toBe(true)
-    // The cards/markdown toggle is the Automations tab's; it leaves with it.
-    expect(screen.queryByLabelText('Markdown')).toBeNull()
     expect(screen.getByText('Library')).toBeTruthy()
   })
 
