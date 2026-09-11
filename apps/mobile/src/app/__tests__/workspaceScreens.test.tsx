@@ -3,7 +3,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 )
 
 /**
- * The Projects, Procedures and Automations screens, on screen.
+ * The Projects, Procedures and Automations tabs of the Library screen, on
+ * screen.
  *
  * The sync contracts are pinned in lib/sync/__tests__/workspaceStores.test.ts and
  * the file surgery in lib/automations/__tests__/heartbeat.test.ts. What only
@@ -49,11 +50,19 @@ jest.mock('@/providers/toast/useToast', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
 }))
+let mockParams: { tab?: string } = {}
 jest.mock('expo-router', () => ({
-  router: { back: jest.fn(), push: jest.fn(), replace: jest.fn(), dismissTo: jest.fn() },
+  router: {
+    back: jest.fn(),
+    push: jest.fn(),
+    replace: jest.fn(),
+    dismissTo: jest.fn(),
+    canGoBack: () => true
+  },
   // The focus refresh belongs to react-navigation; the queries fetch on mount
   // here anyway, so running it would only double every RPC.
-  useFocusEffect: () => undefined
+  useFocusEffect: () => undefined,
+  useLocalSearchParams: () => mockParams
 }))
 jest.mock('@/lib/sync/useFreshConfig', () => ({ useFreshConfig: () => undefined }))
 // SQLite-backed, and only feeds the per-project conversation counts.
@@ -61,9 +70,10 @@ jest.mock('@/lib/conversations/hooks', () => ({ useConversationList: () => ({ da
 
 import { LocaleContext } from '@/providers/locale/useLocale'
 import { ThemeContext } from '@/providers/theme/useTheme'
-import AutomationsScreen from '@/app/settings/automations'
-import ProceduresScreen from '@/app/settings/procedures'
-import ProjectsScreen from '@/app/settings/projects'
+import LibraryScreen from '@/app/settings/library'
+import { AutomationsTab } from '@/components/library/AutomationsTab'
+import { ProceduresTab } from '@/components/library/ProceduresTab'
+import { ProjectsTab } from '@/components/library/ProjectsTab'
 import { queryClient } from '@/lib/query/queryClient'
 import { Rpc } from '@/lib/bridge/protocol'
 import { QueryClientProvider } from '@tanstack/react-query'
@@ -168,12 +178,13 @@ beforeEach(() => {
   mockRpc.mockReset()
   mockConnected = true
   mockPaired = true
+  mockParams = {}
   serveAll()
 })
 
 describe('Projects screen', () => {
   it('renders the desktop’s projects with their instructions and counts', async () => {
-    draw(<ProjectsScreen />)
+    draw(<ProjectsTab />)
     // The FIRST paint in this file pays for the whole module graph — all three
     // screens plus their pickers and dialogs — so the default 1s deadline sits
     // uncomfortably close to the real ~0.5s on a loaded machine. Only the
@@ -190,7 +201,7 @@ describe('Projects screen', () => {
 
   it('says so and offers nothing to press when there is no desktop to write to', async () => {
     mockConnected = false
-    draw(<ProjectsScreen />)
+    draw(<ProjectsTab />)
     // New and Delete are present but disabled — the desktop owns these files.
     await waitFor(() => expect(screen.getByText('New')).toBeTruthy())
     expect(screen.getByText('New').parent?.props.accessibilityState?.disabled).toBe(true)
@@ -198,14 +209,14 @@ describe('Projects screen', () => {
 
   it('shows the empty state rather than a blank list', async () => {
     mockRpc.mockResolvedValue({ projects: [] })
-    draw(<ProjectsScreen />)
+    draw(<ProjectsTab />)
     await waitFor(() => expect(screen.getByText(/No projects yet/)).toBeTruthy())
   })
 })
 
 describe('Procedures screen', () => {
   it('renders the procedure with its project’s emoji and its own mode', async () => {
-    draw(<ProceduresScreen />)
+    draw(<ProceduresTab />)
     await waitFor(() => expect(screen.getByText('Weekly digest')).toBeTruthy())
     expect(screen.getByText('Summarize the week.')).toBeTruthy()
     // A project-bound procedure wears the PROJECT's emoji, not its own 📋.
@@ -216,7 +227,7 @@ describe('Procedures screen', () => {
   })
 
   it('offers the project as a chip row, with the binding lit', async () => {
-    draw(<ProceduresScreen />)
+    draw(<ProceduresTab />)
     await waitFor(() => expect(screen.getByText('Weekly digest')).toBeTruthy())
     fireEvent.press(screen.getByLabelText('Edit'))
     // The chat controls' picker, not a Select: every project on one x-scrolling
@@ -229,7 +240,7 @@ describe('Procedures screen', () => {
 
 describe('Automations screen', () => {
   it('renders active and inactive automations, with the type chip and the next run', async () => {
-    draw(<AutomationsScreen />)
+    draw(<AutomationsTab view="cards" />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     // The switched-off one never reaches the scheduler — its card is parsed
     // from the file, which is the whole reason the parser lives on this side.
@@ -246,7 +257,7 @@ describe('Automations screen', () => {
   })
 
   it('keeps the meta line to next run and edit stamp — the project shows as the emoji', async () => {
-    draw(<AutomationsScreen />)
+    draw(<AutomationsTab view="cards" />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     // The binding is worn, not written: the card takes the project's emoji …
     expect(screen.getByText('📊')).toBeTruthy()
@@ -256,7 +267,7 @@ describe('Automations screen', () => {
   })
 
   it('offers the project as a chip row in the editor', async () => {
-    draw(<AutomationsScreen />)
+    draw(<AutomationsTab view="cards" />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     fireEvent.press(screen.getAllByLabelText('Edit automation')[0])
     await waitFor(() => expect(screen.getByText('No project')).toBeTruthy())
@@ -265,10 +276,47 @@ describe('Automations screen', () => {
   })
 
   it('offers the markdown view of the file the store actually is', async () => {
-    draw(<AutomationsScreen />)
+    // The toggle rides the Library header rather than the tab, so it is the
+    // whole screen under test here — Automations is its first tab.
+    draw(<LibraryScreen />)
     await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
     fireEvent.press(screen.getByLabelText('Markdown'))
     await waitFor(() => expect(screen.getByText('heartbeat.md')).toBeTruthy())
     expect(screen.getByText(HEARTBEAT)).toBeTruthy()
+  })
+})
+
+describe('Library screen', () => {
+  it('opens on Automations with the three tabs, and the markdown toggle for that tab only', async () => {
+    draw(<LibraryScreen />)
+    await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
+    expect(screen.getByText('Library')).toBeTruthy()
+    for (const label of ['Automations', 'Projects', 'Procedures']) {
+      expect(screen.getByLabelText(label)).toBeTruthy()
+    }
+    expect(screen.getByLabelText('Automations').props.accessibilityState.selected).toBe(true)
+    expect(screen.getByLabelText('Markdown')).toBeTruthy()
+    expect(screen.queryByText('Quarterly report')).toBeNull()
+  })
+
+  it('switches tabs in place — Projects replaces Automations under the same header', async () => {
+    draw(<LibraryScreen />)
+    await waitFor(() => expect(screen.getByText('Daily (09:00)')).toBeTruthy())
+    fireEvent.press(screen.getByLabelText('Projects'))
+    await waitFor(() => expect(screen.getByText('Quarterly report')).toBeTruthy())
+    expect(screen.queryByText('Daily (09:00)')).toBeNull()
+    expect(screen.getByLabelText('Projects').props.accessibilityState.selected).toBe(true)
+    // The cards/markdown toggle is the Automations tab's; it leaves with it.
+    expect(screen.queryByLabelText('Markdown')).toBeNull()
+    expect(screen.getByText('Library')).toBeTruthy()
+  })
+
+  it('lands on the tab a deep link names', async () => {
+    // The old settings/procedures route redirects here with this param — a
+    // notification naming it must still open the procedures list.
+    mockParams = { tab: 'procedures' }
+    draw(<LibraryScreen />)
+    await waitFor(() => expect(screen.getByText('Weekly digest')).toBeTruthy())
+    expect(screen.getByLabelText('Procedures').props.accessibilityState.selected).toBe(true)
   })
 })

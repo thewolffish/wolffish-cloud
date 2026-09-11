@@ -3,9 +3,7 @@ import { chipText, chipTone, Pulse } from '@/components/conversations/Conversati
 import {
   AiBrain01Icon,
   ChampionIcon,
-  Folder01Icon,
-  HeartCheckIcon,
-  PlayListIcon,
+  LibraryIcon,
   Settings02Icon,
   UserGroupIcon,
   type IconProps
@@ -111,23 +109,13 @@ const NAV: NavRowSpec[] = [
     Icon: ChampionIcon,
     labelKey: 'leaderboard.title'
   },
+  // Automations, Projects and Procedures are one Library row — the three
+  // lists are tabs of one screen now, as on the desktop.
   {
-    key: 'projects',
-    href: '/settings/projects',
-    Icon: Folder01Icon,
-    labelKey: 'settings.tabs.projects'
-  },
-  {
-    key: 'automations',
-    href: '/settings/automations',
-    Icon: HeartCheckIcon,
-    labelKey: 'settings.tabs.automations'
-  },
-  {
-    key: 'procedures',
-    href: '/settings/procedures',
-    Icon: PlayListIcon,
-    labelKey: 'settings.tabs.procedures'
+    key: 'library',
+    href: '/settings/library',
+    Icon: LibraryIcon,
+    labelKey: 'settings.tabs.library'
   },
   {
     key: 'customization',

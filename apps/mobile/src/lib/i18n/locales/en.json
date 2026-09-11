@@ -51,6 +51,7 @@
       "mcp": "MCP",
       "capabilities": "Capabilities",
       "customization": "Customization",
+      "library": "Library",
       "connection": "Connection",
       "projects": "Projects",
       "procedures": "Procedures",

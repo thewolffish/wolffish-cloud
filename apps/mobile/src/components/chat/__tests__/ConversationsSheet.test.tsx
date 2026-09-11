@@ -56,7 +56,11 @@ jest.mock('@/lib/cloud/session', () => ({
     get current() {
       return mockRole === null
         ? null
-        : { session: { user: { id: 'u', email: 'younes@wolffi.sh', name: 'Younes Alturkey', role: mockRole } } }
+        : {
+            session: {
+              user: { id: 'u', email: 'younes@wolffi.sh', name: 'Younes Alturkey', role: mockRole }
+            }
+          }
     },
     subscribe: () => () => undefined
   }
@@ -143,19 +147,17 @@ afterEach(cleanup)
 describe('the conversations sheet', () => {
   it('links to the core pages, and closes before it navigates', async () => {
     await draw()
-    for (const label of [
-      'Settings',
-      'Leaderboard',
-      'Projects',
-      'Automations',
-      'Procedures',
-      'Customization'
-    ]) {
+    // Projects, Automations and Procedures are tabs of the Library now, so the
+    // sheet carries one row for the three of them — the desktop's own sheet.
+    for (const label of ['Settings', 'Leaderboard', 'Library', 'Customization']) {
       expect(screen.getByLabelText(label)).toBeTruthy()
     }
-    await fireEvent.press(screen.getByLabelText('Projects'))
+    for (const label of ['Projects', 'Automations', 'Procedures']) {
+      expect(screen.queryByLabelText(label)).toBeNull()
+    }
+    await fireEvent.press(screen.getByLabelText('Library'))
     expect(onClose).toHaveBeenCalled()
-    expect(router.push).toHaveBeenCalledWith('/settings/projects')
+    expect(router.push).toHaveBeenCalledWith('/settings/library')
   })
 
   // Admin is a destination beside the other org-wide page, not a knob inside

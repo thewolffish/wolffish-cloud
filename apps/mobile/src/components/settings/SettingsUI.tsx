@@ -17,10 +17,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 export function PanelScreen({
   title,
   subtitle,
+  trailing,
+  tabs,
   children
 }: {
   title: string
   subtitle?: string
+  /** The trailing end of the header bar — a page-level control beside the title. */
+  trailing?: React.ReactNode
+  /**
+   * A strip pinned under the header bar, above the scroller — the Library's
+   * page tabs. Fixed rather than the first child: a tab strip that scrolls
+   * away with the content is one the user has to scroll back up to find.
+   */
+  tabs?: React.ReactNode
   children: React.ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -41,7 +51,9 @@ export function PanelScreen({
         <Text numberOfLines={1} className="text-fg font-sans-semibold flex-1 text-left text-base">
           {title}
         </Text>
+        {trailing}
       </View>
+      {tabs ? <View className="px-4 pt-3">{tabs}</View> : null}
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 16 }}
         keyboardShouldPersistTaps="handled"

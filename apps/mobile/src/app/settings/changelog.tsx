@@ -1,4 +1,5 @@
 import { MarkdownView } from '@/components/chat/MarkdownView'
+import { SegmentedTabs } from '@/components/core/SegmentedTabs'
 import { PanelScreen, Section } from '@/components/settings/SettingsUI'
 import {
   CHANGELOG_MONTHS,
@@ -28,10 +29,9 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 type Source = 'mobile' | 'desktop'
 
 /**
- * The source switch — This app | Desktop — in the LanguageToggle's exact
- * dress: one full-width bordered track, equal segments, the active one
- * filled. Two fixed sources are a switch; the months below stay a scrolling
- * chip row, because a dozen months are a list, not a toggle.
+ * The source switch — This app | Desktop — on the shared segmented track. Two
+ * fixed sources are a switch; the months below stay a scrolling chip row,
+ * because a dozen months are a list, not a toggle.
  */
 function SourceSwitch({
   source,
@@ -45,36 +45,7 @@ function SourceSwitch({
     { value: 'mobile', label: t('settings.updates.thisAppTitle') },
     { value: 'desktop', label: t('settings.updates.desktopTitle') }
   ]
-  return (
-    <View className="border-border bg-bg h-10 w-full flex-row items-stretch rounded-lg border p-0.5">
-      {options.map((option) => {
-        const active = option.value === source
-        return (
-          <Pressable
-            key={option.value}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: active }}
-            disabled={active}
-            onPress={() => onChange(option.value)}
-            className={cn(
-              'flex-1 flex-row items-center justify-center rounded-md px-3',
-              active ? 'bg-primary' : 'bg-transparent'
-            )}
-          >
-            <Text
-              numberOfLines={1}
-              className={cn(
-                'text-xs',
-                active ? 'text-primary-fg font-sans-semibold' : 'text-muted font-sans'
-              )}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        )
-      })}
-    </View>
-  )
+  return <SegmentedTabs value={source} options={options} onChange={onChange} />
 }
 
 /** One chip in a row of choices — the months. */
