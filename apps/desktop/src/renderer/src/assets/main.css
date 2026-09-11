@@ -52,6 +52,10 @@
 
   --color-bg: #f0f4f8;
   --color-surface: #ffffff;
+  /* Recessed surface for a block INSIDE a card — the diff view's ground.
+     One step from the card toward the page, in both themes, so an inset
+     reads as inset rather than as a second card. */
+  --color-surface-2: #f8fafc;
   --color-fg: #0d1117;
   --color-muted: #5b6778;
   --color-border: #d5dde5;
@@ -70,6 +74,7 @@
 
   --color-bg: #0d1117;
   --color-surface: #161b22;
+  --color-surface-2: #11161d;
   --color-fg: #ffffff;
   --color-muted: #8b95a7;
   --color-border: #2a313c;
