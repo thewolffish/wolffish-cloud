@@ -4,7 +4,7 @@
  *
  * Shape: one JSON object of dot-path → value.
  *
- *   { "model.default": "deepseek-ai/DeepSeek-V4-Flash-0731",
+ *   { "model.default": "deepseek-ai/DeepSeek-V4.1-Flash",
  *     "channels.telegram.enabled": false,
  *     "browserExtension.port": 23152 }
  *

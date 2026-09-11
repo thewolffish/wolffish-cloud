@@ -22,7 +22,7 @@ const mkUser = (tag) =>
    VALUES ('usr_${tag}_${stamp}', '${tag}-${stamp}@wolffi.sh', '${tag}', 'employee', 'active', '${hash}', '${salt}', 0);`
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4.1-Flash', '[]');`,
   mkUser('synca'),
   mkUser('syncb')
 ].join(' ')
@@ -67,7 +67,7 @@ check('two employees logged in', a?.access_token && b?.access_token)
 const put1 = await api('/v1/config', {
   token: a.access_token,
   method: 'PUT',
-  body: { config: { theme: 'dark', model: 'deepseek-ai/DeepSeek-V4-Flash-0731' } }
+  body: { config: { theme: 'dark', model: 'deepseek-ai/DeepSeek-V4.1-Flash' } }
 })
 check('config put', put1.status === 200 && put1.json?.updated_at)
 const got = await api('/v1/config', { token: a.access_token })

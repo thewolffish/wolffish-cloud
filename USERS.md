@@ -35,37 +35,37 @@ Phone numbers are deterministic fakes minted by the seed — only the owner's
 
 | # | Email | Name | Position | Phone | Role | Status | Model policy |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 000 | `younes@wolffi.sh` | Younes Alturkey | Founder & Engineer | +966 53 865 4514 | owner | active | full catalog (incl. Flash-Vision-Exp) |
-| 001 | `shahad.alotaibi@wolffi.sh` | Shahad Alotaibi | IT Administrator | +966 51 800 1239 | admin | active | full catalog (incl. Flash-Vision-Exp) |
-| 002 | `abdulaziz.alqahtani@wolffi.sh` | Abdulaziz Alqahtani | IT Administrator | +966 58 364 0099 | admin | active | full catalog (incl. Flash-Vision-Exp) |
+| 000 | `younes@wolffi.sh` | Younes Alturkey | Founder & Engineer | +966 53 865 4514 | owner | active | full catalog |
+| 001 | `shahad.alotaibi@wolffi.sh` | Shahad Alotaibi | IT Administrator | +966 51 800 1239 | admin | active | full catalog |
+| 002 | `abdulaziz.alqahtani@wolffi.sh` | Abdulaziz Alqahtani | IT Administrator | +966 58 364 0099 | admin | active | full catalog |
 | 003 | `saad.alharbi@wolffi.sh` | Saad Alharbi | IT Support Specialist | +966 57 764 5888 | support | active | org defaults |
 | 004 | `alia.alghamdi@wolffi.sh` | Alia Alghamdi | IT Support Specialist | +966 57 304 9856 | support | active | org defaults |
-| 005 | `hamad.alshehri@wolffi.sh` | Hamad Alshehri | Solutions Consultant | +966 55 775 5725 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 006 | `amal.alzahrani@wolffi.sh` | Amal Alzahrani | Customer Support Specialist | +966 56 746 6609 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 007 | `sara.almutairi@wolffi.sh` | Sara Almutairi | Marketing Manager | +966 53 757 3467 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 008 | `faisal.aldossari@wolffi.sh` | Faisal Aldossari | Senior Software Engineer | +966 54 312 0425 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 009 | `lina.alsubaie@wolffi.sh` | Lina Alsubaie | Backend Engineer | +966 53 853 6554 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 010 | `khalid.aljuhani@wolffi.sh` | Khalid Aljuhani | Content Marketer | +966 52 558 9223 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 011 | `bandar.alanazi@wolffi.sh` | Bandar Alanazi | Technical Support Engineer | +966 50 588 7058 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 012 | `yousef.alshammari@wolffi.sh` | Yousef Alshammari | Technical Support Engineer | +966 55 528 9200 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 013 | `lubna.alrashidi@wolffi.sh` | Lubna Alrashidi | Content Marketer | +966 56 037 1756 | employee | active | models: DeepSeek-V4-Flash-0731 |
-| 014 | `waleed.albalawi@wolffi.sh` | Waleed Albalawi | Senior Software Engineer | +966 56 536 2823 | employee | active | models: DeepSeek-V4-Flash-0731 |
+| 005 | `hamad.alshehri@wolffi.sh` | Hamad Alshehri | Solutions Consultant | +966 55 775 5725 | employee | active | models: DeepSeek-V4.1-Flash |
+| 006 | `amal.alzahrani@wolffi.sh` | Amal Alzahrani | Customer Support Specialist | +966 56 746 6609 | employee | active | models: DeepSeek-V4.1-Flash |
+| 007 | `sara.almutairi@wolffi.sh` | Sara Almutairi | Marketing Manager | +966 53 757 3467 | employee | active | models: DeepSeek-V4.1-Flash |
+| 008 | `faisal.aldossari@wolffi.sh` | Faisal Aldossari | Senior Software Engineer | +966 54 312 0425 | employee | active | models: DeepSeek-V4.1-Flash |
+| 009 | `lina.alsubaie@wolffi.sh` | Lina Alsubaie | Backend Engineer | +966 53 853 6554 | employee | active | models: DeepSeek-V4.1-Flash |
+| 010 | `khalid.aljuhani@wolffi.sh` | Khalid Aljuhani | Content Marketer | +966 52 558 9223 | employee | active | models: DeepSeek-V4.1-Flash |
+| 011 | `bandar.alanazi@wolffi.sh` | Bandar Alanazi | Technical Support Engineer | +966 50 588 7058 | employee | active | models: DeepSeek-V4.1-Flash |
+| 012 | `yousef.alshammari@wolffi.sh` | Yousef Alshammari | Technical Support Engineer | +966 55 528 9200 | employee | active | models: DeepSeek-V4.1-Flash |
+| 013 | `lubna.alrashidi@wolffi.sh` | Lubna Alrashidi | Content Marketer | +966 56 037 1756 | employee | active | models: DeepSeek-V4.1-Flash |
+| 014 | `waleed.albalawi@wolffi.sh` | Waleed Albalawi | Senior Software Engineer | +966 56 536 2823 | employee | active | models: DeepSeek-V4.1-Flash |
 | 015 | `noura.alamri@wolffi.sh` | Noura Alamri | Software Engineer | +966 57 941 8789 | employee | active | org defaults |
 | 016 | `turki.almalki@wolffi.sh` | Turki Almalki | Sales Development Rep | +966 54 555 5082 | employee | active | org defaults |
 | 017 | `reem.alyami@wolffi.sh` | Reem Alyami | Account Executive | +966 52 529 4971 | employee | active | org defaults |
 | 018 | `saad.alharthi@wolffi.sh` | Saad Alharthi | Customer Support Specialist | +966 53 511 5418 | employee | active | org defaults |
 | 019 | `sultan.alqurashi@wolffi.sh` | Sultan Alqurashi | Marketing Manager | +966 52 513 6811 | employee | active | org defaults |
 | 020 | `ziyad.alhazmi@wolffi.sh` | Ziyad Alhazmi | Marketing Manager | +966 56 191 6928 | employee | active | org defaults |
-| 021 | `maha.alruwaili@wolffi.sh` | Maha Alruwaili | Marketing Manager | +966 57 698 3590 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 022 | `anas.alenezi@wolffi.sh` | Anas Alenezi | Technical Support Engineer | +966 59 063 4736 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 023 | `dana.alturki@wolffi.sh` | Dana Alturki | Customer Support Specialist | +966 51 747 5595 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 024 | `meshal.altamimi@wolffi.sh` | Meshal Altamimi | Solutions Consultant | +966 57 040 4318 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 025 | `shahad.alharbi@wolffi.sh` | Shahad Alharbi | Senior Software Engineer | +966 56 065 4212 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 026 | `salman.alrajhi@wolffi.sh` | Salman Alrajhi | Customer Support Specialist | +966 55 224 8022 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 027 | `osama.alqahtani@wolffi.sh` | Osama Alqahtani | Sales Development Rep | +966 54 316 2156 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 028 | `nawaf.alotaibi@wolffi.sh` | Nawaf Alotaibi | Solutions Consultant | +966 54 082 1577 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 029 | `jana.alnasser@wolffi.sh` | Jana Alnasser | Senior Software Engineer | +966 50 682 9298 | employee | active | full catalog (incl. Flash-Vision-Exp) |
-| 030 | `norah.alghamdi@wolffi.sh` | Norah Alghamdi | Customer Support Specialist | +966 58 581 2510 | employee | active | full catalog (incl. Flash-Vision-Exp) |
+| 021 | `maha.alruwaili@wolffi.sh` | Maha Alruwaili | Marketing Manager | +966 57 698 3590 | employee | active | org defaults |
+| 022 | `anas.alenezi@wolffi.sh` | Anas Alenezi | Technical Support Engineer | +966 59 063 4736 | employee | active | org defaults |
+| 023 | `dana.alturki@wolffi.sh` | Dana Alturki | Customer Support Specialist | +966 51 747 5595 | employee | active | org defaults |
+| 024 | `meshal.altamimi@wolffi.sh` | Meshal Altamimi | Solutions Consultant | +966 57 040 4318 | employee | active | org defaults |
+| 025 | `shahad.alharbi@wolffi.sh` | Shahad Alharbi | Senior Software Engineer | +966 56 065 4212 | employee | active | org defaults |
+| 026 | `salman.alrajhi@wolffi.sh` | Salman Alrajhi | Customer Support Specialist | +966 55 224 8022 | employee | active | org defaults |
+| 027 | `osama.alqahtani@wolffi.sh` | Osama Alqahtani | Sales Development Rep | +966 54 316 2156 | employee | active | org defaults |
+| 028 | `nawaf.alotaibi@wolffi.sh` | Nawaf Alotaibi | Solutions Consultant | +966 54 082 1577 | employee | active | org defaults |
+| 029 | `jana.alnasser@wolffi.sh` | Jana Alnasser | Senior Software Engineer | +966 50 682 9298 | employee | active | org defaults |
+| 030 | `norah.alghamdi@wolffi.sh` | Norah Alghamdi | Customer Support Specialist | +966 58 581 2510 | employee | active | org defaults |
 | 031 | `rakan.alrasheed@wolffi.sh` | Rakan Alrasheed | Marketing Manager | +966 59 016 6415 | employee | active | org defaults |
 | 032 | `joud.aldakhil@wolffi.sh` | Joud Aldakhil | Account Executive | +966 59 280 3665 | employee | active | org defaults |
 | 033 | `ghada.alzamil@wolffi.sh` | Ghada Alzamil | Solutions Consultant | +966 58 848 7875 | employee | active | org defaults |
@@ -85,7 +85,7 @@ Phone numbers are deterministic fakes minted by the seed — only the owner's
 | 047 | `abrar.almogbel@wolffi.sh` | Abrar Almogbel | QA Engineer | +966 52 071 4016 | employee | active | org defaults |
 | 048 | `talal.alkhathlan@wolffi.sh` | Talal Alkhathlan | Sales Development Rep | +966 56 526 7535 | employee | suspended (demo of suspension) | org defaults |
 | 049 | `ruba.alsanea@wolffi.sh` | Ruba Alsanea | Software Engineer | +966 57 050 0197 | employee | invited — first login forces a password change | org defaults |
-| 050 | `nasser.alowais@wolffi.sh` | Nasser Alowais | Release Gate | +966 56 544 8741 | owner | active | full catalog (incl. Flash-Vision-Exp) |
+| 050 | `nasser.alowais@wolffi.sh` | Nasser Alowais | Release Gate | +966 56 544 8741 | owner | active | full catalog |
 
 Positions and bios paint Wolffish Inc as a tech company — engineering, DevOps,
 support, marketing and sales — all minted deterministically by the seed.
@@ -96,11 +96,10 @@ and no two model pickers are guaranteed to match:
 - **Both owners (000, 050) and both admins (001, 002)** hold the full catalog.
   An owner locked out of a model the org runs could not administer it.
 - **005–014** are locked to the default model alone — the narrowing case.
-- **021–030** are the **vision pilot**: the baseline plus
-  `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp`. It is experimental upstream and
-  5.5x Flash's input price, so it is granted per user rather than added to
-  `org.default_allowed_models`, and a brand-new account does not see it.
 - **Everyone else** runs on org defaults: Flash and Pro, no per-user caps.
+  (021–030 were a vision pilot on the experimental `Flash-Vision-Exp` until
+  2026-09-11, when V4.1 Flash — which sees — became the org's Flash and the
+  grant had nothing left to grant.)
 
 Caps are unset across the baseline (0/NULL = unlimited); a fork switches them
 on through the admin API. The seeded week of usage only ever names a model its

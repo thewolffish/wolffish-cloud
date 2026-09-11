@@ -520,7 +520,7 @@ Reading these confidently lets you answer almost any question about the agent.
   "version": 1,
   "launchAtStartup": false,
   "llm": {
-    "model": "deepseek-ai/DeepSeek-V4-Flash-0731",   // the chosen model — one of the ids the org serves at /v1/models
+    "model": "deepseek-ai/DeepSeek-V4.1-Flash",      // the chosen model — one of the ids the org serves at /v1/models
     "mode": "single",                                // single | workflow
     "thinkingModes": { "deepseek-ai/DeepSeek-V4-Pro-0813": "max" }
   },

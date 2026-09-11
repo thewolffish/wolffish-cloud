@@ -7,7 +7,7 @@
  *   [{ "id": "deepinfra",
  *      "base": "https://api.deepinfra.com/v1/openai",
  *      "key": "…",
- *      "models": { "deepseek-ai/DeepSeek-V4-Flash-0731": "deepseek-ai/DeepSeek-V4-Flash-0731" },
+ *      "models": { "deepseek-ai/DeepSeek-V4.1-Flash": "deepseek-ai/DeepSeek-V4.1-Flash" },
  *      "concurrency": 200,
  *      "weight": 1 }, …]
  *

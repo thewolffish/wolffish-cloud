@@ -30,7 +30,7 @@ const day = new Date().toISOString().slice(0, 10)
 const now = new Date().toISOString()
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4.1-Flash', '[]');`
 ]
 for (const p of PEOPLE) {
   const id = `usr_${p.tag}_${stamp}`

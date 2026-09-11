@@ -21,7 +21,7 @@ const salt = '00112233445566778899aabbccddeeff'
 const hash = pbkdf2Sync(OWNER_PW, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').toString('hex')
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4.1-Flash', '[]');`,
   `INSERT INTO users (id, email, name, role, status, password_hash, password_salt, must_change_password)
    VALUES ('usr_owner_${stamp}', '${ownerEmail}', 'The Owner', 'owner', 'active', '${hash}', '${salt}', 0);`
 ].join(' ')
@@ -138,7 +138,7 @@ check(
 const pol = await api(`/admin/users/${empId}/policy`, {
   token: ownerTok,
   method: 'PUT',
-  body: { allowed_models: ['deepseek-ai/DeepSeek-V4-Flash-0731'], daily_token_cap: 50000 }
+  body: { allowed_models: ['deepseek-ai/DeepSeek-V4.1-Flash'], daily_token_cap: 50000 }
 })
 check('policy set', pol.status === 200)
 const detail = await api(`/admin/users/${empId}`, { token: ownerTok })
@@ -390,7 +390,7 @@ const batch = await api('/v1/sync/batch', {
           id: convId,
           title: 'Booking the flights',
           channel: 'mobile',
-          model: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+          model: 'deepseek-ai/DeepSeek-V4.1-Flash',
           messageCount: 2,
           stats: { allTime: { toolCalls: 3, turns: 1, cost: 0.02 } }
         },

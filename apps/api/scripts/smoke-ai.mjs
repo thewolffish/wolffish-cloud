@@ -15,7 +15,7 @@ const BASE = process.env.API_BASE ?? 'http://localhost:8787'
 const stamp = Date.now().toString(36)
 const ownerEmail = `aiowner-${stamp}@wolffi.sh`
 const PW = 'ai-owner-pass-1'
-const MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+const MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash'
 const OTHER = 'deepseek-ai/DeepSeek-V4-Pro-0813'
 
 const salt = '00112233445566778899aabbccddeeff'

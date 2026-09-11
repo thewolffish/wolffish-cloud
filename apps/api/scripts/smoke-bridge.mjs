@@ -419,7 +419,7 @@ const batch = await api('/v1/sync/batch', {
         content: {
           id: convId,
           title: 'Bridge smoke',
-          model: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+          model: 'deepseek-ai/DeepSeek-V4.1-Flash',
           channel: 'mobile',
           icon: '🐟',
           projectId: 'p1',
@@ -470,7 +470,7 @@ const row = (since.json?.conversations ?? []).find((c) => c.id === convId)
 check(
   'since index carries envelope fields',
   row &&
-    row.model === 'deepseek-ai/DeepSeek-V4-Flash-0731' &&
+    row.model === 'deepseek-ai/DeepSeek-V4.1-Flash' &&
     row.icon === '🐟' &&
     row.project_id === 'p1' &&
     row.summary === 'a smoke',

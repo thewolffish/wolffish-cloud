@@ -22,7 +22,7 @@ const hash = pbkdf2Sync(TEMP, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').t
 
 const sql = [
   `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models)
-   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
+   VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4.1-Flash', '[]');`,
   `INSERT INTO users (id, email, name, role, status, password_hash, password_salt,
      must_change_password, temp_password_expires_at)
    VALUES ('usr_smoke_${stamp}', '${email}', 'Fares Almuhaisen', 'employee', 'invited',

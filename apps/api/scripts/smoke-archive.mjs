@@ -44,7 +44,7 @@ const d1rows = (sql) => JSON.parse(d1(sql))[0].results
 
 d1(
   [
-    `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models) VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4-Flash-0731', '[]');`,
+    `INSERT OR IGNORE INTO org (id, name, default_model, default_allowed_models) VALUES (1, 'Wolffish', 'deepseek-ai/DeepSeek-V4.1-Flash', '[]');`,
     `INSERT INTO users (id, email, name, role, status, password_hash, password_salt, must_change_password) VALUES ('${ownerId}', '${ownerEmail}', 'Owner', 'owner', 'active', '${hash}', '${salt}', 0);`,
     `INSERT INTO users (id, email, name, role, status, password_hash, password_salt, must_change_password) VALUES ('${userId}', '${userEmail}', 'User', 'employee', 'active', '${hash}', '${salt}', 0);`
   ].join(' ')

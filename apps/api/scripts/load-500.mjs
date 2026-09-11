@@ -55,7 +55,7 @@ const CANCEL_RATE = arg('cancel', 0.05)
 const THINK_MS = arg('think', 3000)
 /** Like the desktop: a busy answer (503 + Retry-After) is retried after the hinted delay, with jitter. */
 const BUSY_RETRIES = 4
-const MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+const MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash'
 const PW = 'load-pass-1'
 const stamp = Date.now().toString(36)
 

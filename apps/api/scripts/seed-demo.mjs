@@ -34,31 +34,24 @@ const REMOTE = process.argv.includes('--remote')
 const WIPE = process.argv.includes('--wipe')
 const FLAG = REMOTE ? '--remote' : '--local'
 
-// The org catalog. Dated DeepInfra release ids; see lib/models.ts for the
-// verified metadata behind each one.
+// The org catalog. DeepInfra ids; see lib/models.ts for the verified
+// metadata behind each one.
 //
 // Flash and Pro are the BASELINE: org.default_allowed_models, what anyone
-// without a policy row gets. Flash-Vision-Exp is not — it is experimental
-// upstream and ~2.7x Flash's input price, so it is provisioned to a named
-// group by the per-user rows below. That is the shape a real org uses for a
-// model it is piloting, and it keeps a brand-new account's catalog at the
-// two-model baseline the release gate asserts.
-const DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+// without a policy row gets — the two-model catalog the release gate
+// asserts for a brand-new account. Since 2026-09-11 Flash is V4.1, which
+// sees, so image input needs no per-user grant any more: the vision pilot
+// (021–030 on the experimental Flash-Vision-Exp) is gone with the model.
+const DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash'
 const PRO_MODEL = 'deepseek-ai/DeepSeek-V4-Pro-0813'
-const VISION_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
-
-/** Everything the org has: what the owners, the admins and the pilot see. */
-const FULL_CATALOG = [DEFAULT_MODEL, PRO_MODEL, VISION_MODEL]
 
 /**
- * Who gets the vision model. Both owners (000 human, 050 release gate) and
- * both admins hold the full catalog by construction — an owner locked out
- * of a model the org runs cannot administer it — and employees 21-30 are
- * the pilot. Everyone else is on the baseline or narrower, so the picker
- * genuinely differs between accounts.
+ * Everything the org has. Both owners (000 human, 050 release gate) and
+ * both admins hold it by an explicit row — an owner locked out of a model
+ * the org runs cannot administer it — which is also the same list as the
+ * baseline today; the row is the shape, kept for the day the catalog grows.
  */
-const visionPilot = (n) => n >= 21 && n <= 30
-const hasVision = (n) => n === 0 || n === 50 || n === 1 || n === 2 || visionPilot(n)
+const FULL_CATALOG = [DEFAULT_MODEL, PRO_MODEL]
 
 /**
  * The cast, written down rather than drawn from two pools. Fifty Saudi
@@ -326,8 +319,8 @@ for (const person of roster) {
 // the model picker is not the same list on every account:
 //   000, 050, 001, 002  full catalog (both owners, both admins)
 //   005–014            locked to the default model alone
-//   015–020            no row at all — the org baseline, explicitly cleared
-//   021–030            the vision pilot: baseline + Flash-Vision-Exp
+//   015–030            no row at all — the org baseline, explicitly cleared
+//                      (021–030 were the vision pilot until 2026-09-11)
 //   everyone else       no row — the org baseline (Flash + Pro)
 // No per-user caps in the baseline (NULL = org default, and the org caps are
 // unlimited); a fork sets them via the admin API.
@@ -343,23 +336,15 @@ for (let i = 5; i <= 14; i++) {
      VALUES ('${uid(i)}', '${JSON.stringify([DEFAULT_MODEL])}', NULL);`
   )
 }
-for (let i = 15; i <= 20; i++) {
+for (let i = 15; i <= 30; i++) {
   lines.push(`DELETE FROM model_policies WHERE user_id = '${uid(i)}';`)
 }
-for (let i = 21; i <= 30; i++) {
-  lines.push(
-    `INSERT OR REPLACE INTO model_policies (user_id, allowed_models, daily_token_cap)
-     VALUES ('${uid(i)}', '${JSON.stringify(FULL_CATALOG)}', NULL);`
-  )
-}
 
-// microUSD per token at each model's real rate — lib/models.ts (Flash
-// $0.08/$0.18, Pro $1.30/$2.60, and Flash-Vision-Exp at the $0.2156/$0.6468
-// DeepInfra actually bills, its list price less the 51% promotion).
+// microUSD per token at each model's real rate — lib/models.ts (V4.1 Flash
+// $0.20/$0.60, Pro $1.30/$2.60, both what DeepInfra actually bills).
 const RATES = {
-  [DEFAULT_MODEL]: { in: 0.08, out: 0.18 },
-  [PRO_MODEL]: { in: 1.3, out: 2.6 },
-  [VISION_MODEL]: { in: 0.2156, out: 0.6468 }
+  [DEFAULT_MODEL]: { in: 0.2, out: 0.6 },
+  [PRO_MODEL]: { in: 1.3, out: 2.6 }
 }
 
 /**
@@ -369,7 +354,7 @@ const RATES = {
  */
 function spendableBy(n) {
   if (n >= 5 && n <= 14) return [DEFAULT_MODEL]
-  return hasVision(n) ? FULL_CATALOG : [DEFAULT_MODEL, PRO_MODEL]
+  return FULL_CATALOG
 }
 
 // A week of deterministic usage history (~600 rows) so dashboards live.
@@ -449,8 +434,5 @@ console.log(`   support: ${roster[3].email}, ${roster[4].email}`)
 console.log(`   invited (never logged in): ${roster[49].email}`)
 console.log(`   suspended: ${roster[48].email}`)
 console.log(`   release gate (service owner, 050): ${GATE.email}`)
-console.log(
-  `   vision (${VISION_MODEL.split('/').pop()}): owners 000/050, admins 001-002, pilot 021-030` +
-    ` — ${roster.filter((p) => hasVision(p.n)).length} of ${roster.length}`
-)
+console.log(`   catalog: ${FULL_CATALOG.map((m) => m.split('/').pop()).join(' + ')} (Flash sees; no vision grant needed)`)
 console.log(`\n   demo password (all seeded people): ${password}`)

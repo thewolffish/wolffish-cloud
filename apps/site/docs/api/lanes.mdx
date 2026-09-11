@@ -58,18 +58,17 @@ The organization lane runs open-weight frontier models on a zero-data-retention 
 
 | Model | Context | Reasoning | Vision | In / Out per Mtok |
 | --- | --- | --- | --- | --- |
-| `deepseek-ai/DeepSeek-V4-Flash-0731` | 1,048,576 | yes | no | $0.08 / $0.18 |
+| `deepseek-ai/DeepSeek-V4.1-Flash` | 1,048,576 | yes | **yes** | $0.20 / $0.60 |
 | `deepseek-ai/DeepSeek-V4-Pro-0813` | 1,048,576 | yes | no | $1.30 / $2.60 |
-| `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` | 1,048,576 | yes | **yes** | $0.2156 / $0.6468 |
 
-The first two are the **baseline**: `org.default_allowed_models`, what an account with no policy row
-of its own gets. `Flash-Vision-Exp` is not — it is experimental upstream and ~2.7x Flash's input
-price, so it is granted per user, and the picker genuinely differs between accounts. Its price is the
-discounted rate the host actually bills — 0.49x the $0.44 / $1.32 its model page lists, checked
-against `usage.estimated_cost` on three live calls. Vision is what
-decides whether a screenshot or an attached image may travel at all: a text-only model rejects an
-image content part outright and takes the whole turn down with it, so the client strips visuals and
-says so in the prompt rather than sending them.
+Both are the **baseline**: `org.default_allowed_models`, what an account with no policy row of its
+own gets. Flash is DeepSeek's V4.1 Flash, the first Flash that sees; on 2026-09-11 it replaced the
+dated V4 Flash-0731 and the experimental `Flash-Vision-Exp` that had been granted per user as a
+vision pilot, so image input needs no grant any more. Prices are the rates the host actually bills,
+checked against `usage.estimated_cost` on live calls — a model page's list price is where that check
+starts, not where it ends. Vision is what decides whether a screenshot or an attached image may travel
+at all: a text-only model such as Pro rejects an image content part outright and takes the whole turn
+down with it, so the client strips visuals and says so in the prompt rather than sending them.
 
 `GET /v1/models` returns exactly what a given user's picker should show — the allowlist resolved
 against org defaults. An admin edits the policy, the list changes, the client re-renders.

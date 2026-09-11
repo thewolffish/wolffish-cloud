@@ -32,8 +32,8 @@ export function reasoningModesFor(provider: string, model: string): ReasoningMod
   switch (provider) {
     // ── Wolffish Cloud (org API → DeepInfra) ───────────────────────────
     // The one real lane in this build. Catalog is the frontier DeepSeek V4
-    // pair (Flash-0731 / Pro-0813). Verified live 2026-09-01 through
-    // api.wolffi.sh: top-level `reasoning_effort` is honoured with a
+    // pair (V4.1-Flash / Pro-0813). Verified live 2026-09-01 (and V4.1 Flash
+    // on 2026-09-11) through api.wolffi.sh: top-level `reasoning_effort` is honoured with a
     // genuinely validated enum (none|minimal|low|medium|high|xhigh|max —
     // 'banana' 400s), 'none' produces zero reasoning, higher rungs stream
     // `reasoning_content` deltas, effort coexists with tool calls, and

@@ -36,7 +36,21 @@ const skip = (name, why) => {
   skipped++
   console.log(`⏭️  -- ${name} — SKIPPED: ${why}`)
 }
-const api = async (path, { token, body, method, raw } = {}) => {
+/**
+ * One retry on a TRANSPORT failure only. A pooled keep-alive socket the edge
+ * closed between two slow model calls surfaces as ECONNRESET on the next
+ * request rather than as a response, and an uncaught one aborts the whole
+ * suite. Nothing about the API is retried here — a response, of any status,
+ * is returned exactly as it came.
+ */
+const api = async (path, opts = {}) => {
+  try {
+    return await request(path, opts)
+  } catch {
+    return request(path, opts)
+  }
+}
+const request = async (path, { token, body, method, raw } = {}) => {
   const res = await fetch(`${BASE}${path}`, {
     method: method ?? (body === undefined && raw === undefined ? 'GET' : 'POST'),
     headers: {
@@ -70,9 +84,8 @@ const until = async (fn, ok, tries = 20, delayMs = 3000) => {
 const untilStatus = (fn, wantStatus, tries = 20, delayMs = 3000) =>
   until(fn, (r) => r.status === wantStatus, tries, delayMs)
 
-const FLASH = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+const FLASH = 'deepseek-ai/DeepSeek-V4.1-Flash'
 const PRO = 'deepseek-ai/DeepSeek-V4-Pro-0813'
-const VISION = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
 /**
  * A 64x64 solid magenta PNG, 133 bytes, built pixel by pixel rather than
  * copied: a model that answers "magenta" or "pink" read the actual pixels,
@@ -253,8 +266,10 @@ check('wrong-typed login 400', (await api('/auth/login', { body: { email: 123, p
 check('non-boolean pin 400', (await api('/v1/device/pin', { token: VT, body: { pin_set: 'yes' } })).status === 400)
 
 // ── 4 · the router, on real DeepSeek ─────────────────────────────────────
-const chat1 = await tinyChat(VT, FLASH)
-check('V4 Flash completes (JSON)', chat1.status === 200 && chat1.json?.usage?.completion_tokens > 0, JSON.stringify(chat1.json).slice(0, 200))
+// Polled: V4.1 Flash on DeepInfra answers a transient 429 engine_overloaded
+// (router: 503 model_busy) now and then; the client retries, so does this.
+const chat1 = await untilStatus(() => tinyChat(VT, FLASH), 200)
+check('V4.1 Flash completes (JSON)', chat1.status === 200 && chat1.json?.usage?.completion_tokens > 0, JSON.stringify(chat1.json).slice(0, 200))
 const chat2 = await tinyChat(VT, PRO, true)
 const sse = await chat2.text()
 check(
@@ -285,9 +300,14 @@ const effortChat = (model, effort, maxTokens) =>
       messages: [{ role: 'user', content: 'What is 17 * 23? Reply with just the number.' }]
     }
   })
+// Polled to 200: DeepInfra answers a transient 429 engine_overloaded (router:
+// 503 model_busy) on V4.1 Flash now and then, which the client retries, so
+// a one-shot call here would fail the gate on the host's mood, not the
+// router's behaviour. The enum-rejection check below stays one-shot on
+// purpose — a 502 is its expected answer.
 for (const model of [FLASH, PRO]) {
   const short = model.split('/')[1]
-  const off = await effortChat(model, 'none', 60)
+  const off = await untilStatus(() => effortChat(model, 'none', 60), 200)
   const offMsg = off.json?.choices?.[0]?.message
   check(
     `${short} effort=none: answers with no reasoning`,
@@ -295,7 +315,7 @@ for (const model of [FLASH, PRO]) {
     JSON.stringify(off.json).slice(0, 200)
   )
   for (const effort of ['high', 'max']) {
-    const on = await effortChat(model, effort, 500)
+    const on = await untilStatus(() => effortChat(model, effort, 500), 200)
     const onMsg = on.json?.choices?.[0]?.message
     check(
       `${short} effort=${effort}: reasoning_content present`,
@@ -338,14 +358,15 @@ check(
   'invalid reasoning_effort rejected end-to-end',
   (await effortChat(FLASH, 'banana', 60)).status === 502
 )
-// Both V4 models are text-only on DeepInfra (verified: image parts are
-// rejected upstream) — the catalog's vision:false must stay honest.
+// Pro is text-only on DeepInfra (verified: image parts are rejected
+// upstream) — the catalog's vision:false must stay honest. Flash sees
+// since V4.1; section 5.5 proves that side.
 check(
-  'image input rejected (text-only lane stays true)',
+  'image input rejected (text-only Pro stays true)',
   (await api('/ai/v1/chat/completions', {
     token: VT,
     body: {
-      model: FLASH,
+      model: PRO,
       max_tokens: 60,
       messages: [
         {
@@ -362,14 +383,15 @@ check(
 
 // ── 5 · governance: allowlist + quota, live edits ────────────────────────
 const models0 = await api('/v1/models', { token: VT })
-// A brand-new account gets org.default_allowed_models and nothing else.
-// Flash-Vision-Exp is provisioned per user (seed-demo.mjs), so it must NOT
-// appear here — this check is the guard on that.
+// A brand-new account gets org.default_allowed_models and nothing else:
+// Flash (V4.1, sees) and Pro (text-only), both reasoning, both 1M.
 check(
   'catalog serves the baseline pair',
   (models0.json?.models ?? []).length === 2 &&
     models0.json?.default_model === FLASH &&
-    (models0.json?.models ?? []).every((m) => m.reasoning === true && m.vision === false && m.context_window === 1_048_576),
+    (models0.json?.models ?? []).every((m) => m.reasoning === true && m.context_window === 1_048_576) &&
+    (models0.json?.models ?? []).find((m) => m.id === FLASH)?.vision === true &&
+    (models0.json?.models ?? []).find((m) => m.id === PRO)?.vision === false,
   JSON.stringify(models0.json).slice(0, 300)
 )
 check(
@@ -397,30 +419,31 @@ check(
 const restored = await untilStatus(() => tinyChat(VT, PRO), 200)
 check('service restored after cap lift', restored.status === 200, JSON.stringify(restored.json))
 
-// ── 5.5 · the vision model, granted then exercised ───────────────────────
-// Flash-Vision-Exp is the lane's first multimodal model and is provisioned
-// per user, so proving it takes an admin grant first. Everything the
-// catalog claims about it is then checked against the model itself: it
-// takes an image (where Flash 502s on the same body), it honours the same
+// ── 5.5 · the vision model, exercised ────────────────────────────────────
+// V4.1 Flash is the baseline model and the lane's multimodal one, so no
+// grant is needed — the narrowed allowlist above is cleared back to org
+// defaults and the catalog must show Flash again. Everything the catalog
+// claims about it is then checked against the model itself: it takes an
+// image (where Pro 502s on the same body), it honours the same
 // reasoning_effort rungs the desktop's brain button sends, and the price
 // it publishes is the one the host actually bills.
 check(
-  'vision model granted',
-  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: [FLASH, PRO, VISION] } })).status === 200
+  'allowlist cleared back to org defaults',
+  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: null } })).status === 200
 )
 const models2 = await until(
   () => api('/v1/models', { token: VT }),
-  (r) => (r.json?.models ?? []).some((m) => m.id === VISION)
+  (r) => (r.json?.models ?? []).some((m) => m.id === FLASH)
 )
-const visEntry = (models2.json?.models ?? []).find((m) => m.id === VISION)
+const visEntry = (models2.json?.models ?? []).find((m) => m.id === FLASH)
 check(
   'catalog describes the vision model',
-  (models2.json?.models ?? []).length === 3 &&
+  (models2.json?.models ?? []).length === 2 &&
     visEntry?.vision === true &&
     visEntry?.reasoning === true &&
     visEntry?.context_window === 1_048_576 &&
-    visEntry?.in_per_mtok_microusd === 215_600 &&
-    visEntry?.out_per_mtok_microusd === 646_800,
+    visEntry?.in_per_mtok_microusd === 200_000 &&
+    visEntry?.out_per_mtok_microusd === 600_000,
   JSON.stringify(models2.json).slice(0, 400)
 )
 const seeing = await untilStatus(
@@ -428,7 +451,7 @@ const seeing = await untilStatus(
     api('/ai/v1/chat/completions', {
       token: VT,
       body: {
-        model: VISION,
+        model: FLASH,
         max_tokens: 200,
         reasoning_effort: 'none',
         messages: [
@@ -452,20 +475,27 @@ check(
 )
 // The desktop sends reasoning_effort on every V4 model (providers/cloud.ts
 // keys off 'deepseek-v4'), so all three rungs must be accepted here too —
-// a narrower enum upstream would kill every turn on this model.
+// a narrower enum upstream would kill every turn on this model. Polled to
+// 200: this host answers a transient 429 engine_overloaded (router: 503
+// model_busy) more often on V4.1 than the older Flash did, and the client
+// retries those, so the gate does too.
 for (const effort of ['none', 'high', 'max']) {
-  const r = await api('/ai/v1/chat/completions', {
-    token: VT,
-    body: {
-      model: VISION,
-      max_tokens: effort === 'none' ? 60 : 500,
-      reasoning_effort: effort,
-      messages: [{ role: 'user', content: 'What is 17 * 23? Reply with just the number.' }]
-    }
-  })
+  const r = await untilStatus(
+    () =>
+      api('/ai/v1/chat/completions', {
+        token: VT,
+        body: {
+          model: FLASH,
+          max_tokens: effort === 'none' ? 60 : 500,
+          reasoning_effort: effort,
+          messages: [{ role: 'user', content: 'What is 17 * 23? Reply with just the number.' }]
+        }
+      }),
+    200
+  )
   const msg = r.json?.choices?.[0]?.message
   check(
-    `Vision-Exp effort=${effort}: ${effort === 'none' ? 'answers with no reasoning' : 'reasoning_content present'}`,
+    `V4.1 Flash effort=${effort}: ${effort === 'none' ? 'answers with no reasoning' : 'reasoning_content present'}`,
     r.status === 200 &&
       (effort === 'none'
         ? (msg?.content?.length ?? 0) > 0 && msg?.reasoning_content == null
@@ -474,18 +504,23 @@ for (const effort of ['none', 'high', 'max']) {
   )
 }
 // The catalog publishes prices clients budget against, and a model page's
-// LIST price is not necessarily what the host bills — Flash-Vision-Exp ships
-// at 0.49x its listed rate. Divide a real estimated_cost by the tokens that
-// earned it and the two must agree, or lib/models.ts has gone stale.
-const priced = await api('/ai/v1/chat/completions', {
-  token: VT,
-  body: {
-    model: VISION,
-    max_tokens: 40,
-    reasoning_effort: 'none',
-    messages: [{ role: 'user', content: 'Say ok' }]
-  }
-})
+// LIST price is not necessarily what the host bills — Flash-Vision-Exp
+// shipped at 0.49x its listed rate while its promotion ran. Divide a real
+// estimated_cost by the tokens that earned it and the two must agree, or
+// lib/models.ts has gone stale.
+const priced = await untilStatus(
+  () =>
+    api('/ai/v1/chat/completions', {
+      token: VT,
+      body: {
+        model: FLASH,
+        max_tokens: 40,
+        reasoning_effort: 'none',
+        messages: [{ role: 'user', content: 'Say ok' }]
+      }
+    }),
+  200
+)
 const u = priced.json?.usage
 const fresh = (u?.prompt_tokens ?? 0) - (u?.prompt_tokens_details?.cached_tokens ?? 0)
 const expectedUsd =
@@ -499,10 +534,6 @@ check(
     typeof u?.estimated_cost === 'number' &&
     Math.abs(u.estimated_cost - expectedUsd) <= expectedUsd * 0.01,
   `reported ${u?.estimated_cost} vs catalog ${expectedUsd} (in ${u?.prompt_tokens}, out ${u?.completion_tokens})`
-)
-check(
-  'vision grant cleared back to org defaults',
-  (await api(`/admin/users/${vId}/policy`, { token: O, method: 'PUT', body: { allowed_models: null } })).status === 200
 )
 
 // ── 6 · sync: the folder-is-a-cache proof ────────────────────────────────

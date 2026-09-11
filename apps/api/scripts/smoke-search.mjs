@@ -25,7 +25,7 @@ const MOCK_B = process.env.MOCK_BRAVE_BASE_B ?? 'http://localhost:9093'
 const stamp = Date.now().toString(36)
 const ownerEmail = `searchowner-${stamp}@wolffi.sh`
 const PW = 'search-owner-pass-1'
-const MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731'
+const MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash'
 
 const salt = '00112233445566778899aabbccddeeff'
 const hash = pbkdf2Sync(PW, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256').toString('hex')
