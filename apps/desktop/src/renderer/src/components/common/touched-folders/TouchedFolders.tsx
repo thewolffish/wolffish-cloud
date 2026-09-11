@@ -50,7 +50,12 @@ export function TouchedFolders({
             title={`${folder.path}\n${t('chat.touchedFolders.chip', { count: folder.files })}`}
             className={cn(
               'flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium',
-              'border-border bg-bg/40 text-fg backdrop-blur-md hover:bg-bg/60 active:opacity-60',
+              // The card ground, not the chrome's glass: these chips lie over
+              // scrolling transcript text, and a translucent chip let code lines
+              // ghost through it. bg-surface is the same ground every card below
+              // paints on — white in light, #161b22 in dark — so the strip reads
+              // as chips on the transcript rather than a smudge of it.
+              'border-border bg-surface text-fg hover:bg-bg active:opacity-60',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
             )}
           >

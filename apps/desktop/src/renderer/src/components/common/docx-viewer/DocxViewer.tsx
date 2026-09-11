@@ -95,7 +95,7 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     >
       {html !== null ? (
         <div
-          className="bg-bg text-fg max-h-[400px] overflow-auto p-4 text-sm"
+          className="bg-surface text-fg max-h-[400px] overflow-auto p-4 text-sm"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (

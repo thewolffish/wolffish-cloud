@@ -110,7 +110,7 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     >
       {html !== null ? (
         <div
-          className="spreadsheet-preview bg-bg text-fg max-h-[400px] overflow-auto p-4 text-xs"
+          className="spreadsheet-preview bg-surface text-fg max-h-[400px] overflow-auto p-4 text-xs"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (
