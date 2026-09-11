@@ -81,7 +81,11 @@ jest.mock('@/components/chat/ChatFeed', () => {
 jest.mock('@/lib/conversations/hooks', () => ({
   useConversation: () => ({ data: undefined, isFetching: false })
 }))
-jest.mock('@/lib/cloud/bridge', () => ({ bridgeClient: { connected: true, active: {} } }))
+jest.mock('@/lib/cloud/bridge', () => ({
+  // `subscribe` is what `useDesktopReachable` reaches for; with no listener
+  // ever called, `connected` stays at the `true` this mock opens with.
+  bridgeClient: { connected: true, active: {}, subscribe: () => () => {} }
+}))
 
 /** The staging pipeline, stubbed at its seams — the test is about what the
  *  screen asks of it, not about moving bytes. */

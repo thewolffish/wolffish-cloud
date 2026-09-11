@@ -15,9 +15,15 @@ import {
   HourglassIcon,
   RepeatIcon,
   SecurityCheckIcon,
+  Task01Icon,
   WorkflowSquare03Icon
 } from '@/components/core/icons'
 import { PROVIDER_LOGOS } from '@/components/core/providerLogos'
+import { Toggle } from '@/components/settings/ConfigRows'
+import { setPlanModeSynced } from '@/lib/sync/planMode'
+import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
+import { useAppStore } from '@/state/appStore'
+import { selectPlanMode, useChatRuntime } from '@/state/chatRuntime'
 import type {
   ConversationFile,
   WorkflowAgentView,
@@ -249,6 +255,57 @@ export function PermissionsSwitch(): React.JSX.Element {
       <Text className="text-muted text-left font-sans text-xs leading-5">
         {bypass ? t('chat.permissions.bypassDesc') : t('chat.permissions.askDesc')}
       </Text>
+    </View>
+  )
+}
+
+/**
+ * Plan mode — the desktop composer's Plan chip, as a controls row: a stance
+ * for this conversation's next turns (read-only, the agent investigates and
+ * writes a plan for the user to approve), kept in chatRuntime and stamped on
+ * each send. Lives here rather than in the composer's bottom row, which has
+ * no room for a fourth control; the composer shows a chip only while it is ON
+ * (see Composer), so the state is never hidden.
+ *
+ * Kept in step with the desktop: the switch reads the stance the desktop
+ * holds for this conversation and writes it back (lib/sync/planMode), so the
+ * composer chip over there and this row always agree. While a paired desktop
+ * is out of reach the switch is disabled with a note — a flip nobody would
+ * receive is not a setting. In demo mode it stays local.
+ */
+export function PlanModeControl({
+  conversationId
+}: {
+  conversationId: string | null | undefined
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const reachable = useDesktopReachable()
+  const paired = useAppStore((state) => state.paired)
+  const planMode = useChatRuntime(selectPlanMode(conversationId))
+  const disabled = paired && !reachable
+  return (
+    <View className="flex-col gap-2">
+      <View className="flex-row items-center gap-3">
+        <View className="min-w-0 flex-1 flex-row items-center gap-2">
+          <Task01Icon size={16} className={planMode ? 'text-primary' : 'text-muted'} />
+          <Text className="text-fg font-sans-medium text-left text-sm">
+            {t('chat.planMode.label')}
+          </Text>
+        </View>
+        <Toggle
+          value={planMode}
+          disabled={disabled}
+          onValueChange={(next) => void setPlanModeSynced(conversationId ?? null, next)}
+          accessibilityLabel={t('chat.planMode.label')}
+        />
+      </View>
+      {/* No description under the switch — the label says what it is. The
+          one line that stays is the reason a disabled switch is disabled. */}
+      {disabled ? (
+        <Text className="text-muted text-left font-sans text-xs leading-5">
+          {t('chat.planMode.offline')}
+        </Text>
+      ) : null}
     </View>
   )
 }

@@ -83,15 +83,19 @@ triggers:
   - locate file
 tools:
   - name: wolffish_status
+    readOnly: true
     description: Get current Wolffish status including uptime, the organization-provided model in use, loaded capabilities, and system health
     parameters: {}
   - name: channel_status
+    readOnly: true
     description: Check whether each chat channel (the paired phone, in-app) is currently connected, with reconnect steps for any that are down
     parameters: {}
   - name: wolffish_performance
+    readOnly: true
     description: Get performance stats including task success rates, most used tools, and error rates
     parameters: {}
   - name: wolffish_memory
+    readOnly: true
     description: Get a summary of what Wolffish remembers — recent conversation topics and knowledge areas
     parameters:
       days:
@@ -99,6 +103,7 @@ tools:
         required: false
         description: Number of days to look back (default 7)
   - name: wolffish_recall
+    readOnly: true
     description: Precisely retrieve something from your own memory that is NOT in your current context — what you did on a date, the steps of a past task, an earlier conversation, a learned fact, or a past tool outcome. Search by keyword and/or date. Use this instead of guessing or saying you don't remember.
     parameters:
       query:
@@ -119,6 +124,7 @@ tools:
         required: false
         description: Max matches to return (default 8, max 30)
   - name: memory_search
+    readOnly: true
     description: 'Ranked full-text search across EVERYTHING you know: past conversations (including tool calls and outputs), episodes, long-term knowledge, weekly digests, task runs, tool-outcome feedback, usage/cost records, event logs, and generated files. Returns snippets with refs — follow up with memory_get or conversation_read for full content. Try 2-3 different phrasings before concluding something was never recorded.'
     parameters:
       query:
@@ -142,6 +148,7 @@ tools:
         required: false
         description: Max hits (default 15, max 50)
   - name: memory_get
+    readOnly: true
     description: 'Fetch the FULL content behind a memory_search ref: a whole episode day, a knowledge file, a task transcript with its detail log, or all records of a conversation. file: refs return the actual file; conversation:/task: refs return the stored records in order.'
     parameters:
       ref:
@@ -153,6 +160,7 @@ tools:
         required: false
         description: Max records for prefix refs (default 50)
   - name: conversation_list
+    readOnly: true
     description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
     parameters:
       channel:
@@ -176,6 +184,7 @@ tools:
         required: false
         description: Max conversations (default 20, max 100)
   - name: conversation_read
+    readOnly: true
     description: 'Read a specific past conversation — messages and the tool calls/results inside it — with pagination. Recovers turns of the CURRENT conversation summarized out of your context. Returns excerpts; detail: full raises the caps, and memory_get on the printed file ref returns the complete untruncated bytes.'
     parameters:
       id:
@@ -217,6 +226,7 @@ tools:
         required: false
         description: 'Subject this fact is about — the person, project or area it belongs under. Created if new. Strongly preferred: an unattributed fact waits for the nightly curator to be filed.'
   - name: usage_report
+    readOnly: true
     description: 'Your own LLM spend from the usage ledger: requests, tokens (in/out/cache), and cost, total and per model, for a period.'
     parameters:
       period:
@@ -233,6 +243,7 @@ tools:
         required: false
         description: Explicit end day YYYY-MM-DD
   - name: wolffish_list_files
+    readOnly: true
     description: List files inside the Wolffish workspace ONLY (~/.wfc/workspace — your memory, generated files, capabilities, logs) as a structured tree with sizes. This is NOT a general file browser; it refuses paths outside the workspace. For the user's own files anywhere else (Desktop, Documents, projects, any absolute path), use the filesystem tools or shell instead.
     parameters:
       dir:

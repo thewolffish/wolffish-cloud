@@ -175,6 +175,7 @@ tools:
         required: false
         description: Target a specific tab. Default is the last active tab.
   - name: browser_screenshot
+    readOnly: true
     description: Take a screenshot of the current page or a specific element.
     parameters:
       session_id:
@@ -204,6 +205,7 @@ tools:
         required: false
         description: JPEG quality 0-100. Only for jpeg format.
   - name: browser_page_content
+    readOnly: true
     description: Extract text, HTML, or markdown content from the current page or a specific element.
     parameters:
       session_id:
@@ -392,6 +394,7 @@ tools:
         required: false
         description: Target tab.
   - name: browser_extract_table
+    readOnly: true
     description: Extract an HTML table as structured JSON.
     parameters:
       session_id:
@@ -409,6 +412,7 @@ tools:
         required: false
         description: Target tab.
   - name: browser_extract_links
+    readOnly: true
     description: Extract all links from the page or a section.
     parameters:
       session_id:

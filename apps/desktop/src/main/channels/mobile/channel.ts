@@ -99,6 +99,7 @@ import {
   mintNotificationId,
   type NotifyPhoneRequest
 } from '@main/channels/mobile/tools'
+import { getPlanMode, onPlanModeChange, setPlanMode } from '@main/runtime/plan-mode'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import type { TurnSink } from '@main/channels/channel'
 import { appendTextSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
@@ -241,8 +242,6 @@ export type MobileStatus = {
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
-  /** Whether a running automation draws its floating card on the phone. */
-  runCards: boolean
   /** The org API both devices talk to. */
   apiBase: string
 }
@@ -272,8 +271,6 @@ export type WireDevice = {
 export type ReflectionWirePatch = {
   hour?: number
   quietHours?: number
-  /** Whether a running reflection job draws its floating card, either side. */
-  cards?: boolean
 }
 
 export type MobileChannelDeps = SnapshotSources & {
@@ -341,12 +338,6 @@ export type MobileChannelDeps = SnapshotSources & {
    */
   loadVerbose?: () => Promise<boolean>
   saveVerbose?: (verbose: boolean) => Promise<void>
-  /**
-   * Persisted switch for the phone's floating automation-run cards — see
-   * setRunCards. Absent = no cards, never remembered (tests).
-   */
-  loadRunCards?: () => Promise<boolean>
-  saveRunCards?: (enabled: boolean) => Promise<void>
   /** Broadcast to the renderer so the panel updates without polling. */
   onStatus?: (status: MobileStatus) => void
   /**
@@ -439,7 +430,6 @@ export class MobileChannel {
     }
   >()
   private verbose = false
-  private runCards = false
   /** Live turns the phone started, so it can abort them. */
   private readonly turns = new Map<string, { turnId: string; controller: AbortController }>()
   /**
@@ -580,6 +570,11 @@ export class MobileChannel {
     | null = null
 
   constructor(private readonly deps: MobileChannelDeps) {
+    // Plan mode is the desktop's stance (runtime/plan-mode); every change,
+    // from the composer chip or the phone's own switch, reaches the phone
+    // here. Subscribed for the channel's lifetime (it is a singleton) — a link that is down
+    // simply drops the push, and the phone re-reads on its next open.
+    onPlanModeChange((change) => this.bridge?.emit(Event.planMode, change))
     this.bridge = deps.bridge ?? null
   }
 
@@ -604,7 +599,6 @@ export class MobileChannel {
     this.channelStopped = false
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
     this.verbose = (await this.deps.loadVerbose?.()) ?? false
-    this.runCards = (await this.deps.loadRunCards?.()) ?? false
     if (this.bridge) this.attachBridge(this.bridge)
     this.emitStatus()
   }
@@ -860,23 +854,6 @@ export class MobileChannel {
     this.verbose = verbose
     await this.deps.saveVerbose?.(verbose)
     this.log(`phone feed ${verbose ? 'relays every tool call' : 'kept clean'}`)
-    this.emitStatus()
-    return this.getStatus()
-  }
-
-  /**
-   * Whether an automation running on this desktop draws its live card over
-   * whatever screen the PHONE is on. Off by default: the run pool announces
-   * itself either way (the phone still receives the pushes, the automations
-   * screen still shows what ran), this is only whether it interrupts.
-   *
-   * Persisted and status-borne like the two switches above, so the phone's own
-   * Channels screen and the desktop's Mobile panel edit one value.
-   */
-  async setRunCards(enabled: boolean): Promise<MobileStatus> {
-    this.runCards = enabled
-    await this.deps.saveRunCards?.(enabled)
-    this.log(`phone automation cards ${enabled ? 'shown' : 'hidden'}`)
     this.emitStatus()
     return this.getStatus()
   }
@@ -1188,6 +1165,16 @@ export class MobileChannel {
      * would show project chrome over turns that never received the project's
      * instructions.
      */
+    // Plan mode: the phone's chat-controls switch reads and writes the SAME
+    // stance the desktop composer's chip does (runtime/plan-mode); a set from
+    // either side reaches the other through Event.planMode.
+    tunnel.onRpc(Rpc.planModeGet, (params) => ({
+      planMode: getPlanMode(String(params.conversationId ?? ''))
+    }))
+    tunnel.onRpc(Rpc.planModeSet, (params) => ({
+      planMode: setPlanMode(String(params.conversationId ?? ''), params.planMode === true)
+    }))
+
     tunnel.onRpc(Rpc.conversationProject, async (params) => {
       const conversationId = String(params.conversationId ?? '')
       if (!conversationId) throw new Error('conversationProject needs a conversationId')
@@ -1331,13 +1318,27 @@ export class MobileChannel {
       }
 
       const cid = conversationId
-      void this.continueSend(cid, text, attachments, voicePrompt, voiceLang, messageId).catch(
-        (error) => {
-          const message = error instanceof Error ? error.message : String(error)
-          this.log(`send from the phone failed in ${cid} — ${message}`)
-          this.pushTurnStatus(cid, 'error', message)
-        }
-      )
+      // Plan mode: the phone's chat controls carry the same per-conversation
+      // stance the desktop composer does — a read-only turn that only writes
+      // its plan file (Agent.planMode). The wire is data: anything but a
+      // literal true is off.
+      const planMode = params.planMode === true
+      // The send's stance is the conversation's stance from here on — the
+      // desktop chip follows the phone's switch, not only the other way.
+      setPlanMode(cid, planMode)
+      void this.continueSend(
+        cid,
+        text,
+        attachments,
+        voicePrompt,
+        voiceLang,
+        messageId,
+        planMode
+      ).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.log(`send from the phone failed in ${cid} — ${message}`)
+        this.pushTurnStatus(cid, 'error', message)
+      })
       return { conversationId: cid }
     })
 
@@ -1587,22 +1588,16 @@ export class MobileChannel {
     })
 
     /**
-     * The overlay stack's seed, taken once per connection.
+     * The reindex overlay's seed, taken once per connection.
      *
-     * Both halves of it are push-only — the run pool announces itself when it
-     * moves, the reindex when it starts and stops — so a phone that connects
-     * mid-run has already missed the announcement and would show nothing until
-     * whatever is running ended. This is the one read that closes that window.
+     * The reindex is push-only — it announces itself when it starts and stops
+     * — so a phone that connects mid-rebuild has already missed the
+     * announcement and would show nothing until it ended. This is the one read
+     * that closes that window.
      */
     tunnel.onRpc(Rpc.overlaysRead, async () => {
-      const seed: OverlaySeed = {
-        runs: this.automationRuns(),
-        reindex: this.deps.agent.cortex.getReindexStatus()
-      }
-      this.debug(
-        `served overlay seed (${seed.runs.running.length} running, ` +
-          `${seed.runs.queued.length} queued, reindex ${seed.reindex ? 'active' : 'idle'})`
-      )
+      const seed: OverlaySeed = { reindex: this.deps.agent.cortex.getReindexStatus() }
+      this.debug(`served overlay seed (reindex ${seed.reindex ? 'active' : 'idle'})`)
       return seed
     })
 
@@ -1778,9 +1773,9 @@ export class MobileChannel {
   }
 
   /**
-   * The run pool, minus procedure runs. They share the pool but are not
-   * automations, so they never gate an automation's play button — the same
-   * filter the desktop's own cards apply.
+   * The run pool as the phone reads it — every row, `kind` included, so the
+   * phone's Automations screen can gate its play buttons and skip procedure
+   * runs (which share the pool but are not headings in heartbeat.md).
    */
   private automationRuns(): AutomationRuns {
     const brainstem = this.deps.agent.brainstem
@@ -1798,7 +1793,8 @@ export class MobileChannel {
     attachments: MessageAttachment[],
     voicePrompt: boolean,
     voiceLangHint: string | undefined,
-    messageId?: string
+    messageId?: string,
+    planMode = false
   ): Promise<void> {
     let content = text
     let voiceLang = voiceLangHint
@@ -1860,6 +1856,7 @@ export class MobileChannel {
       conversationId,
       userMessageId: userMessage.id,
       projectId: conversation.projectId ?? null,
+      planMode,
       makeSink: ({ turnId, conversationId: sinkConversationId }) =>
         this.createSink(turnId, sinkConversationId ?? conversationId, userMessage)
     })
@@ -2594,8 +2591,8 @@ export class MobileChannel {
 
   /**
    * The run pool moved. Carries its payload — this fires several times per run
-   * and a fetch per tick would be pure overhead — with procedure runs stripped,
-   * since they share the pool but never gate an automation card.
+   * and a fetch per tick would be pure overhead. Every row travels, procedure
+   * runs included; the phone filters by `kind` where it means automations.
    */
   pushAutomationRuns(snapshot: { running: RunningJobInfo[]; queued: QueuedJobInfo[] }): void {
     this.bridge?.emit(Event.automationRunsChanged, toWireRuns(snapshot))
@@ -2664,7 +2661,6 @@ export class MobileChannel {
       offer: this.offer,
       verbose: this.verbose,
       notificationsEnabled: this.notificationsEnabled,
-      runCards: this.runCards,
       apiBase: API_BASE
     }
   }
@@ -2685,7 +2681,7 @@ export class MobileChannel {
 
 /**
  * A reflection patch from the wire, reduced to the fields that are real: an
- * integer hour 0-23, an integer quiet window 1-48 h, a boolean cards flag.
+ * integer hour 0-23, an integer quiet window 1-48 h.
  * Malformed fields are dropped rather than clamped — clamping would persist a
  * value the user never chose, while dropping costs that field alone and the
  * authoritative answer corrects the screen that sent it.
@@ -2709,7 +2705,6 @@ export function sanitizeReflectionPatch(params: unknown): ReflectionWirePatch {
   ) {
     patch.quietHours = raw.quietHours
   }
-  if (typeof raw.cards === 'boolean') patch.cards = raw.cards
   return patch
 }
 
@@ -2786,37 +2781,20 @@ async function resolveWireDirectories(wire: unknown[]): Promise<string[]> {
  *
  * `kind` is the brainstem's own `family`, resolved from the job id where the
  * ids are minted (see its `runFamily`), so no surface re-derives it. The two
- * vocabularies are the same four words on purpose.
+ * vocabularies are the same four words on purpose. Procedure runs travel like
+ * the rest; a consumer that means automations SPECIFICALLY — the Automations
+ * screen's per-job status — filters `kind === 'procedure'` itself.
  *
- * Procedure runs used to be dropped here, on the grounds that they are not
- * automations. They now travel like the rest: the phone cards them under the
- * automations switch, because "something is running for me" is one question.
- * A consumer that means automations SPECIFICALLY — the Automations screen's
- * per-job status — filters `kind === 'procedure'` itself.
- *
- * Each row is widened with everything a card draws: `body` (the prompt — an
- * i18n key for the built-ins, see OverlayKind), `startedAt` for the elapsed
- * clock, and the run's own mode.
+ * Only what that gating reads goes over: the id, the heading label and the
+ * kind. The prompt body, start time and mode stay home.
  */
 function toWireRuns(snapshot: {
   running: RunningJobInfo[]
   queued: QueuedJobInfo[]
 }): AutomationRuns {
   return {
-    running: snapshot.running.map((row) => ({
-      id: row.id,
-      label: row.label,
-      body: row.body,
-      kind: row.family,
-      startedAt: row.startedAt,
-      mode: row.mode ?? null
-    })),
-    queued: snapshot.queued.map((row) => ({
-      id: row.id,
-      label: row.label,
-      kind: row.family,
-      queuedAt: row.queuedAt
-    }))
+    running: snapshot.running.map((row) => ({ id: row.id, label: row.label, kind: row.family })),
+    queued: snapshot.queued.map((row) => ({ id: row.id, label: row.label, kind: row.family }))
   }
 }
 

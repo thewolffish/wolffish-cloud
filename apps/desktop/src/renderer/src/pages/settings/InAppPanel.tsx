@@ -55,7 +55,7 @@ export function InAppPanel(): React.JSX.Element {
         </header>
 
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          {/* Verbose task results — off (default) shows a clean feed: agent
+          {/* Show all tool activity — off (default) shows a clean feed: agent
               replies, file-bearing tool results, and errors only. On adds the
               model/provider chip plus every tool call/result/activity and
               compaction card. Display-only — never affects history. */}
@@ -66,21 +66,6 @@ export function InAppPanel(): React.JSX.Element {
             loaded={loaded}
             options={toggleOptions}
             onChange={(value) => void patch({ verbose: value })}
-          />
-
-          <div className="border-border/60 border-t" />
-
-          {/* The floating card an AUTOMATION draws over the app while it runs.
-              Off (default) means the run is silent here — it still runs, still
-              logs, still reports on the Automations page. Compaction and
-              reflection runs carry the same switch in their own panels. */}
-          <ToggleRow
-            label={t('settings.services.inapp.runCards.label')}
-            description={t('settings.services.inapp.runCards.description')}
-            value={config?.runCards === true}
-            loaded={loaded}
-            options={toggleOptions}
-            onChange={(value) => void patch({ runCards: value })}
           />
 
           <div className="border-border/60 border-t" />

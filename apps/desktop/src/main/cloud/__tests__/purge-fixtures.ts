@@ -34,7 +34,7 @@ export const CONFIG_A = {
   locale: 'en',
   llm: { model: 'm-test' },
   variables: [{ name: 'SECRET', value: 'sk-live-999', sensitive: true }],
-  mobile: { notifications: true, verbose: true, runCards: false }
+  mobile: { notifications: true, verbose: true }
 }
 
 export const ATTACHMENT_BYTES = Buffer.from('attachment-payload-' + 'x'.repeat(64))

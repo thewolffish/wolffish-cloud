@@ -1,7 +1,7 @@
 import { Button } from '@/components/core/Button'
-import { Activity04Icon, AiMagicIcon, BrainIcon, PlayIcon } from '@/components/core/icons'
+import { Activity04Icon, PlayIcon } from '@/components/core/icons'
 import { Select, type SelectOption } from '@/components/core/Select'
-import { PanelScreen, Section, SwitchRow } from '@/components/settings/SettingsUI'
+import { PanelScreen, Section } from '@/components/settings/SettingsUI'
 import { pushReflectionConfig, runReflectionJob } from '@/lib/sync/reflection'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
 import { formatTokens } from '@/lib/utils/formatTokens'
@@ -44,8 +44,6 @@ export default function KnowledgeScreen(): React.JSX.Element {
   const weeklyHour = useConfigValue('compactionWeeklyHour')
   const reflectionHour = useConfigValue('reflectionHour')
   const reflectionQuietHours = useConfigValue('reflectionQuietHours')
-  const compactionCards = useConfigValue('compactionCards')
-  const reflectionCards = useConfigValue('reflectionCards')
   const runs = useCompactionRuns()
   const desktop = useDesktopInfo()
 
@@ -123,34 +121,6 @@ export default function KnowledgeScreen(): React.JSX.Element {
           </View>
         </Section>
       ) : null}
-
-      {/* Both card switches on ONE card. The desktop keeps them in separate
-          panels because they ARE separate panels there; here the two are one
-          column, and the same question asked twice in two one-row cards reads
-          as two features. Compaction writes through configSet, reflection
-          through its own RPC — the seam is invisible from this side. */}
-      <Section title={t('settings.knowledge.cards.title')}>
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.knowledge.cards.description')}
-        </Text>
-        <SwitchRow
-          label={t('settings.knowledge.cards.compaction')}
-          icon={<AiMagicIcon size={16} className="text-muted" />}
-          value={compactionCards}
-          disabled={readOnly}
-          onValueChange={(next) => setConfigValue('compactionCards', next)}
-        />
-        <SwitchRow
-          label={t('settings.knowledge.cards.reflection')}
-          icon={<BrainIcon size={16} className="text-muted" />}
-          value={reflectionCards}
-          disabled={readOnly}
-          onValueChange={(next) => {
-            setConfigValue('reflectionCards', next)
-            pushReflectionConfig({ cards: next })
-          }}
-        />
-      </Section>
 
       {/* Disabled while paired-but-offline like the reflection rows below:
           these write through configSet now, and a picker whose choice cannot

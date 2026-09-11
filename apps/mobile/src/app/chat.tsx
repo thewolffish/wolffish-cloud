@@ -7,7 +7,7 @@ import { ConversationsSheet } from '@/components/chat/ConversationsSheet'
 import { FLOATING_AREA, FLOATING_GAP, FloatingChrome } from '@/components/chat/FloatingChrome'
 import type { QueuedPrompt } from '@/components/chat/QueuedPrompts'
 import { buildFeed, LIVE_KEY } from '@/lib/conversations/feed'
-import { failedTurnEnd } from '@/lib/conversations/segments'
+import { failedTurnEnd, latestTodoLists, todoListId } from '@/lib/conversations/segments'
 import { useConversation } from '@/lib/conversations/hooks'
 import { mintMessageId, type ConversationMessage } from '@/lib/conversations/types'
 import { deriveTitle, ensureDemoConversation, sendDemoPrompt, stopDemoTurn } from '@/lib/demo/agent'
@@ -21,7 +21,9 @@ import { Image } from 'expo-image'
 import { useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { clearConversationBadges, setActiveConversation } from '@/lib/notifications/push'
 import { useActiveProject } from '@/lib/sync/projects'
+import { seedPlanMode } from '@/lib/sync/planMode'
 import { abortTurn, beginTurn, sendPrompt } from '@/lib/sync/prompt'
+import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
 import {
   discardStaged,
   fileLocally,
@@ -173,6 +175,12 @@ export default function ChatScreen(): React.JSX.Element {
     }, [conversationId])
   )
   const paired = useAppStore((state) => state.paired)
+  // The desktop's plan-mode stance for this conversation, read once per open
+  // and again on reconnect; pushes keep it current in between.
+  const desktopReachable = useDesktopReachable()
+  useEffect(() => {
+    if (conversationId && paired && desktopReachable) void seedPlanMode(conversationId)
+  }, [conversationId, paired, desktopReachable])
   const { data: conversation, isFetching: conversationFetching } = useConversation(conversationId)
   // The turn being written into this conversation right now, from whichever
   // side started it — this phone, the desktop, a channel. One store for demo
@@ -220,6 +228,25 @@ export default function ChatScreen(): React.JSX.Element {
   const feed = useMemo(
     () => buildFeed({ messages: conversation?.messages, live, pendingUser, sending }),
     [conversation, live, pendingUser, sending]
+  )
+  // Every task list in its latest state, keyed by list id: a later turn's
+  // todo_write that continues an earlier list resolves THAT card in place.
+  // Memoized on a signature of the todo segments only, so streaming text
+  // never rebuilds it (and never re-renders every row through the prop).
+  const todoSignature = useMemo(
+    () =>
+      feed
+        .flatMap((item) => (item.message.role === 'assistant' ? (item.message.segments ?? []) : []))
+        .filter((segment) => segment.kind === 'todo')
+        .map((segment) => `${todoListId(segment)}:${segment.segmentId}`)
+        .join('|'),
+    [feed]
+  )
+  const todoLists = useMemo(
+    () => latestTodoLists(feed.map((item) => item.message)),
+    // todoSignature is the memo key on purpose: it changes exactly when a todo segment does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [todoSignature]
   )
 
   /**
@@ -796,6 +823,7 @@ export default function ChatScreen(): React.JSX.Element {
                     message={item.message}
                     conversationId={conversationId ?? undefined}
                     verbose={verbose}
+                    todoLists={todoLists}
                     streaming={item.streaming}
                     // The in-flight turn's row is the one that hosts the
                     // conversation's live ask/approval cards.

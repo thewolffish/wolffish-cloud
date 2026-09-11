@@ -1,4 +1,5 @@
 import { diskWriter } from '@main/io/diskWriter'
+import { spillToolOutput } from '@main/runtime/tool-output'
 import type { Cerebellum, ToolExecutionResult } from '@main/runtime/cerebellum'
 import type { Corpus } from '@main/runtime/corpus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -58,6 +59,8 @@ export type StepResult = {
   // message) stays the only thing replayed into model context. Undefined on
   // success and on failures with nothing extra to surface.
   verbose?: string
+  /** UI-only structured facts from the tool (diff, exit code…); see ToolExecutionResult.meta. */
+  meta?: Record<string, unknown>
 }
 
 export type MotorOptions = {
@@ -360,7 +363,11 @@ export class Motor {
 
       if (result.success) {
         step.status = 'succeeded'
-        step.output = truncate(result.output ?? '')
+        step.output = await this.bound(
+          result.output ?? '',
+          call.name,
+          result.meta?.truncated === true
+        )
         step.error = null
         step.finishedAt = Date.now()
         task.updatedAt = Date.now()
@@ -371,14 +378,22 @@ export class Motor {
           step: task.steps.length,
           total: task.steps.length
         })
-        return { ok: true, output: step.output ?? '', attempts: attempt, images: result.images }
+        return {
+          ok: true,
+          output: step.output ?? '',
+          attempts: attempt,
+          images: result.images,
+          meta: result.meta
+        }
       }
 
       step.error = result.error ?? 'unknown error'
       // Plugins (e.g. shell) attach captured stderr/stdout on failure.
       // Without surfacing it the model sees only "exited with code N" and
       // has to re-run the command just to learn the cause.
-      const failureOutput = result.output ? truncate(result.output) : ''
+      const failureOutput = result.output
+        ? await this.bound(result.output, call.name, result.meta?.truncated === true)
+        : ''
       if (failureOutput) step.output = failureOutput
       this.corpus?.emit('tool.failed', {
         taskId,
@@ -620,6 +635,18 @@ export class Motor {
     return path.join(root, 'brain', 'motor', 'tasks', `TASK-${id}.md`)
   }
 
+  /**
+   * Bound a tool's output for the model: head-biased 2000 lines / 50 KB,
+   * the full text spilled to <workspace>/tool-output/ with a hint naming the
+   * file (see tool-output.ts). Tools that already bounded their own output
+   * (the shell, tail-biased) say so via meta.truncated and pass through.
+   */
+  private async bound(text: string, tool: string, alreadyBounded = false): Promise<string> {
+    if (alreadyBounded) return text
+    const spilled = await spillToolOutput(this.workspaceRoot, text, { tool, direction: 'head' })
+    return spilled.content
+  }
+
   private async writeTranscript(task: Task): Promise<void> {
     if (!this.workspaceRoot) return
     const dir = path.dirname(task.transcriptPath)
@@ -662,13 +689,6 @@ export class Motor {
       signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
-}
-
-const MAX_OUTPUT_BYTES = 100_000
-
-function truncate(text: string): string {
-  if (text.length <= MAX_OUTPUT_BYTES) return text
-  return text.slice(0, MAX_OUTPUT_BYTES) + `\n…[truncated ${text.length - MAX_OUTPUT_BYTES} bytes]`
 }
 
 function generateTaskId(): string {

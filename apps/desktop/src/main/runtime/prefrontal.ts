@@ -104,6 +104,16 @@ export type RuntimeContext = {
    */
   noProgress?: string
   /**
+   * Open task list notice — the conversation's latest todo list still has
+   * unfinished items from an earlier turn (the turn that wrote it was
+   * interrupted, or ended mid-work), so the model knows the checklist the
+   * user is looking at and can carry it on: its next todo_write updates
+   * that same card. Present on every iteration until the model writes the
+   * list once this turn. Same vehicle and cache rationale as noProgress.
+   * Undefined renders nothing.
+   */
+  openTodo?: string
+  /**
    * Control-token notice for this iteration — this conversation's previous
    * model call ended its user-visible text in a literal tokenizer control
    * token (e.g. a plain-text `<|eos|>`), which reached the user as gibberish,
@@ -686,6 +696,24 @@ The ONLY exception: the user's own message explicitly asks for something else ("
     }
   }
 
+  /**
+   * The coding overlay: appended to the pinned prompt by the Agent when a
+   * working folder is a code project (see workdir.ts anyCodeFolder). The
+   * base file stands on its own for every provider; a provider-specific
+   * addendum (coding.<provider>.md) follows it when one ships. Both are
+   * app-managed (workspace.ts migrateAgentsCore) and read fresh per turn, so
+   * the cached prefix is stable across a turn and current across launches.
+   */
+  async buildCodingOverlay(provider: string | null): Promise<string> {
+    const base = (await this.readFile('brain/prefrontal/coding.md'))?.trim() ?? ''
+    if (!base) return ''
+    const extra =
+      provider && /^[a-z0-9-]+$/i.test(provider)
+        ? ((await this.readFile(`brain/prefrontal/coding.${provider}.md`))?.trim() ?? '')
+        : ''
+    return `\n\n${base}${extra ? `\n\n${extra}` : ''}`
+  }
+
   private async readFile(relPath: string): Promise<string | null> {
     try {
       const raw = await fs.readFile(path.join(this.options.workspaceRoot, relPath), 'utf8')
@@ -779,6 +807,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.online === false) lines.push(`  ${OFFLINE_NOTICE}`)
     // No-progress notice rides the same vehicle for the same reason.
     if (runtime.noProgress) lines.push(`  ${runtime.noProgress}`)
+    if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
     // Channel-format notice (prose delivered to a phone with raw markup) —
     // same vehicle, same reason.
     // Control-token notice (a control token leaked into user-visible text) —

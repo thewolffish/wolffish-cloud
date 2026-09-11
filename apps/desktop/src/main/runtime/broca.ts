@@ -103,6 +103,67 @@ export type WorkflowSnapshot = {
 }
 
 /**
+ * A file change a tool made, as a unified diff. Produced by the filesystem
+ * tools (file_edit / file_write) and carried on the tool_result segment's
+ * `meta` so the feed can render red/green hunks and a +N −M chip — live and
+ * on reload alike, since the segment persists whole.
+ */
+export type ToolResultDiff = {
+  file: string
+  /** Standard unified diff text (`--- a/…`, `+++ b/…`, `@@` hunks). */
+  patch: string
+  additions: number
+  deletions: number
+  kind: 'edit' | 'create' | 'overwrite'
+}
+
+/**
+ * Structured facts about a tool result, for the UI only. Display-only in
+ * the strict sense: both model-context rebuild paths ignore `meta` — the
+ * model sees `output`, the user sees what `meta` renders. Optional on every
+ * result; readers that predate it (mobile, CLI) ignore the field.
+ */
+export type ToolResultMeta = {
+  diff?: ToolResultDiff
+  /** Shell exit code, null when killed. */
+  exitCode?: number | null
+  durationMs?: number
+  /** Absolute path of the full output when it was spilled to disk. */
+  outputPath?: string
+  truncated?: boolean
+  /** The directory a command ran in. */
+  cwd?: string
+  /** A short human label chosen by the tool (e.g. "Run tests"). */
+  label?: string
+}
+
+/**
+ * The tools whose call changes the user's project — an edit, a write, a shell
+ * run. Every clean feed (the in-app chat, the phone's live mirror) shows
+ * these as a compact activity row even with verbose off; every other tool
+ * call stays mechanics. One list, so the surfaces cannot drift.
+ */
+export const CODE_ACTIVITY_TOOLS: ReadonlySet<string> = new Set([
+  'file_edit',
+  'file_write',
+  'file_patch',
+  'shell_exec'
+])
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+/**
+ * One item of the model's task list (todo_write). The whole list rides every
+ * `todo` segment; consumers upsert by turnId so a turn shows exactly ONE
+ * checklist card, at the position of its first write, in its latest state.
+ */
+export type TodoItem = {
+  content: string
+  status: TodoStatus
+  priority?: 'high' | 'medium' | 'low'
+}
+
+/**
  * The master's workflow-management tools. Their tool_call/tool_result
  * segments persist and replay into model context like any tool (the master's
  * memory of agent reports lives in agents_await results), but NO render
@@ -131,6 +192,74 @@ export function upsertWorkflowSegment(
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i]
     if (s.kind === 'workflow' && s.snapshot.workflowId === segment.snapshot.workflowId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+/**
+ * Replace-by-turnId upsert for the todo checklist — one card per turn, in
+ * its latest state, at the position of the first write. Same contract as
+ * the snapshot upserts above; shared by every surface that accumulates
+ * segments so live and reloaded conversations render identically.
+ */
+/** The list a todo segment belongs to — its own turn unless it continues an earlier one. */
+export function todoListId(segment: Extract<Segment, { kind: 'todo' }>): string {
+  return segment.listId ?? segment.turnId
+}
+
+/**
+ * Every task list in a conversation in its LATEST state, keyed by list id,
+ * walking the messages' segments in order (a later write replaces an
+ * earlier one). Renderers draw each list once, on the card of the turn that
+ * created it, with these items — so a continuation write in a later turn
+ * resolves the earlier card in place.
+ */
+export function latestTodoLists(
+  segmentLists: Array<ReadonlyArray<Segment> | undefined>
+): Map<string, TodoItem[]> {
+  const out = new Map<string, TodoItem[]>()
+  for (const segments of segmentLists) {
+    if (!segments) continue
+    for (const segment of segments) {
+      if (segment.kind === 'todo') out.set(todoListId(segment), segment.items)
+    }
+  }
+  return out
+}
+
+export type OpenTodoList = { listId: string; items: TodoItem[] }
+
+/**
+ * The conversation's most recently written task list when it still has
+ * unfinished items (pending or in_progress) — the list a turn inherits,
+ * so the model can carry it on and mark it done. Null when the latest list
+ * is settled or there is none.
+ */
+export function openTodoList(
+  segmentLists: Array<ReadonlyArray<Segment> | undefined>
+): OpenTodoList | null {
+  let latest: OpenTodoList | null = null
+  for (const segments of segmentLists) {
+    if (!segments) continue
+    for (const segment of segments) {
+      if (segment.kind === 'todo') latest = { listId: todoListId(segment), items: segment.items }
+    }
+  }
+  if (!latest) return null
+  const open = latest.items.some((i) => i.status === 'pending' || i.status === 'in_progress')
+  return open ? latest : null
+}
+
+export function upsertTodoSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'todo' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'todo' && s.turnId === segment.turnId) {
       segments[i] = segment
       return
     }
@@ -212,7 +341,31 @@ export type Segment =
       status: ToolResultStatus
       output: string
       error?: string
+      /** UI-only structured facts (diff, exit code, duration). See ToolResultMeta. */
+      meta?: ToolResultMeta
       worker?: SegmentWorker
+    }
+  | {
+      /**
+       * The model's task list after a todo_write call (see TodoItem).
+       * Replace-by-turnId semantics — NOT append — on every surface, so a
+       * turn carries one checklist card in its latest state. Display-only:
+       * both model-context rebuild paths ignore it (the model keeps the list
+       * through the todo_write tool result it already has).
+       */
+      kind: 'todo'
+      turnId: string
+      segmentId: string
+      items: TodoItem[]
+      /**
+       * The list this write belongs to — the turnId of the turn that created
+       * it. Absent (or equal to turnId) on the creating write. A later turn
+       * that continues an open list writes with the ORIGINAL list id, and
+       * every renderer draws that card, at its original position, in the
+       * latest state (latestTodoLists) — the model "goes back" and marks
+       * the earlier card done rather than growing a second checklist.
+       */
+      listId?: string
     }
   | {
       kind: 'active_model'
@@ -431,7 +584,8 @@ export class Broca {
     toolCallId: string,
     status: ToolResultStatus,
     output: string,
-    error?: string
+    error?: string,
+    meta?: ToolResultMeta
   ): void {
     if (this.turnId !== turnId || !this.sink) return
     if (this.silentToolCallIds.has(toolCallId)) {
@@ -448,7 +602,23 @@ export class Broca {
       output
     }
     if (error !== undefined) segment.error = error
+    if (meta !== undefined) segment.meta = meta
     this.emit(segment)
+  }
+
+  /**
+   * Emit the model's task list after a todo_write call. The Agent is the
+   * only caller. Consumers upsert by turnId — see upsertTodoSegment.
+   */
+  emitTodo(turnId: string, items: TodoItem[], listId?: string): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({
+      kind: 'todo',
+      turnId,
+      segmentId: this.nextId(),
+      items,
+      ...(listId && listId !== turnId ? { listId } : {})
+    })
   }
 
   /**

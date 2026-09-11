@@ -18,6 +18,47 @@ export type SegmentTurnEndReason =
 
 export type ToolResultStatus = 'success' | 'failed' | 'denied'
 
+/** A file change as a unified diff — what the edit tools attach to their result. */
+export type ToolResultDiff = {
+  path: string
+  patch: string
+  additions: number
+  deletions: number
+}
+
+/**
+ * Presentation-only detail on a tool result (desktop broca.ts ToolResultMeta):
+ * the red/green diff of an edit, a shell run's exit code, duration and spill
+ * file, the tool's own short label ("Run tests"). Never fed back to the model;
+ * the feed renders it the same live and from the stored transcript.
+ */
+export type ToolResultMeta = {
+  diff?: ToolResultDiff
+  /** Shell exit code, null when killed. */
+  exitCode?: number | null
+  durationMs?: number
+  /** Absolute path of the full output when it was spilled to disk. */
+  outputPath?: string
+  truncated?: boolean
+  /** The directory a command ran in. */
+  cwd?: string
+  /** A short human label chosen by the tool (e.g. "Run tests"). */
+  label?: string
+}
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+/**
+ * One item of the model's task list (todo_write). The whole list rides every
+ * `todo` segment; a turn shows exactly ONE checklist card, at the position of
+ * its first write, in its latest state (replace-by-turnId).
+ */
+export type TodoItem = {
+  content: string
+  status: TodoStatus
+  priority?: 'high' | 'medium' | 'low'
+}
+
 /** Legacy parallel-worker tag — render paths must skip worker-tagged segments. */
 export type SegmentWorker = { id: string; label?: string }
 
@@ -102,9 +143,24 @@ export type Segment =
       status: ToolResultStatus
       output: string
       error?: string
+      meta?: ToolResultMeta
       worker?: SegmentWorker
     }
   | { kind: 'active_model'; turnId: string; segmentId: string; provider: string; model: string }
+  /** The model's task list — one card per turn, replaced in place on every write. */
+  | {
+      kind: 'todo'
+      turnId: string
+      segmentId: string
+      items: TodoItem[]
+      /**
+       * The list this write belongs to — the turnId of the turn that created
+       * it; absent on the creating write. A later turn that continues an open
+       * list writes with the ORIGINAL list id, and the feed draws that card,
+       * at its original position, in the latest state (latestTodoLists).
+       */
+      listId?: string
+    }
   | {
       kind: 'turn_end'
       turnId: string

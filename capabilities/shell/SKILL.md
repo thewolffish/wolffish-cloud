@@ -105,7 +105,7 @@ triggers:
   - open terminal
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output. Default cwd is the user home directory. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session (at most one native password dialog per app run, handled app-side) — no TTY needed, nothing for you to handle, works identically from workflow agents and scheduled turns. Set background=true for long-lived processes (dev servers, watchers).
+    description: Run a shell command and return its output (stdout+stderr in order, ANSI stripped). Default cwd is the first working folder when the conversation has one (the runtime tail names it), else the user home directory — so `npm test` or `git status` land in the project without a cwd argument. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Long output keeps the LAST 2000 lines / 50 KB (where a failing run reports its failure) and the full text is saved to a log file the result names. A command shaped like a server or watcher (dev servers, `--watch`, `vitest` without `run`) is refused in the foreground — run it with background=true, which captures its output to a log file you can read and lets you stop it with shell_stop; pass force=true only if it really exits. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session — no TTY needed. This tool is for terminal work (git, package managers, builds, tests, scripts); use file_read / file_edit / file_grep / file_glob for reading, editing and searching files.
     parameters:
       command:
         type: string
@@ -113,7 +113,7 @@ tools:
       cwd:
         type: string
         required: false
-        description: Working directory (default user home). If you set cwd, it must be an absolute path that exists on the system. Otherwise omit it — defaults to the user's home directory.
+        description: Working directory. Omit it to run in the first working folder (or the user's home when the conversation has none). Set it to an absolute path — or a path relative to the working folder — only when the command must run elsewhere; prefer this over a leading `cd`.
       timeout:
         type: number
         required: false
@@ -121,7 +121,26 @@ tools:
       background:
         type: boolean
         required: false
-        description: Start the command detached and return immediately with its PID. Use for any process that does not exit on its own (npm run dev, vite, nodemon, http servers, watchers). stdio is set to /dev/null — redirect inside the command (e.g. > /tmp/log 2>&1) if you want to read output later.
+        description: Start the command detached and return immediately with its PID and a log file path. Use for any process that does not exit on its own (npm run dev, vite, nodemon, http servers, watchers). Read the log with file_read (or tail -n 50 <log>) to check it started; stop it with shell_stop.
+      force:
+        type: boolean
+        required: false
+        description: Run a command in the foreground even though it looks like a server or watcher. Only when you are sure it exits on its own.
+  - name: shell_jobs
+    readOnly: true
+    description: List the background processes started with shell_exec background=true in this app session — PID, command, cwd, log path, running or exited.
+    parameters: {}
+  - name: shell_stop
+    description: Stop a background process started with shell_exec background=true — the whole process tree, SIGTERM then SIGKILL. Pass pid, or all=true to stop every job started this session (do this before finishing a task that started a dev server to verify a change).
+    parameters:
+      pid:
+        type: number
+        required: false
+        description: PID from shell_exec background / shell_jobs
+      all:
+        type: boolean
+        required: false
+        description: Stop every background job started this session
 danger_patterns:
   - pattern: 'rm\s+(-rf|--recursive)'
     level: destructive
@@ -168,14 +187,14 @@ confirm_patterns:
 
 ## Interface
 
-- Tool: `shell_exec`
+- Tools: `shell_exec` (run), `shell_jobs` (list background jobs), `shell_stop` (stop one or all).
 - Method: runs commands via the host's preferred shell, detected once at startup:
   - **Unix:** `/bin/sh -c`
   - **Windows:** PowerShell 7+ (`pwsh`) if installed, else Windows PowerShell 5.1 (`powershell.exe`), else `cmd.exe`. Check the `<device>` block in your system prompt to see which one is active — it's reported as `shell:`.
 - Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
 - Elevation: `sudo` and `doas` commands are **fully supported**. The plugin detects them, pops a native OS password dialog (macOS: system dialog via osascript, Linux: zenity or kdialog), and injects the `-A` flag so no TTY is needed. On macOS and Linux the password is captured **once per app run** and held in memory, so every later privileged command is silent (Linux needs a GUI password tool — zenity/kdialog/ssh-askpass — and otherwise falls back to sudo's ~5-minute timestamp cache); Windows has no sudo. Either way the user sees one prompt, not one per command.
 - stdin: set to `/dev/null` (EOF) so commands that unexpectedly wait for input fail fast instead of hanging.
-- Returns combined stdout+stderr; truncated past ~100 KB
+- Returns combined stdout+stderr in arrival order, ANSI codes stripped, `NO_COLOR=1`/`PAGER=cat` set. Output keeps the LAST 2000 lines / 50 KB; when cut, the full text is saved under `<workspace>/tool-output/` and the result names the file.
 
 ## Writing commands for the active shell
 

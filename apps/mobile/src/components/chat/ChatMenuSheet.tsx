@@ -9,7 +9,8 @@ import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-na
 import {
   ContextMeterCard,
   ModeAndThinkingControls,
-  PermissionsSwitch
+  PermissionsSwitch,
+  PlanModeControl
 } from '@/components/chat/ChatControls'
 import { ModelSwitch } from '@/components/chat/ModelSwitch'
 
@@ -194,6 +195,9 @@ export function ChatControlsPanel({
       <ModelSwitch />
       <PermissionsSwitch />
       <ModeAndThinkingControls />
+      {/* The conversation's own stance — a fresh chat's until its first send
+          creates one. Hidden when no desktop can run the turn. */}
+      <PlanModeControl conversationId={conversation?.id ?? null} />
       {showProject && <ProjectChips conversation={conversation} onPicked={onProjectPicked} />}
       <ContextMeterCard conversation={conversation} />
     </ScrollView>

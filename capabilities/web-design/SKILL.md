@@ -15,6 +15,7 @@ triggers:
   - one-pager
 tools:
   - name: web_design
+    readOnly: true
     description: "Load the full web design manual into context. Call this BEFORE writing the HTML for any web page or site a person will open in a browser — guides, handbooks, field manuals, info sites, reports-as-pages, one-pagers. Returns the complete system — treatment calibration, section-map planning, the rail-and-column architecture, dual light/dark theme tokens, type voices, the component kit, SVG figure rules, the JS-as-enhancement doctrine, RTL/Arabic, and the mandatory screenshot verify loop. Skip only when the user or an automation prompt fully specifies the design (explicit instructions always win over the manual)."
     parameters:
       page:

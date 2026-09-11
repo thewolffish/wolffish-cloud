@@ -69,6 +69,8 @@ export type RunAgentTurn = (args: {
   signal: AbortSignal
   model: WorkflowModelChoice | null
   effort?: WorkflowEffort
+  /** Refuse every mutating tool call for this agent's run (explore agent). */
+  readOnly?: boolean
   onToolCall: () => void
   onLlmCall: (provider: ProviderId, model: string, usage: AgentUsageDelta) => void
   /**
@@ -86,6 +88,12 @@ export type SpawnAgentArgs = {
   model?: WorkflowModelChoice | null
   effort?: WorkflowEffort
   phase?: string
+  /**
+   * Read-only explore agent: every mutating tool call is refused for its
+   * whole run, so it can be pointed at a codebase or a folder to answer
+   * questions without any risk of changing it. Same gate as plan mode.
+   */
+  readOnly?: boolean
 }
 
 /** How many agents may execute at the same time; excess spawns queue. */
@@ -111,6 +119,7 @@ type AgentRecord = {
   history: ChatMessage[]
   result: WorkflowAgentResult | null
   effort?: WorkflowEffort
+  readOnly?: boolean
   modelChoice: WorkflowModelChoice | null
   startedAt: number
   endedAt?: number
@@ -357,6 +366,7 @@ export class WorkflowSession {
       signal: rec.abort.signal,
       model: rec.modelChoice,
       effort: rec.effort,
+      readOnly: rec.readOnly,
       onToolCall: () => {
         rec.toolCalls += 1
         this.emitUsage()
@@ -441,6 +451,7 @@ export class WorkflowSession {
       history: [{ role: 'user', content: args.task }],
       result: null,
       effort: args.effort,
+      readOnly: args.readOnly === true,
       modelChoice: choice,
       startedAt: Date.now(),
       llmCalls: 0,

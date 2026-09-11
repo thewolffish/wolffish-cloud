@@ -321,6 +321,9 @@ export function truncateSuperseded(messages: ChatMessage[]): ChatMessage[] {
 
   // Latest successful page-state read per (tool, session).
   const latestPageState = new Map<string, number>()
+  // Latest successful file read per (path, window): a re-read of the same
+  // window after an edit provably supersedes the earlier copy.
+  const latestFileRead = new Map<string, number>()
   // Latest image-bearing tool result — immune to all stubbing.
   let latestImagesIdx = -1
   for (let i = 0; i < messages.length; i++) {
@@ -328,6 +331,10 @@ export function truncateSuperseded(messages: ChatMessage[]): ChatMessage[] {
     if (m.role !== 'tool') continue
     if (!m.isError && PAGE_STATE_TOOLS.has(m.toolName)) {
       latestPageState.set(pageStateKey(m.toolName, m.toolUseId, argsById), i)
+    }
+    if (!m.isError && m.toolName === FILE_READ_TOOL) {
+      const key = fileReadKey(m.toolUseId, argsById)
+      if (key) latestFileRead.set(key, i)
     }
     if (m.images && m.images.length > 0) latestImagesIdx = i
   }
@@ -349,6 +356,18 @@ export function truncateSuperseded(messages: ChatMessage[]): ChatMessage[] {
       latestPageState.get(pageStateKey(m.toolName, m.toolUseId, argsById)) !== i
     ) {
       next = { ...m, content: supersededStub(m.toolName, m.content.length), images: undefined }
+    }
+
+    if (
+      next === m &&
+      !m.isError &&
+      m.toolName === FILE_READ_TOOL &&
+      m.content.length >= MIN_STUB_CHARS
+    ) {
+      const key = fileReadKey(m.toolUseId, argsById)
+      if (key && latestFileRead.get(key) !== i) {
+        next = { ...m, content: supersededReadStub(key, m.content.length), images: undefined }
+      }
     }
 
     // Dedup only among results that are still full — a stubbed earlier
@@ -382,6 +401,38 @@ function pageStateKey(
   const args = argsById.get(toolUseId)
   const session = typeof args?.session_id === 'string' ? args.session_id : ''
   return `${toolName} ${session}`
+}
+
+const FILE_READ_TOOL = 'file_read'
+
+/** `path|offset|limit` for a file_read call; null when the args are not a read. */
+function fileReadKey(
+  toolUseId: string,
+  argsById: Map<string, Record<string, unknown>>
+): string | null {
+  const args = argsById.get(toolUseId)
+  if (!args || typeof args.path !== 'string') return null
+  const offset =
+    typeof args.offset === 'number'
+      ? args.offset
+      : typeof args.startLine === 'number'
+        ? args.startLine
+        : 1
+  const limit =
+    typeof args.limit === 'number'
+      ? args.limit
+      : typeof args.endLine === 'number'
+        ? args.endLine - offset + 1
+        : 'default'
+  return `${args.path}|${offset}|${limit}`
+}
+
+function supersededReadStub(key: string, chars: number): string {
+  const file = key.split('|')[0]
+  return (
+    `[superseded file read — this file_read of ${file} (${chars.toLocaleString()} chars) was replaced by a ` +
+    `newer read of the same window later in this conversation; that copy is current.]`
+  )
 }
 
 function supersededStub(tool: string, chars: number): string {

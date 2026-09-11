@@ -1,5 +1,11 @@
 import type { Segment } from '@preload/index'
-import { WORKFLOW_TOOL_NAMES, type WorkflowSnapshot } from '@main/runtime/broca'
+import {
+  WORKFLOW_TOOL_NAMES,
+  latestTodoLists,
+  todoListId,
+  type TodoItem,
+  type WorkflowSnapshot
+} from '@main/runtime/broca'
 import { MARKDOWN_SANITIZE_SCHEMA } from '@lib/markdown/sanitize'
 import type { ChatMessage } from '@providers/flow/useFlow'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -217,6 +223,25 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">workflow · ${escapeHtml(snapshot.status)}</span></div>${snapshot.note ? `<div class="wf-note" dir="auto">${escapeHtml(snapshot.note)}</div>` : ''}${phases}${table}</div>`
 }
 
+/** The todo checklist as a static block — mirrors TodoCard, always printed. */
+function todoBlock(items: TodoItem[]): string {
+  const mark: Record<TodoItem['status'], string> = {
+    completed: '☑',
+    in_progress: '◐',
+    pending: '☐',
+    cancelled: '⊘'
+  }
+  const done = items.filter((i) => i.status === 'completed').length
+  const total = items.filter((i) => i.status !== 'cancelled').length
+  const rows = items
+    .map(
+      (i) =>
+        `<div class="wf-note" dir="auto">${mark[i.status]} ${escapeHtml(i.content)}${i.priority === 'high' && i.status !== 'completed' ? ' (high)' : ''}</div>`
+    )
+    .join('')
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">tasks · ${done}/${total}</span></div>${rows}</div>`
+}
+
 /**
  * Walk one assistant message's segments in feed order and emit its printed
  * parts. Mirrors renderSegments' rules: master text buffers and flushes at
@@ -226,6 +251,7 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
  */
 function assistantParts(
   segments: Segment[],
+  todoLists: Map<string, TodoItem[]>,
   verbose: boolean,
   statusLabels: Record<ToolStatus, string>
 ): string[] {
@@ -247,6 +273,12 @@ function assistantParts(
     if (seg.kind === 'text') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
       textBuffer += seg.delta
+    } else if (seg.kind === 'todo') {
+      // One block per list, at the turn that created it, in its latest state
+      // — the feed's rule (Chat.tsx renderSegments), mirrored.
+      if (todoListId(seg) !== seg.turnId) continue
+      flushText()
+      parts.push(todoBlock(todoLists.get(seg.turnId) ?? seg.items))
     } else if (seg.kind === 'workflow') {
       flushText()
       parts.push(workflowBlock(seg.snapshot))
@@ -281,10 +313,13 @@ function assistantParts(
  */
 export function hasExportableContent(messages: ChatMessage[], verbose: boolean): boolean {
   const noLabels: Record<ToolStatus, string> = { running: '', success: '', failed: '', denied: '' }
+  const todoLists = latestTodoLists(
+    messages.map((m) => (m.role === 'assistant' ? m.segments : undefined))
+  )
   return messages.some((m) =>
     m.role === 'user'
       ? m.content.trim().length > 0 || (m.attachments?.length ?? 0) > 0
-      : assistantParts(m.segments, verbose, noLabels).length > 0
+      : assistantParts(m.segments, todoLists, verbose, noLabels).length > 0
   )
 }
 
@@ -400,6 +435,9 @@ const STYLE = `
 
 export function buildChatPdfHtml(options: ChatPdfOptions): string {
   const sections: string[] = []
+  const todoLists = latestTodoLists(
+    options.messages.map((m) => (m.role === 'assistant' ? m.segments : undefined))
+  )
   for (const message of options.messages) {
     if (message.role === 'user') {
       const text = message.content.trim()
@@ -418,7 +456,12 @@ export function buildChatPdfHtml(options: ChatPdfOptions): string {
       )
       continue
     }
-    const parts = assistantParts(message.segments, options.verbose, options.toolStatusLabels)
+    const parts = assistantParts(
+      message.segments,
+      todoLists,
+      options.verbose,
+      options.toolStatusLabels
+    )
     if (parts.length === 0) continue
     sections.push(
       `<section class="msg assistant"><div class="role">${escapeHtml(options.assistantLabel)}</div>` +

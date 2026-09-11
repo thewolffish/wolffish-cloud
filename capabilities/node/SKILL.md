@@ -74,6 +74,7 @@ triggers:
 requires: []
 tools:
   - name: node_check
+    readOnly: true
     description: Check if a usable Node.js (24+) is available
     parameters: {}
   - name: node_install

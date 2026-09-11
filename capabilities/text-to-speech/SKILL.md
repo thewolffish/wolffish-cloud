@@ -91,9 +91,11 @@ tools:
         required: false
         description: "Speech rate multiplier between 0.5 and 1.5 (default 1.0). Omit to use the user's configured default."
   - name: voice_list
+    readOnly: true
     description: List all voice memo files in the workspace voice directory with their timestamps and sizes.
     parameters: {}
   - name: voice_settings_get
+    readOnly: true
     description: "Read the user's Text-to-Speech settings — default voice, default speed, whether voice replies are on, and whether the Kokoro engine is installed — plus the full list of selectable voices and speeds. Call this before changing a setting or answering a question about one."
     parameters: {}
   - name: voice_settings_set

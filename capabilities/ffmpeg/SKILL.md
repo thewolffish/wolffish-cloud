@@ -102,6 +102,7 @@ triggers:
 requires: []
 tools:
   - name: ffmpeg_check
+    readOnly: true
     description: Check if ffmpeg is installed
     parameters: {}
   - name: ffmpeg_install

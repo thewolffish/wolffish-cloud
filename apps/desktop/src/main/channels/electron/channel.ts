@@ -9,7 +9,7 @@ import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import { mintMessageId, type ConversationMessage } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import { appendTextSegment, upsertWorkflowSegment } from '@main/runtime/broca'
+import { appendTextSegment, upsertTodoSegment, upsertWorkflowSegment } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -154,6 +154,7 @@ export class ElectronChannel {
       thinkingMode?: string
       modeOverride?: 'single' | 'workflow'
       projectId?: string | null
+      planMode?: boolean
     }
   ): { turnId: string; ok: true } {
     const conversationId = payload.conversationId ?? null
@@ -212,6 +213,7 @@ export class ElectronChannel {
       projectId: payload.projectId,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,
+      planMode: payload.planMode === true,
       makeSink: ({ turnId, conversationId: cid }) =>
         this.createSink(turnId, cid, sender, userMessage, acc, checkpoint)
     })
@@ -428,6 +430,7 @@ export class ElectronChannel {
         if (!conversationId || (!this.mirrorListener && !checkpoint)) return
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
+        else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)

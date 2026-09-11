@@ -1,6 +1,6 @@
 import { CodeBlock } from '@components/core/CodeBlock'
 import { cn } from '@lib/utils/cn'
-import type { RiskLevel } from '@preload/index'
+import type { ApprovalDecision, RiskLevel } from '@preload/index'
 import type { ApprovalCardState } from '@providers/flow/useFlow'
 import { getApprovalPhrases, localizeApprovalPhrase } from './localizeApproval'
 import { useTranslation } from 'react-i18next'
@@ -23,6 +23,7 @@ function titleCase(toolName: string): string {
 function detectCommandLanguage(tool: string, args: Record<string, unknown>): string | undefined {
   if (typeof args.command === 'string') return 'bash'
   if (typeof args.find === 'string' && typeof args.replace === 'string') return 'diff'
+  if (typeof args.old === 'string' && typeof args.new === 'string') return 'diff'
   if (tool.includes('shell') || tool.includes('bash') || tool.includes('exec')) return 'bash'
   return undefined
 }
@@ -54,7 +55,7 @@ export function ApprovalCard({
   onDecision
 }: {
   state: ApprovalCardState
-  onDecision: (decision: 'approved' | 'denied') => void
+  onDecision: (decision: ApprovalDecision) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const decided = state.decision !== undefined
@@ -118,22 +119,40 @@ export function ApprovalCard({
         <p
           className={cn(
             'text-xs font-medium',
-            state.decision === 'approved'
+            state.decision !== 'denied'
               ? 'text-emerald-600 dark:text-emerald-400'
               : 'text-red-600 dark:text-red-400'
           )}
         >
-          {state.decision === 'approved' ? t('chat.approval.approved') : t('chat.approval.denied')}
+          {state.decision === 'approved_session'
+            ? t('chat.approval.approvedSession')
+            : state.decision === 'approved'
+              ? t('chat.approval.approved')
+              : t('chat.approval.denied')}
         </p>
       ) : (
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => onDecision('approved')}
-            className="bg-primary text-primary-fg cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium hover:brightness-110"
-          >
-            {t('chat.approval.approve')}
-          </button>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onDecision('approved')}
+              className="bg-primary text-primary-fg cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium hover:brightness-110"
+            >
+              {t('chat.approval.approve')}
+            </button>
+            {/* "Allow for this conversation": approves now and auto-approves
+                the same kind of call (same tool; for the shell, the same
+                command head such as `git push` or `npm install`) for the
+                rest of this conversation. Never offered for block-level
+                calls, which never reach this card. */}
+            <button
+              type="button"
+              onClick={() => onDecision('approved_session')}
+              className="bg-surface text-fg border-border hover:bg-bg cursor-pointer rounded-md border px-3 py-1.5 text-xs font-medium"
+            >
+              {t('chat.approval.approveSession')}
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => onDecision('denied')}

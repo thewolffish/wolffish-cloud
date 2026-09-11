@@ -33,9 +33,9 @@
   "settings": {
     "title": "Settings",
     "verbose": {
-      "label": "Verbose task results",
-      "description": "Show every tool call and step.",
-      "channelDescription": "Relay every tool call and step to the chat. Off sends only agent replies and files."
+      "label": "Show all tool activity",
+      "description": "On adds every tool call and its result to the chat, plus the model chip. Off shows only what always appears: replies, delivered files, questions and approvals, and reasoning.",
+      "channelDescription": "On relays every tool call and its result to the chat. Off sends only the agent's replies and the files it delivers."
     },
     "tabs": {
       "model": "Model",
@@ -97,10 +97,7 @@
       "notifications": "Phone notifications",
       "notificationsDescription": "Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.",
       "taskResults": "Task results",
-      "taskResultsDescription": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
-      "runCards": "Run cards",
-      "runCardsDesktopDescription": "Show a live card over the desktop app while one of your automations or procedures runs. Off (the default) keeps that screen quiet — the run still happens and still reports on its own page.",
-      "runCardsPhoneDescription": "Show a live card on this phone while one of your automations or procedures runs on the desktop. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
+      "taskResultsDescription": "Off keeps the phone's feed clean: replies, delivered files, questions and approvals, reasoning, and errors. On relays every tool call and its result. Connection logging is always on and is not affected by this.",
       "enabled": "Enabled",
       "reasoning": "Show reasoning",
       "reasoningDescription": "Show the model's thinking as a collapsible card in the chat, here and on the desktop. Off (the default) hides it — the model still thinks, and the reasoning is still saved with the conversation."
@@ -173,12 +170,6 @@
       "weeklyTitle": "Weekly consolidation",
       "weeklyDay": "Day",
       "weeklyHour": "Hour",
-      "cards": {
-        "title": "Run cards",
-        "description": "Show a live card — over the chat on the desktop, and over whatever screen this phone is on — while one of these runs. Off (the default) hides the card only; both still run on the schedules above.",
-        "compaction": "Compaction",
-        "reflection": "Reflection"
-      },
       "lastRun": {
         "dailyTitle": "Last daily run",
         "weeklyTitle": "Last weekly run",
@@ -852,6 +843,16 @@
         "success": "Done",
         "failed": "Failed",
         "denied": "Denied"
+      },
+      "exit": "exit {{code}}",
+      "savedTo": "Full output saved to",
+      "label": {
+        "edit": "Edit",
+        "write": "Write",
+        "read": "Read",
+        "search": "Search",
+        "find": "Find files",
+        "run": "Run"
       }
     },
     "questionCard": {
@@ -957,6 +958,17 @@
       "queued": "Voice message",
       "play": "Play",
       "pause": "Pause"
+    },
+    "planMode": {
+      "label": "Plan",
+      "onTitle": "Plan mode is on: this turn only investigates and writes a plan. Tap to allow changes.",
+      "offTitle": "Plan first: read-only turns that write a plan you approve before anything changes.",
+      "offline": "Connect the desktop to change plan mode."
+    },
+    "todoCard": {
+      "title": "Tasks",
+      "progress": "{{done}}/{{total}} done",
+      "high": "high"
     }
   },
   "history": {
@@ -1274,26 +1286,11 @@
       "localTime": "Times are 24-hour, in your computer’s local time zone.",
       "chipsTip": "The chips above the schedule field fill in a correct schedule for you — then just adjust the time."
     },
-    "overlay": {
-      "compactionDaily": "Curate today's episodes into the long-term knowledge files — merge, dedupe, and update.",
-      "compactionWeekly": "Consolidate the past week's episodes into a digest.",
-      "reflection": "Review settled conversations — wins, failures — and fold the lessons into the playbook.",
-      "deepClean": "Deep reflection: challenge the playbook and knowledge files — merge duplicates, prune stale or contradicted entries."
-    },
     "attachAfterSave": "Save the schedule and prompt first — files and folders attach to a saved automation."
   },
   "overlays": {
-    "kind": {
-      "automation": "Automation",
-      "compaction": "Compaction",
-      "reflection": "Reflection",
-      "procedure": "Procedure",
-      "reindex": "Rebuilding memory index"
-    },
-    "openHint": "Opens the full prompt",
-    "noPrompt": "No prompt",
-    "queuedCount": "{{count}} queued",
-    "moreActive": "+{{count}} more running",
+    "reindexTitle": "Rebuilding memory index",
+    "openHint": "Opens the details",
     "startedAt": "Started at {{time}}",
     "reindexBody": "Wolffish is rebuilding its memory search index from scratch. Nothing is lost — every file is being read back in.",
     "runsOnDesktop": "This is running on your desktop. Closing this doesn't stop it."

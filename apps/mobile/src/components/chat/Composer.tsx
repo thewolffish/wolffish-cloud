@@ -1,11 +1,12 @@
 import {
-  ArrowExpandIcon,
   ArrowUp02Icon,
   Delete02Icon,
+  Edit02Icon,
   Image02Icon,
   Mic01Icon,
   PreferenceVerticalIcon,
   StopCircleIcon,
+  Task01Icon,
   Tick02Icon
 } from '@/components/core/icons'
 import { INPUT_TEXT_ALIGN, WRITING_DIRECTION, rtlPlaceholder } from '@/components/core/Input'
@@ -36,7 +37,9 @@ import { QueuedPromptTray, type QueuedPrompt } from '@/components/chat/QueuedPro
 import { RainbowBorder } from '@/components/chat/RainbowBorder'
 import { DEFAULT_PROJECT_ICON, ProjectDialog } from '@/components/workspace/ProjectDialog'
 import { useActiveProject, useProjectsWritable } from '@/lib/sync/projects'
-import { useChatRuntime } from '@/state/chatRuntime'
+import { setPlanModeSynced } from '@/lib/sync/planMode'
+import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
+import { selectPlanMode, useChatRuntime } from '@/state/chatRuntime'
 
 /**
  * The chat composer — the desktop's composer card mapped to touch: ONE
@@ -125,6 +128,14 @@ export function Composer({
   // — the provider is already there as a mark, and the desktop's chip makes
   // the same trade. The untouched id stays on the accessibility label below.
   const chipModelName = brainModel ? shortModelName(brainModel) : activeModelName
+
+  // Plan mode is switched in the chat controls (the bottom row has no room for
+  // it); while it is ON a chip sits at the end of the row ABOVE the controls,
+  // so the stance is never invisible from the chat, and one tap turns it off.
+  // Gone entirely when no desktop can run the turn — the switch is too.
+  const planMode = useChatRuntime(selectPlanMode(conversation?.id ?? null))
+  const desktopReachable = useDesktopReachable()
+  const showPlanChip = planMode && desktopReachable && !recording
 
   // A file on its own is a message, exactly as it is on the desktop — the
   // prompt is optional once something is attached.
@@ -351,6 +362,24 @@ export function Composer({
             </View>
           )}
 
+          {showPlanChip && (
+            <View className="flex-row items-center justify-end px-1.5 pb-1">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: true }}
+                accessibilityLabel={t('chat.planMode.onTitle')}
+                hitSlop={6}
+                onPress={() => void setPlanModeSynced(conversation?.id ?? null, false)}
+                className="bg-primary-soft border-primary-line active:bg-primary-line h-6 flex-row items-center gap-1 rounded-full border px-2"
+              >
+                <Task01Icon size={12} className="text-primary" />
+                <Text className="text-primary font-sans-medium text-[11px]">
+                  {t('chat.planMode.label')}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
           {/* The bottom row inside the card — the desktop's grammar with what
             this screen already has. Start: the controls button (faders — or
             the PROJECT button in project mode: the project's own emoji,
@@ -413,8 +442,14 @@ export function Composer({
               <View className="flex-1" />
               {!recording && (
                 <>
-                  {/* Expand — opens the full-screen draft editor, like the
-                    desktop textarea's expand button. */}
+                  {/* Opens the full-screen draft editor. It wears the same
+                    pencil the desktop's composer button does, not the
+                    four-arrow expand mark: the arrows belong to the file and
+                    chart viewers, where the act really is "make this bigger",
+                    while this control's own label is "Write your message".
+                    Sized 16 like attach and mic beside it — the pencil is a
+                    lighter mark than the arrows were, so at 13 it read
+                    undersized next to them. */}
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={t('chat.editor.title')}
@@ -422,7 +457,7 @@ export function Composer({
                     onPress={() => setEditorOpen(true)}
                     className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
                   >
-                    <ArrowExpandIcon size={13} className="text-muted" />
+                    <Edit02Icon size={16} className="text-muted" />
                   </Pressable>
                   {/* Attach sits with the other message actions, next to
                     send, not with the session controls, so a file can be

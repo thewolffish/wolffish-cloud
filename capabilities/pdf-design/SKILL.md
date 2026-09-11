@@ -12,6 +12,7 @@ triggers:
   - styled document
 tools:
   - name: pdf_design
+    readOnly: true
     description: "Load the full document design manual into context. Call this BEFORE writing the HTML for any PDF or styled document a person will read — reports, briefs, proposals, guides, summaries, one-pagers. Returns the complete system — pipeline, page architecture, type scale, color rules, the component kit, chart rules, RTL/Arabic, density planning, and the mandatory render-verify loop. Skip only when the user or an automation prompt fully specifies the design (explicit instructions always win over the manual)."
     parameters:
       document:

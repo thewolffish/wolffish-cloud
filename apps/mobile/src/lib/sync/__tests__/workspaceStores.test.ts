@@ -228,16 +228,7 @@ describe('automations', () => {
   it('folds a run-pool push in without a fetch', () => {
     queryClient.setQueryData(automationKeys.snapshot, served('a'))
     applyRunsPush({
-      running: [
-        {
-          id: 'j',
-          label: 'Daily (09:00)',
-          body: 'Summarise the day',
-          kind: 'automation',
-          startedAt: 1_000,
-          mode: null
-        }
-      ],
+      running: [{ id: 'j', label: 'Daily (09:00)', kind: 'automation' }],
       queued: []
     })
     const snapshot = queryClient.getQueryData(automationKeys.snapshot) as {

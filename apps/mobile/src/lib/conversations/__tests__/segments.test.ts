@@ -1,5 +1,8 @@
 import {
+  CODE_ACTIVITY_TOOLS,
   buildRenderBlocks,
+  latestTodoLists,
+  todoListId,
   coalesceTextSegments,
   failedTurnEnd,
   messageFilePaths,
@@ -727,5 +730,159 @@ describe('in-place reasoning', () => {
         s.kind === 'text' || s.kind === 'reasoning' ? `${s.kind}:${s.delta}` : s.kind
       )
     ).toEqual(['reasoning:ab', 'text:cd', 'reasoning:e'])
+  })
+})
+
+describe('code activity: result meta and the task list', () => {
+  const edit = (meta?: Record<string, unknown>): Segment[] => [
+    {
+      kind: 'tool_call',
+      turnId: 't1',
+      segmentId: 'c1',
+      toolCallId: 'call1',
+      name: 'file_edit',
+      args: { path: '/repo/src/a.ts' }
+    },
+    {
+      kind: 'tool_result',
+      turnId: 't1',
+      segmentId: 'r1',
+      toolCallId: 'call1',
+      status: 'success',
+      output: 'edited',
+      ...(meta ? { meta } : {})
+    } as Segment
+  ]
+
+  it('carries the diff, exit code and duration onto the tool block', () => {
+    const meta = {
+      diff: { path: '/repo/src/a.ts', patch: '@@ -1 +1 @@\n-a\n+b', additions: 1, deletions: 1 },
+      exitCode: 0,
+      durationMs: 42,
+      label: 'Edit'
+    }
+    const blocks = buildRenderBlocks(message(edit(meta)))
+    expect(blocks[0]).toMatchObject({ type: 'tool', result: { status: 'success', meta } })
+  })
+
+  it('leaves meta off a result that has none', () => {
+    const blocks = buildRenderBlocks(message(edit()))
+    const block = blocks[0]
+    expect(block.type).toBe('tool')
+    if (block.type === 'tool') expect(block.result).not.toHaveProperty('meta')
+  })
+
+  it('folds every todo write of a turn into one card, in its latest state', () => {
+    const blocks = buildRenderBlocks(
+      message([
+        textSeg('Starting.', 's1'),
+        {
+          kind: 'todo',
+          turnId: 't1',
+          segmentId: 'd1',
+          items: [{ content: 'a', status: 'pending' }]
+        },
+        textSeg('Working.', 's2'),
+        {
+          kind: 'todo',
+          turnId: 't1',
+          segmentId: 'd2',
+          items: [
+            { content: 'a', status: 'completed' },
+            { content: 'b', status: 'in_progress' }
+          ]
+        }
+      ])
+    )
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'todo', 'text'])
+    expect(blocks[1]).toEqual({
+      type: 'todo',
+      key: 'td:t1',
+      items: [
+        { content: 'a', status: 'completed' },
+        { content: 'b', status: 'in_progress' }
+      ]
+    })
+  })
+
+  it('keeps one card per turn across turns', () => {
+    const blocks = buildRenderBlocks(
+      message([
+        {
+          kind: 'todo',
+          turnId: 't1',
+          segmentId: 'd1',
+          items: [{ content: 'a', status: 'pending' }]
+        },
+        { kind: 'separator', turnId: 't1', segmentId: 'sep' },
+        {
+          kind: 'todo',
+          turnId: 't2',
+          segmentId: 'd2',
+          items: [{ content: 'b', status: 'pending' }]
+        }
+      ])
+    )
+    expect(blocks.filter((block) => block.type === 'todo').map((block) => block.key)).toEqual([
+      'td:t1',
+      'td:t2'
+    ])
+  })
+
+  it('names the code tools the clean feed keeps', () => {
+    expect([...CODE_ACTIVITY_TOOLS].sort()).toEqual([
+      'file_edit',
+      'file_patch',
+      'file_write',
+      'shell_exec'
+    ])
+  })
+})
+
+describe('a task list continued by a later turn', () => {
+  const open: Segment = {
+    kind: 'todo',
+    turnId: 't1',
+    segmentId: 'd1',
+    items: [
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'in_progress' }
+    ]
+  }
+  const continued: Segment = {
+    kind: 'todo',
+    turnId: 't2',
+    segmentId: 'd2',
+    listId: 't1',
+    items: [
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'completed' }
+    ]
+  }
+  const first = message([textSeg('Working.', 's1'), open])
+  const second = { ...message([textSeg('Done.', 's2'), continued]), id: 'm2' }
+
+  it('names the original list on a continuation', () => {
+    expect(todoListId(open)).toBe('t1')
+    expect(todoListId(continued)).toBe('t1')
+  })
+
+  it('collects the latest state per list across messages', () => {
+    const lists = latestTodoLists([first, second])
+    expect([...lists.keys()]).toEqual(['t1'])
+    expect(lists.get('t1')).toBe(continued.items)
+  })
+
+  it('draws the card once, on the creating turn, in the latest state', () => {
+    const lists = latestTodoLists([first, second])
+    const firstBlocks = buildRenderBlocks(first, { todoLists: lists })
+    expect(firstBlocks.map((b) => b.type)).toEqual(['text', 'todo'])
+    expect(firstBlocks[1]).toEqual({ type: 'todo', key: 'td:t1', items: continued.items })
+    const secondBlocks = buildRenderBlocks(second, { todoLists: lists })
+    expect(secondBlocks.map((b) => b.type)).toEqual(['text'])
+  })
+
+  it('without the map a card shows its own write', () => {
+    expect(buildRenderBlocks(first)[1]).toEqual({ type: 'todo', key: 'td:t1', items: open.items })
   })
 })

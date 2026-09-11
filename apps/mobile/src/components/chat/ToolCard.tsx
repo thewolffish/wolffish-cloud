@@ -1,17 +1,28 @@
 import { ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon } from '@/components/core/icons'
+import { DiffView } from '@/components/chat/DiffView'
 import type { ToolCallInfo, ToolResultInfo } from '@/lib/conversations/segments'
 import type { ToolTiming } from '@/lib/conversations/types'
 import { NEEDS_SELECT_SHEET, openSelectText } from '@/components/chat/SelectTextSheet'
 import { cn } from '@/lib/utils/cn'
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { I18nManager, Pressable, ScrollView, Text, View } from 'react-native'
 
 /**
- * Verbose-feed tool card — the mobile take on the desktop ToolCard: status
- * pill, tool name, headline action, and expandable args/output/error blocks.
- * Long outputs are clamped; unknown tool names render fine (the workspace
- * data contains 150 distinct tools, some with typos — never assume a name).
+ * Tool card — the mobile take on the desktop ToolCard, in its two shapes:
+ *
+ *  - the verbose-feed card: status pill, tool name, headline action, and
+ *    expandable args/output/error blocks, expanded by default;
+ *  - the COMPACT row the clean feed shows for the code tools (edits, writes,
+ *    shell runs): status, a short label, the file or command, a green/red
+ *    +N −M for an edit or the exit code for a run, and the elapsed time —
+ *    collapsed by default, expandable to the red/green diff or the output.
+ *
+ * Everything on the row comes from the tool_result's `meta` (segments.ts
+ * ToolResultInfo.meta) or the call's own args, so a live row and a row
+ * reopened from the stored transcript are the same pixels. Long outputs are
+ * clamped; unknown tool names render fine (the workspace data contains 150
+ * distinct tools, some with typos — never assume a name).
  */
 
 const OUTPUT_CLAMP = 1200
@@ -19,12 +30,52 @@ const OUTPUT_CLAMP = 1200
 /** Best single-line summary of the call, like the desktop "action" headline. */
 function headlineFor(call: ToolCallInfo): string | null {
   const args = call.args
-  const candidates = ['command', 'path', 'file_path', 'url', 'query', 'prompt', 'to', 'title']
+  if (typeof args.command === 'string' && args.command.trim()) return args.command.trim()
+  if (typeof args.pattern === 'string' && args.pattern.trim()) {
+    const where = typeof args.path === 'string' && args.path.trim() ? ` in ${args.path}` : ''
+    return `${args.pattern.trim()}${where}`
+  }
+  const candidates = ['path', 'file_path', 'url', 'query', 'prompt', 'to', 'title']
   for (const key of candidates) {
     const value = args[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return null
+}
+
+function firstLine(text: string): string {
+  const nl = text.indexOf('\n')
+  return nl === -1 ? text : text.slice(0, nl)
+}
+
+/** The label a code tool wears when its result names none — desktop defaultLabel. */
+function labelKeyFor(tool: string): string | null {
+  switch (tool) {
+    case 'file_edit':
+    case 'file_patch':
+      return 'edit'
+    case 'file_write':
+      return 'write'
+    case 'file_read':
+      return 'read'
+    case 'file_grep':
+      return 'search'
+    case 'file_glob':
+      return 'find'
+    case 'shell_exec':
+      return 'run'
+    default:
+      return null
+  }
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const totalSeconds = ms / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = Math.floor(totalSeconds % 60)
+  return `${minutes}m ${seconds}s`
 }
 
 function statusTone(status: ToolResultInfo['status'] | 'running'): {
@@ -87,22 +138,49 @@ export type ToolCardProps = {
   call: ToolCallInfo
   result?: ToolResultInfo
   timing?: ToolTiming
+  /**
+   * The clean-feed shape: one collapsed row (label, path or command, +N −M or
+   * exit code) that expands to the diff or output. Verbose cards leave it off.
+   */
+  compact?: boolean
 }
 
 export const ToolCard = memo(function ToolCard({
   call,
   result,
-  timing
+  timing,
+  compact = false
 }: ToolCardProps): React.JSX.Element {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  // Verbose cards open expanded; compact rows start folded. Only the user's
+  // tap changes it afterwards — never a status transition.
+  const [expanded, setExpanded] = useState(!compact)
   const status = result?.status ?? 'running'
+  const running = status === 'running'
   const tone = statusTone(status)
+  const meta = result?.meta
   const headline = headlineFor(call)
-  const elapsed =
-    timing?.endedAt && timing.startedAt
-      ? `${((timing.endedAt - timing.startedAt) / 1000).toFixed(1)}s`
+  const hasDiff = !!meta?.diff?.patch
+  const hasArgs = Object.keys(call.args).length > 0
+  const canExpand = hasArgs || !!result?.output || !!result?.error || hasDiff
+
+  // A live tick keeps the elapsed counter moving while the tool runs; once the
+  // result lands, timing.endedAt freezes it. A reopened conversation has no
+  // live timing, so the tool's own measured duration fills the same slot.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!timing || timing.endedAt !== undefined) return
+    const id = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(id)
+  }, [timing])
+  const elapsedMs = timing
+    ? (timing.endedAt ?? now) - timing.startedAt
+    : typeof meta?.durationMs === 'number'
+      ? meta.durationMs
       : null
+
+  const labelKey = labelKeyFor(call.name)
+  const label = meta?.label ?? (labelKey ? t(`chat.toolCard.label.${labelKey}`) : null)
   const statusLabel = t(`chat.toolCard.status.${status === 'success' ? 'success' : status}`)
   // Collapsed chevron points into the reading direction.
   const Chevron = expanded
@@ -112,38 +190,97 @@ export const ToolCard = memo(function ToolCard({
       : ArrowRight01Icon
 
   return (
-    <View className="bg-surface border-border w-full max-w-full flex-col gap-2 self-start rounded-xl border px-3 py-2.5">
+    <View
+      className={cn(
+        'bg-surface border-border w-full max-w-full flex-col gap-2 self-start rounded-xl border',
+        compact ? 'px-2.5 py-2' : 'px-3 py-2.5'
+      )}
+    >
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded }}
+        accessibilityState={{ expanded, disabled: !canExpand }}
+        disabled={!canExpand}
         onPress={() => setExpanded((value) => !value)}
         className="flex-row items-center gap-2"
       >
-        <View className={cn('rounded-full px-2 py-0.5', tone.container)}>
+        <View
+          className={cn('rounded-full px-2 py-0.5', tone.container, running && 'animate-pulse')}
+        >
           <Text className={cn('font-sans-medium text-[10px]', tone.text)}>{statusLabel}</Text>
         </View>
-        <Text numberOfLines={1} className="text-fg font-sans-medium flex-1 text-left text-xs">
-          {call.name}
+        {compact && label ? (
+          <Text numberOfLines={1} className="text-fg font-sans-medium shrink-0 text-xs">
+            {label}
+          </Text>
+        ) : null}
+        <Text
+          numberOfLines={1}
+          className={cn(
+            'flex-1 text-left text-xs',
+            compact && headline ? 'text-muted font-mono' : 'text-fg font-sans-medium'
+          )}
+          style={compact && headline ? { writingDirection: 'ltr' } : undefined}
+        >
+          {compact && headline ? firstLine(headline) : call.name}
         </Text>
-        {elapsed && <Text className="text-muted font-sans text-[10px]">{elapsed}</Text>}
-        <Chevron size={14} className="text-muted" />
+        {meta?.diff ? (
+          <Text className="font-sans text-[11px]" style={{ writingDirection: 'ltr' }}>
+            <Text className="text-emerald-600 dark:text-emerald-400">+{meta.diff.additions}</Text>
+            <Text className="text-muted"> </Text>
+            <Text className="text-red-600 dark:text-red-400">−{meta.diff.deletions}</Text>
+          </Text>
+        ) : null}
+        {typeof meta?.exitCode === 'number' ? (
+          <View
+            className={cn(
+              'rounded-full px-1.5 py-0.5',
+              meta.exitCode === 0 ? 'bg-emerald-500/15' : 'bg-red-500/15'
+            )}
+          >
+            <Text
+              className={cn(
+                'font-sans text-[10px]',
+                meta.exitCode === 0
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-red-600 dark:text-red-400'
+              )}
+              style={{ writingDirection: 'ltr' }}
+            >
+              {t('chat.toolCard.exit', { code: meta.exitCode })}
+            </Text>
+          </View>
+        ) : null}
+        {elapsedMs !== null ? (
+          <Text className="text-muted font-sans text-[10px]" style={{ writingDirection: 'ltr' }}>
+            {formatElapsed(Math.max(0, elapsedMs))}
+          </Text>
+        ) : null}
+        {canExpand ? <Chevron size={14} className="text-muted" /> : null}
       </Pressable>
-      {headline && <CodeBlockText text={headline} />}
+      {/* The verbose card always shows its headline; the compact row folds it
+          into the title and shows the full text (a multi-line command) only
+          once opened. */}
+      {headline && (!compact || expanded) ? <CodeBlockText text={headline} /> : null}
       {expanded && (
         <View className="flex-col gap-2">
-          {Object.keys(call.args).length > 0 && (
+          {hasDiff && meta?.diff ? <DiffView patch={meta.diff.patch} /> : null}
+          {!compact && hasArgs && !hasDiff ? (
             <View className="flex-col gap-1">
               <Text className="text-muted font-sans-medium text-left text-[10px]">
                 {t('chat.toolCard.args')}
               </Text>
               <CodeBlockText text={JSON.stringify(call.args, null, 2)} />
             </View>
-          )}
-          {result?.output ? (
+          ) : null}
+          {/* On failure the error block carries the full raw original, so the
+              output block stays out — the two would be near-identical. */}
+          {result?.output && !result.error ? (
             <View className="flex-col gap-1">
-              <Text className="text-muted font-sans-medium text-left text-[10px]">
-                {t('chat.toolCard.output')}
-              </Text>
+              {!compact ? (
+                <Text className="text-muted font-sans-medium text-left text-[10px]">
+                  {t('chat.toolCard.output')}
+                </Text>
+              ) : null}
               <CodeBlockText text={result.output} />
             </View>
           ) : null}
@@ -154,6 +291,15 @@ export const ToolCard = memo(function ToolCard({
               </Text>
               <CodeBlockText text={result.error} error />
             </View>
+          ) : null}
+          {meta?.outputPath ? (
+            <Text
+              numberOfLines={1}
+              className="text-muted text-left font-sans text-[10px]"
+              style={{ writingDirection: 'ltr' }}
+            >
+              {t('chat.toolCard.savedTo')} {meta.outputPath}
+            </Text>
           ) : null}
         </View>
       )}

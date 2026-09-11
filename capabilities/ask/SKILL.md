@@ -21,6 +21,7 @@ triggers:
   - multiple choice
 tools:
   - name: ask_user
+    readOnly: true
     description: Pose one or more multiple-choice questions to the user and wait for their answers. Renders a single interactive card in the chat (numbered tabs when asking several questions); the user answers each question by clicking an option or writing their own instructions, then your loop resumes with all their choices. Quizzes and knowledge checks MUST run through this tool — one item per quiz question, then grade from the returned answers; never print a quiz as chat text with answers hidden below.
     parameters:
       questions:

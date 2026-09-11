@@ -29,9 +29,11 @@ triggers:
   - the work folder
 tools:
   - name: project_list
+    readOnly: true
     description: List every project — number, icon, title, file count, last-edited time. Use before viewing, editing, or deleting one so you reference it by the correct number, title, or id.
     parameters: {}
   - name: project_view
+    readOnly: true
     description: Show one project in full — icon, title, complete instructions, and its file list with per-file existence and size. Identify it by the number from project_list, its exact title, or its id.
     parameters:
       identifier:

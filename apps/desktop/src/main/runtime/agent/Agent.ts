@@ -1,5 +1,6 @@
 import {
   createConversation,
+  loadConversation,
   mintMessageId,
   saveConversation,
   type ConversationChannel,
@@ -10,6 +11,8 @@ import { titleFromMessage } from '@main/conversation-titler'
 import { diskWriter } from '@main/io/diskWriter'
 import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import os from 'node:os'
+import path from 'node:path'
 import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
 import {
   armContentFreeReplyNotice,
@@ -37,10 +40,24 @@ import {
   type Segment,
   type SegmentSink,
   type SegmentTurnEndReason,
-  type ToolResultStatus
+  type TodoItem,
+  type ToolResultMeta,
+  type ToolResultStatus,
+  openTodoList,
+  type OpenTodoList
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
+import type { StepResult } from '@main/runtime/motor'
 import { buildProjectOverlay, projectWorkingFolders } from '@main/projects'
+import {
+  anyCodeFolder,
+  buildInstructionsOverlay,
+  describeWorkingFolders,
+  findNestedInstructionFile,
+  formatNestedInstructionReminder,
+  readInstructionFile,
+  type FolderFacts
+} from '@main/runtime/workdir'
 import { buildAttachedFilesOverlay } from '@main/uploads/owned-copies'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
@@ -110,7 +127,7 @@ import {
 } from '@main/runtime/thalamus'
 import { Usage, calculateCost } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
-import { Wernicke } from '@main/runtime/wernicke'
+import { Wernicke, type ToolCall } from '@main/runtime/wernicke'
 import { processAttachments, type MessageAttachmentInput } from '@main/uploads/file-processor'
 import { isInternalToolCall, readConfig } from '@main/workspace/workspace'
 
@@ -163,8 +180,12 @@ const SMALL_WINDOW_BOOTSTRAP_TOOLS: ReadonlySet<string> = new Set([
   'wolffish_recall',
   'ask_user',
   'file_read',
+  'file_edit',
   'file_write',
+  'file_grep',
+  'file_glob',
   'shell_exec',
+  'todo_write',
   'send_file',
   'web_search'
 ])
@@ -215,6 +236,19 @@ export type AgentTurnOptions = {
    */
   conversationId?: string | null
   conversationTitle?: string | null
+  /**
+   * Plan mode: the user wants a plan, not execution. The turn is read-only
+   * (every mutating tool call is refused — see isReadOnlyCall) except for
+   * the plan file the Agent names in the tail; the tail also carries the
+   * plan-mode workflow, and the first non-plan turn after one gets a
+   * one-time "you may execute now" note pointing at the plan.
+   */
+  planMode?: boolean
+  /**
+   * Read-only run without a plan file — a workflow explore agent. Same
+   * gate as plan mode, no plan-file exception, an agent-specific note.
+   */
+  readOnly?: boolean
   /**
    * Project this conversation runs inside. Its instructions + file list
    * (never file content — model-led) overlay the system prompt each turn.
@@ -430,8 +464,7 @@ export class Agent {
   // same chat:turnState broadcast in index.ts. 'started' rides it too now: the
   // conversation is created and saved BEFORE the run begins (like every other
   // conversation), so there IS a row to pulse mid-run, and the rail/chat show
-  // it processing exactly like a channel turn. The Heartbeat page's run cards
-  // keep their own live log on top of that.
+  // it processing exactly like a channel turn.
   private autonomousLifecycle: ((ev: TurnLifecycleEvent) => void) | null = null
 
   // Live-mirror sink for autonomous runs, pointed at the same
@@ -457,11 +490,23 @@ export class Agent {
   // master-only), even though it executes inside the master's async context.
   private mode: 'single' | 'workflow' = 'single'
   private workflowCtx = new AsyncLocalStorage<WorkflowSession | null>()
+  /**
+   * Nested instruction files (a package's own AGENTS.md / CLAUDE.md below
+   * the working folder) already attached to a conversation, so each one
+   * rides a read result exactly once. Keyed by conversation id (turn id for
+   * conversation-less runs); in-memory only — after a restart a file may
+   * attach once more, which is harmless.
+   */
+  private attachedInstructionFiles = new Map<string, Set<string>>()
+  /** Whether a conversation's PREVIOUS turn ran in plan mode (for the switch note). */
+  private lastPlanTurn = new Map<string, boolean>()
+  private readonly workspaceRoot: string
 
   constructor(options: AgentOptions) {
     this.thalamus = options.thalamus
 
     const workspaceRoot = options.workspaceRoot
+    this.workspaceRoot = workspaceRoot
     this.corpus = new Corpus({ workspaceRoot })
     this.thalamus.setCorpus(this.corpus)
 
@@ -734,6 +779,7 @@ export class Agent {
         // model's provider default. The user's Brain reasoning setting drives
         // only the master turn, never the agents.
         thinkingMode: args.effort,
+        readOnly: args.readOnly === true,
         onUsage: (provider, model, usage) => args.onLlmCall(provider, model, usage),
         // Surface this subagent's no-progress escalation up to the workflow so
         // the master can be woken from agents_await to manage it.
@@ -852,6 +898,39 @@ export class Agent {
     )
   }
 
+  /**
+   * OpenCode's lazy nested-instruction rule: the first time a turn reads a
+   * file under a subdirectory that carries its own AGENTS.md / CLAUDE.md
+   * (below the working folder, whose file is already pinned), that file
+   * rides the read result as a system-reminder. Returns '' when there is
+   * nothing new to attach.
+   */
+  private async nestedInstructionReminder(
+    rawPath: string,
+    folders: string[],
+    key: string
+  ): Promise<string> {
+    if (folders.length === 0) return ''
+    const expanded = rawPath.startsWith('~/')
+      ? path.join(os.homedir(), rawPath.slice(2))
+      : rawPath === '~'
+        ? os.homedir()
+        : rawPath
+    const abs = path.isAbsolute(expanded) ? expanded : path.resolve(folders[0], expanded)
+    const file = await findNestedInstructionFile(abs, folders).catch(() => null)
+    if (!file) return ''
+    let attached = this.attachedInstructionFiles.get(key)
+    if (!attached) {
+      attached = new Set()
+      this.attachedInstructionFiles.set(key, attached)
+    }
+    if (attached.has(file)) return ''
+    const content = await readInstructionFile(file)
+    if (!content || !content.trim()) return ''
+    attached.add(file)
+    return formatNestedInstructionReminder(file, content)
+  }
+
   private async runRespond(
     turn: AgentTurnOptions,
     workflow: WorkflowSession | null,
@@ -961,6 +1040,20 @@ export class Agent {
     // turn (or may have — see the UNCONFIRMED note at the call site). One tail
     // transition per turn, like deliveredThisTurn.
     let notifiedThisTurn = false
+    // The task list this turn continues: the conversation's latest todo list
+    // when it still has unfinished items (a turn interrupted mid-work leaves
+    // one behind). Model-led — the model is told about it every iteration
+    // until it writes, and its todo_write then carries the ORIGINAL list id
+    // so the earlier card resolves in place instead of a second checklist
+    // appearing. `fresh: true` on the write starts a new list instead.
+    const inheritedTodo =
+      turn.role !== 'agent' && turn.conversationId
+        ? await loadConversation(turn.conversationId)
+            .then((conv) => (conv ? openTodoList(conv.messages.map((m) => m.segments)) : null))
+            .catch(() => null)
+        : null
+    let todoListId: string | null = inheritedTodo?.listId ?? null
+    let todoWrittenThisTurn = false
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -1014,8 +1107,78 @@ export class Agent {
         ...(await projectWorkingFolders(turn.projectId ?? null).catch(() => []))
       ])
     ]
-    const workingFoldersBlock =
-      turnWorkingFolders.length > 0 ? await renderWorkingFolders(turnWorkingFolders) : ''
+    // The folders become the turn's working directory contract: the shell's
+    // default cwd and the file tools' relative-path base (plugins read them
+    // through PluginContext.getWorkingFolders). Entered on the turn's async
+    // context, so every tool call — and every workflow agent spawned inside
+    // this turn — resolves the same folders.
+    this.cerebellum.enterWorkingFolders(turnWorkingFolders)
+    // Live repo facts (branch, dirty count, detected toolchain and check
+    // commands) ride the tail beside the listing — computed once per turn.
+    let folderFacts: FolderFacts[] = []
+    let folderFactsBlock = ''
+    if (turnWorkingFolders.length > 0) {
+      const described = await describeWorkingFolders(turnWorkingFolders).catch(() => null)
+      folderFacts = described?.facts ?? []
+      folderFactsBlock = described?.block ?? ''
+    }
+    // The facts block is refreshed after any iteration that ran a mutating
+    // tool (an edit, a write, a shell command), so the git state the model
+    // reads stays true mid-turn — a "clean" reading from turn start beside a
+    // diff it just made was read as a reverted edit in a benchmark run.
+    let workingFoldersBlock =
+      turnWorkingFolders.length > 0
+        ? [await renderWorkingFolders(turnWorkingFolders), folderFactsBlock]
+            .filter((b) => b.length > 0)
+            .join('\n')
+        : ''
+    let folderFactsStale = false
+    const refreshFolderFacts = async (): Promise<void> => {
+      if (!folderFactsStale || turnWorkingFolders.length === 0) return
+      folderFactsStale = false
+      const described = await describeWorkingFolders(turnWorkingFolders).catch(() => null)
+      if (!described) return
+      folderFacts = described.facts
+      folderFactsBlock = described.block
+      workingFoldersBlock = [await renderWorkingFolders(turnWorkingFolders), folderFactsBlock]
+        .filter((b) => b.length > 0)
+        .join('\n')
+    }
+    // Instruction files (AGENTS.md / CLAUDE.md) found in the working folders
+    // go in the PINNED prompt, not the tail: they change rarely and the
+    // model should read them as standing doctrine. Computed once per turn so
+    // the cached prefix stays byte-stable across iterations.
+    const instructionsOverlay =
+      folderFacts.length > 0 ? await buildInstructionsOverlay(folderFacts).catch(() => '') : ''
+    // The coding doctrine rides the pinned prompt only for code projects —
+    // a non-coding turn never pays for it. Provider-specific addenda key on
+    // the turn's provider (override, else the configured brain).
+    // Read-only turns: plan mode (with its one writable plan file) and
+    // explore agents. The gate itself sits in the tool loop; these blocks
+    // tell the model the rules and ride the volatile tail.
+    const planKey = turn.conversationId ?? turn.turnId
+    const planFileFor = (key: string): string =>
+      path.join(this.workspaceRoot, 'files', 'plans', `${key.replace(/[^a-z0-9_-]/gi, '_')}.md`)
+    const planFile = turn.planMode ? planFileFor(planKey) : null
+    const readOnly = turn.planMode === true || turn.readOnly === true
+    let readOnlyBlock = ''
+    if (turn.planMode) {
+      readOnlyBlock = renderPlanModeBlock(planFile ?? '', turnWorkingFolders.length > 0)
+    } else if (turn.readOnly) {
+      readOnlyBlock = READ_ONLY_AGENT_BLOCK
+    } else if (this.lastPlanTurn.get(planKey)) {
+      readOnlyBlock = renderPlanSwitchBlock(planFileFor(planKey))
+    }
+    if (turn.role !== 'agent') this.lastPlanTurn.set(planKey, turn.planMode === true)
+    let codingOverlay = ''
+    if (anyCodeFolder(folderFacts)) {
+      // The org lane serves one model id; the provider-specific addendum keys
+      // on the vendor that id names (coding.deepseek.md for a DeepSeek model).
+      const model =
+        turn.modelOverride?.model ?? (await readConfig().catch(() => null))?.llm?.model ?? ''
+      const provider = /deepseek/i.test(model) ? 'deepseek' : null
+      codingOverlay = await this.prefrontal.buildCodingOverlay(provider ?? null).catch(() => '')
+    }
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     // Publish the active conversation to the UI/extension ONCE, for real
@@ -1115,6 +1278,8 @@ export class Agent {
           online,
           lastMessage: lastMessageNotice,
           noProgress: noProgressText,
+          openTodo:
+            inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
           controlToken: controlTokenText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText
@@ -1178,6 +1343,8 @@ export class Agent {
         }
         if (projectOverlay) systemPrompt = systemPrompt + projectOverlay
         if (filesOverlay) systemPrompt = systemPrompt + filesOverlay
+        if (instructionsOverlay) systemPrompt = systemPrompt + instructionsOverlay
+        if (codingOverlay) systemPrompt = systemPrompt + codingOverlay
 
         // Context Compaction: if context exceeds the model's input budget,
         // use LLM-generated summaries to reduce size while retaining
@@ -1225,6 +1392,7 @@ export class Agent {
           })
         }
 
+        await refreshFolderFacts()
         const stream = this.thalamus.stream({
           system: systemPrompt,
           messages,
@@ -1260,6 +1428,7 @@ export class Agent {
             // to iteration 2 would drop the one notice this guard exists for.
             (iterationCount > 1 ||
               workingFoldersBlock ||
+              readOnlyBlock ||
               !online ||
               lastMessageNotice ||
               voiceReplyNotice ||
@@ -1273,10 +1442,16 @@ export class Agent {
                   online,
                   lastMessage: lastMessageNotice,
                   noProgress: noProgressText,
+                  openTodo:
+                    inheritedTodo && !todoWrittenThisTurn
+                      ? openTodoNotice(inheritedTodo)
+                      : undefined,
                   controlToken: controlTokenText,
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText
-                }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
+                }) +
+                (workingFoldersBlock ? `\n${workingFoldersBlock}` : '') +
+                (readOnlyBlock ? `\n${readOnlyBlock}` : '')
               : undefined
         })
         const teed = broca.streamSegments(stream)
@@ -1502,6 +1677,36 @@ export class Agent {
         if (parsed.thinking) assistantMsg.reasoningContent = parsed.thinking
         messages.push(assistantMsg)
 
+        // Parallel read batches: when one assistant message carries several
+        // tool calls, the read-only ones (file_read, file_grep, file_glob,
+        // memory_search… — frontmatter `readOnly: true`) START now, bounded,
+        // and are awaited below at their own position in the batch. Mutating
+        // and approval-gated calls keep their sequential slot, so a write
+        // after a read in the same batch still sees the read complete
+        // first. Segment order is untouched: tool_call segments already
+        // streamed in order, and tool_result segments are emitted by the
+        // sequential loop, in order, as each result is awaited.
+        const prestarted = new Map<string, Promise<StepResult>>()
+        if (task && parsed.toolCalls.length > 1) {
+          let inflight = 0
+          for (const call of parsed.toolCalls) {
+            if (inflight >= PARALLEL_READ_LIMIT) break
+            if (!this.cerebellum.isReadOnlyTool(call.name)) continue
+            if (!this.cerebellum.isToolReady(call.name)) continue
+            if (broca.isSilent(call.id)) continue
+            const level = this.amygdala.match(call)?.level ?? 'safe'
+            if (level !== 'safe' && level !== 'warn') continue
+            const taskId = task.id
+            const p = this.motor.executeStep(taskId, call, turn.signal)
+            // Swallow here; the awaiting slot below re-throws through the
+            // same promise and handles it. Without this an early rejection
+            // would surface as an unhandled rejection before its turn.
+            p.catch(() => undefined)
+            prestarted.set(call.id, p)
+            inflight += 1
+          }
+        }
+
         let aborted = false
         for (const call of parsed.toolCalls) {
           if (turn.signal?.aborted) {
@@ -1554,6 +1759,31 @@ export class Agent {
             continue
           }
 
+          // Read-only gate (plan mode / explore agent): a call that would
+          // change state is refused before any safety or execution step,
+          // with the rule spelled out so the model adjusts instead of
+          // retrying. The plan file is the one exception in plan mode.
+          if (readOnly && !prestarted.has(call.id)) {
+            const allowed =
+              (await this.cerebellum.isReadOnlyCall(call.name, call.args).catch(() => false)) ||
+              (planFile !== null && isPlanFileCall(call, planFile, turnWorkingFolders))
+            if (!allowed) {
+              const output = planFile
+                ? `Refused: plan mode is active (read-only). ${call.name} would change something. Investigate with read-only tools, and write the plan itself to ${planFile} — the one file you may create or edit. Ask the user to turn plan mode off when they want it executed.`
+                : `Refused: this run is read-only (explore agent). ${call.name} would change something. Observe with read-only tools and report your findings instead.`
+              messages.push({
+                role: 'tool',
+                toolUseId: call.id,
+                toolName: call.name,
+                content: output,
+                isError: true
+              })
+              broca.emitToolResult(turn.turnId, call.id, 'denied', output, 'read-only turn')
+              turnTools.push({ name: call.name, argsSummary, outcome: 'denied' })
+              continue
+            }
+          }
+
           const silent = broca.isSilent(call.id)
           const match = silent ? null : this.amygdala.match(call)
           const level = match?.level ?? 'safe'
@@ -1604,7 +1834,9 @@ export class Agent {
                 toolCall: call,
                 level,
                 reason: match?.reason ?? 'requires confirmation',
-                description
+                description,
+                // "Allow for this conversation" rules are scoped here.
+                sessionKey: turn.conversationId ?? turn.turnId
               })
               if (decision === 'denied') {
                 const reason = match?.reason ?? 'requires confirmation'
@@ -1640,15 +1872,34 @@ export class Agent {
             })
           }
 
+          // Snapshot the file BEFORE the first mutating file tool touches it
+          // this turn, so changes_revert can put it back (snapshots.ts).
+          if (FILE_MUTATING_TOOLS.has(call.name) && typeof call.args.path === 'string') {
+            const target = resolveToolPath(call.args.path, turnWorkingFolders, this.workspaceRoot)
+            await this.cerebellum.snapshots
+              .capture(turn.conversationId ?? turn.turnId, turn.turnId, target)
+              .catch(() => undefined)
+          }
           let result: {
             ok: boolean
             output: string
             images?: Array<{ mediaType: string; data: string }>
             verbose?: string
+            meta?: Record<string, unknown>
           }
           try {
-            const r = await this.motor.executeStep(task.id, call, turn.signal)
-            result = { ok: r.ok, output: r.output, images: r.images, verbose: r.verbose }
+            // A read-only call the batch pre-started (see prestarted above)
+            // is awaited here, at its own position, so results land in call
+            // order even though execution overlapped.
+            const r = await (prestarted.get(call.id) ??
+              this.motor.executeStep(task.id, call, turn.signal))
+            result = {
+              ok: r.ok,
+              output: r.output,
+              images: r.images,
+              verbose: r.verbose,
+              meta: r.meta
+            }
           } catch (err) {
             if (err instanceof SafetyBlockedError) {
               result = { ok: false, output: `Blocked: ${err.reason}` }
@@ -1657,7 +1908,20 @@ export class Agent {
               result = { ok: false, output: `Tool error: ${message}` }
             }
           }
+          // A read under a subdirectory with its own instruction file attaches
+          // that file once (see nestedInstructionReminder). Appended to the
+          // output BEFORE the segment is emitted so the persisted tool_result
+          // and the model's context stay byte-identical.
+          if (call.name === 'file_read' && result.ok && typeof call.args.path === 'string') {
+            const reminder = await this.nestedInstructionReminder(
+              call.args.path,
+              turnWorkingFolders,
+              turn.conversationId ?? turn.turnId
+            ).catch(() => '')
+            if (reminder) result.output += reminder
+          }
           totalToolCalls += 1
+          if (result.ok && MUTATING_FOLDER_TOOLS.has(call.name)) folderFactsStale = true
 
           const status: ToolResultStatus = result.ok ? 'success' : 'failed'
 
@@ -1682,8 +1946,22 @@ export class Agent {
               // so the user sees it as-is in a scrollable block. `output` keeps
               // the classified message — the only field replayed into model
               // context — so the verbose dump never clouds the conversation.
-              result.ok ? undefined : (result.verbose ?? result.output)
+              result.ok ? undefined : (result.verbose ?? result.output),
+              // UI-only structured facts (a diff, an exit code) — persisted on
+              // the segment so a reopened conversation renders the same card.
+              result.meta as ToolResultMeta | undefined
             )
+          }
+          // The model's task list is a card, not a tool chip: one checklist
+          // per turn, upserted by turnId in its latest state (upsertTodoSegment).
+          if (call.name === 'todo_write' && result.ok) {
+            const items = normalizeTodoItems(call.args.todos)
+            if (items) {
+              const listId = call.args.fresh === true ? turn.turnId : (todoListId ?? turn.turnId)
+              todoListId = listId
+              todoWrittenThisTurn = true
+              broca.emitTodo(turn.turnId, items, listId)
+            }
           }
 
           const outcome = result.ok ? 'success' : 'failed'
@@ -2377,6 +2655,114 @@ function isHostOnline(): boolean {
   } catch {
     return true
   }
+}
+
+/**
+ * Plan mode's standing instructions, generalised from OpenCode's plan-mode
+ * reminder: read-only investigation, one writable plan file, clarify real
+ * ambiguities with the user, end with the plan. Task-neutral — a trip, a
+ * document, a data cleanup and a refactor all plan the same way.
+ */
+function renderPlanModeBlock(planFile: string, hasWorkingFolders: boolean): string {
+  return [
+    '<plan_mode>',
+    'Plan mode is ON for this conversation: the user wants a plan, not execution. You may only OBSERVE — read, search, list, fetch, recall — and write the plan itself.',
+    `The plan file is ${planFile}: file_write / file_edit on that one path are allowed; every other call that changes state (writes, edits, shell commands that mutate, sends, memory writes) is refused. Build the plan incrementally in that file.`,
+    'Workflow: (1) understand the request and the material it touches' +
+      (hasWorkingFolders ? ' — search and read the working folder' : '') +
+      '; in workflow mode, spawn up to 3 read-only explore agents in parallel (agent_spawn with readOnly=true) for open-ended questions, one focus each; in single mode, search yourself. (2) ask_user about real ambiguities up front — never "is this plan okay?". (3) write the plan: the recommended approach only (not every alternative), the files or resources it touches, the steps in order, and a verification section saying how the result will be checked. (4) BEFORE your final reply, file_write the plan to the plan file — a plan-mode turn that ends without the plan file written is incomplete — then end your reply with the plan itself and tell the user to turn plan mode off to execute it.',
+    '</plan_mode>'
+  ].join('\n')
+}
+
+/** The one-time note on the first executing turn after a plan-mode turn. */
+function renderPlanSwitchBlock(planFile: string): string {
+  return [
+    '<plan_mode_switch>',
+    `Plan mode was switched OFF. You may change files, run commands and use every tool again. A plan may exist at ${planFile} — read it and execute it unless the user says otherwise, verifying as you go.`,
+    '</plan_mode_switch>'
+  ].join('\n')
+}
+
+const READ_ONLY_AGENT_BLOCK = [
+  '<read_only_agent>',
+  'This run is read-only: you are an explore agent. Search, read, list, fetch and recall; every call that would change state is refused. Return your findings — with absolute paths and line numbers — as your final message.',
+  '</read_only_agent>'
+].join('\n')
+
+/** A file_write / file_edit aimed at the plan file (the one plan-mode exception). */
+function isPlanFileCall(call: ToolCall, planFile: string, folders: string[]): boolean {
+  if (call.name !== 'file_write' && call.name !== 'file_edit') return false
+  const raw = typeof call.args.path === 'string' ? call.args.path : ''
+  if (!raw) return false
+  const expanded = raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(2)) : raw
+  const abs = path.isAbsolute(expanded)
+    ? expanded
+    : path.resolve(folders[0] ?? path.dirname(planFile), expanded)
+  return path.resolve(abs) === path.resolve(planFile)
+}
+
+/** File tools whose call is preceded by a snapshot of the target (undo). */
+const FILE_MUTATING_TOOLS: ReadonlySet<string> = new Set(['file_edit', 'file_write', 'file_patch'])
+
+/** A file tool's `path` argument resolved the way the filesystem plugin resolves it. */
+function resolveToolPath(raw: string, folders: string[], workspaceRoot: string): string {
+  if (raw === '~') return os.homedir()
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) return path.join(os.homedir(), raw.slice(2))
+  if (path.isAbsolute(raw)) return raw
+  return path.resolve(folders[0] ?? workspaceRoot, raw)
+}
+
+/** Tools whose success can change the working folder's git state. */
+const MUTATING_FOLDER_TOOLS: ReadonlySet<string> = new Set([
+  'file_edit',
+  'file_write',
+  'file_patch',
+  'shell_exec'
+])
+
+/** Read-only tool calls a single batch may run concurrently. */
+const PARALLEL_READ_LIMIT = 8
+
+const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed', 'cancelled'])
+const TODO_PRIORITIES = new Set(['high', 'medium', 'low'])
+
+/**
+ * The todo_write argument, validated into card items. Null when the shape
+ * is not a list — the tool itself already rejected it, so no card.
+ */
+/**
+ * The open-task-list notice: what the user still sees as unfinished on the
+ * earlier card, and the one rule for resolving it. Observe-and-notify — the
+ * model decides whether this turn is that work.
+ */
+function openTodoNotice(open: OpenTodoList): string {
+  const unfinished = open.items.filter((i) => i.status === 'pending' || i.status === 'in_progress')
+  const shown = unfinished
+    .slice(0, 6)
+    .map((i) => `"${i.content}" (${i.status})`)
+    .join(', ')
+  const more = unfinished.length > 6 ? ` and ${unfinished.length - 6} more` : ''
+  return `<open_task_list>Your task list from an earlier turn is still showing ${unfinished.length} of ${open.items.length} items unfinished on the user's screen: ${shown}${more}. If this turn continues or finishes that work, bring the list up to date with todo_write (mark done items completed, abandoned ones cancelled, the current one in_progress) — your write updates that same card in place. If this turn is unrelated work, leave it, or pass fresh: true to start a separate list.</open_task_list>`
+}
+
+function normalizeTodoItems(raw: unknown): TodoItem[] | null {
+  if (!Array.isArray(raw)) return null
+  const items: TodoItem[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as Record<string, unknown>
+    const content = typeof e.content === 'string' ? e.content.trim() : ''
+    if (!content) continue
+    const status =
+      typeof e.status === 'string' && TODO_STATUSES.has(e.status) ? e.status : 'pending'
+    const item: TodoItem = { content, status: status as TodoItem['status'] }
+    if (typeof e.priority === 'string' && TODO_PRIORITIES.has(e.priority)) {
+      item.priority = e.priority as TodoItem['priority']
+    }
+    items.push(item)
+  }
+  return items
 }
 
 /** Entries listed per working folder in the volatile tail. */

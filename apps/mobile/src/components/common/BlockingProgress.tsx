@@ -111,7 +111,7 @@ export function BlockingProgress({
               </Text>
             ) : null}
             {/* Pinned LTR: mm:ss counts up left to right in every locale —
-                the same treatment the run overlays give their clocks. */}
+                the same treatment the reindex overlay gives its clock. */}
             {since ? <Clock since={since} /> : null}
           </View>
         ) : null}
@@ -133,7 +133,7 @@ export function BlockingProgress({
   )
 }
 
-/** How long one halo takes to expand and fade — the run cards' `animate-ping`. */
+/** How long one halo takes to expand and fade — the desktop's `animate-ping`. */
 const PULSE_MS = 1600
 
 /** The disc behind the icon, with a halo pushing out of it forever.

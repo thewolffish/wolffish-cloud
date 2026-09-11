@@ -282,6 +282,7 @@ tools:
         required: false
   # Page Reading
   - name: ext_read_page
+    readOnly: true
     description: Extract page content as text, markdown, or HTML.
     parameters:
       format:
@@ -298,6 +299,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_query_selector
+    readOnly: true
     description: Query DOM elements matching a CSS selector. Returns tag, text, attributes, rect.
     parameters:
       selector:
@@ -316,6 +318,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_get_attribute
+    readOnly: true
     description: Get specific attributes from an element.
     parameters:
       selector:
@@ -329,6 +332,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_get_value
+    readOnly: true
     description: Get the current value of an input/textarea/select element.
     parameters:
       selector:
@@ -339,6 +343,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_get_url
+    readOnly: true
     description: Get the current URL and title of the active tab.
     parameters:
       tabId:
@@ -346,6 +351,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_get_page_info
+    readOnly: true
     description: Get comprehensive page info — URL, title, description, favicon, language, links, headings, forms.
     parameters:
       tabId:
@@ -354,6 +360,7 @@ tools:
         required: false
   # Tab Management
   - name: ext_tabs_list
+    readOnly: true
     description: List all open tabs with id, url, title, active state, and a wolffish flag that is true for tabs in the Wolffish tab group and false for the user's own tabs.
     parameters:
       windowId:
@@ -404,6 +411,7 @@ tools:
         required: false
   # Window Management
   - name: ext_windows_list
+    readOnly: true
     description: List all open browser windows.
     parameters: {}
   - name: ext_window_open
@@ -460,6 +468,7 @@ tools:
         required: false
   # Screenshots & Visual
   - name: ext_screenshot
+    readOnly: true
     description: Take a screenshot of the current page or a specific element. Returns the image inline for your own eyes and saves it to a file whose path is on the result's last line — send_file that path when the moment is worth showing the user.
     parameters:
       format:
@@ -492,6 +501,7 @@ tools:
         required: false
   # Cookies & Storage
   - name: ext_cookies_get
+    readOnly: true
     description: Get cookies for a domain.
     parameters:
       domain:
@@ -543,6 +553,7 @@ tools:
         type: string
         description: Cookie name to remove.
   - name: ext_storage_get
+    readOnly: true
     description: Get data from the page's localStorage or sessionStorage.
     parameters:
       type:
@@ -573,6 +584,7 @@ tools:
         required: false
   # Clipboard
   - name: ext_clipboard_read
+    readOnly: true
     description: Read the clipboard text content.
     parameters: {}
   - name: ext_clipboard_write
@@ -706,6 +718,7 @@ tools:
     description: Detach the debugger from the currently attached tab. No-op if nothing is attached.
     parameters: {}
   - name: ext_debugger_status
+    readOnly: true
     description: Check whether the debugger is currently attached and to which tab.
     parameters: {}
   # Mouse Interaction (coordinate- or selector-based)
@@ -843,6 +856,7 @@ tools:
         description: Target tab.
         required: false
   - name: ext_get_interactive_elements
+    readOnly: true
     description: List visible interactive elements (links, buttons, inputs, [role=button], etc.) with their center coordinates, bounding rect, text label, and key attributes. The map for clicking and moving through a web app — read it, then act by coordinates (ext_mouse_click) or by a selector built from id/name/aria-label.
     parameters:
       selector:

@@ -51,9 +51,11 @@ triggers:
   - drop that
 tools:
   - name: knowledge_list
+    readOnly: true
     description: 'Map every long-term belief file you can edit: what each governs, its size and ceiling, its section headings (the anchors you edit by), and whether it rides in every prompt. Start here when the user corrects you and you are not sure which file holds the belief.'
     parameters: {}
   - name: knowledge_read
+    readOnly: true
     description: Read one long-term file in full, verbatim. Always read before editing — knowledge_edit and knowledge_forget need the entry copied exactly.
     parameters:
       target:

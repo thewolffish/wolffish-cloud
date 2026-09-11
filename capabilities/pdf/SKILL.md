@@ -82,12 +82,14 @@ triggers:
   - tagged pdf
 tools:
   - name: pdf_info
+    readOnly: true
     description: Inspect a PDF before reading it — page count, file size, metadata, outline/bookmarks with page numbers, and sampled text density (detects scanned/image PDFs). Fast on any size. Call this FIRST for documents longer than a few pages, then navigate with pdf_search and pdf_read.
     parameters:
       path:
         type: string
         description: Absolute path to the PDF file
   - name: pdf_read
+    readOnly: true
     description: Extract text from specific pages of a PDF. Reads ONLY the requested pages (lazy extraction with caching — a deep page in a 3,000-page PDF costs milliseconds). Without "pages" it returns just the first 5 pages and says how to continue; results are capped per call and the cap is always reported, never silently truncated. For whole-document questions, work through the document in ranges (e.g. "1-40", then "41-80") or locate content with pdf_search first.
     parameters:
       path:
@@ -98,6 +100,7 @@ tools:
         description: 'Page selection like "12", "1-5", "80-" (to end), or "1-3,10,50-60".'
         required: false
   - name: pdf_search
+    readOnly: true
     description: Search the text of a PDF exhaustively — EVERY page in scope is extracted and scanned, so the reported total match count is authoritative (0 means the text genuinely does not occur). Returns matches with page numbers and snippets plus the distribution across pages. Works on any file size. Use this to locate content in large documents instead of paging through them; then pdf_read the matching pages. The FIRST search on a huge document does a one-time extraction that can take a while (tell the user before starting it); every search after is near-instant from cache.
     parameters:
       path:
@@ -212,6 +215,7 @@ tools:
         required: false
         description: Not used — the tool cannot apply it; give the password to the pypdf/qpdf route instead.
   - name: pdf_render_pages
+    readOnly: true
     description: Render whole PDF pages to PNG/JPEG images. This is how you SHOW someone a figure, chart, algorithm, table, or scanned page — it captures the page exactly as it looks, including figures drawn as vectors (which pdf_extract_images cannot return). Page-scoped and fast on any file size, including a 250MB book. Then send_file the result.
     parameters:
       path:
@@ -235,6 +239,7 @@ tools:
           - jpg
         required: false
   - name: pdf_extract_images
+    readOnly: true
     description: Save the photos and raster figures embedded in specific PDF pages as real PNG/JPEG files. ALWAYS pass "pages" — without it every page in the document is walked, which on a large book means thousands of files and a very long run. Fragments below 80px (glyphs, rules, bullets) are skipped by default. A page reporting no embedded images means its figure is vector art, so nothing can be extracted from it — render that page with pdf_render_pages instead.
     parameters:
       path:

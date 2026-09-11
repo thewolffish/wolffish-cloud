@@ -14,6 +14,7 @@ triggers:
   - pie chart
 tools:
   - name: dataviz
+    readOnly: true
     description: "Load the full data visualization manual into context. Call this BEFORE creating any chart, graph, plot, or data display on any surface — the interactive .chart.json chart card in the app chat, hand-authored SVG charts inside PDF/HTML documents, or table fallbacks on channels. Returns the form-choice heuristic, the fixed validated palette, the chart-card spec, SVG print recipes, and the failure catalog. Skip only when the user fully specifies the chart's design."
     parameters:
       data:

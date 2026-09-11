@@ -42,6 +42,7 @@ tools:
         required: false
         description: Whether the value is a secret (masked in the Settings UI and in list_secrets). Defaults to true; pass false for non-secret config like a base URL.
   - name: list_secrets
+    readOnly: true
     description: List the saved secrets/variables by name with masked values (first and last two characters) and a sensitive flag — enough to know what exists without putting a value into the transcript. Call before asking the user for any key/token/value. The real values are in your <variables> block; get_secret with reveal true returns one on demand.
     parameters: {}
   - name: get_secret

@@ -198,7 +198,9 @@ async function run(): Promise<void> {
     'index collapses remainder to grouped count',
     /…plus \d+ more capabilities \(\d+ tools\)/.test(bigIndex)
   )
-  ok('index stays bounded', bigIndex.split('\n').length <= 63)
+  // 60 listed capabilities, the always-listed in-process core rows
+  // (tool-discovery, todo, changes) and the grouped remainder line.
+  ok('index stays bounded', bigIndex.split('\n').length <= 65)
 
   console.log(`${passed} passed, ${failed} failed`)
   if (failed > 0) process.exit(1)

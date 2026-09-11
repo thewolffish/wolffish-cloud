@@ -28,15 +28,18 @@ triggers:
   - reusable
 tools:
   - name: skill_list
+    readOnly: true
     description: List every skill Wolffish has — name, description, enabled/official status, tool count.
     parameters: {}
   - name: skill_search
+    readOnly: true
     description: Search skills by keyword across name, description, triggers, and tool names.
     parameters:
       query:
         type: string
         description: Keyword(s) to search for, case-insensitive.
   - name: skill_read_source
+    readOnly: true
     description: Read a skill's source (SKILL.md, plugin code, bundled files) to see how it's written before amending it, or to learn from an official skill.
     parameters:
       name:

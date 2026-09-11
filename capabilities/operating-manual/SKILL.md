@@ -9,6 +9,7 @@ triggers:
   - complex task
 tools:
   - name: operating_manual
+    readOnly: true
     description: Load your full working discipline (the operating manual) into context. Call this FIRST on any non-trivial task — debugging, analysis, research, writing/reviewing code, migrations, decisions, anything the user will act on — before memory_search or any other tool. Returns the discipline to work by. Skip only for genuinely trivial turns (greetings, one-line lookups, simple recall).
     parameters:
       task:

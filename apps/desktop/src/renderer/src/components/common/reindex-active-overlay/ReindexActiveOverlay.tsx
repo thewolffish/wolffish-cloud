@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 /**
  * Full-screen blocking overlay shown while the cortex search index is being
  * rebuilt (one-time after an app update). Unlike automation/procedure runs
- * (non-blocking, surfaced via ActiveRunCard), this one really does block:
+ * (non-blocking, and drawing nothing over the app), this one really does block:
  * pulsing icon, started-at + live elapsed timer, an explanatory body, and a
  * "blocked" footer — with a progress bar instead of an activity log.
  *

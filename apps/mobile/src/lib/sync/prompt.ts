@@ -11,7 +11,7 @@ import { attachCardStream, seedTurnCards } from '@/lib/sync/cards'
 import { fetchConversationBody, setConversationSettleHook } from '@/lib/sync/sync'
 import { bridgeClient } from '@/lib/cloud/bridge'
 import { Event, Rpc } from '@/lib/bridge/protocol'
-import { useChatRuntime, type LiveStream } from '@/state/chatRuntime'
+import { planModeFor, useChatRuntime, type LiveStream } from '@/state/chatRuntime'
 import { markRun, useRunStatus } from '@/state/runStatus'
 import type {
   ConversationMessage,
@@ -805,6 +805,10 @@ export async function sendPrompt(input: SendPromptInput): Promise<SendPromptResu
   // Read before the wire is touched, so the value the local stub is written
   // with below is the same one the desktop was asked for.
   const projectId = input.conversationId ? null : projectForNewConversation()
+  // The conversation's plan stance (the fresh chat's for a first message),
+  // read at the send so a toggle flipped while a message sat in the queue
+  // still applies to it — the desktop composer reads its own chip the same way.
+  const planMode = planModeFor(input.conversationId)
 
   // Offline. The desktop holds the models and the workspace, so there is no
   // answer to be had here — but throwing turns a normal situation (a phone in
@@ -828,7 +832,9 @@ export async function sendPrompt(input: SendPromptInput): Promise<SendPromptResu
       voicePrompt: input.voicePrompt === true,
       // Only meaningful for a conversation the desktop is about to create; it
       // ignores the field for one that already exists and has its own binding.
-      ...(projectId ? { projectId } : {})
+      ...(projectId ? { projectId } : {}),
+      // Off is the wire's default; a desktop predating the field ignores it.
+      ...(planMode ? { planMode: true } : {})
     })) as { conversationId?: string }
   } catch (error) {
     // The turn never started. Take the optimistic row down with it rather than
@@ -855,6 +861,9 @@ export async function sendPrompt(input: SendPromptInput): Promise<SendPromptResu
     if (useChatRuntime.getState().pendingProjectId) {
       useChatRuntime.getState().setPendingProject(null)
     }
+    // The plan stance set while this chat had no id follows it under the id
+    // it now has, so the second turn keeps the mode the first ran in.
+    useChatRuntime.getState().adoptPlanMode(conversationId)
   }
   beginTurn(conversationId, user)
   invalidateConversationList()

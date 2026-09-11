@@ -237,14 +237,6 @@ export type DemoConfigValues = {
   /** inapp.verbose — what the DESKTOP feed displays, not this device's. */
   inappVerbose: boolean
   /**
-   * inapp.runCards — whether a running automation OR procedure draws its
-   * floating card on the DESKTOP. Its own copy of the same question is
-   * `mobileRunCards` below; the two are deliberately separate, because a card
-   * worth having on the desk is not automatically one worth having in a
-   * pocket. Both default off.
-   */
-  inappRunCards: boolean
-  /**
    * inapp.reasoning — whether the model's thinking renders as a card. One
    * workspace answer for BOTH surfaces (unlike the run cards above): this
    * phone's feed and the desktop's obey the same key. Off by default, and
@@ -260,13 +252,6 @@ export type DemoConfigValues = {
   /** mobile.verbose — what this phone's feed shows mid-turn: off (default)
    *  is the clean feed, on relays every tool call and activity card. */
   mobileVerbose: boolean
-  /**
-   * mobile.runCards — whether an automation or procedure running on the
-   * desktop draws its card over whatever screen THIS phone is on. Off by
-   * default; the pushes still arrive either way, so nothing but the
-   * interruption changes.
-   */
-  mobileRunCards: boolean
   // --- services (remotely controllable values) ---
   /**
    * Web search is the organization's lane — one key at the API edge, none on
@@ -295,14 +280,6 @@ export type DemoConfigValues = {
   compactionWeeklyHour: number
   reflectionHour: number
   reflectionQuietHours: number
-  /**
-   * compaction.cards / reflection.cards — whether a running compaction or
-   * reflection job draws its floating card. One switch per family, obeyed by
-   * BOTH surfaces (unlike the automation pair above): this is housekeeping
-   * either device can watch, not a per-device taste. Both default off.
-   */
-  compactionCards: boolean
-  reflectionCards: boolean
   // --- customization ---
   /**
    * The three hand-written documents that shape the agent, verbatim — the
@@ -395,11 +372,9 @@ const DEFAULTS: DemoConfigValues = {
   blockCredentials: false,
   weekStartsOn: 1,
   inappVerbose: false,
-  inappRunCards: false,
   inappReasoning: false,
   mobileNotifications: true,
   mobileVerbose: false,
-  mobileRunCards: false,
   braveEnabled: true,
   sttModel: 'large-v3-turbo',
   sttLanguage: 'en',
@@ -419,8 +394,6 @@ const DEFAULTS: DemoConfigValues = {
   reflectionHour: 3,
   reflectionQuietHours: 12,
   // Floating run cards, all off — the desktop's own defaults.
-  compactionCards: false,
-  reflectionCards: false,
   soulMarkdown: DEMO_SOUL_MD,
   userMarkdown: DEMO_USER_MD,
   agentsMarkdown: DEMO_AGENTS_MD,
@@ -518,7 +491,7 @@ export type ConfigSnapshot = {
    *
    * The run pool is deliberately NOT here: a run is something happening right
    * now on a machine this one cannot see, and a bundled one would be a claim
-   * with no evidence behind it (see lib/sync/overlays).
+   * with no evidence behind it.
    */
   automations?: {
     /** heartbeat.md verbatim. */
@@ -574,12 +547,12 @@ export type ConfigSnapshot = {
   }
   channels: {
     /** Absent in bundles published before the in-app feed setting shipped;
-     *  `runCards` is later still and falls back to off. */
-    inapp?: { verbose?: boolean; runCards?: boolean; reasoning?: boolean }
+     */
+    inapp?: { verbose?: boolean; reasoning?: boolean }
     /** This phone's own channel. Absent in bundles (and on desktops) from
      *  before these two settings reached the snapshot; notifications then
      *  falls back to ON and the feed to clean, as the desktop defaults them. */
-    mobile?: { notifications?: boolean; verbose?: boolean; runCards?: boolean }
+    mobile?: { notifications?: boolean; verbose?: boolean }
   }
   /**
    * The org lane: the current model and the two behavior knobs, nothing else.
@@ -1061,8 +1034,6 @@ export const useDemoConfig = create<DemoConfigState>()(
             compactionDailyHour: compaction?.dailyHour ?? DEFAULTS.compactionDailyHour,
             compactionWeeklyDay: compaction?.weeklyDay ?? DEFAULTS.compactionWeeklyDay,
             compactionWeeklyHour: compaction?.weeklyHour ?? DEFAULTS.compactionWeeklyHour,
-            compactionCards: compaction?.cards ?? DEFAULTS.compactionCards,
-            reflectionCards: snapshot.reflection?.cards ?? DEFAULTS.reflectionCards,
             reflectionHour: snapshot.reflection?.hour ?? DEFAULTS.reflectionHour,
             reflectionQuietHours: snapshot.reflection?.quietHours ?? DEFAULTS.reflectionQuietHours,
             compactionRuns: {
@@ -1126,12 +1097,10 @@ export const useDemoConfig = create<DemoConfigState>()(
               ? { thinkingMode: snapshot.llm.thinkingMode as ThinkingLevel }
               : {}),
             inappVerbose: snapshot.channels.inapp?.verbose ?? DEFAULTS.inappVerbose,
-            inappRunCards: snapshot.channels.inapp?.runCards ?? DEFAULTS.inappRunCards,
             inappReasoning: snapshot.channels.inapp?.reasoning ?? DEFAULTS.inappReasoning,
             mobileNotifications:
               snapshot.channels.mobile?.notifications ?? DEFAULTS.mobileNotifications,
             mobileVerbose: snapshot.channels.mobile?.verbose ?? DEFAULTS.mobileVerbose,
-            mobileRunCards: snapshot.channels.mobile?.runCards ?? DEFAULTS.mobileRunCards,
             launchAtStartup: snapshot.preferences.launchAtStartup,
             bypassPermissions: snapshot.preferences.bypassPermissions,
             blockCredentials: snapshot.preferences.blockCredentials,
@@ -1296,9 +1265,6 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   // in force for the next turn, and moves the desktop panel's control too.
   'mobileNotifications',
   'mobileVerbose',
-  // This phone's own floating automation cards, through the same channel
-  // setter — so flipping it here moves the desktop Mobile panel's control too.
-  'mobileRunCards',
   // Services — the editable surface of that screen. Two absences are
   // deliberate on both sides: the extension PORT (moving it restarts the
   // desktop's local pairing server) and web search (`braveEnabled` is the
@@ -1328,9 +1294,6 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   'brainModel',
   // Channels — every editable row.
   'inappVerbose',
-  // The desktop's floating automation cards — that machine's setting, edited
-  // from here exactly as the feed switch above it is.
-  'inappRunCards',
   // The thinking card — the workspace's answer, so flipping it here changes
   // this phone's feed and the desktop's in the same act.
   'inappReasoning',
@@ -1342,10 +1305,7 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   // (lib/sync/reflection); these three are Knowledge's generic-path keys.
   'compactionDailyHour',
   'compactionWeeklyDay',
-  'compactionWeeklyHour',
-  // Compaction's floating run cards. Reflection's twin is NOT here: it rides
-  // the reflection RPC with the rest of that config.
-  'compactionCards'
+  'compactionWeeklyHour'
 ])
 
 /**

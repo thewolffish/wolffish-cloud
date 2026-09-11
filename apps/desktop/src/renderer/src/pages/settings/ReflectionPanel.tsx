@@ -218,28 +218,6 @@ export function ReflectionPanel(): React.JSX.Element {
               {t('settings.knowledge.reflection.quiet.description')}
             </p>
           </div>
-
-          <div className="border-border/60 border-t" />
-
-          {/* The floating card a running reflection (nightly or deep clean)
-              draws over the chat — here and on the paired phone, one switch
-              for both. Off (default) hides the card only: the review still
-              runs, and the last-run cards below still report it. */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.knowledge.reflection.cards.label')}
-              </span>
-              <OnOffToggle
-                value={config.cards === true}
-                disabled={saving}
-                onChange={(value) => void persist({ cards: value })}
-              />
-            </div>
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.knowledge.reflection.cards.description')}
-            </p>
-          </div>
         </section>
 
         {/* Monthly deep reflection (internally `deepClean`) — core like the
@@ -273,53 +251,6 @@ export function ReflectionPanel(): React.JSX.Element {
 }
 
 // ── Small controls ───────────────────────────────────────────────────
-
-function OnOffToggle({
-  value,
-  disabled,
-  onChange
-}: {
-  value: boolean
-  disabled?: boolean
-  onChange: (value: boolean) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const options: Array<{ value: boolean; label: string }> = [
-    { value: true, label: t('settings.knowledge.reflection.on') },
-    { value: false, label: t('settings.knowledge.reflection.off') }
-  ]
-  return (
-    <div
-      role="tablist"
-      className="border-border bg-bg/40 inline-flex shrink-0 items-center self-start rounded-lg border p-0.5"
-    >
-      {options.map((opt) => {
-        const active = opt.value === value
-        return (
-          <button
-            key={String(opt.value)}
-            role="tab"
-            type="button"
-            aria-selected={active}
-            disabled={disabled}
-            onClick={() => onChange(opt.value)}
-            className={cn(
-              'rounded-md px-3 py-1 text-xs font-medium',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              disabled
-                ? 'text-muted/50 cursor-not-allowed'
-                : active
-                  ? 'bg-primary text-primary-fg shadow-sm'
-                  : 'text-muted hover:text-fg cursor-pointer'
-            )}
-          >
-            {opt.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 /**
  * The label never collapses while a run is in flight — `disabled` covers the

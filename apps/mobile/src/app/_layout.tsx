@@ -93,12 +93,12 @@ function AppShell(): React.JSX.Element {
         />
       </Stack>
       <UpdateNotice />
-      {/* What the desktop is busy with, over whatever screen is showing —
-          app-wide because the desktop's own cards are, and because a run the
-          phone did not start is news wherever the user happens to be. Above
+      {/* A memory rebuild on the desktop, over whatever screen is showing —
+          app-wide because it blocks that whole machine, and a desktop that
+          has stopped answering is news wherever the user happens to be. Above
           the screens but below the blocking overlays: a phone that has lost
-          the tunnel has no live runs to report anyway (they are cleared on
-          the drop), so the two never compete for the same space. */}
+          the tunnel has no rebuild to report anyway (it is cleared on the
+          drop), so the two never compete for the same space. */}
       <ActiveOverlays />
       {/* Above every screen: without the tunnel a paired app can only show a
           stale copy and refuse every action. One card for the whole episode —

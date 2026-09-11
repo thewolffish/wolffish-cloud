@@ -36,6 +36,7 @@ triggers:
   - archive file
 tools:
   - name: archive_list
+    readOnly: true
     description: "List what is inside a .zip WITHOUT unpacking it: every entry path, its unpacked size and date, the top-level layout, totals, and which entries are encrypted. Reads only the archive's index, so it is fast on an archive of any size and costs nothing on disk. ALWAYS the first call on an archive you have not seen — you cannot say what a zip contains until you have run this. Supports paging (offset/limit) and a filter, and never truncates silently: the true match count is always reported."
     parameters:
       path:
@@ -54,6 +55,7 @@ tools:
         description: "Row to start from — page through a big archive with offset:100, offset:200, …"
         required: false
   - name: archive_read
+    readOnly: true
     description: "Read one text file straight out of a .zip — no extraction, nothing written to disk. Use this to answer questions about an archive's contents (a README, a config, a source file) instead of unpacking the whole thing. The entry path comes from archive_list; a bare file name resolves if it is unambiguous. Long files page with start_line/end_line and the per-call cap is always reported. Binary entries are not dumped as garbage — you get their size and the tool to open them with after extracting."
     parameters:
       path:

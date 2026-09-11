@@ -59,6 +59,7 @@ type RpcHandler = (params: Record<string, unknown>) => Promise<unknown> | unknow
 type Push = { topic: string; payload: Record<string, unknown> }
 type SinkLike = {
   onSegment: (segment: unknown) => void
+  onTurnEvent: (type: string, payload: unknown) => void
   onDone: () => void
 }
 
@@ -83,16 +84,22 @@ async function run(): Promise<void> {
   // turn segment by segment, exactly as a real turn would. Kept per
   // conversation: several sends run below and each makes its own.
   const sinks = new Map<string, SinkLike>()
+  // Every option the channel hands the runner, per send — the plan-mode
+  // stance the phone stamps on a send has to reach the turn as `planMode`.
+  const sendOpts: Array<{ conversationId: string; planMode?: boolean }> = []
   const channel = new MobileChannel({
     agent: {},
     runner: {
       send: ({
         conversationId,
+        planMode,
         makeSink
       }: {
         conversationId: string
+        planMode?: boolean
         makeSink: (a: { turnId: string; conversationId: string | null }) => SinkLike
       }) => {
+        sendOpts.push({ conversationId, planMode })
         sinks.set(conversationId, makeSink({ turnId: 'turn_1', conversationId: null }))
         return { turnId: 'turn_1', controller: new AbortController() }
       }
@@ -124,6 +131,74 @@ async function run(): Promise<void> {
 
   const created = await loadConversation(sent.conversationId)
   ok('a new conversation is stamped as started on mobile', created?.channel === 'mobile')
+  ok(
+    'a send without the field runs the turn with plan mode off',
+    sendOpts.at(-1)?.planMode === false,
+    JSON.stringify(sendOpts.at(-1))
+  )
+
+  // The phone's chat controls stamp `planMode: true` on a send; the turn must
+  // run read-only. Anything but a literal true stays off — the wire is data.
+  const planned = (await call(Rpc.sendMessage, {
+    conversationId: sent.conversationId,
+    text: 'plan it first',
+    planMode: true
+  })) as { conversationId: string }
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  ok(
+    'planMode: true on the send reaches the runner',
+    sendOpts.at(-1)?.conversationId === planned.conversationId &&
+      sendOpts.at(-1)?.planMode === true,
+    JSON.stringify(sendOpts.at(-1))
+  )
+  await call(Rpc.sendMessage, {
+    conversationId: sent.conversationId,
+    text: 'and a hostile value',
+    planMode: 'yes'
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  ok('a non-boolean planMode is off', sendOpts.at(-1)?.planMode === false)
+
+  // The stance itself is shared: a set from the phone answers with the
+  // applied value, is readable back, and fans out as Event.planMode — the
+  // desktop chip and the phone switch settle on one answer. A send stamps it
+  // too, so the chip follows a phone that flipped it at the send.
+  pushes.length = 0
+  const setOn = (await call(Rpc.planModeSet, {
+    conversationId: sent.conversationId,
+    planMode: true
+  })) as { planMode: boolean }
+  ok('planModeSet answers with the applied stance', setOn.planMode === true)
+  ok(
+    'planModeSet fans out as Event.planMode',
+    pushes.some(
+      (p) =>
+        p.topic === Event.planMode &&
+        p.payload.conversationId === sent.conversationId &&
+        p.payload.planMode === true
+    ),
+    JSON.stringify(pushes.map((p) => p.topic))
+  )
+  const got = (await call(Rpc.planModeGet, { conversationId: sent.conversationId })) as {
+    planMode: boolean
+  }
+  ok('planModeGet reads it back', got.planMode === true)
+  pushes.length = 0
+  await call(Rpc.sendMessage, {
+    conversationId: sent.conversationId,
+    text: 'no plan',
+    planMode: false
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  ok(
+    'a send without the stance turns it off and says so',
+    pushes.some((p) => p.topic === Event.planMode && p.payload.planMode === false) &&
+      (
+        (await call(Rpc.planModeGet, { conversationId: sent.conversationId })) as {
+          planMode: boolean
+        }
+      ).planMode === false
+  )
   ok(
     "the prompt is saved under the phone's own id",
     created?.messages[0]?.id === PHONE_MESSAGE_ID,
@@ -215,12 +290,63 @@ async function run(): Promise<void> {
   )
 
   // -------------------------------------------------------------- the turn ends
+  // The usage events the runner relays into every sink. The renderer folds
+  // these into the context-meter `stats` for its own turns; a turn started on
+  // the phone has no renderer, so the channel must fold them itself or the
+  // app reopens the conversation with a blank meter.
+  turn.onTurnEvent('context.built', {
+    tokenCount: 1200,
+    tokenBudget: 200000,
+    compactionAt: 150000,
+    sectionsIncluded: []
+  })
+  turn.onTurnEvent('llm.response', {
+    provider: 'anthropic',
+    model: 'claude-test',
+    role: 'brain',
+    inputTokens: 1000,
+    outputTokens: 50,
+    cacheCreationTokens: 200,
+    cacheReadTokens: 300,
+    durationMs: 800
+  })
+  turn.onTurnEvent('turn.usage', {
+    provider: 'anthropic',
+    model: 'claude-test',
+    role: 'brain',
+    iterations: 1,
+    toolCalls: 2,
+    inputTokens: 1000,
+    outputTokens: 50,
+    cacheCreationTokens: 200,
+    cacheReadTokens: 300,
+    cacheHitRate: 0.2,
+    cost: 0.0123
+  })
   pushes.length = 0
   turn.onDone()
   await new Promise((resolve) => setTimeout(resolve, 100))
   const saved = await loadConversation(sent.conversationId)
   const assistant = saved?.messages.find((m) => m.role === 'assistant')
   ok('the reply is persisted', assistant !== undefined)
+  ok('the context-meter stats are persisted with the reply', saved?.stats != null)
+  ok(
+    'the meter reads the last brain call (in + cacheRead + cacheWrite)',
+    saved?.stats?.meter?.contextTokens === 1500 &&
+      saved?.stats?.meter?.contextBudget === 200000 &&
+      saved?.stats?.meter?.compactionAt === 150000 &&
+      saved?.stats?.meter?.model === 'claude-test',
+    JSON.stringify(saved?.stats?.meter)
+  )
+  ok(
+    'last-turn + all-time roll-ups are folded',
+    saved?.stats?.lastTurn?.apiCalls === 1 &&
+      saved?.stats?.lastTurn?.toolCalls === 2 &&
+      saved?.stats?.lastTurn?.cost === 0.0123 &&
+      saved?.stats?.allTime.turns === 1 &&
+      saved?.stats?.allTime.inputTokens === 1000,
+    JSON.stringify(saved?.stats)
+  )
   ok(
     'the saved message carries the id the phone was shown all turn',
     assistant?.id === MIRROR_ID,

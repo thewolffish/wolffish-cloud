@@ -15,6 +15,7 @@ triggers:
   - external tools
 tools:
   - name: mcp_list
+    readOnly: true
     description: List every configured MCP server — its name, whether it's a local command (stdio) or a remote URL, its live status (connected, connecting, needs sign-in, offline, disabled), and how many tools it currently exposes. Call this first so you can reference a server by name or number for the other tools.
     parameters: {}
   - name: mcp_add

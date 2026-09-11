@@ -1,4 +1,5 @@
 import { is } from '@electron-toolkit/utils'
+import { cleanupToolOutput } from '@main/runtime/tool-output'
 import { diskWriter } from '@main/io/diskWriter'
 import { importOutsideProjectFiles } from '@main/projects'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
@@ -28,12 +29,6 @@ export type SafetyConfig = {
  * model/provider chip plus every tool call/result/activity card. Display-only
  * — never affects history persistence.
  *
- * `runCards` gates the floating run card an AUTOMATION draws over this
- * app while it runs (the compaction and reflection families have their own
- * switches, in their own panels). False is the default and the whole point:
- * the runs still happen, are still logged, and still reach the automations
- * screen — the card simply does not float over the chat.
- *
  * `reasoning` gates the collapsible thinking card. False (default) hides the
  * model's reasoning on BOTH surfaces — like `verbose`, the preference belongs
  * to the workspace rather than to the device rendering it, and it is
@@ -42,7 +37,6 @@ export type SafetyConfig = {
  */
 export type InAppConfig = {
   verbose?: boolean
-  runCards?: boolean
   reasoning?: boolean
 }
 
@@ -58,17 +52,10 @@ export type InAppConfig = {
  * replies, file-bearing results, errors), true relays every tool call and
  * activity card. Display-only — it never affects what is stored, and never
  * affects connection logging, which is unconditional.
- *
- * `runCards` is the phone's own copy of the in-app switch: whether an
- * AUTOMATION run draws a card over whatever screen the phone is on. Separate
- * from `inapp.runCards` because the two devices are looked at
- * differently — a card worth having on the desk is not automatically one worth
- * having in a pocket. Default off, like the desktop's.
  */
 export type MobileChannelConfig = {
   notifications?: boolean
   verbose?: boolean
-  runCards?: boolean
   /**
    * Power-user tunnel relay override (Settings → Mobile). Lives HERE — not
    * in the device-local pairing file — because it is user-authored
@@ -152,13 +139,6 @@ export type CompactionConfig = {
   weeklyDay: number
   /** Hour of day (0-23) for weekly consolidation. Defaults to 23. */
   weeklyHour: number
-  /**
-   * Whether a running compaction job draws its floating card — over the chat
-   * here, over whatever screen the phone is on there. One switch for both
-   * surfaces: this is housekeeping either device can see, not a per-device
-   * taste. Defaults to false; the jobs run either way.
-   */
-  cards: boolean
 }
 
 export type ReflectionConfig = {
@@ -174,13 +154,6 @@ export type ReflectionConfig = {
    * hours — a conversation still warm may not be done yet. Defaults to 12.
    */
   quietHours: number
-  /**
-   * Whether a running reflection job (nightly review or monthly deep clean)
-   * draws its floating card on either surface — the compaction switch's twin,
-   * and off for the same reason. The review runs regardless; this is only
-   * whether it announces itself over the chat.
-   */
-  cards: boolean
 }
 
 export type WorkspaceConfig = {
@@ -683,14 +656,24 @@ async function pruneRetiredConfigKeys(): Promise<void> {
     }
   }
   if (changed) await writeConfig(config)
+  // Spilled tool outputs (tool-output/*.log — the full text of a truncated
+  // shell run or file read) are a seven-day scratch buffer, not memory:
+  // the conversation keeps the bounded preview and the path. Idempotent.
+  await cleanupToolOutput(WORKSPACE_ROOT).catch(() => undefined)
 }
 
 async function migrateAgentsCore(): Promise<void> {
-  const bundled = path.join(defaultsWorkspacePath(), 'brain', 'prefrontal', 'agents.core.md')
-  if (!existsSync(bundled)) return
-  const target = path.join(WORKSPACE_ROOT, 'brain', 'prefrontal', 'agents.core.md')
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.copyFile(bundled, target)
+  // App-managed prefrontal files: the core contract plus the coding overlay
+  // and its provider-specific addenda. All overwritten on every launch so
+  // prompt improvements ship with an upgrade; user customizations belong in
+  // agents.md, which is never touched.
+  for (const name of ['agents.core.md', 'coding.md', 'coding.deepseek.md']) {
+    const bundled = path.join(defaultsWorkspacePath(), 'brain', 'prefrontal', name)
+    if (!existsSync(bundled)) continue
+    const target = path.join(WORKSPACE_ROOT, 'brain', 'prefrontal', name)
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.copyFile(bundled, target)
+  }
 }
 
 /**
@@ -813,15 +796,15 @@ export async function setWeekStartsOn(value: WeekStartsOn): Promise<WorkspaceCon
 export const DEFAULT_COMPACTION: CompactionConfig = {
   dailyHour: 23,
   weeklyDay: 0,
-  weeklyHour: 23,
-  cards: false
+  weeklyHour: 23
 }
 
 export async function getCompactionConfig(): Promise<CompactionConfig> {
   const cfg = await readConfig()
-  // Merged over the defaults rather than returned raw: `cards` shipped after
-  // the schedule did, so a config written before it has no such field and
-  // must read as "no card" instead of undefined.
+  // Merged over the defaults rather than returned raw, so a config section
+  // written before a field shipped still reads as that field's default. The
+  // retired `cards` switch may still sit in older files; it is carried along
+  // harmlessly and never read.
   return { ...DEFAULT_COMPACTION, ...(cfg?.compaction ?? {}) }
 }
 
@@ -836,23 +819,21 @@ export async function setCompactionConfig(
 
 export const DEFAULT_REFLECTION: ReflectionConfig = {
   hour: 3,
-  quietHours: 12,
-  cards: false
+  quietHours: 12
 }
 
 /**
  * Merge a possibly-partial stored value over the defaults. Constructed
  * field-by-field so retired keys in an older stored config (e.g. the removed
- * `enabled` switch, or the retired turn-scoring `scoring` map) are dropped
- * rather than carried forward.
+ * `enabled` switch, the retired turn-scoring `scoring` map, or the retired
+ * `cards` switch) are dropped rather than carried forward.
  */
 export function normalizeReflectionConfig(
   raw: Partial<ReflectionConfig> | undefined | null
 ): ReflectionConfig {
   return {
     hour: raw?.hour ?? DEFAULT_REFLECTION.hour,
-    quietHours: raw?.quietHours ?? DEFAULT_REFLECTION.quietHours,
-    cards: raw?.cards ?? DEFAULT_REFLECTION.cards
+    quietHours: raw?.quietHours ?? DEFAULT_REFLECTION.quietHours
   }
 }
 
@@ -924,14 +905,13 @@ export async function setVariables(variables: Variable[]): Promise<WorkspaceConf
 
 const EMPTY_INAPP_CONFIG: InAppConfig = {
   verbose: false,
-  runCards: false,
   reasoning: false
 }
 
 export async function getInAppConfig(): Promise<InAppConfig> {
   const config = await readConfig()
-  // Merged, not returned raw: a config written before `runCards`
-  // shipped has no such field, and undefined must read as off.
+  // Merged, not returned raw: a config written before `reasoning` shipped has
+  // no such field, and undefined must read as the default.
   return { ...EMPTY_INAPP_CONFIG, ...(config?.inapp ?? {}) }
 }
 
@@ -940,7 +920,6 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
     const current = c.inapp ?? EMPTY_INAPP_CONFIG
     const next: InAppConfig = {
       verbose: patch.verbose ?? current.verbose,
-      runCards: patch.runCards ?? current.runCards ?? false,
       reasoning: patch.reasoning ?? current.reasoning ?? false
     }
     return { ...c, inapp: next }
@@ -949,8 +928,7 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
 
 const EMPTY_MOBILE_CONFIG: MobileChannelConfig = {
   notifications: true,
-  verbose: false,
-  runCards: false
+  verbose: false
 }
 
 export async function getMobileChannelConfig(): Promise<MobileChannelConfig> {
@@ -966,7 +944,6 @@ export async function setMobileChannelConfig(
     const next: MobileChannelConfig = {
       notifications: patch.notifications ?? current.notifications,
       verbose: patch.verbose ?? current.verbose,
-      runCards: patch.runCards ?? current.runCards,
       // Not a preference this setter owns — carried through so a prefs
       // save can never strip the synced relay override.
       ...(current.relayUrl ? { relayUrl: current.relayUrl } : {})

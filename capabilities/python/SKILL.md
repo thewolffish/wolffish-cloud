@@ -26,6 +26,7 @@ triggers:
   - install python
 tools:
   - name: python_check
+    readOnly: true
     description: Check whether the managed Python runtime (uv + CPython) is installed and ready.
     parameters: {}
   - name: python_install

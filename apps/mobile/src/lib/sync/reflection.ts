@@ -26,22 +26,18 @@ import { refreshConfigSnapshot, useDemoConfig, type DemoConfigValues } from '@/s
 export type ReflectionPatch = {
   hour?: number
   quietHours?: number
-  /** Whether a running reflection draws its floating card, on both surfaces. */
-  cards?: boolean
 }
 
 /** The desktop's answer: its complete post-write reflection config. */
 type ReflectionAnswer = {
   hour?: unknown
   quietHours?: unknown
-  cards?: unknown
 }
 
 /** Every flat store key a reflection answer settles. */
 const REFLECTION_KEYS: ReadonlyArray<keyof DemoConfigValues> = [
   'reflectionHour',
-  'reflectionQuietHours',
-  'reflectionCards'
+  'reflectionQuietHours'
 ]
 
 /** The flat store keys one patch touches — what to mark dirty for it. */
@@ -49,7 +45,6 @@ function patchKeys(patch: ReflectionPatch): Array<keyof DemoConfigValues> {
   const keys: Array<keyof DemoConfigValues> = []
   if (patch.hour !== undefined) keys.push('reflectionHour')
   if (patch.quietHours !== undefined) keys.push('reflectionQuietHours')
-  if (patch.cards !== undefined) keys.push('reflectionCards')
   return keys
 }
 
@@ -58,8 +53,7 @@ function mergePatch(base: ReflectionPatch, next: ReflectionPatch): ReflectionPat
   return {
     ...base,
     ...(next.hour !== undefined ? { hour: next.hour } : {}),
-    ...(next.quietHours !== undefined ? { quietHours: next.quietHours } : {}),
-    ...(next.cards !== undefined ? { cards: next.cards } : {})
+    ...(next.quietHours !== undefined ? { quietHours: next.quietHours } : {})
   }
 }
 
@@ -68,7 +62,6 @@ function applyAnswer(answer: ReflectionAnswer): void {
   const { setValue } = useDemoConfig.getState()
   if (typeof answer.hour === 'number') setValue('reflectionHour', answer.hour)
   if (typeof answer.quietHours === 'number') setValue('reflectionQuietHours', answer.quietHours)
-  if (typeof answer.cards === 'boolean') setValue('reflectionCards', answer.cards)
 }
 
 let pending: ReflectionPatch | null = null

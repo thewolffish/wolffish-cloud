@@ -70,20 +70,14 @@ async function run(): Promise<void> {
   // ------------------------------------------------------------- sanitizer
   ok(
     'sanitize: a well-formed patch passes whole',
-    JSON.stringify(sanitizeReflectionPatch({ hour: 5, quietHours: 24, cards: true })) ===
-      '{"hour":5,"quietHours":24,"cards":true}'
+    JSON.stringify(sanitizeReflectionPatch({ hour: 5, quietHours: 24 })) ===
+      '{"hour":5,"quietHours":24}'
   )
-  // The card switch is a plain boolean and rides the same patch — a field
-  // silently dropped here would make the phone's toggle a no-op that snaps
-  // back on the next snapshot, with nothing to say why.
-  ok('sanitize: cards passes through', sanitizeReflectionPatch({ cards: true }).cards === true)
+  // A retired field on the wire (an older phone still sending the removed
+  // `cards` switch) is dropped rather than persisted.
   ok(
-    'sanitize: cards false passes through',
-    sanitizeReflectionPatch({ cards: false }).cards === false
-  )
-  ok(
-    'sanitize: a non-boolean cards drops',
-    sanitizeReflectionPatch({ cards: 'yes' }).cards === undefined
+    'sanitize: a retired cards field drops',
+    !('cards' in sanitizeReflectionPatch({ hour: 5, cards: true }))
   )
   ok('sanitize: hour above 23 drops', sanitizeReflectionPatch({ hour: 24 }).hour === undefined)
   ok('sanitize: negative hour drops', sanitizeReflectionPatch({ hour: -1 }).hour === undefined)
@@ -111,11 +105,7 @@ async function run(): Promise<void> {
   )
 
   // ------------------------------------------------- handlers via fake tunnel
-  const canonical = {
-    hour: 5,
-    quietHours: 24,
-    cards: false
-  }
+  const canonical = { hour: 5, quietHours: 24 }
   const applied: unknown[] = []
   const ran: string[] = []
   const channel = new MobileChannel({
@@ -144,6 +134,8 @@ async function run(): Promise<void> {
     return Promise.resolve(handler(params))
   }
 
+  // `quietHours: 99` is out of range and `cards` is a retired field an older
+  // phone may still send — both must be dropped before the dep sees the patch.
   const answer = await call(Rpc.setReflectionConfig, {
     hour: 5,
     quietHours: 99,
@@ -151,7 +143,7 @@ async function run(): Promise<void> {
   })
   ok(
     'set: dep receives the sanitized patch only',
-    JSON.stringify(applied[0]) === '{"hour":5,"cards":false}',
+    JSON.stringify(applied[0]) === '{"hour":5}',
     JSON.stringify(applied[0])
   )
   ok(

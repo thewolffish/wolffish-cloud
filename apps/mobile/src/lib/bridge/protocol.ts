@@ -92,6 +92,18 @@ export const Rpc = {
   variablesSet: 'desktop.variables.set',
   /** File a conversation under a project (null unfiles). */
   conversationProject: 'desktop.conversations.project',
+  /**
+   * One conversation's plan-mode stance — `{ conversationId }` →
+   * `{ planMode }`. Read when the phone opens a chat so its switch matches
+   * the desktop's chip; the desktop holds the stance (main/runtime/plan-mode).
+   */
+  planModeGet: 'desktop.chat.planMode.get',
+  /**
+   * Set one conversation's plan-mode stance — `{ conversationId, planMode }`
+   * → `{ planMode }`. The desktop applies it and pushes `Event.planMode` to
+   * every surface, the phone included, so both sides settle on one answer.
+   */
+  planModeSet: 'desktop.chat.planMode.set',
   /** One month of the desktop's own release notes. */
   changelogRead: 'desktop.changelog.read',
   /** Flip one capability; answers the state that actually holds. */
@@ -160,6 +172,12 @@ export const Event = {
   messageDelta: 'message.delta',
   messageAppended: 'message.appended',
   turnStatus: 'turn.status',
+  /**
+   * A conversation's plan-mode stance changed on any surface —
+   * `{ conversationId, planMode }`. The phone mirrors it into its switch and
+   * chip; the desktop chip does the same through its own IPC.
+   */
+  planMode: 'chat.planMode',
   askRequest: 'ask.request',
   approvalRequest: 'approval.request',
   /**
@@ -237,29 +255,25 @@ export type AutomationJob = {
   mode: 'single' | 'workflow' | null
 }
 
-export const OVERLAY_KINDS = [
-  'automation',
-  'compaction',
-  'reflection',
-  'procedure',
-  'reindex'
-] as const
-export type OverlayKind = (typeof OVERLAY_KINDS)[number]
+/**
+ * Which family a run belongs to — resolved on the DESKTOP from the brainstem's
+ * job id. Every family rides the wire; consumers that mean automations
+ * specifically (the Automations screen's per-job status) skip `procedure`.
+ */
+export const RUN_KINDS = ['automation', 'compaction', 'reflection', 'procedure'] as const
+export type RunKind = (typeof RUN_KINDS)[number]
 
+/** One in-flight run — what the Automations screen's play-button gating reads. */
 export type AutomationRun = {
   id: string
   label: string
-  body: string
-  kind: Exclude<OverlayKind, 'reindex'>
-  startedAt: number
-  mode: 'single' | 'workflow' | null
+  kind: RunKind
 }
 
 export type AutomationQueuedRun = {
   id: string
   label: string
-  kind: Exclude<OverlayKind, 'reindex'>
-  queuedAt: number
+  kind: RunKind
 }
 
 export type AutomationRuns = {
@@ -273,8 +287,8 @@ export type ReindexStatus = {
   total: number
 }
 
+/** The reindex overlay's once-per-connection seed. */
 export type OverlaySeed = {
-  runs: AutomationRuns
   reindex: ReindexStatus | null
 }
 

@@ -141,10 +141,6 @@
           "description": "A conversation is only reviewed once it has been idle this long, so unfinished work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns included."
         },
         "quietHoursOption": "{{count}}h",
-        "cards": {
-          "label": "Reflection cards",
-          "description": "Show a live card over the chat, on this desktop and the paired phone, while a reflection runs. Off (the default) hides the card only — the nightly review and the deep clean still run."
-        },
         "deepClean": {
           "label": "Monthly deep reflection",
           "description": "Once a month, a deep reflection takes the opposite stance of the nightly pass: it challenges the playbook and knowledge files against recent evidence, merging duplicates and pruning stale, over-general, or contradicted entries — the structural guard against learned bad habits."
@@ -178,12 +174,6 @@
           "label": "Weekly consolidation",
           "description": "Merges the week's episode logs into a single digest for archival."
         },
-        "cards": {
-          "label": "Compaction cards",
-          "description": "Show a live card over the chat, on this desktop and the paired phone, while a compaction pass runs. Off (the default) hides the card only — the passes still run on the schedule above."
-        },
-        "on": "On",
-        "off": "Off",
         "days": {
           "0": "Sunday",
           "1": "Monday",
@@ -323,12 +313,8 @@
           "off": "Off"
         },
         "verbose": {
-          "label": "Verbose task results",
-          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends."
-        },
-        "runCards": {
-          "label": "Run cards",
-          "description": "Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge."
+          "label": "Show all tool activity",
+          "description": "On adds every tool call and its result to the chat, plus the model chip. Off shows only what always appears: replies, delivered files, questions and approvals, and reasoning."
         },
         "reasoning": {
           "label": "Show reasoning",
@@ -822,9 +808,7 @@
       "notifications": "Phone notifications",
       "notificationsHint": "Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.",
       "verbose": "Task results",
-      "verboseHint": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
-      "runCards": "Run cards",
-      "runCardsHint": "Show a live card on the paired phone while one of your automations or procedures runs. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
+      "verboseHint": "Off keeps the phone's feed clean: replies, delivered files, questions and approvals, reasoning, and errors. On relays every tool call and its result. Connection logging is always on and is not affected by this.",
       "toggle": {
         "off": "Off",
         "on": "On"
@@ -1275,7 +1259,9 @@
         "success": "Done",
         "failed": "Failed",
         "denied": "Denied"
-      }
+      },
+      "exit": "exit {{code}}",
+      "savedTo": "Full output saved to"
     },
     "compactionCard": {
       "title": "Compaction",
@@ -1417,7 +1403,9 @@
       "approve": "Approve",
       "deny": "Deny",
       "approved": "Approved",
-      "denied": "Denied"
+      "denied": "Denied",
+      "approveSession": "Allow for this conversation",
+      "approvedSession": "Allowed for this conversation"
     },
     "modelPicker": {
       "search": "Search models",
@@ -1486,7 +1474,22 @@
       "transcribed": "Transcribed",
       "error": "Recording failed"
     },
-    "admin": "Admin"
+    "admin": "Admin",
+    "planMode": {
+      "label": "Plan",
+      "onTitle": "Plan mode is on: this turn only investigates and writes a plan. Click to allow changes.",
+      "offTitle": "Plan first: read-only turns that write a plan you approve before anything changes."
+    },
+    "todoCard": {
+      "title": "Tasks",
+      "progress": "{{done}}/{{total}} done",
+      "high": "high"
+    },
+    "touchedFolders": {
+      "label": "Folders changed in this conversation",
+      "chip_one": "{{count}} file changed here. Click to open the folder",
+      "chip_other": "{{count}} files changed here. Click to open the folder"
+    }
   },
   "library": {
     "title": "Library"
@@ -1611,7 +1614,6 @@
     "runStarted": "Automation started",
     "runQueued": "Automation queued — the run slots are full ({{count}} in progress). It starts when one frees up",
     "runCoalesced": "Already in flight — this press joined the run that is going, it won’t start a second one",
-    "queuedCount": "{{count}} in queue",
     "noteRunning": "This automation is running right now.",
     "noteQueued": "This automation is queued and will run shortly.",
     "runError": "Couldn’t run automation",
@@ -1634,13 +1636,7 @@
       "cron": "Cron"
     },
     "overlay": {
-      "startedAt": "Started at {{time}}",
-      "activity": "Activity",
-      "waiting": "Waiting for output…",
-      "compactionDaily": "Curate today's episodes into the long-term knowledge files — merge, dedupe, and update.",
-      "reflection": "Review settled conversations — wins, failures — and fold the lessons into the playbook.",
-      "deepClean": "Deep reflection: challenge the playbook and knowledge files — merge duplicates, prune stale or contradicted entries.",
-      "compactionWeekly": "Consolidate the past week's episodes into a digest."
+      "waiting": "Waiting for output…"
     },
     "modeAria": "Run mode",
     "editor": {

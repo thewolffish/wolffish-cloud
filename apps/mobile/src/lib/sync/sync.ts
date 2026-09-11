@@ -23,8 +23,8 @@ import {
   type ConfigSnapshot
 } from '@/state/demoConfig'
 import { pushCapability, setOutboxRefreshHook } from '@/lib/sync/outbox'
-import { applyRunsPush, invalidateAutomations } from '@/lib/sync/automations'
-import { applyOverlayReindex, applyOverlayRuns, readReindex, readRuns } from '@/lib/sync/overlays'
+import { applyRunsPush, invalidateAutomations, readRuns } from '@/lib/sync/automations'
+import { applyOverlayReindex, readReindex } from '@/lib/sync/overlays'
 import { applyUpdaterPush, readUpdaterState } from '@/lib/sync/updater'
 import { invalidateProcedures } from '@/lib/sync/procedures'
 import { invalidateProjects } from '@/lib/sync/projects'
@@ -479,9 +479,7 @@ export function attachLiveUpdates(): () => void {
   })
 
   bridge.onEvent(Event.automationRunsChanged, (payload) => {
-    const runs = readRuns(payload)
-    applyRunsPush(runs)
-    applyOverlayRuns(runs)
+    applyRunsPush(readRuns(payload))
     invalidateAutomations()
   })
 

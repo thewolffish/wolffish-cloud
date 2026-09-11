@@ -41,6 +41,7 @@ triggers:
   - run automatically
 tools:
   - name: automation_list
+    readOnly: true
     description: List every configured automation — its name, its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
     parameters: {}
   - name: automation_create
@@ -95,6 +96,7 @@ tools:
         type: string
         description: The automation to delete — its 1-based number from automation_list, or its exact schedule label.
   - name: automation_check
+    readOnly: true
     description: Check runtime status — which automation (if any) is running right now, and how each one's last run went (completed, failed, or skipped). Use this to verify an automation works or to see recent activity.
     parameters: {}
   - name: automation_run

@@ -27,9 +27,11 @@ triggers:
   - save my prompt
 tools:
   - name: procedure_list
+    readOnly: true
     description: List every saved procedure — its number, title, and a one-line preview of the prompt. Start here so you reference one by the right number or title.
     parameters: {}
   - name: procedure_view
+    readOnly: true
     description: Show one procedure's full title and complete prompt (the list only previews). Identify it by number, exact title, or id.
     parameters:
       identifier:

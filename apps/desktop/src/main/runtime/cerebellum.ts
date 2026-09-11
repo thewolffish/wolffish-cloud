@@ -2,6 +2,7 @@ import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdal
 import type { ChannelStatusSnapshot } from '@main/channels/status'
 import { diskWriter } from '@main/io/diskWriter'
 import { turnScope, type Corpus } from '@main/runtime/corpus'
+import { SnapshotStore } from '@main/runtime/snapshots'
 import type {
   ArtifactHit,
   ConversationSummary,
@@ -78,6 +79,14 @@ export type SkillToolDescriptor = {
   name: string
   description: string
   parameters: Record<string, ToolParameterSpec>
+  /**
+   * Declares that the tool observes without changing anything outside the
+   * conversation (reads, searches, lookups). Two consumers: the agent loop
+   * runs consecutive read-only calls concurrently, and a read-only turn
+   * (plan mode) refuses every tool that is NOT flagged. Absent means
+   * mutating — nothing is accidentally allowed.
+   */
+  readOnly?: boolean
 }
 
 export type ConfirmPattern = {
@@ -190,6 +199,13 @@ export type ToolExecutionResult = {
    * At-most-once beats at-least-once for anything the user can see.
    */
   retryable?: boolean
+  /**
+   * UI-only structured facts about the result — a unified diff for a file
+   * change, a shell exit code and duration, the spill path of a truncated
+   * output. Passed through untouched to the tool_result segment's `meta`
+   * (see broca's ToolResultMeta); never replayed into model context.
+   */
+  meta?: Record<string, unknown>
 }
 
 export type RiskLevel = 'low' | 'medium' | 'high'
@@ -533,6 +549,8 @@ export type WorkflowHost = {
    * level (clamped to the resolved model's support).
    */
   spawnAgent: (args: {
+    /** Read-only explore agent: observes and reports, never changes state. */
+    readOnly?: boolean
     task: string
     name?: string
     model?: string
@@ -755,6 +773,14 @@ export type PluginContext = {
    */
   getCurrentConversationId: () => string | null
   /**
+   * The working folders of the turn in flight (conversation picker ∪ project
+   * directories), first one primary — `[]` outside any turn. Read at execute
+   * time, never at init: the shell defaults its cwd to the first folder and
+   * the filesystem tools resolve relative paths against it, so the model can
+   * say `src/foo.ts` and `npm test` and land in the project.
+   */
+  getWorkingFolders: () => string[]
+  /**
    * Shared, app-lifetime admin-password session. Plugins that run privileged
    * (sudo) commands call `sudo.ensurePassword()` once and merge
    * `sudo.getElevatedEnv()` into their elevated spawns so the user is prompted
@@ -866,6 +892,14 @@ export type WolffishPlugin = {
     signal?: AbortSignal
   ) => Promise<ToolExecutionResult>
   init?: (context: PluginContext) => Promise<void>
+  /**
+   * Per-call read-only classification for tools whose effect depends on
+   * their arguments (the shell: `git status` observes, `git push` acts).
+   * Consulted by a read-only turn (plan mode, explore agents) after the
+   * frontmatter `readOnly` flag; absent means the tool is judged by the
+   * flag alone. Must be pure and fast.
+   */
+  isReadOnlyCall?: (toolName: string, args: Record<string, unknown>) => boolean | Promise<boolean>
   destroy?: () => Promise<void>
   /**
    * Optional: produce a rich, human-readable description of what this
@@ -899,6 +933,13 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'tool-discovery',
+  // Undo for file edits (changes_list / changes_revert) — always callable so
+  // "put it back" never needs a discovery hop.
+  'changes',
+  // The model's task list (todo_write) — a coding-loop staple that must be
+  // callable without a discovery hop; the doctrine tells the model to keep
+  // it for any multi-step work.
+  'todo',
   // Delegation must be core: workflow.md commands workflow_plan/agent_spawn
   // at turn start, so its schemas must ship without a discovery hop. Role
   // gating (excludedCapabilitiesFor) still hides it from single-mode/agent turns.
@@ -948,6 +989,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'workflow',
+  'todo',
   'automations',
   'projects',
   'introspect',
@@ -1044,8 +1086,39 @@ export class Cerebellum {
    * anchor one turn's ask card to another turn's tool_call segment.
    */
   private toolCallCtx = new AsyncLocalStorage<string>()
+  /**
+   * The turn's working folders, entered by the agent once it has resolved
+   * them (conversation picker ∪ project directories). Plugins read it at
+   * execute time through `PluginContext.getWorkingFolders()` — the shell's
+   * default cwd and the filesystem tools' relative-path base both come from
+   * here. AsyncLocalStorage (not a field) for the same reason as
+   * conversationCtx: concurrent turns interleave, and a workflow agent that
+   * runs inside the master's async tree inherits the master's folders
+   * without either clobbering the other.
+   */
+  private workingFoldersCtx = new AsyncLocalStorage<string[]>()
+  /** Per-turn file snapshots (see snapshots.ts) — captured by the Agent, restored by `changes`. */
+  readonly snapshots: SnapshotStore
 
-  constructor(private options: CerebellumOptions = {}) {}
+  constructor(private options: CerebellumOptions = {}) {
+    this.snapshots = new SnapshotStore(options.workspaceRoot ?? '')
+  }
+
+  /**
+   * Enter `folders` as the working folders for the rest of the current
+   * async execution (the turn) and everything it awaits or spawns. A no-op
+   * for an empty list so a nested turn that resolved nothing of its own
+   * keeps inheriting its parent's folders.
+   */
+  enterWorkingFolders(folders: string[]): void {
+    if (folders.length === 0) return
+    this.workingFoldersCtx.enterWith([...folders])
+  }
+
+  /** The working folders of the turn in flight — `[]` outside any turn. */
+  getWorkingFolders(): string[] {
+    return this.workingFoldersCtx.getStore() ?? []
+  }
 
   /**
    * Wire the ask-the-user bridge after construction (mirrors amygdala's
@@ -1306,6 +1379,8 @@ export class Cerebellum {
     // tool the lean surface depends on. Registered before the disk scan so
     // every loadAll exit path has it.
     this.registerDiscoveryCapability()
+    this.registerTodoCapability()
+    this.registerChangesCapability()
     const root = this.options.workspaceRoot
     if (!root) {
       this.loaded = true
@@ -1553,6 +1628,304 @@ export class Cerebellum {
     }
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, limit)
+  }
+
+  /**
+   * True when the tool declared `readOnly: true` in its frontmatter — it
+   * observes without changing anything outside the conversation. Consumers:
+   * the agent loop's parallel read batches and the read-only turn gate.
+   * Unknown tools are mutating.
+   */
+  isReadOnlyTool(toolName: string): boolean {
+    const capName = this.toolToCapability.get(toolName)
+    if (!capName) return false
+    const cap = this.capabilities.get(capName)
+    return cap?.tools.find((t) => t.name === toolName)?.readOnly === true
+  }
+
+  /**
+   * Whether ONE call observes without changing anything: the tool's
+   * frontmatter `readOnly` flag, else the plugin's per-call judgement
+   * (`isReadOnlyCall`), else mutating. A read-only turn refuses every call
+   * this returns false for. Loads the plugin if needed (an import, never a
+   * dependency install).
+   */
+  async isReadOnlyCall(toolName: string, args: Record<string, unknown>): Promise<boolean> {
+    if (this.isReadOnlyTool(toolName)) return true
+    const capName = this.toolToCapability.get(toolName)
+    if (!capName) return false
+    const cap = this.capabilities.get(capName)
+    if (!cap || cap.status !== 'ok') return false
+    let plugin = this.plugins.get(capName)
+    if (!plugin && !cap.inProcess) {
+      await this.ensurePluginLoaded(cap).catch(() => undefined)
+      plugin = this.plugins.get(capName)
+    }
+    if (!plugin?.isReadOnlyCall) return false
+    try {
+      return (await plugin.isReadOnlyCall(toolName, args)) === true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * True when a call to `toolName` would execute without any dependency
+   * work — capability loaded, plugin imported, dependency chain already
+   * resolved this process. The agent loop only pre-starts read-only calls
+   * that are ready, so a first call that must install or approve something
+   * keeps its sequential slot and its dialogs in order.
+   */
+  isToolReady(toolName: string): boolean {
+    const capName = this.toolToCapability.get(toolName)
+    if (!capName) return false
+    const cap = this.capabilities.get(capName)
+    if (!cap || cap.status !== 'ok') return false
+    if (cap.inProcess) return true
+    return this.plugins.has(capName) && this.dependencyCache.get(capName) === true
+  }
+
+  /**
+   * Register the built-in `changes` capability: the undo for file edits.
+   * The Agent snapshots a file before the first mutating file tool touches
+   * it in a turn (see snapshots.ts); these tools list the turns and put the
+   * files back. Model-led — "that made it worse, put it back" — with no
+   * git dependency, so it works in any folder.
+   */
+  private registerChangesCapability(): void {
+    const plugin: WolffishPlugin = {
+      name: 'changes',
+      tools: [],
+      execute: async (toolName, args) => {
+        const conversationId = this.getCurrentConversationId()
+        if (!conversationId) {
+          return { success: false, error: 'No conversation in flight — nothing to list or revert.' }
+        }
+        if (toolName === 'changes_list') {
+          const turns = await this.snapshots.list(conversationId)
+          if (turns.length === 0)
+            return { success: true, output: 'No file changes recorded in this conversation.' }
+          const lines = turns.map((t, i) => {
+            const files = Object.entries(t.files)
+              .map(
+                ([file, e]) =>
+                  `    ${e.blob === null && e.size === 0 && !e.skipped ? 'created' : e.skipped ? 'not restorable' : 'edited '} ${file}`
+              )
+              .join('\n')
+            return `${i === 0 ? '[latest] ' : ''}turn ${t.turnId} (${new Date(t.startedAt).toISOString()}):\n${files}`
+          })
+          return {
+            success: true,
+            output: `${lines.join('\n')}\n\nchanges_revert restores a turn's files to their state before that turn (turn=latest or a turn id above; path narrows it to one file).`
+          }
+        }
+        if (toolName === 'changes_revert') {
+          const turns = await this.snapshots.list(conversationId)
+          if (turns.length === 0)
+            return { success: false, error: 'No file changes recorded in this conversation.' }
+          const wanted =
+            typeof args?.turn === 'string' && args.turn !== 'latest' ? args.turn : turns[0].turnId
+          const turn = turns.find((t) => t.turnId === wanted)
+          if (!turn)
+            return {
+              success: false,
+              error: `No recorded changes for turn ${wanted}. changes_list shows the turns.`
+            }
+          const only = typeof args?.path === 'string' && args.path ? args.path : undefined
+          const result = await this.snapshots.revert(conversationId, turn.turnId, only)
+          const parts: string[] = []
+          if (result.restored.length)
+            parts.push(`Restored:\n${result.restored.map((f) => `  ${f}`).join('\n')}`)
+          if (result.deleted.length)
+            parts.push(
+              `Deleted (did not exist before the turn):\n${result.deleted.map((f) => `  ${f}`).join('\n')}`
+            )
+          if (result.skipped.length)
+            parts.push(`Skipped:\n${result.skipped.map((f) => `  ${f}`).join('\n')}`)
+          if (parts.length === 0)
+            return {
+              success: false,
+              error: only ? `That turn did not touch ${only}.` : 'Nothing to revert.'
+            }
+          return { success: true, output: parts.join('\n'), meta: { label: 'Revert changes' } }
+        }
+        return { success: false, error: `changes: unknown tool ${toolName}` }
+      }
+    }
+    this.registerInProcessCapability(
+      {
+        name: 'changes',
+        dir: '',
+        description:
+          'Undo for file changes: list the files each turn of this conversation edited or created, and restore them to their pre-turn state.',
+        triggers: {
+          keywords: ['undo', 'revert', 'put it back', 'restore file', 'rollback change']
+        },
+        tools: [
+          {
+            name: 'changes_list',
+            readOnly: true,
+            description:
+              'List the file changes recorded in this conversation, newest turn first: which files each turn edited or created. Every file_edit / file_write is snapshotted before the first change of a turn, so this is the record changes_revert restores from.',
+            parameters: {}
+          },
+          {
+            name: 'changes_revert',
+            description:
+              'Restore files to their state before a turn: edited files get their original bytes back, files the turn created are deleted. Default turn=latest; pass a turn id from changes_list, and path to revert a single file. Use it when a change made things worse and the user (or you) wants the previous state back — then re-run the check to confirm.',
+            parameters: {
+              turn: {
+                type: 'string',
+                required: false,
+                description: '"latest" (default) or a turn id from changes_list'
+              },
+              path: {
+                type: 'string',
+                required: false,
+                description: 'Revert only this file (absolute path as listed)'
+              }
+            }
+          }
+        ],
+        body: '',
+        hasPlugin: true,
+        status: 'ok',
+        requires: [],
+        packages: {},
+        npmDependencies: {}
+      },
+      plugin
+    )
+  }
+
+  /**
+   * Register the built-in `todo` capability: the model's task list for
+   * multi-step work (OpenCode's todowrite, generalised beyond coding). The
+   * tool validates and echoes the list; the Agent turns a successful call
+   * into a `todo` segment so the feed shows one checklist card per turn.
+   * Read-only by declaration: it changes nothing outside the conversation,
+   * so a plan-mode turn may keep its list.
+   */
+  private registerTodoCapability(): void {
+    const statuses = new Set(['pending', 'in_progress', 'completed', 'cancelled'])
+    const priorities = new Set(['high', 'medium', 'low'])
+    const plugin: WolffishPlugin = {
+      name: 'todo',
+      tools: [],
+      execute: async (toolName, args) => {
+        if (toolName !== 'todo_write')
+          return { success: false, error: `todo: unknown tool ${toolName}` }
+        const raw = args?.todos
+        if (!Array.isArray(raw)) {
+          return {
+            success: false,
+            error: 'todos must be an array of { content, status, priority? }.'
+          }
+        }
+        const items: Array<{ content: string; status: string; priority?: string }> = []
+        const problems: string[] = []
+        raw.forEach((entry, i) => {
+          if (!entry || typeof entry !== 'object') {
+            problems.push(`item ${i + 1} is not an object`)
+            return
+          }
+          const e = entry as Record<string, unknown>
+          const content = typeof e.content === 'string' ? e.content.trim() : ''
+          if (!content) {
+            problems.push(`item ${i + 1} has no content`)
+            return
+          }
+          const status = typeof e.status === 'string' ? e.status : 'pending'
+          if (!statuses.has(status)) {
+            problems.push(
+              `item ${i + 1} has unknown status "${status}" (pending | in_progress | completed | cancelled)`
+            )
+            return
+          }
+          const item: { content: string; status: string; priority?: string } = { content, status }
+          if (typeof e.priority === 'string' && priorities.has(e.priority))
+            item.priority = e.priority
+          items.push(item)
+        })
+        if (problems.length > 0) return { success: false, error: problems.join('; ') }
+        const inProgress = items.filter((t) => t.status === 'in_progress').length
+        const done = items.filter((t) => t.status === 'completed').length
+        const note =
+          inProgress > 1
+            ? `\nNote: ${inProgress} items are in_progress — keep exactly one in progress at a time.`
+            : ''
+        return {
+          success: true,
+          output: `${items.length} todos (${done} completed, ${inProgress} in progress)${note}\n${JSON.stringify(items, null, 2)}`
+        }
+      }
+    }
+    this.registerInProcessCapability(
+      {
+        name: 'todo',
+        dir: '',
+        description:
+          'Your task list for multi-step work: todo_write keeps a checklist the user sees as a card and you update as you go.',
+        triggers: { keywords: ['todo', 'task list', 'checklist', 'plan steps', 'track progress'] },
+        tools: [
+          {
+            name: 'todo_write',
+            readOnly: true,
+            description: [
+              'Create and maintain a structured task list for the current piece of work — a bug fix, a feature, a research task, a document, a data cleanup. Tracks progress, organizes multi-step work, and surfaces status to the user as a checklist card that updates in place.',
+              '',
+              'Use it proactively when: the task needs 3+ distinct steps (not 3 tool calls for one step); the work is non-trivial and benefits from planning; the user gave several tasks or asked for a list; new instructions arrive mid-task (capture them); you start a step (mark it in_progress, exactly ONE at a time); you finish a step (mark it completed and add follow-ups you discovered).',
+              'Skip it when: the work is one straightforward step (or fewer than 3 trivial ones); the request is informational or conversational; tracking adds nothing.',
+              '',
+              'States: pending (not started) · in_progress (exactly ONE at a time) · completed (finished) · cancelled (no longer needed).',
+              'Rules: update status in real time, never batch completions; mark completed ONLY after the work is actually done, including any verification it needed — never on intent; keep exactly one in_progress while work remains; if blocked or partial, keep it in_progress and add a follow-up todo naming the blocker; preserve user-provided commands verbatim; items are specific and actionable — break big work into smaller steps.',
+              'Each call REPLACES the whole list, so send every item every time. When in doubt, use it.',
+              'A list left unfinished by an earlier turn (an interrupted run) is yours to carry on: the runtime tells you what is still open, and your next todo_write updates THAT card in place — so when you finish that work, write the list with those items completed. Pass fresh: true only when this turn starts unrelated work that deserves its own list.'
+            ].join('\n'),
+            parameters: {
+              fresh: {
+                type: 'boolean',
+                required: false,
+                description:
+                  'Start a separate list instead of continuing the open list from an earlier turn (default false).'
+              },
+              todos: {
+                type: 'array',
+                required: true,
+                description: 'The complete, updated task list.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    content: {
+                      type: 'string',
+                      description: 'Brief, specific description of the step'
+                    },
+                    status: {
+                      type: 'string',
+                      enum: ['pending', 'in_progress', 'completed', 'cancelled'],
+                      description: 'pending | in_progress (exactly one) | completed | cancelled'
+                    },
+                    priority: {
+                      type: 'string',
+                      enum: ['high', 'medium', 'low'],
+                      description: 'Optional priority'
+                    }
+                  },
+                  required: ['content', 'status']
+                }
+              }
+            }
+          }
+        ],
+        body: '',
+        hasPlugin: true,
+        status: 'ok',
+        requires: [],
+        packages: {},
+        npmDependencies: {}
+      },
+      plugin
+    )
   }
 
   /**
@@ -2183,6 +2556,7 @@ export class Cerebellum {
         pluginDir: path.dirname(cap.pluginEntryPath),
         workspaceRoot: this.options.workspaceRoot ?? '',
         getCurrentConversationId: () => this.getCurrentConversationId(),
+        getWorkingFolders: () => this.getWorkingFolders(),
         sudo: sudoSession,
         host: this.pluginHost,
         automations: this.automationsHost,
@@ -2712,7 +3086,8 @@ function normalizeToolResult(raw: unknown): ToolExecutionResult {
         'images',
         'exitCode',
         'partial',
-        'retryable'
+        'retryable',
+        'meta'
       ])
       const extra: Record<string, unknown> = {}
       for (const k of Object.keys(r)) if (!known.has(k)) extra[k] = r[k]
@@ -2739,6 +3114,9 @@ function normalizeToolResult(raw: unknown): ToolExecutionResult {
   }
   if (typeof r.partial === 'boolean') out.partial = r.partial
   if (typeof r.retryable === 'boolean') out.retryable = r.retryable
+  if (r.meta && typeof r.meta === 'object' && !Array.isArray(r.meta)) {
+    out.meta = r.meta as Record<string, unknown>
+  }
   return out
 }
 

@@ -1,11 +1,13 @@
 import { Copy01Icon, Tick02Icon } from '@/components/core/icons'
 import {
+  CODE_ACTIVITY_TOOLS,
   buildRenderBlocks,
   failedTurnEnd,
   messageText,
   toWorkspaceRelative
 } from '@/lib/conversations/segments'
 import type { RenderBlock, ToolResultInfo } from '@/lib/conversations/segments'
+import type { TodoItem } from '@/lib/conversations/types'
 import { respondApproval, respondAsk } from '@/lib/sync/cards'
 import type {
   ApprovalDecision,
@@ -40,6 +42,7 @@ import { MarkdownView, markdownHasTable } from '@/components/chat/MarkdownView'
 import { NEEDS_SELECT_SHEET, openSelectMarkdown } from '@/components/chat/SelectTextSheet'
 import { QuestionCard } from '@/components/chat/QuestionCard'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
+import { TodoCard } from '@/components/chat/TodoCard'
 import { ToolCard } from '@/components/chat/ToolCard'
 
 /**
@@ -47,7 +50,8 @@ import { ToolCard } from '@/components/chat/ToolCard'
  * assistant turns walk their segment stream into blocks (text bubbles, tool
  * cards, delivered files, chips) with the desktop's clean/verbose gating:
  * verbose off hides tool cards, model chips and compaction — replies,
- * question cards and delivered files always render.
+ * question cards, task lists and delivered files always render, and the code
+ * tools (edits, writes, shell runs) keep a compact activity row.
  */
 
 function CopyFooter({
@@ -158,11 +162,15 @@ export const AssistantMessageView = memo(function AssistantMessageView({
   streaming,
   liveTurn,
   liveError,
-  onTryAgain
+  onTryAgain,
+  todoLists
 }: {
   message: ConversationMessage
   conversationId?: string
   verbose: boolean
+  /** Every task list in its latest state (segments.ts latestTodoLists) — a
+   *  later turn's todo_write resolves an earlier card in place. */
+  todoLists?: Map<string, TodoItem[]>
   streaming?: boolean
   /** True for the in-flight turn's own row (feed.ts LIVE_KEY) — the only row
    *  that may host the conversation's live cards. */
@@ -175,7 +183,7 @@ export const AssistantMessageView = memo(function AssistantMessageView({
    *  running — the desktop's own rule for the retry button. */
   onTryAgain?: (reason: string) => void
 }): React.JSX.Element {
-  const blocks = useMemo(() => buildRenderBlocks(message), [message])
+  const blocks = useMemo(() => buildRenderBlocks(message, { todoLists }), [message, todoLists])
   const fullText = useMemo(() => messageText(message), [message])
   // Cards the desktop is holding this turn open for. Live state wins over the
   // persisted record for the same tool call: the two describe one approval,
@@ -210,7 +218,12 @@ export const AssistantMessageView = memo(function AssistantMessageView({
   const visible = blocks.filter((block) => {
     // An approval always renders — the user must be able to act on a pending
     // tool call whatever the verbose preference says. Same rule as the desktop.
-    if (block.type === 'tool') return verbose || !!approvals[block.call.toolCallId]
+    // So does a code tool: an edit, a write or a shell run is a change in the
+    // user's project, shown as a compact row the clean feed can expand.
+    if (block.type === 'tool')
+      return (
+        verbose || !!approvals[block.call.toolCallId] || CODE_ACTIVITY_TOOLS.has(block.call.name)
+      )
     if (block.type === 'model' || block.type === 'compaction') return verbose
     // ask_user renders as its card while the turn is parked on it and once it
     // has been answered; with neither there is nothing to show yet.
@@ -373,13 +386,26 @@ function renderBlock(
       // by then it is mechanics again. The desktop makes the same swap.
       const approval = approvals[block.call.toolCallId]
       if (!approval) {
-        return <ToolCard call={block.call} result={block.result} timing={block.timing} />
+        return (
+          <ToolCard
+            call={block.call}
+            result={block.result}
+            timing={block.timing}
+            compact={!verbose}
+          />
+        )
       }
       return (
         <View className="flex-col gap-2">
           {renderApproval(approval, conversationId, !!liveApprovals[block.call.toolCallId])}
-          {approval.decision !== undefined && verbose ? (
-            <ToolCard call={block.call} result={block.result} timing={block.timing} />
+          {approval.decision !== undefined &&
+          (verbose || CODE_ACTIVITY_TOOLS.has(block.call.name)) ? (
+            <ToolCard
+              call={block.call}
+              result={block.result}
+              timing={block.timing}
+              compact={!verbose}
+            />
           ) : null}
         </View>
       )
@@ -423,6 +449,9 @@ function renderBlock(
       return <PathCard path={block.path} kind={block.kind} />
     case 'workflow':
       return <WorkflowCard snapshot={block.snapshot} />
+    case 'todo':
+      // The model's task list — output FOR the user, so never verbose-gated.
+      return <TodoCard items={block.items} />
     case 'compaction':
       return <CompactionCard block={block} />
     case 'reasoning':

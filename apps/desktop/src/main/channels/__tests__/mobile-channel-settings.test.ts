@@ -84,10 +84,6 @@ async function run(): Promise<void> {
     loadVerbose: async () => (await getMobileChannelConfig()).verbose === true,
     saveVerbose: async (verbose: boolean) => {
       await setMobileChannelConfig({ verbose })
-    },
-    loadRunCards: async () => (await getMobileChannelConfig()).runCards === true,
-    saveRunCards: async (enabled: boolean) => {
-      await setMobileChannelConfig({ runCards: enabled })
     }
   }
 
@@ -97,7 +93,6 @@ async function run(): Promise<void> {
     const fresh = channel.getStatus()
     ok('a fresh workspace notifies by default', fresh.notificationsEnabled === true)
     ok('a fresh workspace keeps the feed clean', fresh.verbose === false)
-    ok('a fresh workspace draws no automation cards', fresh.runCards === false)
 
     const afterVerbose = await channel.setVerbose(true)
     ok('setVerbose answers the updated status', afterVerbose.verbose === true)
@@ -107,15 +102,11 @@ async function run(): Promise<void> {
       afterNotifications.notificationsEnabled === false
     )
 
-    const afterCards = await channel.setRunCards(true)
-    ok('setRunCards answers the updated status', afterCards.runCards === true)
-
     // Written where the panel, the snapshot and the next launch all read it —
     // not held in the instance that happened to make the change.
     const stored = await getMobileChannelConfig()
     ok('verbose reached config.json', stored.verbose === true)
     ok('notifications reached config.json', stored.notifications === false)
-    ok('automation cards reached config.json', stored.runCards === true)
   }
 
   {
@@ -126,16 +117,13 @@ async function run(): Promise<void> {
     const status = restarted.getStatus()
     ok('verbose survives a restart', status.verbose === true)
     ok('notifications survives a restart', status.notificationsEnabled === false)
-    ok('automation cards survive a restart', status.runCards === true)
 
     // And one setter must never carry the other back to its default — they
     // share a config section, which is exactly where that goes wrong.
     await restarted.setVerbose(false)
     const both = await getMobileChannelConfig()
     ok('writing verbose leaves notifications alone', both.notifications === false)
-    ok('writing verbose leaves the cards alone', both.runCards === true)
     ok('verbose is back off', both.verbose === false)
-    await restarted.setRunCards(false)
   }
 
   // -------------------------------------------------- what the phone receives
@@ -146,8 +134,8 @@ async function run(): Promise<void> {
       serializeCapabilities: async () => []
     } as never)) as {
       channels: {
-        mobile?: { notifications?: boolean; verbose?: boolean; runCards?: boolean }
-        inapp?: { verbose?: boolean; runCards?: boolean }
+        mobile?: { notifications?: boolean; verbose?: boolean }
+        inapp?: { verbose?: boolean }
       }
     }
     ok(
@@ -158,10 +146,6 @@ async function run(): Promise<void> {
     // Left at notifications:false / verbose:false by the block above.
     ok('snapshot mirrors the stored gate', snapshot.channels.mobile?.notifications === false)
     ok('snapshot mirrors the stored feed setting', snapshot.channels.mobile?.verbose === false)
-    // Left off by the block above — and the phone renders this row directly,
-    // so an absent field must read as "no cards", never as undefined.
-    ok('snapshot mirrors the stored card switch', snapshot.channels.mobile?.runCards === false)
-    ok('snapshot carries the desktop card switch too', snapshot.channels.inapp?.runCards === false)
   }
 
   {
@@ -175,13 +159,12 @@ async function run(): Promise<void> {
       serializeCapabilities: async () => []
     } as never)) as {
       channels: {
-        mobile?: { notifications?: boolean; verbose?: boolean; runCards?: boolean }
-        inapp?: { verbose?: boolean; runCards?: boolean }
+        mobile?: { notifications?: boolean; verbose?: boolean }
+        inapp?: { verbose?: boolean }
       }
     }
     ok('absent section still notifies', snapshot.channels.mobile?.notifications === true)
     ok('absent section still means a clean feed', snapshot.channels.mobile?.verbose === false)
-    ok('absent section still means no cards', snapshot.channels.mobile?.runCards === false)
   }
 
   // ------------------------------------------------- the autostart probe

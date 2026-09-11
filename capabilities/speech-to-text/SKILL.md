@@ -132,6 +132,7 @@ tools:
         type: string
         description: Absolute path or workspace-relative path to the audio file.
   - name: stt_settings_get
+    readOnly: true
     description: "Read the user's Speech-to-Text settings — the default Whisper model size and the pinned transcription language — plus whether the engine is installed and which models are selectable. Call this before changing a setting or answering a question about one."
     parameters: {}
   - name: stt_settings_set

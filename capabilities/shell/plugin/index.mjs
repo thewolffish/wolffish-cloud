@@ -1,18 +1,35 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { access, chmod, constants, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { access, chmod, constants, mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { describeCommand, isInvestigation, isReadOnly, looksLikeWatcher } from './tokenize.mjs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-const MAX_OUTPUT_BYTES = 100_000
+// Injected at init: the turn's working folders (conversation picker ∪
+// project directories). The first one is the default cwd, so `npm test`
+// lands in the project without the model retyping an absolute path.
+let getWorkingFolders = () => []
+
+function defaultCwd() {
+  try {
+    const folders = getWorkingFolders()
+    if (Array.isArray(folders) && typeof folders[0] === 'string' && folders[0]) return folders[0]
+  } catch {
+    // fall through to home
+  }
+  return homedir()
+}
 
 function resolveCwd(input) {
   const raw = typeof input === 'string' ? input.trim() : ''
-  if (!raw || raw === '~') return homedir()
+  if (!raw) return defaultCwd()
+  if (raw === '~') return homedir()
   if (raw.startsWith('~/')) return path.join(homedir(), raw.slice(2))
+  // A relative cwd is relative to the working folder (or home without one).
+  if (!path.isAbsolute(raw)) return path.resolve(defaultCwd(), raw)
   return raw
 }
 
@@ -335,18 +352,24 @@ function injectAskpassFlag(command) {
 }
 
 // ---------------------------------------------------------------------------
-// Tool definitions
+// Tool definitions (the model-facing schema is the SKILL.md frontmatter; this
+// array is kept in sync for skill_create derivation and tests)
 // ---------------------------------------------------------------------------
 
 const toolDefinitions = [
   {
     name: 'shell_exec',
-    description: 'Run a shell command and return its combined stdout+stderr.',
+    description:
+      'Run a shell command and return its combined stdout+stderr (tail-biased; the full output of a long run is saved to a log file the result names).',
     parameters: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The command to execute' },
-        cwd: { type: 'string', description: 'Working directory (default: user home)' },
+        cwd: {
+          type: 'string',
+          description:
+            'Working directory. Omit it to run in the first working folder (or home when none). Absolute, or relative to the working folder.'
+        },
         timeout: {
           type: 'number',
           description:
@@ -355,10 +378,33 @@ const toolDefinitions = [
         background: {
           type: 'boolean',
           description:
-            'Start the command detached and return immediately with its PID. Use for dev servers, watchers, daemons, or any process that does not exit on its own (npm run dev, vite, nodemon). stdio is set to /dev/null — redirect inside the command if you want to read output later (e.g. > /tmp/log 2>&1).'
+            'Start the command detached and return immediately with its PID and a log file path. Use for dev servers, watchers, daemons — anything that does not exit on its own. Read the log with file_read; stop it with shell_stop.'
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'Run a command in the foreground even though it looks like a server/watcher. Only when you are sure it exits on its own.'
         }
       },
       required: ['command']
+    }
+  },
+  {
+    name: 'shell_jobs',
+    description:
+      'List the background processes started with shell_exec background=true in this app session.',
+    parameters: { type: 'object', properties: {} }
+  },
+  {
+    name: 'shell_stop',
+    description:
+      'Stop a background process started with shell_exec background=true (by PID, or all of them).',
+    parameters: {
+      type: 'object',
+      properties: {
+        pid: { type: 'number', description: 'PID from shell_exec background / shell_jobs' },
+        all: { type: 'boolean', description: 'Stop every background job started this session' }
+      }
     }
   }
 ]
@@ -367,17 +413,140 @@ const toolDefinitions = [
 // Output helpers
 // ---------------------------------------------------------------------------
 
-function clamp(buf, chunk) {
-  if (buf.length >= MAX_OUTPUT_BYTES) return buf
-  const room = MAX_OUTPUT_BYTES - buf.length
-  return buf + chunk.toString().slice(0, room)
+// Bounded, tail-biased preview of a command's output (ported from OpenCode's
+// shell tool): the LAST 2000 lines / 50 KB stay in the result — a failing
+// test run's assertion is at the bottom — and the full text is written to
+// <workspace>/tool-output/ so nothing is lost. Memory is capped too: a
+// runaway command keeps only its last 8 MB in RAM.
+const OUTPUT_MAX_LINES = 2000
+const OUTPUT_MAX_BYTES = 50 * 1024
+const OUTPUT_MEMORY_CAP = 8 * 1024 * 1024
+const TOOL_OUTPUT_DIR = 'tool-output'
+
+// Injected at init: where spilled logs and background logs live.
+let workspaceRoot = null
+
+// CSI sequences (colours, cursor moves), OSC sequences (titles, hyperlinks)
+// and bare carriage returns used for progress-bar redraws.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\r(?=[^\n])/g
+
+function stripAnsi(text) {
+  return text.replace(ANSI_RE, '')
 }
 
-function combine(out, err) {
-  const parts = []
-  if (out) parts.push(out.trim())
-  if (err) parts.push(err.trim())
-  return parts.join('\n').trim()
+function tailBound(text, maxLines = OUTPUT_MAX_LINES, maxBytes = OUTPUT_MAX_BYTES) {
+  const lines = text.split('\n')
+  if (lines.length <= maxLines && Buffer.byteLength(text, 'utf8') <= maxBytes) {
+    return { text, cut: false }
+  }
+  const out = []
+  let bytes = 0
+  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
+    const size = Buffer.byteLength(lines[i], 'utf8') + (out.length > 0 ? 1 : 0)
+    if (bytes + size > maxBytes) {
+      if (out.length === 0) {
+        // The last line alone exceeds the byte cap — keep its tail, aligned
+        // to a UTF-8 boundary so we never split a character.
+        const buf = Buffer.from(lines[i], 'utf8')
+        let start = Math.max(0, buf.length - maxBytes)
+        while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++
+        out.unshift(buf.subarray(start).toString('utf8'))
+      }
+      break
+    }
+    out.unshift(lines[i])
+    bytes += size
+  }
+  return { text: out.join('\n'), cut: true }
+}
+
+let spillCounter = 0
+async function spillFile(prefix) {
+  if (!workspaceRoot) return null
+  const dir = path.join(workspaceRoot, TOOL_OUTPUT_DIR)
+  await mkdir(dir, { recursive: true })
+  spillCounter = (spillCounter + 1) % 1000
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  return path.join(dir, `${stamp}-${prefix}-${String(spillCounter).padStart(3, '0')}.log`)
+}
+
+// A chronological capture of stdout+stderr with a memory cap.
+function makeCapture() {
+  const chunks = []
+  let used = 0
+  let dropped = false
+  return {
+    push(chunk) {
+      const text = chunk.toString()
+      const size = Buffer.byteLength(text, 'utf8')
+      chunks.push({ text, size })
+      used += size
+      while (used > OUTPUT_MEMORY_CAP && chunks.length > 1) {
+        const first = chunks.shift()
+        used -= first.size
+        dropped = true
+      }
+    },
+    text() {
+      return stripAnsi(chunks.map((c) => c.text).join(''))
+    },
+    get dropped() {
+      return dropped
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Background jobs
+// ---------------------------------------------------------------------------
+
+// Every process started with background=true this app session, so the model
+// can read its log and stop it — a dev server started to verify a fix must
+// be tear-down-able without the user hunting PIDs.
+const backgroundJobs = new Map() // pid -> { pid, command, cwd, logPath, startedAt }
+
+function killTree(pid, signal = 'SIGTERM') {
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
+      return
+    }
+    // Detached children lead their own process group; -pid signals the group.
+    try {
+      process.kill(-pid, signal)
+    } catch {
+      process.kill(pid, signal)
+    }
+  } catch {
+    // already gone
+  }
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function stopJob(job) {
+  killTree(job.pid, 'SIGTERM')
+  await new Promise((r) => setTimeout(r, 1500))
+  if (isAlive(job.pid)) {
+    killTree(job.pid, 'SIGKILL')
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  backgroundJobs.delete(job.pid)
+  return !isAlive(job.pid)
+}
+
+function describeJob(job) {
+  const alive = isAlive(job.pid)
+  const age = Math.round((Date.now() - job.startedAt) / 1000)
+  return `PID ${job.pid} (${alive ? 'running' : 'exited'}, ${age}s): ${job.command}\n    cwd: ${job.cwd}\n    log: ${job.logPath}`
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +569,21 @@ async function execShell(args, signal) {
   const shell = await detectShell()
   const needsElevation = ELEVATION_RE.test(command)
 
+  // --- Watcher guard ---
+  // A server or watcher run in the foreground never returns, and the turn
+  // hangs with it. The guard refuses the shape before spawning, names the
+  // fix, and stays model-led: force=true runs it anyway.
+  if (args?.background !== true && args?.force !== true && looksLikeWatcher(command)) {
+    return {
+      success: false,
+      retryable: false,
+      error:
+        `This command looks like a server or watcher that does not exit on its own (${command}). ` +
+        'Run it with background=true — its output goes to a log file you can read with file_read and it can be stopped with shell_stop — ' +
+        'or pass force=true if it really does exit.'
+    }
+  }
+
   // --- Elevation handling ---
   // When the command contains sudo/doas/pkexec, we:
   // 1. Prime the credential cache via a native OS password dialog
@@ -413,8 +597,6 @@ async function execShell(args, signal) {
     let handled = false
 
     // Preferred path (macOS + Linux): the shared in-memory password session.
-    // Acquire once, reuse for the app's lifetime — no dialog after the first
-    // capture. Windows has no sudo, so we skip straight to the legacy guidance.
     if (sudoCtx && process.platform !== 'win32') {
       const auth = await sudoCtx.ensurePassword()
       if (auth.ok) {
@@ -422,10 +604,6 @@ async function execShell(args, signal) {
         execCommand = injectAskpassFlag(command)
         handled = true
       } else if (!auth.unsupported) {
-        // The session attempted and was rejected (cancelled, wrong password,
-        // not in sudoers). Surface that — don't fall back, which would just
-        // re-prompt. Only `unsupported` (no GUI tool, infra error) falls
-        // through to the legacy path below.
         return {
           success: false,
           error: auth.error ?? 'operation not permitted (elevation required)'
@@ -433,9 +611,7 @@ async function execShell(args, signal) {
       }
     }
 
-    // Fallback: legacy per-session askpass dialog. Runs on Windows, when the
-    // session is unavailable, or when the session reported it couldn't attempt
-    // (e.g. no GUI password tool on Linux). Byte-for-byte the pre-session flow.
+    // Fallback: legacy per-session askpass dialog.
     if (!handled) {
       const elevation = await ensureElevation()
       if (!elevation.ok) {
@@ -443,12 +619,18 @@ async function execShell(args, signal) {
       }
       execEnv = elevation.env
       execCommand = injectAskpassFlag(command)
-
-      // Refresh the OS credential cache right before execution so the timer
-      // resets. This is silent (no dialog) as long as the cache hasn't already
-      // expired. If it has, sudo calls the askpass helper automatically.
       await runCollect('sudo', ['-A', '-v'], execEnv)
     }
+  }
+
+  // Plain output: no ANSI colour in captured text (stripped anyway as a
+  // backstop), and no pager waiting on a TTY that does not exist.
+  execEnv = {
+    ...execEnv,
+    NO_COLOR: execEnv.NO_COLOR ?? '1',
+    FORCE_COLOR: execEnv.FORCE_COLOR ?? '0',
+    PAGER: execEnv.PAGER ?? 'cat',
+    GIT_PAGER: execEnv.GIT_PAGER ?? 'cat'
   }
 
   // Applied after elevation rewriting so both dispatch paths get the same
@@ -456,47 +638,78 @@ async function execShell(args, signal) {
   execCommand = stripRedundantStderrMerge(execCommand, shell)
 
   if (args?.background === true) {
-    return execBackground({ command: execCommand, cwd, shell, env: execEnv })
+    return execBackground({ command: execCommand, display: command, cwd, shell, env: execEnv })
   }
 
-  const timeoutMs =
-    typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
+  const timeoutMs = typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
-  const result = await execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv, signal })
+  const result = await execForeground({
+    command: execCommand,
+    display: command,
+    cwd,
+    shell,
+    timeoutMs,
+    env: execEnv,
+    signal
+  })
   if (result.success) {
     // If the command installed something onto PATH, re-read the PATH so the new
     // tool is reachable by the next tool call without an app restart.
     if (PATH_MUTATING_RE.test(command)) {
       await refreshWolffishPath()
     }
-    // NOTE: opened-file auto-surfacing was removed on purpose. Delivery is the
-    // MODEL's job — it sends outputs with send_file; the harness never
-    // appends delivery markers on its own.
   }
   return result
 }
 
-function execBackground({ command, cwd, shell, env }) {
+async function execBackground({ command, display, cwd, shell, env }) {
+  let logPath = null
+  let logFd = null
   try {
+    logPath = await spillFile('bg')
+    if (logPath) logFd = await open(logPath, 'a')
+  } catch {
+    logPath = null
+    logFd = null
+  }
+  try {
+    const stdio = logFd ? ['ignore', logFd.fd, logFd.fd] : 'ignore'
     const child = spawn(shell.bin, [...shell.args, command], {
       cwd,
       env,
       detached: true,
-      stdio: 'ignore',
+      stdio,
       windowsHide: true
     })
     const pid = child.pid
     if (!pid) {
+      await logFd?.close().catch(() => {})
       return { success: false, error: 'failed to start background process (no PID returned)' }
     }
     child.unref()
-    return { success: true, output: `Started in background, PID: ${pid}` }
+    // The fd is inherited by the child; our handle can close now.
+    await logFd?.close().catch(() => {})
+    const job = { pid, command: display, cwd, logPath, startedAt: Date.now() }
+    backgroundJobs.set(pid, job)
+    return {
+      success: true,
+      output:
+        `Started in background, PID: ${pid}.` +
+        (logPath
+          ? ` Output log: ${logPath} — read it with file_read (or tail -n 50 "${logPath}") once the process has had a moment to start.`
+          : ' (No log file available.)') +
+        ` Stop it with shell_stop(pid=${pid}).`,
+      meta: { label: 'Start in background', cwd, outputPath: logPath ?? undefined }
+    }
   } catch (err) {
+    await logFd?.close().catch(() => {})
     return { success: false, error: err?.message ?? String(err) }
   }
 }
 
-function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
+function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }) {
+  const startedAt = Date.now()
+  const label = describeCommand(display).label
   return new Promise((resolve) => {
     let child
     try {
@@ -505,87 +718,118 @@ function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
         env,
         // stdin is 'ignore' so processes that unexpectedly block on input
         // get EOF immediately instead of hanging forever. stdout/stderr are
-        // piped for capture.
+        // piped for capture. detached on POSIX so the whole process group can
+        // be killed on stop/timeout.
         stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
+        windowsHide: true,
+        detached: process.platform !== 'win32'
       })
     } catch (err) {
       resolve({ success: false, error: err?.message ?? String(err) })
       return
     }
 
-    let stdout = ''
-    let stderr = ''
+    const capture = makeCapture()
+    let stderrOnly = ''
+    let stdoutSeen = false
     let resolved = false
     let timer = null
     let onAbort = null
+
+    const finalize = async (base) => {
+      const raw = capture.text().trim()
+      const bounded = tailBound(raw)
+      let output = bounded.text
+      let outputPath
+      if (bounded.cut || capture.dropped) {
+        try {
+          outputPath = await spillFile('shell')
+          if (outputPath) await writeFile(outputPath, raw, 'utf8')
+        } catch {
+          outputPath = undefined
+        }
+        const note = capture.dropped
+          ? '...output truncated (only the last 8 MB were kept)...'
+          : '...output truncated...'
+        output =
+          `${note}\n\n` +
+          (outputPath
+            ? `Full output saved to: ${outputPath}\nUse file_grep to search it or file_read with startLine/endLine to view specific sections.\n\n`
+            : '') +
+          output
+      }
+      const meta = {
+        label,
+        cwd,
+        durationMs: Date.now() - startedAt,
+        exitCode: base.exitCode ?? null,
+        truncated: bounded.cut || capture.dropped
+      }
+      if (outputPath) meta.outputPath = outputPath
+      return { ...base, output: output || base.output, meta }
+    }
+
     const finish = (result) => {
       if (resolved) return
       resolved = true
       if (timer) clearTimeout(timer)
       if (signal && onAbort) signal.removeEventListener('abort', onAbort)
-      resolve(result)
+      void finalize(result).then(resolve)
     }
 
     // The command's shell spawns descendants; a plain child.kill leaves them
-    // running. On Windows kill the whole tree via taskkill (same approach as
-    // the cerebellum's npm-install backstop); elsewhere SIGKILL the shell.
-    const killTree = () => {
-      try {
-        if (process.platform === 'win32' && child.pid) {
-          spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
-        } else {
+    // running. Kill the whole tree: taskkill on Windows, the process group
+    // elsewhere (the child is detached, so it leads its own group).
+    const kill = () => {
+      if (child.pid) killTree(child.pid, 'SIGKILL')
+      else {
+        try {
           child.kill('SIGKILL')
+        } catch {
+          // already dead
         }
-      } catch {
-        // already dead
       }
     }
 
-    // Stop the run mid-command: kill the process tree and resolve as a
-    // failure so the agent can close the turn cleanly instead of waiting for
-    // a long-running command to finish on its own.
     if (signal) {
       if (signal.aborted) {
-        killTree()
-        finish({ success: false, error: 'Stopped by user.', output: combine(stdout, stderr) })
+        kill()
+        finish({ success: false, error: 'Stopped by user.', output: '' })
         return
       }
       onAbort = () => {
-        killTree()
-        finish({ success: false, error: 'Stopped by user.', output: combine(stdout, stderr) })
+        kill()
+        finish({ success: false, error: 'Stopped by user.', output: '' })
       }
       signal.addEventListener('abort', onAbort, { once: true })
     }
 
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // already dead
-        }
+        kill()
         finish({
           success: false,
-          error: `Command timed out after ${timeoutMs}ms`,
-          output: combine(stdout, stderr)
+          error: `Command timed out after ${timeoutMs}ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout (or none) — or run it with background=true.`,
+          output: ''
         })
       }, timeoutMs)
     }
 
     child.stdout?.on('data', (chunk) => {
-      stdout = clamp(stdout, chunk)
+      stdoutSeen = true
+      capture.push(chunk)
     })
     child.stderr?.on('data', (chunk) => {
-      stderr = clamp(stderr, chunk)
+      capture.push(chunk)
+      if (stderrOnly.length < 20_000) stderrOnly += chunk.toString()
     })
     child.on('error', (err) => {
       finish({ success: false, error: err?.message ?? String(err) })
     })
     child.on('close', (code) => {
-      const output = combine(stdout, stderr)
+      const combined = capture.text().trim()
       if (code === 0) {
-        finish({ success: true, output: output || '(no output)' })
+        finish({ success: true, output: combined || '(no output)', exitCode: 0 })
         return
       }
       // Exit code 1 with no output at all is the universal "no match / nothing
@@ -596,27 +840,27 @@ function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
       // blind "(unknown)" error with zero signal. Surface it as a clean empty
       // result. Exit codes >= 2 still mean a real error (e.g. grep 2 = read
       // error) and fall through to the failure path below.
-      if (code === 1 && !stdout.trim() && !stderr.trim()) {
-        finish({ success: true, output: '(no matches — command exited 1 with no output)' })
+      if (code === 1 && !combined) {
+        finish({
+          success: true,
+          output: '(no matches — command exited 1 with no output)',
+          exitCode: 1
+        })
         return
       }
       // `grep -c` (and `grep -c -r`) print a tally and exit 1 when the total
       // count is zero — "0" for a single file, "<file>:0" per file with -r.
-      // The number IS the result, not an error, so the no-output guard above
-      // misses it (stdout is "0", not empty) and the command lands in the
-      // failure path, handing the model a blind "exited with code 1: 0". Treat
-      // a stderr-free exit-1 whose stdout is only zero-counts as a clean empty
-      // result and return the tally itself. grep only exits 1 here when every
-      // count is zero (any match exits 0), so this never masks a real hit.
-      if (code === 1 && !stderr.trim() && stdout.trim()) {
-        const lines = stdout.trim().split(/\r?\n/)
+      // The number IS the result, not an error. Treat a stderr-free exit-1
+      // whose stdout is only zero-counts as a clean empty result.
+      if (code === 1 && !stderrOnly.trim() && stdoutSeen && combined) {
+        const lines = combined.split(/\r?\n/)
         if (lines.every((l) => /^(?:.+:)?0$/.test(l.trim()))) {
-          finish({ success: true, output: stdout.trim() })
+          finish({ success: true, output: combined, exitCode: 1 })
           return
         }
       }
-      const diagnostic = buildDiagnostic(stdout, stderr, command)
-      const partial = stdout.trim().length > 100
+      const diagnostic = buildDiagnostic(combined, stderrOnly, command)
+      const partial = combined.length > 100
       finish({
         success: false,
         exitCode: code,
@@ -624,7 +868,7 @@ function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
         error: diagnostic
           ? `Command exited with code ${code}: ${diagnostic}`
           : `Command exited with code ${code} (no output captured — if you redirected stderr with 2>/dev/null, drop it so the cause is visible)`,
-        output
+        output: combined
       })
     })
   })
@@ -634,89 +878,38 @@ function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
 // Diagnostics
 // ---------------------------------------------------------------------------
 
-function buildDiagnostic(stdout, stderr, command) {
+// The model's classified error line: the tail of the combined output (where
+// a failing run reports its failure) plus the head of stderr when stderr
+// carried something distinct. Short by design — the tool result's `output`
+// carries the bounded full text alongside.
+function buildDiagnostic(combined, stderr, command) {
   const err = stderr.trim()
-  const out = stdout.trim()
+  const out = combined.trim()
 
   if (!err && ELEVATION_RE.test(command) && out.length < 200) {
     return `operation not permitted (non-interactive shell, elevation required)\n${out}`
   }
-
-  if (err) {
-    const errPart = err.slice(0, 300)
-    const outPart = out.slice(0, 200)
-    return outPart ? `${errPart}\n---\n${outPart}` : errPart
-  }
-
-  if (out.length <= 500) return out
-  return `${out.slice(0, 250)}\n…\n${out.slice(-250)}`
+  if (!out) return err.slice(0, 300)
+  if (out.length <= 600) return out
+  const tail = out.slice(-400)
+  const head = err && !out.startsWith(err.slice(0, 40)) ? `${err.slice(0, 200)}\n---\n` : ''
+  return `${head}…${tail}`
 }
 
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Risk descriptions (for the approval card UI)
 // ---------------------------------------------------------------------------
 
-const HIGH_RISK_RE =
-  /\brm\s+(-rf|--recursive)|\bmkfs|\bdd\s+if=|chmod\s+777|curl[^|]*\|\s*(bash|sh|zsh)|:\(\)\s*\{\s*:\|:|shutdown|sudo\s+|git\s+push\s+.*--force|npm\s+publish/i
-const MEDIUM_RISK_RE = /\b(npm|pip|brew|apt|dnf|cargo|gem)\s+install\b|git\s+push\b|docker\s+rm\b|rm\s+/i
-
 function describeShellAction(command) {
   const cmd = String(command ?? '').trim()
-  let risk = 'low'
-  if (HIGH_RISK_RE.test(cmd)) risk = 'high'
-  else if (MEDIUM_RISK_RE.test(cmd)) risk = 'medium'
-
-  const verbMap = [
-    [/^ls\b/, 'List files'],
-    [/^pwd\b/, 'Print working directory'],
-    [/^cat\b/, 'Print file contents'],
-    [/^(?:open|xdg-open|start)\b/, 'Open file'],
-    [/^cd\b/, 'Change directory'],
-    [/^cp\b/, 'Copy files'],
-    [/^mv\b/, 'Move/rename files'],
-    [/^rm\s+(-rf|--recursive)/, 'Delete directory recursively'],
-    [/^rm\b/, 'Delete files'],
-    [/^mkdir\b/, 'Create directory'],
-    [/^grep\b|^rg\b/, 'Search code'],
-    [/^find\b/, 'Find files'],
-    [/^git\s+status/, 'Check git status'],
-    [/^git\s+diff/, 'Show git diff'],
-    [/^git\s+log/, 'Show git log'],
-    [/^git\s+push/, 'Push commits to remote'],
-    [/^git\s+pull/, 'Pull from remote'],
-    [/^git\s+commit/, 'Create git commit'],
-    [/^npm\s+install/, 'Install npm dependencies'],
-    [/^npm\s+run/, 'Run npm script'],
-    [/^pip\s+install/, 'Install Python packages'],
-    [/^docker\s+/, 'Run Docker command'],
-    [/^brew\s+install/, 'Install with Homebrew'],
-    [/^curl\b/, 'Make HTTP request']
-  ]
-  let description = 'Run shell command'
-  for (const [re, label] of verbMap) {
-    if (re.test(cmd)) {
-      description = label
-      break
-    }
-  }
-
-  let impact
-  if (/^rm\s+(-rf|--recursive)/.test(cmd)) {
-    impact = 'Permanently deletes files. This cannot be undone.'
-  } else if (/sudo\s+/.test(cmd)) {
-    impact = 'Runs with elevated privileges (will prompt for your password via system dialog).'
-  } else if (/git\s+push\s+.*--force/.test(cmd)) {
-    impact = 'Force-pushes the branch — may overwrite remote history.'
-  }
-
+  const described = describeCommand(cmd)
   const out = {
     title: 'Run shell command',
-    description,
+    description: described.label,
     command: cmd,
-    risk
+    risk: described.risk
   }
-  if (impact) out.impact = impact
+  if (described.impact) out.impact = described.impact
   return out
 }
 
@@ -729,16 +922,80 @@ const plugin = {
   tools: toolDefinitions,
   async init(context) {
     sudoCtx = context?.sudo ?? null
+    if (typeof context?.getWorkingFolders === 'function') {
+      getWorkingFolders = context.getWorkingFolders
+    }
+    if (typeof context?.workspaceRoot === 'string' && context.workspaceRoot) {
+      workspaceRoot = context.workspaceRoot
+    }
+  },
+  // A read-only turn (plan mode, explore agents) asks per call: `git status`
+  // observes, `git push` acts. Conservative allowlist — see tokenize.mjs.
+  isReadOnlyCall(toolName, args) {
+    if (toolName === 'shell_jobs') return true
+    if (toolName !== 'shell_exec') return false
+    const command = typeof args?.command === 'string' ? args.command : ''
+    // Checks (tests, type-check, lint) count as investigation: a plan that
+    // cannot reproduce the failure is a guess.
+    return (
+      command.length > 0 &&
+      args?.background !== true &&
+      (isReadOnly(command) || isInvestigation(command))
+    )
   },
   describeAction(toolName, args) {
-    if (toolName !== 'shell_exec') return null
-    return describeShellAction(args?.command)
+    if (toolName === 'shell_exec') return describeShellAction(args?.command)
+    if (toolName === 'shell_stop') {
+      return {
+        title: 'Stop background process',
+        description: args?.all ? 'Stop every background job' : `Stop PID ${args?.pid}`,
+        risk: 'low'
+      }
+    }
+    return null
   },
   async execute(toolName, args, signal) {
-    if (toolName !== 'shell_exec') {
-      return { success: false, error: `shell: unknown tool ${toolName}` }
+    if (toolName === 'shell_exec') return execShell(args, signal)
+    if (toolName === 'shell_jobs') {
+      if (backgroundJobs.size === 0) {
+        return { success: true, output: 'No background jobs started this session.' }
+      }
+      return { success: true, output: [...backgroundJobs.values()].map(describeJob).join('\n') }
     }
-    return execShell(args, signal)
+    if (toolName === 'shell_stop') {
+      if (args?.all === true) {
+        const jobs = [...backgroundJobs.values()]
+        if (jobs.length === 0) return { success: true, output: 'No background jobs to stop.' }
+        const results = []
+        for (const job of jobs) {
+          results.push(`PID ${job.pid}: ${(await stopJob(job)) ? 'stopped' : 'still running'}`)
+        }
+        return { success: true, output: results.join('\n') }
+      }
+      const pid = Number(args?.pid)
+      if (!Number.isInteger(pid) || pid <= 0) {
+        return {
+          success: false,
+          error: 'Pass pid (from shell_exec background / shell_jobs) or all=true.'
+        }
+      }
+      const job = backgroundJobs.get(pid) ?? {
+        pid,
+        command: '(not started by shell_exec)',
+        cwd: '',
+        logPath: '',
+        startedAt: Date.now()
+      }
+      if (!isAlive(pid)) {
+        backgroundJobs.delete(pid)
+        return { success: true, output: `PID ${pid} is not running.` }
+      }
+      const stopped = await stopJob(job)
+      return stopped
+        ? { success: true, output: `Stopped PID ${pid} (${job.command}).` }
+        : { success: false, error: `PID ${pid} is still running after SIGTERM and SIGKILL.` }
+    }
+    return { success: false, error: `shell: unknown tool ${toolName}` }
   }
 }
 

@@ -1,6 +1,14 @@
 import { queryClient } from '@/lib/query/queryClient'
 import { bridgeClient } from '@/lib/cloud/bridge'
-import { Rpc, type AutomationJob, type AutomationRuns } from '@/lib/bridge/protocol'
+import {
+  Rpc,
+  RUN_KINDS,
+  type AutomationJob,
+  type AutomationQueuedRun,
+  type AutomationRun,
+  type AutomationRuns,
+  type RunKind
+} from '@/lib/bridge/protocol'
 import { adoptUploadedFile, chooseUploadPath, uploadFileToCloud } from '@/lib/sync/files'
 import { useDemoConfig } from '@/state/demoConfig'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
@@ -41,6 +49,47 @@ const EMPTY: AutomationsSnapshot = {
 
 export const automationKeys = { snapshot: ['automations'] as const }
 
+// ------------------------------------------------------------------ the pool
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/** An unknown kind reads as an automation — the gating then treats it as one. */
+function runKind(value: unknown): RunKind {
+  return (RUN_KINDS as readonly string[]).includes(text(value)) ? (value as RunKind) : 'automation'
+}
+
+/** A run off the wire, or null if it is not one. Every field but `id` defaults. */
+function readRun(row: unknown): AutomationRun | null {
+  const source = row as Partial<AutomationRun> | null
+  const id = text(source?.id)
+  if (!id) return null
+  return { id, label: text(source?.label), kind: runKind(source?.kind) }
+}
+
+function readQueued(row: unknown): AutomationQueuedRun | null {
+  const source = row as Partial<AutomationQueuedRun> | null
+  const id = text(source?.id)
+  if (!id) return null
+  return { id, label: text(source?.label), kind: runKind(source?.kind) }
+}
+
+/**
+ * The run pool off the wire — the `automations.runs` push and the `runs` half
+ * of an automationsRead answer. Normalized rather than trusted: an older
+ * desktop sends rows without `kind`, and a row with no id is not a run.
+ */
+export function readRuns(payload: unknown): AutomationRuns {
+  const source = payload as { running?: unknown; queued?: unknown } | null
+  const running = Array.isArray(source?.running) ? source.running : []
+  const queued = Array.isArray(source?.queued) ? source.queued : []
+  return {
+    running: running.map(readRun).filter((row): row is AutomationRun => row !== null),
+    queued: queued.map(readQueued).filter((row): row is AutomationQueuedRun => row !== null)
+  }
+}
+
 export function invalidateAutomations(): void {
   void queryClient.invalidateQueries({ queryKey: automationKeys.snapshot })
 }
@@ -75,7 +124,7 @@ async function call<T>(method: string, params?: Record<string, unknown>): Promis
  *
  * `runs` is deliberately never seeded. A run is something happening on a
  * machine this one cannot see right now, and an empty pool is the only honest
- * answer with no desktop behind it (see lib/sync/overlays).
+ * answer with no desktop behind it.
  */
 function snapshotAutomations(): AutomationsSnapshot {
   const { markdown, jobs, stamps } = useDemoConfig.getState().snapshotAutomations
@@ -97,10 +146,7 @@ async function readSnapshot(): Promise<AutomationsSnapshot> {
     markdown: typeof answer?.markdown === 'string' ? answer.markdown : '',
     jobs: Array.isArray(answer?.jobs) ? answer.jobs : [],
     stamps: answer?.stamps && typeof answer.stamps === 'object' ? answer.stamps : {},
-    runs: {
-      running: Array.isArray(answer?.runs?.running) ? answer.runs.running : [],
-      queued: Array.isArray(answer?.runs?.queued) ? answer.runs.queued : []
-    }
+    runs: readRuns(answer?.runs)
   }
 }
 

@@ -90,7 +90,8 @@ function spawnAgent(args) {
       name: name || undefined,
       model: model || undefined,
       effort,
-      phase: phase || undefined
+      phase: phase || undefined,
+      readOnly: args?.readOnly === true
     })
   } catch (err) {
     return { success: false, error: `agent_spawn: ${err instanceof Error ? err.message : String(err)}` }

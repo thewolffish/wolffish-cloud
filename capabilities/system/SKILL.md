@@ -74,6 +74,7 @@ tools:
         required: false
         description: Force-kill instead of quitting gracefully (may lose unsaved work). Default false.
   - name: app_list
+    readOnly: true
     description: List the applications currently open (visible GUI apps).
     parameters: {}
   - name: open_path

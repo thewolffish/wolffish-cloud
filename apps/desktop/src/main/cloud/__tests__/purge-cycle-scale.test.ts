@@ -285,7 +285,7 @@ const CONFIG_A = {
   locale: 'en',
   llm: { model: 'deepseek-ai/DeepSeek-V4-Flash-0731' },
   variables: [{ name: 'SECRET', value: 'sk-live-999', sensitive: true }],
-  mobile: { notifications: true, verbose: true, runCards: false }
+  mobile: { notifications: true, verbose: true }
 }
 
 function seedConversation(n: number): Record<string, unknown> {

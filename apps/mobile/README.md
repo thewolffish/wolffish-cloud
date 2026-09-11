@@ -179,7 +179,7 @@ The desktop runs every turn; the phone hands over the prompt and renders what co
 
 Turns that park waiting on you — the agent's multiple-choice **questions** and **approval requests** for flagged tool calls — arrive as cards anchored at the tool result they belong to. Both fail closed: an unanswered request is denied when its turn ends or the phone goes away.
 
-Anything the desktop is busy with in the background — automations, compaction, nightly reflection, a memory reindex — shows as a card in an overlay stack. It is in-memory only and cleared the instant the desktop leaves the bridge, because every card asserts something is happening _right now_ on a machine the phone can no longer see.
+A memory reindex on the desktop — the one thing that blocks it outright — shows as a card over whatever screen the phone is on. It is in-memory only and cleared the instant the desktop leaves the bridge, because the card asserts something is happening _right now_ on a machine the phone can no longer see. Background runs (automations, compaction, reflection) draw nothing; the Automations screen reports them.
 
 ---
 

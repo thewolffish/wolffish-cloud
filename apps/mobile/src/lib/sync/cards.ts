@@ -5,6 +5,7 @@ import type {
   AskUserResponse,
   DangerLevel
 } from '@/lib/conversations/types'
+import { attachPlanModeStream } from '@/lib/sync/planMode'
 import { bridgeClient } from '@/lib/cloud/bridge'
 import { Event, Rpc } from '@/lib/bridge/protocol'
 import { useChatRuntime, type ApprovalCardState } from '@/state/chatRuntime'
@@ -95,6 +96,9 @@ const DANGER_LEVELS: DangerLevel[] = ['safe', 'warn', 'confirm', 'destructive', 
 export function attachCardStream(): void {
   const tunnel = bridgeClient.active
   if (!tunnel) return
+  // Plan mode rides the same stream: a stance flipped on the desktop lands
+  // on the phone's switch and chip the same way a parked card does.
+  attachPlanModeStream()
 
   tunnel.onEvent(Event.askRequest, (payload) => {
     const { conversationId, id, toolCallId, questions } = (payload ?? {}) as {

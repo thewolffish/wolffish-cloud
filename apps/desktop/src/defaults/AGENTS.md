@@ -385,8 +385,10 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
-| **System** | `.shell` | Run shell commands — `shell_exec` (auto-elevation via native password dialog; `background:true` for servers) |
-| | `.filesystem` | `file_read`, `file_write`, `file_patch` |
+| **System** | `.shell` | Run shell commands — `shell_exec` (working-folder cwd, tail-biased output spilled to a log, watcher guard, auto-elevation; `background:true` for servers), `shell_jobs`, `shell_stop` |
+| | `.filesystem` | `file_read` (line-numbered), `file_edit` (exact-match edit with diff), `file_write`, `file_grep`, `file_glob` (ripgrep), `image_view`; `file_patch` is a deprecated alias |
+| | *(in-process)* `todo` | The model's task list — `todo_write` renders a checklist card |
+| | *(in-process)* `changes` | Undo for file edits — `changes_list`, `changes_revert` |
 | | `.node` | Node.js runtime + npm — `node_check`, `node_install` |
 | | `.python` | Hermetic uv-managed CPython for native Python plugins — `python_check`, `python_install` |
 | | `.package-manager` | Cross-platform packages (brew/winget/apt/dnf) — `pkg_install`, `pkg_check` |

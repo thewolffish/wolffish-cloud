@@ -82,8 +82,8 @@ async function draw(node: React.ReactElement): Promise<void> {
 /**
  * Press one segment of the Off | On pair belonging to a named row.
  *
- * `nth` disambiguates rows that deliberately share a label: "Verbose task
- * results" is the wording every non-phone channel uses, and rows sharing it
+ * `nth` disambiguates rows that deliberately share a label: "Show all tool
+ * activity" is the wording every non-phone channel uses, and rows sharing it
  * are told apart by the card they sit in — exactly the desktop's own rule.
  */
 function pressSegment(row: string, segment: 'Off' | 'On', nth = 0): void {
@@ -154,8 +154,8 @@ describe('Channels — the desktop-owned rows', () => {
 
   it('the in-app feed switch writes inappVerbose to the desktop', async () => {
     await draw(<ChannelsScreen />)
-    // The first "Verbose task results" on the screen is the in-app card's.
-    pressSegment('Verbose task results', 'On', 0)
+    // The first "Show all tool activity" on the screen is the in-app card's.
+    pressSegment('Show all tool activity', 'On', 0)
     await waitFor(() => {
       expect(configSetCalls()).toEqual([[Rpc.configSet, { settings: { inappVerbose: true } }]])
     })

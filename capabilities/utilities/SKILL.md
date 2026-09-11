@@ -18,6 +18,7 @@ triggers:
   - show the folder
 tools:
   - name: send_file
+    readOnly: true
     description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and the CLI, and reaches the paired phone as a download. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. No size limit in-app or in the CLI; remote surfaces refuse files over their own upload ceilings and tell the user where the file is. Pass the file path — absolute, ~/-relative, or workspace-relative."
     parameters:
       file:
@@ -25,6 +26,7 @@ tools:
         description: "Path to the file to deliver. Absolute (/Users/you/report.pdf), home-relative (~/Desktop/report.pdf), or workspace-relative (files/report.pdf)."
         required: true
   - name: show_path
+    readOnly: true
     description: "Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens it in the OS file manager), a file gets a Reveal button (opens its folder with the file selected, like Reveal in Finder). Use it whenever the user would want to jump to a location — a folder you created or organized, a batch of outputs, a file deliberately left in place instead of sent. The path must exist. In-app desktop chat only — on the phone nothing renders, so name the path in prose there instead."
     parameters:
       path:

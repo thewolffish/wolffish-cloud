@@ -133,9 +133,28 @@ export type ConversationCards = {
   approvals: Record<string, ApprovalCardState>
 }
 
+/**
+ * The key a chat with no conversation yet files its plan stance under. A fresh
+ * chat gets its id only when the first send creates the conversation on the
+ * desktop, so the toggle needs a key before then; sendPrompt moves the stance
+ * under the real id once it exists (adoptPlanMode).
+ */
+export const NEW_CHAT_PLAN_KEY = '\u0000new-chat'
+
 export type ChatRuntimeState = {
   streams: Record<string, LiveStream>
   cards: Record<string, ConversationCards>
+  /**
+   * PLAN MODE per conversation — the desktop composer's Plan chip, mirrored:
+   * a stance for the next turns (read-only, the agent only writes its plan
+   * file) rather than a property of the transcript. In memory for the
+   * session, keyed by conversation id or NEW_CHAT_PLAN_KEY, never persisted
+   * and never synced: it rides each send as `planMode` on the wire.
+   */
+  planModes: Record<string, boolean>
+  setPlanMode: (conversationId: string | null, value: boolean) => void
+  /** The fresh chat's stance follows the conversation its first send created. */
+  adoptPlanMode: (conversationId: string) => void
   /**
    * Project a new chat will be filed under. A conversation does not exist
    * until its first message, so a project picked before then has nothing to
@@ -201,6 +220,17 @@ const NO_CARDS: ConversationCards = { asks: {}, approvals: {} }
 export const useChatRuntime = create<ChatRuntimeState>()((set) => ({
   streams: {},
   cards: {},
+  planModes: {},
+  setPlanMode: (conversationId, value) =>
+    set((state) => ({
+      planModes: { ...state.planModes, [conversationId ?? NEW_CHAT_PLAN_KEY]: value }
+    })),
+  adoptPlanMode: (conversationId) =>
+    set((state) => {
+      const { [NEW_CHAT_PLAN_KEY]: stance, ...rest } = state.planModes
+      if (stance === undefined) return state
+      return { planModes: { ...rest, [conversationId]: stance } }
+    }),
   pendingProjectId: null,
   setPendingProject: (pendingProjectId) => set({ pendingProjectId }),
   activeProjectId: null,
@@ -283,6 +313,7 @@ export const useChatRuntime = create<ChatRuntimeState>()((set) => ({
     set({
       streams: {},
       cards: {},
+      planModes: {},
       pendingProjectId: null,
       activeProjectId: null,
       pendingPrompt: null
@@ -307,4 +338,16 @@ export function selectCards(
 /** Read one conversation's live turn outside React (event handlers, tests). */
 export function liveStreamFor(conversationId: string): LiveStream | undefined {
   return useChatRuntime.getState().streams[conversationId]
+}
+
+/** One conversation's plan stance (the fresh chat's when there is no id). */
+export function selectPlanMode(
+  conversationId: string | null | undefined
+): (state: ChatRuntimeState) => boolean {
+  return (state) => state.planModes[conversationId ?? NEW_CHAT_PLAN_KEY] ?? false
+}
+
+/** The same, outside React — what the send path stamps on the wire. */
+export function planModeFor(conversationId: string | null | undefined): boolean {
+  return selectPlanMode(conversationId)(useChatRuntime.getState())
 }

@@ -32,9 +32,20 @@ export type ApprovalRequest = {
   level: DangerLevel
   reason: string
   description?: ApprovalDescription
+  /**
+   * Scope for "Allow for this conversation": a rule the user grants on this
+   * request auto-approves later matching calls carrying the same key. The
+   * Agent passes the conversation id (turn id for conversation-less runs).
+   */
+  sessionKey?: string
 }
 
-export type ApprovalDecision = 'approved' | 'denied'
+/**
+ * `approved_session` is "approve, and keep approving the same kind of call
+ * for the rest of this conversation" — the rule lives in memory only (see
+ * Amygdala.sessionAllow) and never touches block-level patterns.
+ */
+export type ApprovalDecision = 'approved' | 'denied' | 'approved_session'
 
 export type ApprovalBridge = (
   request: ApprovalRequest & { id: string }
@@ -47,7 +58,61 @@ export type AmygdalaOptions = {
 
 const APPROVAL_DENIED: ApprovalDecision = 'denied'
 
+/**
+ * Command heads whose FIRST argument is part of the identity of the action
+ * (`git push` vs `git status`), so a session rule for one never covers the
+ * other. Everything else is keyed on the head alone — the same shape
+ * OpenCode's arity table produces for the common cases.
+ */
+const TWO_TOKEN_HEADS = new Set([
+  'git',
+  'npm',
+  'pnpm',
+  'yarn',
+  'bun',
+  'npx',
+  'pip',
+  'pip3',
+  'docker',
+  'cargo',
+  'go',
+  'brew',
+  'apt',
+  'apt-get',
+  'dnf',
+  'kubectl',
+  'gh',
+  'make',
+  'python',
+  'python3',
+  'node',
+  'uv',
+  'poetry'
+])
+
+/**
+ * The rule a "Allow for this conversation" grant records for a call: the
+ * tool name, and for the shell the command's leading token(s) with wrappers
+ * (sudo, env, nohup…) stripped. Pure and conservative — anything unusual
+ * falls back to the whole first token.
+ */
+export function sessionAllowRule(call: ToolCall): string {
+  if (call.name !== 'shell_exec') return call.name
+  const command = typeof call.args?.command === 'string' ? call.args.command.trim() : ''
+  const first = command.split(/\s*(?:&&|\|\||;|\|)\s*/)[0] ?? ''
+  const words = first.split(/\s+/).filter((w) => w.length > 0)
+  while (words.length > 0 && /^(sudo|doas|env|nohup|time|nice)$/.test(words[0])) words.shift()
+  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift()
+  const head = words[0] ?? ''
+  if (!head) return 'shell_exec'
+  const sub =
+    words[1] && !words[1].startsWith('-') && TWO_TOKEN_HEADS.has(head) ? ` ${words[1]}` : ''
+  return `shell_exec:${head}${sub}`
+}
+
 export class Amygdala {
+  /** "Allow for this conversation" grants: session key → rules. Memory only. */
+  private sessionAllow = new Map<string, Set<string>>()
   private patterns: DangerPattern[] = []
   private approvalBridge: ApprovalBridge | null
   private bypassPermissions = false
@@ -138,6 +203,17 @@ export class Amygdala {
    */
   async requestApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
     const id = generateApprovalId()
+    const rule = sessionAllowRule(req.toolCall)
+    if (req.sessionKey && this.sessionAllow.get(req.sessionKey)?.has(rule)) {
+      this.options.corpus?.emit('safety.autoApproved', {
+        id,
+        tool: req.toolCall.name,
+        args: req.toolCall.args,
+        level: req.level,
+        reason: `allowed for this conversation (${rule})`
+      })
+      return 'approved'
+    }
     if (this.bypassPermissions) {
       this.options.corpus?.emit('safety.autoApproved', {
         id,
@@ -164,12 +240,34 @@ export class Amygdala {
     } catch {
       decision = APPROVAL_DENIED
     }
+    if (decision === 'approved_session') {
+      if (req.sessionKey) {
+        let rules = this.sessionAllow.get(req.sessionKey)
+        if (!rules) {
+          rules = new Set()
+          this.sessionAllow.set(req.sessionKey, rules)
+        }
+        rules.add(rule)
+      }
+      this.options.corpus?.emit('safety.approved', { id })
+      return 'approved'
+    }
     if (decision === 'approved') {
       this.options.corpus?.emit('safety.approved', { id })
     } else {
       this.options.corpus?.emit('safety.denied', { id })
     }
     return decision
+  }
+
+  /** The rules "Allow for this conversation" has granted, per session key. */
+  sessionAllowRules(sessionKey: string): string[] {
+    return [...(this.sessionAllow.get(sessionKey) ?? [])]
+  }
+
+  /** Drop a conversation's session rules (on delete / reset). */
+  clearSessionAllow(sessionKey: string): void {
+    this.sessionAllow.delete(sessionKey)
   }
 
   /**

@@ -71,6 +71,8 @@ export type TurnSendOptions = {
    * stamp. Omitted (every normal channel turn) ⇒ the global mode.
    */
   modeOverride?: 'single' | 'workflow'
+  /** Plan mode: read-only turn that may only write its plan file (see Agent). */
+  planMode?: boolean
   /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending
@@ -504,7 +506,8 @@ export class TurnRunner {
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,
-            modeOverride: opts.modeOverride
+            modeOverride: opts.modeOverride,
+            planMode: opts.planMode === true
           })
         )
         sink.onDone()

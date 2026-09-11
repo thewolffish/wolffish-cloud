@@ -19,9 +19,11 @@ import { ProviderErrorCards } from '@components/common/provider-error-card/Provi
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
-import { ToolCard } from '@components/common/tool-card/ToolCard'
+import { CODE_ACTIVITY_TOOLS, ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
+import { TodoCard } from '@components/common/todo-card/TodoCard'
+import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
@@ -35,7 +37,11 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
+import { collectTouchedFolders } from '@lib/touched-folders/touchedFolders'
 import {
+  todoListId,
+  latestTodoLists,
+  upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type WorkflowSnapshot
@@ -47,6 +53,7 @@ import {
 } from '@main/runtime/reasoning'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
+  ApprovalDecision,
   AskUserResponse,
   ChatHistoryMessage,
   ConversationFile,
@@ -56,7 +63,8 @@ import type {
   MessageAttachmentType,
   Segment,
   ThinkingMode,
-  TimelineEntry
+  TimelineEntry,
+  TodoItem
 } from '@preload/index'
 import {
   useFlow,
@@ -90,22 +98,33 @@ import {
   PlusSignIcon,
   Settings02Icon,
   StopCircleIcon,
+  Task01Icon,
   WorkflowSquare03Icon
 } from 'hugeicons-react'
 import {
   createContext,
   memo,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
-  type ReactNode
+  useState
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+
+/** Plan-mode stance per conversation, for the session (see Chat's planMode state). */
+const planModeByConversation = new Map<string, boolean>()
+/**
+ * The stance of a chat that has no conversation yet. A fresh chat gets its id
+ * only when the first send creates the conversation, so the toggle needs a
+ * key before then; the send path moves the stance under the real id.
+ */
+const NEW_CHAT_PLAN_KEY = '\u0000new-chat'
 
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
@@ -411,10 +430,94 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // The composer textarea and the expanded CodeMirror editor both use the app-wide
   // <InputContextMenu> (Select all / Copy / Paste / Clear + spelling corrections);
   // no per-surface menu here. See InputContextMenu.tsx for the main-driven flow.
+  // Plan mode per conversation: a read-only turn that may only write the
+  // conversation's plan file (Agent.planMode). Remembered per conversation
+  // for the session, not persisted — like OpenCode's plan agent, it is a
+  // stance for the next turns, not a property of the transcript.
+  const [planModeTick, bumpPlanMode] = useReducer((n: number) => n + 1, 0)
+  const planMode = useMemo(
+    () => planModeByConversation.get(activeConversationId ?? NEW_CHAT_PLAN_KEY) ?? false,
+    // planModeTick re-derives after a toggle; the map itself is module state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeConversationId, planModeTick]
+  )
+  // Every local change to the map bumps this; a seed read that started
+  // before a change resolves stale and is dropped (see the effect below).
+  const planModeGeneration = useRef(0)
+  const setPlanMode = useCallback(
+    (next: boolean) => {
+      planModeByConversation.set(activeConversationId ?? NEW_CHAT_PLAN_KEY, next)
+      planModeGeneration.current += 1
+      bumpPlanMode()
+      // Main holds the shared stance (runtime/plan-mode): the paired phone's
+      // switch reads it and its own flips come back through onPlanMode below.
+      // A chat with no id yet stays local until its first send creates one.
+      if (activeConversationId) {
+        void window.api.chat.setPlanMode({ conversationId: activeConversationId, planMode: next })
+      }
+    },
+    [activeConversationId]
+  )
+  // Mirror main's stance: seed when a conversation opens (the phone may have
+  // flipped it while this window showed another chat), and follow every
+  // change any surface makes from then on.
+  useEffect(() => {
+    if (!activeConversationId) return
+    let alive = true
+    const generation = planModeGeneration.current
+    void window.api.chat.getPlanMode(activeConversationId).then((on) => {
+      // A flip (here or pushed from the phone) that landed while this read
+      // was in flight is newer than the answer — keep it.
+      if (!alive || generation !== planModeGeneration.current) return
+      if ((planModeByConversation.get(activeConversationId) ?? false) === on) return
+      planModeByConversation.set(activeConversationId, on)
+      bumpPlanMode()
+    })
+    return () => {
+      alive = false
+    }
+  }, [activeConversationId])
+  useEffect(
+    () =>
+      window.api.chat.onPlanMode(({ conversationId, planMode: on }) => {
+        if ((planModeByConversation.get(conversationId) ?? false) === on) return
+        planModeByConversation.set(conversationId, on)
+        planModeGeneration.current += 1
+        bumpPlanMode()
+      }),
+    []
+  )
   const [storedFolders, setStoredFolders] = useState<string[]>([])
   const workingFolders = useMemo(
     () => (activeConversationId ? storedFolders : []),
     [activeConversationId, storedFolders]
+  )
+  // Every task list in its latest state, keyed by list id (broca
+  // latestTodoLists): a later turn's todo_write that continues an earlier
+  // list resolves THAT card in place. Memoized on a signature of the todo
+  // segments only, so streaming text never re-renders every row through
+  // this prop (ChatItem is memoized on prop identity).
+  const todoSignature = useMemo(
+    () =>
+      messages
+        .flatMap((m) => (m.role === 'assistant' ? m.segments : []))
+        .filter((s) => s.kind === 'todo')
+        .map((s) => `${todoListId(s)}:${s.segmentId}`)
+        .join('|'),
+    [messages]
+  )
+  const todoLists = useMemo(
+    () => latestTodoLists(messages.map((m) => (m.role === 'assistant' ? m.segments : undefined))),
+    // todoSignature is the memo key on purpose: it changes exactly when a todo segment does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [todoSignature]
+  )
+  // The folders this conversation changed files in — chips over the
+  // transcript's top edge. Derived from the persisted segments so the strip
+  // is the same live, after the turn and on a reopened conversation.
+  const touchedFolders = useMemo(
+    () => collectTouchedFolders(messages, workingFolders),
+    [messages, workingFolders]
   )
   /**
    * Reference files this conversation's turns are told about — seeded by a
@@ -966,6 +1069,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (descriptor.projectId) conv.projectId = descriptor.projectId
         if (descriptor.icon) conv.icon = descriptor.icon
         conversationRef.current = conv
+        // The plan stance set while this chat had no id follows it under the
+        // id it now has, so the second turn keeps the mode the first ran in.
+        const stance = planModeByConversation.get(NEW_CHAT_PLAN_KEY)
+        planModeByConversation.delete(NEW_CHAT_PLAN_KEY)
+        if (stance !== undefined) {
+          planModeByConversation.set(conv.id, stance)
+          if (stance) void window.api.chat.setPlanMode({ conversationId: conv.id, planMode: true })
+        }
         setActiveConversationId(conv.id)
       }
 
@@ -1172,6 +1283,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         turnStatsRef.current = emptyTurnStats()
         setTimelineEntries([])
         setFilesOpen(false)
+        // A fresh chat starts in plan mode off — the stance is a choice made
+        // for one conversation, never carried into the next.
+        planModeByConversation.delete(NEW_CHAT_PLAN_KEY)
+        bumpPlanMode()
       })
     }
   }, [activeConversationId, resetTurnStats, applyPersistedStats])
@@ -1695,7 +1810,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   }, [])
 
   const respondApproval = useCallback(
-    async (approvalId: string, decision: 'approved' | 'denied') => {
+    async (approvalId: string, decision: ApprovalDecision) => {
       setMessages((prev) =>
         prev.map((m) => {
           if (!isAssistant(m) || !m.approvals) return m
@@ -1906,6 +2021,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           workingFolders: opts?.workingFolders ?? workingFolders,
           contextFiles: opts?.contextFiles ?? contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+          planMode,
           projectId: descriptor.projectId ?? undefined,
           // Per-call only (procedure Play): a lingering state-based override
           // would leak the procedure's mode into later sends.
@@ -1949,6 +2065,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       workingFolders,
       contextFiles,
       thinkingMode,
+      planMode,
       scrollToBottom,
       markSending,
       sessionKey
@@ -2604,6 +2721,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           conversations sheet) laid over this transcript — no rails, no
           header. It stays live while turns stream; only the composer of a
           PROCESSING conversation is gated (below). */}
+      <TouchedFolders folders={touchedFolders} />
       <div
         ref={scrollerRef}
         className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"
@@ -2766,6 +2884,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   key={m.id}
                   message={m}
                   t={t}
+                  todoLists={todoLists}
                   awaitingApproval={awaitingApproval}
                   awaitingAsk={awaitingAsk}
                   onApprovalDecision={respondApproval}
@@ -3014,6 +3133,29 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               </>
             )}
             <div className="min-w-0 flex-1" />
+            {/* Plan mode, leading the end-edge cluster beside the draft editor
+                button. It renders only while it can actually be toggled: the
+                field is showing (the recorder owns the top row otherwise) and a
+                model exists to run the turn. The stance keys on the
+                conversation, or on the fresh chat until its first send creates
+                one, so it works before the id exists. */}
+            {recPhase === 'idle' && hasAnyModel && (
+              <button
+                type="button"
+                onClick={() => setPlanMode(!planMode)}
+                aria-pressed={planMode}
+                title={planMode ? t('chat.planMode.onTitle') : t('chat.planMode.offTitle')}
+                className={cn(
+                  'me-1 flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 text-xs font-medium',
+                  planMode
+                    ? 'border-accent/40 bg-accent/10 text-accent'
+                    : 'border-border bg-surface text-muted hover:text-fg'
+                )}
+              >
+                <Task01Icon size={14} aria-hidden />
+                {t('chat.planMode.label')}
+              </button>
+            )}
             {/* Opens the draft in the full-height CodeMirror sheet — leads the
                 end-edge cluster; gone while the recorder owns the top zone. It
                 names the sheet it opens, the way the automation, project and
@@ -4063,9 +4205,11 @@ function useRelativeTime(ts: number | undefined): string | null {
 type ChatItemProps = {
   message: ChatMessage
   t: (k: string, opts?: Record<string, unknown>) => string
+  /** Every task list in its latest state — see Chat's todoLists memo. */
+  todoLists: Map<string, TodoItem[]>
   awaitingApproval: boolean
   awaitingAsk: boolean
-  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
+  onApprovalDecision: (id: string, decision: ApprovalDecision) => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
   /** Present only on the last message when it's a failed turn and no turn is running. */
   onTryAgain?: (reason: string) => void
@@ -4079,6 +4223,7 @@ const ChatItem = memo(
   function ChatItem({
     message,
     t,
+    todoLists,
     awaitingApproval,
     awaitingAsk,
     onApprovalDecision,
@@ -4100,6 +4245,7 @@ const ChatItem = memo(
     return (
       <AssistantBubble
         message={message}
+        todoLists={todoLists}
         awaitingApproval={awaitingApproval}
         awaitingAsk={awaitingAsk}
         onApprovalDecision={onApprovalDecision}
@@ -4114,6 +4260,8 @@ const ChatItem = memo(
     // that was actually mutated (new segment, approval/ask update, status flip).
     if (prev.message !== next.message) return false
     if (prev.t !== next.t) return false
+    // A todo_write anywhere in the conversation may resolve THIS row's card.
+    if (prev.todoLists !== next.todoLists) return false
     if (prev.onApprovalDecision !== next.onApprovalDecision) return false
     if (prev.onAskRespond !== next.onAskRespond) return false
     // Flips between undefined and a stable callback as the row gains/loses
@@ -4206,6 +4354,7 @@ export function UserBubble({
 
 export function AssistantBubble({
   message,
+  todoLists,
   awaitingApproval,
   awaitingAsk,
   onApprovalDecision,
@@ -4213,9 +4362,10 @@ export function AssistantBubble({
   onTryAgain
 }: {
   message: AssistantMessage
+  todoLists: Map<string, TodoItem[]>
   awaitingApproval: boolean
   awaitingAsk: boolean
-  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
+  onApprovalDecision: (id: string, decision: ApprovalDecision) => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
   onTryAgain?: (reason: string) => void
 }): React.JSX.Element {
@@ -4274,7 +4424,8 @@ export function AssistantBubble({
     onApprovalDecision,
     onAskRespond,
     verbose,
-    showReasoning
+    showReasoning,
+    todoLists
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -4361,10 +4512,11 @@ function renderSegments(
   approvals: Record<string, ApprovalCardState> | undefined,
   asks: Record<string, AskCardState> | undefined,
   toolTimings: Record<string, ToolTiming> | undefined,
-  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
+  onApprovalDecision: (id: string, decision: ApprovalDecision) => void,
   onAskRespond: (askId: string, response: AskUserResponse) => void,
   verbose: boolean,
-  showReasoning: boolean
+  showReasoning: boolean,
+  todoLists: Map<string, TodoItem[]> = new Map()
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -4492,6 +4644,16 @@ function renderSegments(
       // would split one streamed run into a card per tick.
       flushTextOnly()
       reasoningBuffer += seg.delta
+    } else if (seg.kind === 'todo') {
+      // The model's task list: one checklist card per LIST, at the turn that
+      // created it, in its latest state — a later turn's write that continues
+      // the list (listId ≠ turnId) resolves this card in place and draws
+      // nothing of its own. Output FOR the user — renders on the clean feed.
+      if (todoListId(seg) !== seg.turnId) continue
+      flushText()
+      blocks.push(
+        <TodoCard key={`todo-${seg.turnId}`} items={todoLists.get(seg.turnId) ?? seg.items} />
+      )
     } else if (seg.kind === 'workflow') {
       // The workflow card: one full-width, deterministic, collapsible block
       // per run. Snapshots are upserted by workflowId on append, so exactly
@@ -4546,11 +4708,23 @@ function renderSegments(
       // verbose-only. Mirrors the channel renderSegment rules. (The model
       // still sees every result — segment.output replays into its context;
       // this gate is purely what the UI shows.)
-      const cardVisible = verbose
+      // The code tools are the one exception: an edit, a write or a shell run
+      // is a change the user can see in their project, so the clean feed
+      // shows it as a compact activity row (status, file or command, +N −M
+      // or exit code) expandable to the diff or output — never hidden.
+      const cardVisible = verbose || CODE_ACTIVITY_TOOLS.has(seg.name)
 
       if (voiceData) {
         if (cardVisible) {
-          blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
+          blocks.push(
+            <ToolCard
+              key={seg.segmentId}
+              call={seg}
+              result={result}
+              timing={timing}
+              compact={!verbose}
+            />
+          )
         }
         // Render every voice_generate asset, but for the voice_respond REPLY
         // only the final one — a redone reply must not show as a second memo.
@@ -4578,10 +4752,26 @@ function renderSegments(
           />
         )
         if (approval.decision !== undefined && cardVisible) {
-          blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
+          blocks.push(
+            <ToolCard
+              key={seg.segmentId}
+              call={seg}
+              result={result}
+              timing={timing}
+              compact={!verbose}
+            />
+          )
         }
       } else if (cardVisible) {
-        blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
+        blocks.push(
+          <ToolCard
+            key={seg.segmentId}
+            call={seg}
+            result={result}
+            timing={timing}
+            compact={!verbose}
+          />
+        )
       }
 
       const fileContent = isFileContentResult(seg, result)
@@ -5832,6 +6022,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       // not render-layer dedup. Everything else appends.
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
+      else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
       if (segment.kind === 'turn_end') next.stopReason = segment.stopReason

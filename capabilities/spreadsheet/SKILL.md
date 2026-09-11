@@ -100,6 +100,7 @@ triggers:
   - export excel
 tools:
   - name: spreadsheet_read
+    readOnly: true
     description: Read any spreadsheet file (xlsx, csv, tsv) and return structured JSON data. Auto-detects format from extension.
     parameters:
       path:

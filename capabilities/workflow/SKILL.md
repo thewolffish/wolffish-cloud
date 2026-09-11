@@ -37,6 +37,10 @@ tools:
         type: string
         required: false
         description: The workflow_plan phase this agent belongs to (exact title). Drives the card's per-phase progress. Optional.
+      readOnly:
+        type: boolean
+        required: false
+        description: 'Spawn a read-only EXPLORE agent: it can read, search, list, fetch and recall but every call that would change state (file writes, edits, shell commands that mutate, sends) is refused for its whole run. Use it for open-ended questions about a codebase or a folder ("how does X work", "where is Y handled", "what would this change touch") so your own context stays lean and nothing can be altered by accident. Give it the thoroughness you want ("quick", "medium", "very thorough") and ask for absolute paths in its report.'
   - name: agent_send
     description: Send a follow-up to an agent that has finished its previous task and is idle. Returns immediately; the agent runs again on the new message with its full prior context intact. Use this to iterate — a revision, a deeper pass, the next step. (An agent that is still running can only be cancelled and respawned.)
     parameters:

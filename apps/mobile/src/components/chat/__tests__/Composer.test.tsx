@@ -25,6 +25,11 @@ jest.mock('react-native-reanimated', () => {
   return { __esModule: true, default: { View }, FadeInDown: anim, FadeInUp: anim, FadeOut: anim }
 })
 
+// Whether a desktop is on the other end decides if plan mode can be on at all.
+let mockReachable = true
+jest.mock('@/lib/cloud/useBridgeStatus', () => ({
+  useDesktopReachable: () => mockReachable
+}))
 jest.mock('expo-audio', () => ({
   useAudioRecorder: () => ({ prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn() }),
   useAudioRecorderState: () => ({ durationMillis: 0 }),
@@ -215,5 +220,42 @@ describe('the expanded editor', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     expect(view.queryAllByPlaceholderText(EXPANDED)).toHaveLength(0)
     expect(fieldValue()).toBe('still writing')
+  })
+})
+
+/**
+ * Plan mode's chip: switched in the chat controls, the composer wears a
+ * "Plan" chip at the end of the row above the send/attach/mic row only while
+ * the stance is ON and a desktop can run the turn — and one tap turns it off.
+ */
+describe('the plan-mode chip', () => {
+  const runtime = () => require('@/state/chatRuntime') as typeof import('@/state/chatRuntime')
+
+  beforeEach(() => {
+    runtime().useChatRuntime.setState({ planModes: {} })
+    mockReachable = true
+  })
+
+  it('is absent while plan mode is off', async () => {
+    await mount()
+    expect(view.queryByText('Plan')).toBeNull()
+  })
+
+  it('appears once plan mode is on and turns it off when tapped', async () => {
+    runtime().useChatRuntime.getState().setPlanMode(null, true)
+    await mount()
+    expect(view.getByText('Plan')).toBeTruthy()
+    await act(async () =>
+      press('Plan mode is on: this turn only investigates and writes a plan. Tap to allow changes.')
+    )
+    expect(runtime().planModeFor(null)).toBe(false)
+    expect(view.queryByText('Plan')).toBeNull()
+  })
+
+  it('stays hidden when no desktop can run the turn', async () => {
+    runtime().useChatRuntime.getState().setPlanMode(null, true)
+    mockReachable = false
+    await mount()
+    expect(view.queryByText('Plan')).toBeNull()
   })
 })

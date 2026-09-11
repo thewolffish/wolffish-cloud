@@ -11,7 +11,6 @@ import { ToastProvider } from '@components/core/toast/ToastProvider'
 import { InputContextMenu } from '@components/core/InputContextMenu'
 import { useNetworkToasts } from '@hooks/use-network-toasts/useNetworkToasts'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
-import { ActiveRunCard } from '@components/common/active-run-card/ActiveRunCard'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { AuthGate } from '@pages/auth/AuthGate'
 import { Onboarding } from '@pages/Onboarding'
@@ -27,8 +26,8 @@ import { Leaderboard } from '@pages/Leaderboard'
 
 // The one-time cortex reindex (after an app update) blocks every turn, so
 // while it runs the chat screen is swapped for its own overlay. (Background
-// automation/procedure runs do NOT block — they surface as the floating
-// ActiveRunCard instead.) Tracked here — not inside Chat — so the overlay
+// automation/procedure runs do NOT block and draw nothing over the app — the
+// Automations page reports them.) Tracked here — not inside Chat — so the overlay
 // renders once at app level and the floating chrome hides behind the same
 // chatVisible gate. When Chat owned this state the old conversations rail (a
 // fixed z-30 element gated only at app level) kept floating over the overlay,
@@ -203,10 +202,6 @@ function App(): React.JSX.Element {
               <ChatSessionsProvider>
                 <div className="app-titlebar" aria-hidden />
                 <Screens />
-                {/* Floating live-run card (automations). Rendered AFTER Screens
-                    so it paints above same-z screen chrome; the app stays fully
-                    usable while a background run is active. */}
-                <ActiveRunCard />
                 <ClosingOverlay />
                 <InputContextMenu />
               </ChatSessionsProvider>

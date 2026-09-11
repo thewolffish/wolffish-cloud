@@ -4,6 +4,7 @@ import { mapConversationMessages } from '@lib/conversation-open'
 import { useLocale } from '@providers/locale/useLocale'
 import type { ChatMessage } from '@providers/flow/useFlow'
 import type { AdminTranscript } from '@preload/index'
+import { latestTodoLists } from '@main/runtime/broca'
 import { AssistantBubble, UserBubble } from '@pages/Chat'
 import { ArrowLeft02Icon, ArrowRight02Icon } from 'hugeicons-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -172,6 +173,15 @@ function TranscriptView({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const noop = (): void => undefined
+  // Each task list once, in its latest state — the chat page's own rule
+  // (a later turn's todo_write resolves the earlier card in place).
+  const todoLists = useMemo(
+    () =>
+      latestTodoLists(
+        (messages ?? []).map((m) => (m.role === 'assistant' ? m.segments : undefined))
+      ),
+    [messages]
+  )
 
   if (loading || messages === null) return <TranscriptSkeleton />
 
@@ -199,6 +209,7 @@ function TranscriptView({
           <AssistantBubble
             key={m.id}
             message={m}
+            todoLists={todoLists}
             awaitingApproval={false}
             awaitingAsk={false}
             onApprovalDecision={noop}

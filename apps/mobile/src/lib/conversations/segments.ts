@@ -3,6 +3,8 @@ import type {
   NoProviderAvailableInfo,
   Segment,
   SegmentTurnEndReason,
+  TodoItem,
+  ToolResultMeta,
   ToolResultStatus,
   ToolTiming,
   WorkflowSnapshot
@@ -32,6 +34,18 @@ const ASK_TOOL_NAME = 'ask_user'
 /** Tools whose output is file content — markers quoted inside never render. */
 const FILE_CONTENT_TOOL_NAMES = new Set(['file_read', 'file_write', 'file_patch'])
 
+/**
+ * The code tools that earn a compact activity row on the clean feed — an
+ * edit, a write or a shell run is a change the user can see in their project,
+ * so it shows with verbose off too (desktop ToolCard.CODE_ACTIVITY_TOOLS).
+ */
+export const CODE_ACTIVITY_TOOLS: ReadonlySet<string> = new Set([
+  'file_edit',
+  'file_write',
+  'file_patch',
+  'shell_exec'
+])
+
 export type ToolCallInfo = {
   toolCallId: string
   name: string
@@ -42,6 +56,7 @@ export type ToolResultInfo = {
   status: ToolResultStatus
   output: string
   error?: string
+  meta?: ToolResultMeta
 }
 
 export type DeliveredFileKind = 'image' | 'document' | 'audio' | 'video' | 'file' | 'chart'
@@ -65,6 +80,8 @@ export type RenderBlock =
   | { type: 'file'; key: string; relPath: string; kind: DeliveredFileKind }
   | { type: 'path'; key: string; path: string; kind: 'folder' | 'file' }
   | { type: 'workflow'; key: string; snapshot: WorkflowSnapshot }
+  /** The model's task list for one turn, in its latest state. */
+  | { type: 'todo'; key: string; items: TodoItem[] }
   | {
       type: 'compaction'
       key: string
@@ -232,7 +249,41 @@ function extractDeliveredFiles(
  * exist (a turn streaming in as deltas). Without the fallback both render as
  * an empty bubble: text on screen everywhere else, silently blank here.
  */
-export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
+/** The list a todo segment belongs to — its own turn unless it continues an earlier one. */
+export function todoListId(segment: Extract<Segment, { kind: 'todo' }>): string {
+  return segment.listId ?? segment.turnId
+}
+
+/**
+ * Every task list in a conversation in its LATEST state, keyed by list id,
+ * walking the messages in order (a later write replaces an earlier one).
+ * The feed draws each list once, on the card of the turn that created it,
+ * with these items — so a continuation write in a later turn resolves the
+ * earlier card in place (the desktop's latestTodoLists, mirrored).
+ */
+export function latestTodoLists(messages: ConversationMessage[]): Map<string, TodoItem[]> {
+  const out = new Map<string, TodoItem[]>()
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    for (const segment of message.segments ?? []) {
+      if (segment && typeof segment === 'object' && segment.kind === 'todo') {
+        out.set(todoListId(segment), Array.isArray(segment.items) ? segment.items : [])
+      }
+    }
+  }
+  return out
+}
+
+export type RenderOptions = {
+  /** Every task list in its latest state — see latestTodoLists. Without it,
+   *  each card shows the items of its own write. */
+  todoLists?: Map<string, TodoItem[]>
+}
+
+export function buildRenderBlocks(
+  message: ConversationMessage,
+  options: RenderOptions = {}
+): RenderBlock[] {
   const segments = message.segments ?? []
   if (segments.length === 0) {
     const prose = message.content?.trim() ?? ''
@@ -242,6 +293,7 @@ export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
   const openTools = new Map<string, number>() // toolCallId -> block index
   const emittedFiles = new Set<string>()
   const workflowIndexById = new Map<string, number>()
+  const todoIndexByTurn = new Map<string, number>()
   let textBuffer = ''
   let textKey = ''
   let reasoningBuffer = ''
@@ -332,7 +384,8 @@ export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
         const result: ToolResultInfo = {
           status: segment.status,
           output: segment.output ?? '',
-          error: segment.error
+          error: segment.error,
+          ...(segment.meta && typeof segment.meta === 'object' ? { meta: segment.meta } : {})
         }
         const callIndex = openTools.get(segment.toolCallId)
         let call: ToolCallInfo | undefined
@@ -379,6 +432,28 @@ export function buildRenderBlocks(message: ConversationMessage): RenderBlock[] {
         } else {
           workflowIndexById.set(id, blocks.length)
           blocks.push({ type: 'workflow', key: `w:${id}`, snapshot: segment.snapshot })
+        }
+        break
+      }
+      case 'todo': {
+        // The task list: one checklist per LIST, at the turn that created it,
+        // in its latest state. A later turn's write that continues the list
+        // (listId ≠ turnId) resolves that earlier card and draws nothing of
+        // its own; within one turn every write replaces the card — the
+        // desktop's upsertTodoSegment contract, applied again here so a
+        // transcript that still carries several writes renders exactly one.
+        if (todoListId(segment) !== segment.turnId) break
+        flushText()
+        const items =
+          options.todoLists?.get(segment.turnId) ??
+          (Array.isArray(segment.items) ? segment.items : [])
+        const key = `td:${segment.turnId}`
+        const existing = todoIndexByTurn.get(segment.turnId)
+        if (existing !== undefined) {
+          blocks[existing] = { type: 'todo', key, items }
+        } else {
+          todoIndexByTurn.set(segment.turnId, blocks.length)
+          blocks.push({ type: 'todo', key, items })
         }
         break
       }

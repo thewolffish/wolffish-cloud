@@ -35,6 +35,7 @@ jest.mock('expo-audio', () => ({
 jest.mock('@/components/chat/ChatControls', () => {
   const { Text } = require('react-native')
   return {
+    PlanModeControl: () => <Text>plan-mode</Text>,
     ContextMeterCard: () => <Text>context-meter</Text>,
     ModeAndThinkingControls: () => <Text>mode-and-thinking</Text>,
     PermissionsSwitch: () => <Text>permissions-switch</Text>

@@ -58,6 +58,7 @@ triggers:
 requires: []
 tools:
   - name: pkg_check
+    readOnly: true
     description: Check if a system package manager is available and which one
     parameters: {}
   - name: pkg_install_manager

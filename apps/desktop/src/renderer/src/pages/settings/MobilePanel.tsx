@@ -175,7 +175,6 @@ export function MobilePanel(): React.JSX.Element {
     [t]
   )
   const verbose = status?.verbose ?? null
-  const runCards = status?.runCards ?? null
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -441,14 +440,6 @@ export function MobilePanel(): React.JSX.Element {
             options={toggleOptions}
             disabled={busy || !loaded}
             onChange={(value) => void act(() => window.api.mobile.setVerbose(value))}
-          />
-          <Toggle
-            title={t('settings.mobile.runCards')}
-            hint={t('settings.mobile.runCardsHint')}
-            value={runCards}
-            options={toggleOptions}
-            disabled={busy || !loaded}
-            onChange={(value) => void act(() => window.api.mobile.setRunCards(value))}
           />
         </section>
       </div>
