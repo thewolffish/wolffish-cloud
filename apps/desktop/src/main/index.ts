@@ -114,7 +114,7 @@ import { pathToFileURL } from 'node:url'
 import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
-import { previewSchedule } from '@main/runtime/brainstem'
+import { nextCronMs, previewSchedule } from '@main/runtime/brainstem'
 import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { LOCKED_CAPABILITIES, WOLFFISH_AUTHOR } from '@main/runtime/cerebellum'
@@ -4341,68 +4341,6 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => {
   // Keep the app alive in the tray on all platforms
 })
-
-function nextCronMs(expr: string, nowMs: number): number | null {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return null
-  const [minute, hour, dom, , dow] = parts
-  const now = new Date(nowMs)
-
-  if (minute.startsWith('*/') && hour === '*') {
-    const interval = parseInt(minute.slice(2))
-    if (!interval) return null
-    const cur = now.getMinutes()
-    const next = Math.ceil((cur + 1) / interval) * interval
-    const d = new Date(now)
-    d.setSeconds(0, 0)
-    if (next >= 60) {
-      d.setHours(d.getHours() + 1)
-      d.setMinutes(next % 60)
-    } else {
-      d.setMinutes(next)
-    }
-    return d.getTime()
-  }
-
-  if (hour.startsWith('*/')) {
-    const interval = parseInt(hour.slice(2))
-    if (!interval) return null
-    const mm = minute === '*' ? 0 : parseInt(minute)
-    const curH = now.getHours()
-    const nextH = Math.ceil((curH + 1) / interval) * interval
-    const d = new Date(now)
-    d.setSeconds(0, 0)
-    d.setMinutes(mm)
-    if (nextH >= 24) {
-      d.setDate(d.getDate() + 1)
-      d.setHours(nextH % 24)
-    } else {
-      d.setHours(nextH)
-    }
-    return d.getTime()
-  }
-
-  const mm = minute === '*' ? 0 : parseInt(minute)
-  const hh = hour === '*' ? -1 : parseInt(hour)
-
-  if (hh >= 0 && dom === '*' && dow === '*') {
-    const d = new Date(now)
-    d.setSeconds(0, 0)
-    d.setHours(hh, mm)
-    if (d.getTime() <= nowMs) d.setDate(d.getDate() + 1)
-    return d.getTime()
-  }
-
-  if (hh < 0) {
-    const d = new Date(now)
-    d.setSeconds(0, 0)
-    d.setMinutes(mm)
-    if (d.getTime() <= nowMs) d.setHours(d.getHours() + 1)
-    return d.getTime()
-  }
-
-  return null
-}
 
 function rangeCutoffMs(range: UsageTimeRange): number {
   const now = new Date()

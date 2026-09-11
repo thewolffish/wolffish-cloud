@@ -23,7 +23,9 @@ import {
   addBlockPath,
   attachJobs,
   chipSchedule,
+  chipStateOf,
   CHIP_KINDS,
+  CHIP_TIMES,
   deleteBlock,
   DEFAULT_AUTOMATION_ICON,
   findBlock,
@@ -37,7 +39,9 @@ import {
   toggleBlock,
   writeDraft,
   type AutomationBlock,
-  type BoundBlock
+  type BoundBlock,
+  type ChipKind,
+  type ChipTimes
 } from '@/lib/automations/heartbeat'
 import { AttachSheet } from '@/components/chat/AttachmentPicker'
 import { AttachmentChips } from '@/components/workspace/AttachmentChips'
@@ -586,6 +590,21 @@ function AutomationEditor({
   const [guideOpen, setGuideOpen] = useState(false)
 
   const [schedule, setSchedule] = useState(block?.label ?? chipSchedule('daily'))
+  // The "how many times" pills multiply the period chips: picking "3 times"
+  // then "Every day" (or the other way round) fills a three-time Daily. Both
+  // rows light from the heading in the field (chipStateOf), so an edited or
+  // hand-typed schedule shows its own period and count. The count state only
+  // carries a pick made while no period chip describes the field yet.
+  const chipState = useMemo(() => chipStateOf(schedule.trim()), [schedule])
+  const [pendingTimes, setPendingTimes] = useState<ChipTimes>(1)
+  const litTimes: ChipTimes | null = chipState ? chipState.times : pendingTimes
+  const applyChip = (kind: ChipKind, times: ChipTimes): void => {
+    setSchedule(chipSchedule(kind, Date.now(), times))
+  }
+  const applyTimes = (times: ChipTimes): void => {
+    setPendingTimes(times)
+    if (chipState) applyChip(chipState.kind, times)
+  }
   /** Required — an automation with no name is never written (see gates below). */
   const [name, setName] = useState(block?.name ?? '')
   const [prompt, setPrompt] = useState(block?.body ?? '')
@@ -968,21 +987,59 @@ function AutomationEditor({
         </Pressable>
       </View>
 
-      {/* The chips fill in a correct schedule anchored on now, so the preview
-          line below immediately confirms the pick. */}
-      <View className="flex-row flex-wrap gap-1.5">
-        {CHIP_KINDS.map((kind) => (
-          <Pressable
-            key={kind}
-            accessibilityRole="button"
-            onPress={() => setSchedule(chipSchedule(kind))}
-            className="border-border bg-bg rounded-full border px-2.5 py-1 active:bg-border-soft"
-          >
-            <Text className="text-muted font-sans text-xs">
-              {t(`heartbeat.editor.chips.${kind}`)}
-            </Text>
-          </Pressable>
-        ))}
+      {/* Two rows that read as one sentence: "3 times" · "Every day". The
+          count pills hold a selection (lit); the period chips fill in a
+          correct schedule anchored on now, so the preview line below
+          immediately confirms the pick. */}
+      <View
+        accessibilityRole="radiogroup"
+        accessibilityLabel={t('heartbeat.editor.timesAria')}
+        className="flex-row flex-wrap gap-1.5"
+      >
+        {CHIP_TIMES.map((times) => {
+          const active = times === litTimes
+          return (
+            <Pressable
+              key={times}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active }}
+              onPress={() => applyTimes(times)}
+              className={cn(
+                'rounded-full border px-2.5 py-1',
+                active ? 'bg-primary border-primary' : 'border-border bg-bg active:bg-border-soft'
+              )}
+            >
+              <Text className={cn('font-sans text-xs', active ? 'text-primary-fg' : 'text-muted')}>
+                {t(`heartbeat.editor.times.${times}`)}
+              </Text>
+            </Pressable>
+          )
+        })}
+      </View>
+      <View
+        accessibilityRole="radiogroup"
+        accessibilityLabel={t('heartbeat.editor.schedule')}
+        className="flex-row flex-wrap gap-1.5"
+      >
+        {CHIP_KINDS.map((kind) => {
+          const active = chipState?.kind === kind
+          return (
+            <Pressable
+              key={kind}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active }}
+              onPress={() => applyChip(kind, litTimes ?? pendingTimes)}
+              className={cn(
+                'rounded-full border px-2.5 py-1',
+                active ? 'bg-primary border-primary' : 'border-border bg-bg active:bg-border-soft'
+              )}
+            >
+              <Text className={cn('font-sans text-xs', active ? 'text-primary-fg' : 'text-muted')}>
+                {t(`heartbeat.editor.chips.${kind}`)}
+              </Text>
+            </Pressable>
+          )
+        })}
       </View>
 
       <Input

@@ -87,7 +87,84 @@ const DAY_MAP: Record<string, number> = {
   wednesday: 3,
   thursday: 4,
   friday: 5,
-  saturday: 6
+  saturday: 6,
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6
+}
+
+// The day-anchored forms take LISTS — "Daily (08:00, 14:00, 20:00)",
+// "Weekly (Monday, Wednesday, Friday 09:00)", "Monthly (1, 15 09:00)" — so
+// "three times a day" is one heading. Mirrors the engine's regexes and its
+// cron builder: times sharing a minute fold into one 5-field expression, each
+// distinct minute gets its own, and the parts are joined by " ; " (one
+// expression is a cross product of its fields, so "08:00, 12:30" can never be
+// a single expression).
+const TIME_LIST = String.raw`\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2})*`
+const DAY_NAME =
+  'Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sun|Mon|Tue|Wed|Thu|Fri|Sat'
+const DAY_LIST = `(?:${DAY_NAME})(?:\\s*,\\s*(?:${DAY_NAME}))*`
+const DOM_LIST = String.raw`\d{1,2}(?:\s*,\s*\d{1,2})*`
+const DAILY_NIGHTLY_RE = new RegExp(`^(?:Nightly|Daily)\\s*\\((${TIME_LIST})\\)$`, 'i')
+const WEEKDAY_RE = new RegExp(`^Weekday\\s*\\((${TIME_LIST})\\)$`, 'i')
+const WEEKLY_RE = new RegExp(`^Weekly\\s*\\((${DAY_LIST})\\s+(${TIME_LIST})\\)$`, 'i')
+const MONTHLY_RE = new RegExp(`^Monthly\\s*\\((${DOM_LIST})\\s+(${TIME_LIST})\\)$`, 'i')
+const CRON_JOIN = ' ; '
+
+function splitCron(expr: string): string[] {
+  return expr
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function parseTimeList(list: string): Array<{ hh: number; mm: number }> {
+  const seen = new Set<string>()
+  const out: Array<{ hh: number; mm: number }> = []
+  for (const part of list.split(',')) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(part.trim())
+    if (!m) continue
+    const key = `${Number(m[1])}:${Number(m[2])}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ hh: Number(m[1]), mm: Number(m[2]) })
+  }
+  return out.sort((a, b) => a.hh * 60 + a.mm - (b.hh * 60 + b.mm))
+}
+
+function parseDayList(list: string): number[] {
+  const out = new Set<number>()
+  for (const part of list.split(',')) {
+    const d = DAY_MAP[part.trim().toLowerCase()]
+    if (d !== undefined) out.add(d)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+function parseNumberList(list: string): number[] {
+  const out = new Set<number>()
+  for (const part of list.split(',')) {
+    const n = Number(part.trim())
+    if (Number.isInteger(n)) out.add(n)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+function timesToCron(times: Array<{ hh: number; mm: number }>, dom: string, dow: string): string {
+  const byMinute = new Map<number, number[]>()
+  for (const t of times) {
+    const hours = byMinute.get(t.mm) ?? []
+    hours.push(t.hh)
+    byMinute.set(t.mm, hours)
+  }
+  return [...byMinute.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([mm, hours]) => `${mm} ${hours.join(',')} ${dom} * ${dow}`)
+    .join(CRON_JOIN)
 }
 
 /**
@@ -134,35 +211,26 @@ export function parseSchedule(heading: string): ParsedSchedule | null {
   const hourly = /^Hourly\s*\(:?(\d{1,2})\)$/i.exec(heading)
   if (hourly) return { type: 'hourly', cron: `${Number(hourly[1])} * * * *` }
 
-  const daily = /^(?:Nightly|Daily)\s*\((\d{1,2}):(\d{2})\)$/i.exec(heading)
-  if (daily) return { type: 'daily', cron: `${Number(daily[2])} ${Number(daily[1])} * * *` }
+  const daily = DAILY_NIGHTLY_RE.exec(heading)
+  if (daily) return { type: 'daily', cron: timesToCron(parseTimeList(daily[1]), '*', '*') }
 
-  const weekday = /^Weekday\s*\((\d{1,2}):(\d{2})\)$/i.exec(heading)
-  if (weekday) {
-    return { type: 'weekday', cron: `${Number(weekday[2])} ${Number(weekday[1])} * * 1-5` }
-  }
+  const weekday = WEEKDAY_RE.exec(heading)
+  if (weekday) return { type: 'weekday', cron: timesToCron(parseTimeList(weekday[1]), '*', '1-5') }
 
-  const weekly =
-    /^Weekly\s*\((Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\s+(\d{1,2}):(\d{2})\)/i.exec(
-      heading
-    )
+  const weekly = WEEKLY_RE.exec(heading)
   if (weekly) {
-    return {
-      type: 'weekly',
-      cron: `${Number(weekly[3])} ${Number(weekly[2])} * * ${DAY_MAP[weekly[1].toLowerCase()] ?? 0}`
-    }
+    const days = parseDayList(weekly[1])
+    return { type: 'weekly', cron: timesToCron(parseTimeList(weekly[2]), '*', days.join(',')) }
   }
 
-  const monthly = /^Monthly\s*\((\d{1,2})\s+(\d{1,2}):(\d{2})\)$/i.exec(heading)
+  const monthly = MONTHLY_RE.exec(heading)
   if (monthly) {
-    return {
-      type: 'monthly',
-      cron: `${Number(monthly[3])} ${Number(monthly[2])} ${Number(monthly[1])} * *`
-    }
+    const doms = parseNumberList(monthly[1])
+    return { type: 'monthly', cron: timesToCron(parseTimeList(monthly[2]), doms.join(','), '*') }
   }
 
   const cronMatch = /^Cron\s*\((.+)\)$/i.exec(heading)
-  if (cronMatch) return { type: 'cron', cron: cronMatch[1].trim() }
+  if (cronMatch) return { type: 'cron', cron: splitCron(cronMatch[1]).join(CRON_JOIN) }
 
   return null
 }
@@ -207,6 +275,12 @@ function parseCronField(field: string, min: number, max: number): number[] | nul
  * desktop's own value.
  */
 export function nextCronMs(expr: string, nowMs: number): number | null {
+  // A " ; "-joined multi-expression fires at the earliest of its parts.
+  const exprs = splitCron(expr)
+  if (exprs.length > 1) {
+    const nexts = exprs.map((e) => nextCronMs(e, nowMs)).filter((n): n is number => n !== null)
+    return nexts.length > 0 ? Math.min(...nexts) : null
+  }
   const parts = expr.trim().split(/\s+/)
   if (parts.length !== 5) return null
   const minutes = parseCronField(parts[0], 0, 59)
@@ -735,6 +809,43 @@ export type ChipKind = 'hourly' | 'daily' | 'weekly' | 'monthly'
 
 export const CHIP_KINDS: readonly ChipKind[] = ['hourly', 'daily', 'weekly', 'monthly']
 
+/** How many runs per period a chip spreads out: once, twice, 3, 4 or 5 times. */
+export type ChipTimes = 1 | 2 | 3 | 4 | 5
+
+export const CHIP_TIMES: readonly ChipTimes[] = [1, 2, 3, 4, 5]
+
+/**
+ * Which pills a heading lights: the period chip its form belongs to and the
+ * number of runs it makes per period, read back off the text itself, so the
+ * pills reflect what is in the field — a chip-built heading, a hand-typed one,
+ * or an existing automation being edited — rather than the last press. Null
+ * when no period chip describes the form (Weekday, Cron, Once, Startup);
+ * `times` is null when the count is beyond the pills.
+ */
+export function chipStateOf(heading: string): { kind: ChipKind; times: ChipTimes | null } | null {
+  const asTimes = (n: number): ChipTimes | null =>
+    CHIP_TIMES.includes(n as ChipTimes) ? (n as ChipTimes) : null
+  if (/^Hourly\s*\(:?\d{1,2}\)$/i.test(heading)) return { kind: 'hourly', times: 1 }
+  const every = /^Every\s*\((\d+)m\)$/i.exec(heading)
+  if (every) {
+    const n = Number(every[1])
+    return n > 0 && 60 % n === 0 && 60 / n > 1 ? { kind: 'hourly', times: asTimes(60 / n) } : null
+  }
+  const daily = DAILY_NIGHTLY_RE.exec(heading)
+  if (daily) return { kind: 'daily', times: asTimes(parseTimeList(daily[1]).length) }
+  const weekly = WEEKLY_RE.exec(heading)
+  if (weekly) {
+    const runs = parseDayList(weekly[1]).length * parseTimeList(weekly[2]).length
+    return { kind: 'weekly', times: asTimes(runs) }
+  }
+  const monthly = MONTHLY_RE.exec(heading)
+  if (monthly) {
+    const runs = parseNumberList(monthly[1]).length * parseTimeList(monthly[2]).length
+    return { kind: 'monthly', times: asTimes(runs) }
+  }
+  return null
+}
+
 const EN_WEEKDAYS = [
   'Sunday',
   'Monday',
@@ -752,24 +863,45 @@ function pad2(n: number): string {
 /**
  * A chip's schedule means "…starting about now", so it anchors on now rounded
  * up to the next 5-minute mark: the first run lands within minutes and the
- * preview line immediately confirms the pick.
+ * preview line immediately confirms the pick. `times` runs are spread evenly
+ * across the period, the first one on the anchor: "3 times a day" at 09:10 →
+ * Daily (01:10, 09:10, 17:10); "3 times a week" on a Friday → Weekly (Sunday,
+ * Tuesday, Friday 09:10); "twice a month" on the 11th → Monthly (11, 25 09:10).
+ * Lists come out sorted the way the parser sorts them.
  */
-export function chipSchedule(kind: ChipKind, nowMs: number = Date.now()): string {
+export function chipSchedule(
+  kind: ChipKind,
+  nowMs: number = Date.now(),
+  times: ChipTimes = 1
+): string {
   const d = new Date(nowMs)
   d.setSeconds(0, 0)
   d.setMinutes(d.getMinutes() + 5 - (d.getMinutes() % 5))
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
   switch (kind) {
     case 'hourly':
-      return `Hourly (${d.getMinutes()})`
-    case 'daily':
-      return `Daily (${time})`
-    case 'weekly':
-      return `Weekly (${EN_WEEKDAYS[d.getDay()]} ${time})`
-    case 'monthly':
-      // Cron skips a day number the month does not have — clamp to 28 so the
-      // automation fires every month without exception.
-      return `Monthly (${Math.min(d.getDate(), 28)} ${time})`
+      // Several runs an hour is an interval: 60 splits evenly by 2, 3 and 4.
+      return times === 1 ? `Hourly (${d.getMinutes()})` : `Every (${60 / times}m)`
+    case 'daily': {
+      const hours = CHIP_TIMES.slice(0, times)
+        .map((i) => (d.getHours() + Math.floor((24 * (i - 1)) / times)) % 24)
+        .sort((a, b) => a - b)
+      return `Daily (${hours.map((h) => `${pad2(h)}:${pad2(d.getMinutes())}`).join(', ')})`
+    }
+    case 'weekly': {
+      const days = CHIP_TIMES.slice(0, times)
+        .map((i) => (d.getDay() + Math.floor((7 * (i - 1)) / times)) % 7)
+        .sort((a, b) => a - b)
+      return `Weekly (${days.map((day) => EN_WEEKDAYS[day]).join(', ')} ${time})`
+    }
+    case 'monthly': {
+      // Cron skips a day number the month does not have — every day stays
+      // within 1–28 so the automation fires every month without exception.
+      const doms = CHIP_TIMES.slice(0, times)
+        .map((i) => ((Math.min(d.getDate(), 28) - 1 + Math.floor((28 * (i - 1)) / times)) % 28) + 1)
+        .sort((a, b) => a - b)
+      return `Monthly (${doms.join(', ')} ${time})`
+    }
   }
 }
 
@@ -779,10 +911,13 @@ export const GUIDE_ROWS = [
   { code: 'Every (30m)', key: 'every' },
   { code: 'Hourly (15)', key: 'hourly' },
   { code: 'Daily (08:00)', key: 'daily' },
+  { code: 'Daily (08:00, 14:00, 20:00)', key: 'dailyTimes' },
   { code: 'Nightly (23:00)', key: 'nightly' },
   { code: 'Weekday (09:00)', key: 'weekday' },
   { code: 'Weekly (Monday 09:30)', key: 'weekly' },
+  { code: 'Weekly (Monday, Wednesday, Friday 09:30)', key: 'weeklyDays' },
   { code: 'Monthly (1 09:00)', key: 'monthly' },
+  { code: 'Monthly (1, 15 09:00)', key: 'monthlyDays' },
   { code: 'Once (2026-08-01 15:00)', key: 'once' },
   { code: 'Cron (0 9 * * 1,3,5)', key: 'cron' }
 ] as const

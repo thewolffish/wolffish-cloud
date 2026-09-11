@@ -52,7 +52,8 @@ export type BrainstemJob = {
   cron: string | null
   label: string
   body: string
-  task: ScheduledTask | null
+  /** One node-cron task per ";"-joined expression in `cron`; empty otherwise. */
+  tasks: ScheduledTask[]
   /** Epoch ms a one-time ('once') job fires; null for recurring/startup jobs. */
   runAt?: number | null
   /**
@@ -214,15 +215,24 @@ const TICK_INTERVAL_MS = 60 * 1000
 const MAX_TIMER_MS = 2 ** 31 - 1
 
 // ── Schedule heading regexes ──────────────────────────────────────────
+// The day-anchored forms take LISTS, so "three times a day" is one heading
+// rather than three: "Daily (08:00, 14:00, 20:00)", "Weekday (09:00, 17:00)",
+// "Weekly (Monday, Wednesday, Friday 09:00)", "Monthly (1, 15 09:00)". A
+// single value is the one-item list, so every pre-list heading still parses
+// byte-for-byte. Day names accept the full word or its 3-letter start.
+const TIME_LIST = String.raw`\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2})*`
+const DAY_NAME =
+  'Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sun|Mon|Tue|Wed|Thu|Fri|Sat'
+const DAY_LIST = `(?:${DAY_NAME})(?:\\s*,\\s*(?:${DAY_NAME}))*`
+const DOM_LIST = String.raw`\d{1,2}(?:\s*,\s*\d{1,2})*`
 const STARTUP_RE = /^Startup$/i
 const EVERY_RE = /^Every\s*\((\d+)(m|h)\)$/i
 const HOURLY_RE = /^Hourly\s*\(:?(\d{1,2})\)$/i
 const ONCE_RE = /^Once\s*\((\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\)$/i
-const DAILY_NIGHTLY_RE = /^(?:Nightly|Daily)\s*\((\d{1,2}):(\d{2})\)$/i
-const WEEKDAY_RE = /^Weekday\s*\((\d{1,2}):(\d{2})\)$/i
-const WEEKLY_RE =
-  /^Weekly\s*\((Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\s+(\d{1,2}):(\d{2})\)/i
-const MONTHLY_RE = /^Monthly\s*\((\d{1,2})\s+(\d{1,2}):(\d{2})\)$/i
+const DAILY_NIGHTLY_RE = new RegExp(`^(?:Nightly|Daily)\\s*\\((${TIME_LIST})\\)$`, 'i')
+const WEEKDAY_RE = new RegExp(`^Weekday\\s*\\((${TIME_LIST})\\)$`, 'i')
+const WEEKLY_RE = new RegExp(`^Weekly\\s*\\((${DAY_LIST})\\s+(${TIME_LIST})\\)$`, 'i')
+const MONTHLY_RE = new RegExp(`^Monthly\\s*\\((${DOM_LIST})\\s+(${TIME_LIST})\\)$`, 'i')
 const CRON_RE = /^Cron\s*\((.+)\)$/i
 
 const DAY_OF_WEEK: Record<string, number> = {
@@ -232,7 +242,84 @@ const DAY_OF_WEEK: Record<string, number> = {
   wednesday: 3,
   thursday: 4,
   friday: 5,
-  saturday: 6
+  saturday: 6,
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6
+}
+
+/**
+ * A job's `cron` may hold SEVERAL 5-field expressions joined by ";". One
+ * expression is a cross product of its fields, so "08:00, 12:30, 18:00" — two
+ * different minutes — cannot be one expression ("0,30 8,12,18" would also fire
+ * 08:30 and 12:00). The friendly forms group their times by minute and emit
+ * one expression per group; the scheduler registers one node-cron task per
+ * expression, and every next-run / catch-up computation folds over the parts.
+ */
+export const CRON_JOIN = ' ; '
+export function splitCron(expr: string): string[] {
+  return expr
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+type HHMM = { hh: number; mm: number }
+
+/** "08:00, 14:00" → [{8,0},{14,0}], de-duplicated and sorted by wall-clock. */
+function parseTimeList(list: string): HHMM[] {
+  const seen = new Set<string>()
+  const out: HHMM[] = []
+  for (const part of list.split(',')) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(part.trim())
+    if (!m) continue
+    const key = `${Number(m[1])}:${Number(m[2])}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ hh: Number(m[1]), mm: Number(m[2]) })
+  }
+  return out.sort((a, b) => a.hh * 60 + a.mm - (b.hh * 60 + b.mm))
+}
+
+/** "Monday, Wed" → [1, 3] (de-duplicated, ascending, Sunday = 0). */
+function parseDayList(list: string): number[] {
+  const out = new Set<number>()
+  for (const part of list.split(',')) {
+    const d = DAY_OF_WEEK[part.trim().toLowerCase()]
+    if (d !== undefined) out.add(d)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+/** "1, 15" → [1, 15] (de-duplicated, ascending; range is checked by cron). */
+function parseNumberList(list: string): number[] {
+  const out = new Set<number>()
+  for (const part of list.split(',')) {
+    const n = Number(part.trim())
+    if (Number.isInteger(n)) out.add(n)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+/**
+ * Times × the day fields → the ";"-joined cron. Times sharing a minute fold
+ * into one expression (`0 8,14,20 * * *`); each distinct minute gets its own.
+ */
+function timesToCron(times: HHMM[], dom: string, dow: string): string {
+  const byMinute = new Map<number, number[]>()
+  for (const t of times) {
+    const hours = byMinute.get(t.mm) ?? []
+    hours.push(t.hh)
+    byMinute.set(t.mm, hours)
+  }
+  return [...byMinute.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([mm, hours]) => `${mm} ${hours.join(',')} ${dom} * ${dow}`)
+    .join(CRON_JOIN)
 }
 
 export type ParsedSchedule = {
@@ -592,7 +679,7 @@ export class Brainstem {
           cron: null,
           label: schedule.label,
           body: schedule.body,
-          task: null,
+          tasks: [],
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
           icon: schedule.icon ?? null,
@@ -612,7 +699,7 @@ export class Brainstem {
           cron: null,
           label: schedule.label,
           body: schedule.body,
-          task: null,
+          tasks: [],
           runAt: schedule.runAt ?? null,
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
@@ -629,12 +716,26 @@ export class Brainstem {
       const handler = this.handlerFor(schedule.kind, schedule)
       if (!handler) continue
 
-      let task: ScheduledTask
+      // One task per expression. A multi-time heading registers several; the
+      // queue coalesces per job id, so two parts landing on the same minute
+      // still run the job once.
+      const tasks: ScheduledTask[] = []
       try {
-        task = cron.schedule(schedule.cron, async () => {
-          this.enqueue(schedule, handler)
-        })
+        for (const expr of splitCron(schedule.cron)) {
+          tasks.push(
+            cron.schedule(expr, async () => {
+              this.enqueue(schedule, handler)
+            })
+          )
+        }
       } catch {
+        for (const t of tasks) {
+          try {
+            t.stop()
+          } catch {
+            // best-effort
+          }
+        }
         continue
       }
       this.jobs.set(schedule.id, {
@@ -643,7 +744,7 @@ export class Brainstem {
         cron: schedule.cron,
         label: schedule.label,
         body: schedule.body,
-        task,
+        tasks,
         mode: schedule.mode ?? null,
         project: schedule.project ?? null,
         icon: schedule.icon ?? null,
@@ -668,11 +769,12 @@ export class Brainstem {
 
   async stopScheduler(): Promise<void> {
     for (const job of this.jobs.values()) {
-      if (!job.task) continue
-      try {
-        await job.task.stop()
-      } catch {
-        // best-effort
+      for (const task of job.tasks) {
+        try {
+          await task.stop()
+        } catch {
+          // best-effort
+        }
       }
     }
     for (const timer of this.onceTimers.values()) clearTimeout(timer)
@@ -2263,8 +2365,10 @@ function matchSchedule(
   const withCron = (
     kind: ScheduleKind,
     expr: string
-  ): { kind: ScheduleKind; cron: string } | null =>
-    cron.validate(expr) ? { kind, cron: expr } : null
+  ): { kind: ScheduleKind; cron: string } | null => {
+    const parts = splitCron(expr)
+    return parts.length > 0 && parts.every((p) => cron.validate(p)) ? { kind, cron: expr } : null
+  }
 
   // Startup — no cron, runs once on init
   if (STARTUP_RE.test(text)) {
@@ -2310,46 +2414,38 @@ function matchSchedule(
     return withCron('hourly', `${mm} * * * *`)
   }
 
-  // Daily (HH:MM) or Nightly (HH:MM) — both parse as 'daily'
+  // Daily (HH:MM[, HH:MM…]) or Nightly (…) — both parse as 'daily'
   const daily = DAILY_NIGHTLY_RE.exec(text)
   if (daily) {
-    const hh = Number(daily[1])
-    const mm = Number(daily[2])
-    return withCron('daily', `${mm} ${hh} * * *`)
+    return withCron('daily', timesToCron(parseTimeList(daily[1]), '*', '*'))
   }
 
-  // Weekday (HH:MM)
+  // Weekday (HH:MM[, HH:MM…])
   const weekday = WEEKDAY_RE.exec(text)
   if (weekday) {
-    const hh = Number(weekday[1])
-    const mm = Number(weekday[2])
-    return withCron('weekday', `${mm} ${hh} * * 1-5`)
+    return withCron('weekday', timesToCron(parseTimeList(weekday[1]), '*', '1-5'))
   }
 
-  // Weekly (Day HH:MM)
+  // Weekly (Day[, Day…] HH:MM[, HH:MM…])
   const weekly = WEEKLY_RE.exec(text)
   if (weekly) {
-    const day = DAY_OF_WEEK[weekly[1].toLowerCase()] ?? 0
-    const hh = Number(weekly[2])
-    const mm = Number(weekly[3])
-    return withCron('weekly', `${mm} ${hh} * * ${day}`)
+    const days = parseDayList(weekly[1])
+    return withCron('weekly', timesToCron(parseTimeList(weekly[2]), '*', days.join(',')))
   }
 
-  // Monthly (DD HH:MM)
+  // Monthly (DD[, DD…] HH:MM[, HH:MM…])
   const monthly = MONTHLY_RE.exec(text)
   if (monthly) {
-    const dd = Number(monthly[1])
-    const hh = Number(monthly[2])
-    const mm = Number(monthly[3])
-    return withCron('monthly', `${mm} ${hh} ${dd} * *`)
+    const doms = parseNumberList(monthly[1])
+    return withCron('monthly', timesToCron(parseTimeList(monthly[2]), doms.join(','), '*'))
   }
 
-  // Cron (raw expression)
+  // Cron (raw expression — or several, joined by ";")
   const cronMatch = CRON_RE.exec(text)
   if (cronMatch) {
-    const expression = cronMatch[1].trim()
-    if (cron.validate(expression)) {
-      return { kind: 'cron', cron: expression }
+    const parts = splitCron(cronMatch[1])
+    if (parts.length > 0 && parts.every((p) => cron.validate(p))) {
+      return { kind: 'cron', cron: parts.join(CRON_JOIN) }
     }
     return null
   }
@@ -2366,7 +2462,11 @@ export const SCHEDULE_SYNTAX_HELP =
   'Valid forms (the text inside the ## heading): one-time → "Once (2026-06-27 14:30)" ' +
   '(runs once then deletes itself); recurring → "Startup" · "Every (5m)" / "Every (2h)" · ' +
   '"Hourly (30)" · "Daily (08:00)" or "Nightly (23:00)" · "Weekday (09:00)" · ' +
-  '"Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)".'
+  '"Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)". ' +
+  'Several times a day/week/month = a comma list in the same heading: ' +
+  '"Daily (08:00, 14:00, 20:00)" · "Weekday (09:00, 17:00)" · ' +
+  '"Weekly (Monday, Wednesday, Friday 09:00)" · "Monthly (1, 15 09:00)" ' +
+  '(days and times can both be lists; every listed day runs at every listed time).'
 
 /**
  * Validate a proposed schedule heading exactly the way the scheduler will
@@ -2395,6 +2495,19 @@ function pad2(s: string | number): string {
   return String(Number(s)).padStart(2, '0')
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** "a", "a and b", "a, b and c". */
+function joinAnd(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ''
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
+
+/** A time list as written → "08:00, 14:00 and 20:00" (sorted, de-duplicated). */
+function humanTimes(list: string): string {
+  return joinAnd(parseTimeList(list).map((t) => `${pad2(t.hh)}:${pad2(t.mm)}`))
+}
+
 function humanizeSchedule(text: string, kind: ScheduleKind): string {
   switch (kind) {
     case 'startup':
@@ -2420,32 +2533,103 @@ function humanizeSchedule(text: string, kind: ScheduleKind): string {
     }
     case 'daily': {
       const m = DAILY_NIGHTLY_RE.exec(text)
-      return m ? `every day at ${pad2(m[1])}:${m[2]}` : 'every day'
+      return m ? `every day at ${humanTimes(m[1])}` : 'every day'
     }
     case 'weekday': {
       const m = WEEKDAY_RE.exec(text)
-      return m ? `every weekday (Mon–Fri) at ${pad2(m[1])}:${m[2]}` : 'every weekday'
+      return m ? `every weekday (Mon–Fri) at ${humanTimes(m[1])}` : 'every weekday'
     }
     case 'weekly': {
       const m = WEEKLY_RE.exec(text)
       if (!m) return 'once a week'
-      const day = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
-      return `every ${day} at ${pad2(m[2])}:${m[3]}`
+      const days = parseDayList(m[1]).map((d) => DAY_NAMES[d])
+      return `every ${joinAnd(days)} at ${humanTimes(m[2])}`
     }
     case 'monthly': {
       const m = MONTHLY_RE.exec(text)
-      return m ? `on day ${Number(m[1])} of each month at ${pad2(m[2])}:${m[3]}` : 'once a month'
+      if (!m) return 'once a month'
+      const days = parseNumberList(m[1])
+      return `on day${days.length > 1 ? 's' : ''} ${joinAnd(days.map(String))} of each month at ${humanTimes(m[2])}`
     }
     case 'cron': {
       const m = CRON_RE.exec(text)
-      return m ? `on cron schedule "${m[1].trim()}"` : 'on a cron schedule'
+      return m ? `on cron schedule "${splitCron(m[1]).join(CRON_JOIN)}"` : 'on a cron schedule'
     }
     default:
       return ''
   }
 }
 
-// ── Cron occurrence math (downtime catch-up) ──────────────────────────
+// ── Cron occurrence math (downtime catch-up, next-run display) ────────
+
+/** One 5-field cron field expanded to its values: `*`, `a`, `a-b`, `*\/n`, lists. */
+function cronFieldValues(field: string, min: number, max: number): number[] | null {
+  const out = new Set<number>()
+  for (const part of field.split(',')) {
+    const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part.trim())
+    if (!m) return null
+    const step = m[2] ? Number(m[2]) : 1
+    if (step < 1) return null
+    let lo: number
+    let hi: number
+    if (m[1] === '*') {
+      lo = min
+      hi = max
+    } else if (m[1].includes('-')) {
+      const [a, b] = m[1].split('-')
+      lo = Number(a)
+      hi = Number(b)
+    } else {
+      lo = Number(m[1])
+      hi = m[2] ? max : lo
+    }
+    if (lo < min || hi > max || lo > hi) return null
+    for (let v = lo; v <= hi; v += step) out.add(v)
+  }
+  return out.size > 0 ? [...out].sort((a, b) => a - b) : null
+}
+
+/**
+ * Next fire of a job's cron in local time, or null when it can't be
+ * computed. Full 5-field support (lists, ranges, steps, the standard
+ * dom-OR-dow rule, a 4-year day scan); a ";"-joined multi-expression yields
+ * the earliest of its parts. The renderer and the phone carry a copy of this
+ * scanner for unsaved drafts — keep them in step.
+ */
+export function nextCronMs(expr: string, nowMs: number): number | null {
+  const parts = splitCron(expr)
+  if (parts.length > 1) {
+    const nexts = parts.map((p) => nextCronMs(p, nowMs)).filter((n): n is number => n !== null)
+    return nexts.length > 0 ? Math.min(...nexts) : null
+  }
+  const fields = expr.trim().split(/\s+/)
+  if (fields.length !== 5) return null
+  const minutes = cronFieldValues(fields[0], 0, 59)
+  const hours = cronFieldValues(fields[1], 0, 23)
+  const doms = cronFieldValues(fields[2], 1, 31)
+  const months = cronFieldValues(fields[3], 1, 12)
+  const dowsRaw = cronFieldValues(fields[4], 0, 7)
+  if (!minutes || !hours || !doms || !months || !dowsRaw) return null
+  const dows = new Set(dowsRaw.map((d) => d % 7))
+  const domAny = fields[2] === '*'
+  const dowAny = fields[4] === '*'
+  const base = new Date(nowMs)
+  for (let dayOffset = 0; dayOffset <= 4 * 366; dayOffset++) {
+    const day = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayOffset)
+    if (!months.includes(day.getMonth() + 1)) continue
+    const domOk = doms.includes(day.getDate())
+    const dowOk = dows.has(day.getDay())
+    const dayOk = domAny && dowAny ? true : domAny ? dowOk : dowAny ? domOk : domOk || dowOk
+    if (!dayOk) continue
+    for (const h of hours) {
+      for (const m of minutes) {
+        const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m).getTime()
+        if (t > nowMs) return t
+      }
+    }
+  }
+  return null
+}
 
 /**
  * The most recent time the 5-field cron expression fired at or before `now`,
@@ -2469,6 +2653,9 @@ export function mostRecentCronOccurrence(
 }
 
 export function cronMatches(cronStr: string, d: Date): boolean {
+  // A ";"-joined multi-expression matches when any part does.
+  const parts = splitCron(cronStr)
+  if (parts.length > 1) return parts.some((p) => cronMatches(p, d))
   const f = cronStr.trim().split(/\s+/)
   if (f.length !== 5) return false
   const dow = d.getDay() // 0 = Sunday

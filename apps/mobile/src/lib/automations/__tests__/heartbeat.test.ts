@@ -12,6 +12,7 @@
 import {
   attachJobs,
   chipSchedule,
+  chipStateOf,
   deleteBlock,
   escapePromptBody,
   findBlock,
@@ -74,7 +75,16 @@ describe('parseSchedule', () => {
     ['Weekday (09:00)', 'weekday', '0 9 * * 1-5'],
     ['Weekly (Monday 09:30)', 'weekly', '30 9 * * 1'],
     ['Monthly (1 09:00)', 'monthly', '0 9 1 * *'],
-    ['Cron (0 9 * * 1,3,5)', 'cron', '0 9 * * 1,3,5']
+    ['Cron (0 9 * * 1,3,5)', 'cron', '0 9 * * 1,3,5'],
+    // Lists: several times a day / week / month in ONE heading. Times sharing
+    // a minute fold into one expression; distinct minutes join with " ; ".
+    ['Daily (08:00, 14:00, 20:00)', 'daily', '0 8,14,20 * * *'],
+    ['Daily (08:00, 12:30, 18:00)', 'daily', '0 8,18 * * * ; 30 12 * * *'],
+    ['Weekday (09:00, 17:00)', 'weekday', '0 9,17 * * 1-5'],
+    ['Weekly (Monday, Wednesday, Friday 09:00)', 'weekly', '0 9 * * 1,3,5'],
+    ['Weekly (Mon, wed, FRI 09:00, 17:00)', 'weekly', '0 9,17 * * 1,3,5'],
+    ['Monthly (1, 15 09:00)', 'monthly', '0 9 1,15 * *'],
+    ['Cron (0 8 * * * ;30 12 * * *)', 'cron', '0 8 * * * ; 30 12 * * *']
   ])('reads %s', (heading, type, cron) => {
     expect(parseSchedule(heading)).toMatchObject({ type, cron })
   })
@@ -96,6 +106,24 @@ describe('parseSchedule', () => {
   it('is not a schedule', () => {
     expect(parseSchedule('Notes')).toBeNull()
     expect(parseSchedule('Daily')).toBeNull()
+    expect(parseSchedule('Daily ()')).toBeNull()
+    expect(parseSchedule('Weekly (Monday 09:00) x')).toBeNull()
+  })
+})
+
+describe('nextCronMs', () => {
+  // Friday 2026-09-11 09:00.
+  const now = new Date(2026, 8, 11, 9, 0).getTime()
+
+  it('takes the earliest part of a multi-expression cron', () => {
+    expect(nextCronMs('0 8,18 * * * ; 30 12 * * *', now)).toBe(
+      new Date(2026, 8, 11, 12, 30).getTime()
+    )
+  })
+
+  it('resolves day lists', () => {
+    expect(nextCronMs('0 9 * * 1,3,5', now)).toBe(new Date(2026, 8, 14, 9, 0).getTime())
+    expect(nextCronMs('0 9 1,15 * *', now)).toBe(new Date(2026, 8, 15, 9, 0).getTime())
   })
 })
 
@@ -533,11 +561,53 @@ describe('chipSchedule', () => {
     }
   })
 
+  it('spreads several runs evenly across the period, the first on the anchor', () => {
+    expect(chipSchedule('hourly', now, 3)).toBe('Every (20m)')
+    expect(chipSchedule('daily', now, 2)).toBe('Daily (02:10, 14:10)')
+    expect(chipSchedule('daily', now, 3)).toBe('Daily (06:10, 14:10, 22:10)')
+    expect(chipSchedule('weekly', now, 2)).toBe('Weekly (Wednesday, Saturday 14:10)')
+    expect(chipSchedule('weekly', now, 3)).toBe('Weekly (Sunday, Wednesday, Friday 14:10)')
+    expect(chipSchedule('monthly', now, 2)).toBe('Monthly (5, 19 14:10)')
+    expect(chipSchedule('monthly', now, 4)).toBe('Monthly (5, 12, 19, 26 14:10)')
+    expect(chipSchedule('hourly', now, 5)).toBe('Every (12m)')
+    expect(chipSchedule('daily', now, 5)).toBe('Daily (04:10, 09:10, 14:10, 18:10, 23:10)')
+    for (const kind of ['hourly', 'daily', 'weekly', 'monthly'] as const) {
+      for (const times of [1, 2, 3, 4, 5] as const) {
+        const heading = chipSchedule(kind, now, times)
+        const parsed = parseSchedule(heading)
+        expect(parsed?.cron && nextCronMs(parsed.cron, now)).not.toBeNull()
+        // The pills read their lit state back off the heading they built.
+        expect(chipStateOf(heading)).toEqual({ kind, times })
+      }
+    }
+  })
+
+  it('lights the pills from the heading text, whoever wrote it', () => {
+    expect(chipStateOf('Daily (08:00, 12:30, 18:00)')).toEqual({ kind: 'daily', times: 3 })
+    expect(chipStateOf('Weekly (Mon, Fri 09:00, 17:00)')).toEqual({ kind: 'weekly', times: 4 })
+    expect(chipStateOf('Monthly (1 09:00)')).toEqual({ kind: 'monthly', times: 1 })
+    expect(chipStateOf('Hourly (30)')).toEqual({ kind: 'hourly', times: 1 })
+    expect(chipStateOf('Every (30m)')).toEqual({ kind: 'hourly', times: 2 })
+    // Beyond the pills: the period lights, no count does.
+    expect(chipStateOf('Daily (01:00, 02:00, 03:00, 04:00, 05:00, 06:00)')).toEqual({
+      kind: 'daily',
+      times: null
+    })
+    // Not a chip form at all.
+    expect(chipStateOf('Every (7m)')).toBeNull()
+    expect(chipStateOf('Every (2h)')).toBeNull()
+    expect(chipStateOf('Weekday (09:00)')).toBeNull()
+    expect(chipStateOf('Cron (0 9 * * 1)')).toBeNull()
+  })
+
   it('clamps the monthly day to 28 so no month is skipped', () => {
     // 09:00 anchors to 09:05: the round-up is unconditional, so a chip's first
     // run is always minutes away rather than possibly right now.
     expect(chipSchedule('monthly', new Date(2026, 0, 31, 9, 0).getTime())).toBe(
       'Monthly (28 09:05)'
+    )
+    expect(chipSchedule('monthly', new Date(2026, 0, 31, 9, 0).getTime(), 3)).toBe(
+      'Monthly (9, 18, 28 09:05)'
     )
   })
 })

@@ -52,7 +52,7 @@ tools:
         description: 'A short human name for this automation — what the user sees on its card (e.g. "Morning digest", "Invoice filer"). Two to four words naming the JOB, never the schedule. Required.'
       schedule:
         type: string
-        description: 'YOU pick one-time vs recurring from the user''s wording. ONE-TIME (runs once, then deletes itself) for "in 15 min", "in 2 days", "at 3pm", "tomorrow", "remind me once": "In (15m)" / "In (2h)" / "In (2d)" (relative — minutes, hours, days) or "Once (2026-06-27 14:30)" (absolute, 24h local). RECURRING for "every", "each", "daily", "from now on": "Every (5m)" / "Every (2h)" · "Hourly (30)" · "Daily (08:00)" / "Nightly (23:00)" · "Weekday (09:00)" · "Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)" · "Startup". Default to one-time for a specific future moment.'
+        description: 'YOU pick one-time vs recurring from the user''s wording. ONE-TIME (runs once, then deletes itself) for "in 15 min", "in 2 days", "at 3pm", "tomorrow", "remind me once": "In (15m)" / "In (2h)" / "In (2d)" (relative — minutes, hours, days) or "Once (2026-06-27 14:30)" (absolute, 24h local). RECURRING for "every", "each", "daily", "from now on": "Every (5m)" / "Every (2h)" · "Hourly (30)" · "Daily (08:00)" / "Nightly (23:00)" · "Weekday (09:00)" · "Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)" · "Startup". SEVERAL TIMES a day/week/month is ONE heading with a comma list: "Daily (08:00, 14:00, 20:00)" · "Weekday (09:00, 17:00)" · "Weekly (Monday, Wednesday, Friday 09:00)" · "Monthly (1, 15 09:00)" (days and times can both be lists). Default to one-time for a specific future moment.'
       instruction:
         type: string
         description: What to do when it fires — plain natural-language instruction, exactly as you'd phrase a task to yourself. It runs as an autonomous turn with tools available and tool calls auto-approved. No markdown headings (no lines starting with "## ") and no "---" separator lines.
@@ -248,6 +248,22 @@ moment you create it, so it survives restarts. The unit is `m` (minutes), `h`
 | `Weekly (Day HH:MM)`     | once a week on Day (Sunday…Saturday) at HH:MM      | `Weekly (Monday 09:30)` |
 | `Monthly (DD HH:MM)`     | once a month on day DD (1–31) at HH:MM             | `Monthly (1 09:00)`     |
 | `Cron (expr)`            | a raw 5-field cron expression — for anything else  | `Cron (0 9 * * 1,3,5)`  |
+
+**Several times a day, week or month — ONE heading, comma lists.** "Three
+times a day", "Mondays and Thursdays", "the 1st and the 15th" are all a single
+automation, never three copies:
+
+| Form                                  | Fires…                                             | Example                                    |
+| ------------------------------------- | -------------------------------------------------- | ------------------------------------------ |
+| `Daily (HH:MM, HH:MM, …)`             | every day at each listed time                      | `Daily (08:00, 14:00, 20:00)`              |
+| `Weekday (HH:MM, HH:MM, …)`           | Mon–Fri at each listed time                        | `Weekday (09:00, 17:00)`                   |
+| `Weekly (Day, Day, … HH:MM)`          | each listed day (full name or Mon/Tue/…) at HH:MM  | `Weekly (Monday, Wednesday, Friday 09:00)` |
+| `Monthly (DD, DD, … HH:MM)`           | each listed day of the month at HH:MM              | `Monthly (1, 15 09:00)`                    |
+
+Days and times can BOTH be lists — every listed day runs at every listed time
+(`Weekly (Monday, Friday 09:00, 17:00)` = four runs a week). The times need not
+share a minute (`Daily (08:00, 12:30, 18:00)` is fine). `Cron (…)` accepts
+several expressions joined by `;` for anything the lists can't say.
 
 Cron is `minute hour day-of-month month day-of-week`. Reach for it only when no
 simpler form fits (e.g. `Cron (0 9 * * 1,3,5)` = 9am Mon/Wed/Fri). If you pass a

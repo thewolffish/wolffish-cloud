@@ -119,6 +119,9 @@ Runs once per day at the specified time. "Daily" and "Nightly" are
 interchangeable — both map to the same schedule kind.
 Format: Daily (<HH>:<MM>) or Nightly (<HH>:<MM>)
 
+Several times a day is ONE heading — list the times with commas:
+Daily (08:00, 14:00, 20:00). The times need not share a minute.
+
 The first example also shows the optional per-job mode line: as the FIRST
 body line, `mode: workflow` runs the job as a multi-agent workflow and
 `mode: single` as a plain single-model turn. Any job form can carry it;
@@ -143,11 +146,16 @@ End-of-day wrap-up. Compile what was accomplished today, what
 rolled over, and draft tomorrow's priority list. Save to the
 daily log.
 
+## Daily (08:00, 14:00, 20:00)
+
+Three times a day: sweep the inbox and flag anything that needs
+a reply before the next sweep.
+
 
 ── WEEKDAY ────────────────────────────────────────────────────────────
 Runs Monday through Friday at the specified time. Does not fire
 on Saturday or Sunday.
-Format: Weekday (<HH>:<MM>)
+Format: Weekday (<HH>:<MM>)    — or a comma list: Weekday (09:00, 17:00)
 
 ## Weekday (09:00)
 
@@ -165,7 +173,11 @@ a response before I sign off. Flag anything urgent.
 Runs once per week on the specified day and time.
 Format: Weekly (<DayName> <HH>:<MM>)
 Days: Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday
-(case-insensitive)
+(case-insensitive; Sun, Mon, Tue, Wed, Thu, Fri, Sat also work)
+
+Several days a week is ONE heading — list the days with commas:
+Weekly (Monday, Wednesday, Friday 09:00). Times can be a list too:
+every listed day runs at every listed time.
 
 ## Weekly (Monday 09:30)
 
@@ -183,10 +195,18 @@ Prepare for the week ahead. Review next week's calendar for
 conflicts, check deadlines, and pre-read materials for Monday
 meetings.
 
+## Weekly (Monday, Wednesday, Friday 09:00)
+
+Three times a week: check competitor updates and summarize any
+notable changes in their public offerings.
+
 
 ── MONTHLY ────────────────────────────────────────────────────────────
 Runs once per month on the specified day at the specified time.
 Format: Monthly (<DD> <HH>:<MM>)    — DD is day of month (1–31).
+
+Several days a month is ONE heading — list the days with commas:
+Monthly (1, 15 09:00). Keep days within 1–28 so no month is skipped.
 
 ## Monthly (1 09:00)
 
@@ -204,7 +224,7 @@ adjustments.
 ── CRON (RAW EXPRESSION) ──────────────────────────────────────────────
 For advanced scheduling not covered above. Uses standard 5-field
 cron syntax: <minute> <hour> <day-of-month> <month> <day-of-week>
-Format: Cron (<expression>)
+Format: Cron (<expression>)    — join several with ";" to combine them
 
 ## Cron (0 9 * * 1,3,5)
 

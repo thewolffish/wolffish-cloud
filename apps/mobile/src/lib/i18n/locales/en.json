@@ -1268,6 +1268,14 @@
         "daily": "Every day",
         "weekly": "Every week",
         "monthly": "Every month"
+      },
+      "timesAria": "How many times per period",
+      "times": {
+        "1": "Once",
+        "2": "Twice",
+        "3": "3 times",
+        "4": "4 times",
+        "5": "5 times"
       }
     },
     "guide": {
@@ -1277,14 +1285,17 @@
       "every": "Runs on an interval — minutes (m) or hours (h).",
       "hourly": "Runs every hour at that minute.",
       "daily": "Runs every day at that time.",
+      "dailyTimes": "Several times a day: list the times, separated by commas. Every listed time runs.",
       "nightly": "Same as Daily — reads better for night times.",
       "weekday": "Runs Monday through Friday at that time.",
       "weekly": "Runs once a week on that day. Day names are in English.",
+      "weeklyDays": "Several days a week: list the days, then the time. Add more times after a comma to run each day more than once.",
       "monthly": "Runs monthly on that day number. Keep it between 1 and 28 so no month is skipped.",
+      "monthlyDays": "Several days a month: list the day numbers, then the time. Keep them between 1 and 28.",
       "once": "Runs one time at that date, then removes itself.",
-      "cron": "A full cron expression, for anything the forms above can’t say.",
+      "cron": "A full cron expression, for anything the forms above can’t say. Join several with a semicolon to combine them.",
       "localTime": "Times are 24-hour, in your computer’s local time zone.",
-      "chipsTip": "The chips above the schedule field fill in a correct schedule for you — then just adjust the time."
+      "chipsTip": "The pills above the schedule field fill in a correct schedule for you: pick how many times, then the period — then just adjust the times."
     },
     "attachAfterSave": "Save the schedule and prompt first — files and folders attach to a saved automation."
   },

@@ -66,7 +66,7 @@ import {
   type Project,
   type ProjectFileRef
 } from '@main/projects'
-import { nextCronMs } from '@main/runtime/cronNext'
+import { nextCronMs } from '@main/runtime/brainstem'
 import type { QueuedJobInfo, RunningJobInfo } from '@main/runtime/brainstem'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { classifyFile, resolveUploadPath, statUpload, uploadExists } from '@main/uploads/uploads'
