@@ -1,5 +1,6 @@
 import type { Segment } from '@preload/index'
 import {
+  CODE_ACTIVITY_TOOLS,
   WORKFLOW_TOOL_NAMES,
   latestTodoLists,
   todoListId,
@@ -294,7 +295,7 @@ function assistantParts(
       }
       // The feed's clean-mode rule: tool cards are verbose-only — successful
       // and failed/denied calls alike drop from the clean feed.
-      if (verbose) {
+      if (verbose || CODE_ACTIVITY_TOOLS.has(seg.name)) {
         parts.push(toolBlock(seg, result, statusLabels))
       }
     } else if (seg.kind === 'separator' || seg.kind === 'turn_end') {

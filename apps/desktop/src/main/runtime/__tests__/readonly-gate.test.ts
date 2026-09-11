@@ -172,6 +172,37 @@ async function main(): Promise<void> {
   ok('shell_jobs is read-only', shell.isReadOnlyCall('shell_jobs', {}))
   ok('shell_stop is not', !shell.isReadOnlyCall('shell_stop', { pid: 1 }))
 
+  // Three ways a write used to reach a read-only turn through the
+  // INVESTIGATION pass (checks a plan may run), all fixed in tokenize.mjs.
+  ok('a bare redirect is not an investigation', !ro('> ~/.zshrc'))
+  ok('a bare redirect after a read is not either', !ro('ls && > /tmp/wiped'))
+  ok('eslint --fix is a write, not a check', !ro('eslint --fix .'))
+  ok('so is it behind npx', !ro('npx eslint --fix src'))
+  ok('ruff check --fix is a write', !ro('ruff check --fix .'))
+  ok('cargo clippy --fix is a write', !ro('cargo clippy --fix'))
+  ok('prettier --write is a write', !ro('prettier --write .'))
+  ok('a lint:fix script is a write', !ro('npm run lint:fix'))
+  ok('node -r runs a FILE, so it is not an inline probe', !ro('node -r ./script.js'))
+  // …while the checks a plan actually needs still pass.
+  ok('npm test is still an investigation', ro('npm test'))
+  ok('a plain lint is still an investigation', ro('eslint .'))
+  ok('npm run lint is still an investigation', ro('npm run lint'))
+  ok('typecheck is still an investigation', ro('npm run typecheck'))
+  ok('eslint --fix-dry-run writes nothing', ro('eslint --fix-dry-run .'))
+  ok('php -r is still an inline probe', ro('php -r "echo 1;"'))
+  // A test run that rewrites its snapshots is the same class as `eslint --fix`.
+  ok('jest -u overwrites snapshots', !ro('npx jest -u'))
+  ok('so does --updateSnapshot', !ro('npx jest --updateSnapshot'))
+  ok('and vitest -u', !ro('npx vitest run -u'))
+  ok('and pytest --snapshot-update', !ro('pytest --snapshot-update'))
+  // …but the short flags that merely change HOW a check runs must not be
+  // mistaken for it: -i is jest's --runInBand, -w is a watch flag.
+  ok('jest -i is --runInBand, not in-place', ro('npx jest -i'))
+  ok('jest -i keeps working with other flags', ro('npx jest --ci -i'))
+  ok('npm test -- -i still runs', ro('npm test -- -i'))
+  ok('go test -i still runs', ro('go test -i ./...'))
+  ok('a fixtures script is not a fix script', ro('npm run test:fixtures'))
+
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed ? 1 : 0)
 }

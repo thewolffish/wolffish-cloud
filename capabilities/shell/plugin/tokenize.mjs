@@ -1360,6 +1360,31 @@ export function isReadOnlyCommand(cmd) {
  * elevation. `npm test` reproduces; `npm run build` and `git push` do not.
  */
 const CHECK_LABELS = new Set(['Run tests', 'Type-check', 'Lint'])
+
+/**
+ * A check that also REWRITES the files it checks: `eslint --fix`,
+ * `ruff check --fix`, `cargo clippy --fix`, `jest -u` (which overwrites every
+ * `__snapshots__` file it disagrees with), or a package script whose name says
+ * so (`npm run lint:fix`). The approval card still calls it "Lint" or "Run
+ * tests" — that is what the command IS — but a read-only turn must not run it,
+ * so the investigation gate asks this separately from the label.
+ *
+ * Spelled out rather than pattern-matched, because a short flag means different
+ * things to different tools and a read-only turn still has to be able to run
+ * ordinary checks: `-i` is jest's `--runInBand`, `-w` is a watch flag for tsc
+ * and vitest. Neither writes anything, and neither belongs here.
+ */
+const FIX_FLAG_RE =
+  /^(--fix|--fix-only|--fix-all|--unsafe-fixes|--apply|--write|--in-place|-u|--update|--update-snapshot|--update-snapshots|--updateSnapshot|--snapshot-update)$/
+/** `fix`, `lint:fix`, `fix:all` — but not `fixtures` or `fixup`. */
+const FIX_SCRIPT_RE = /(^|[:._-])(fix|write)([:._-]|$)/
+function rewritesWhileChecking(cmd) {
+  const tokens = unwrapRunner(cmd.tokens)
+  const script = packageScript(tokens)
+  if (script !== null && FIX_SCRIPT_RE.test(script)) return true
+  return tokens.slice(1).some((a) => FIX_FLAG_RE.test(a))
+}
+
 // Inline evaluation probes (`node -e`, `node -p`, `python3 -c`, `ruby -e`,
 // or an interpreter fed by heredoc / here-string) are how a plan reproduces
 // a behaviour without touching the repo. They pass when the program text
@@ -1370,7 +1395,13 @@ const CHECK_LABELS = new Set(['Run tests', 'Type-check', 'Lint'])
 // like `truncate` or `rename` (a function under test, a string) still counts
 // as a probe.
 const EVAL_HEADS = new Set(['node', 'nodejs', 'bun', 'deno', 'python', 'python3', 'ruby', 'php', 'perl'])
-const EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print', '-c', '-r'])
+const EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print', '-c'])
+/**
+ * `-r` means "run this code" for php alone. For node and ruby it is a module
+ * PRELOAD — `node -r ./setup.js` makes the interpreter execute that FILE — so
+ * reading it as an inline probe would let a read-only turn run a script.
+ */
+const EVAL_FLAGS_BY_HEAD = { php: new Set(['-r']) }
 const WRITE_API_NAMES =
   'writeFile|writeFileSync|appendFile|appendFileSync|unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|rename|renameSync|copyFile|copyFileSync|cp|cpSync|createWriteStream|truncate|truncateSync|ftruncate|ftruncateSync|chmod|chmodSync|chown|chownSync|symlink|symlinkSync|link|linkSync|utimes|utimesSync|writeSync|openSync|execSync|execFile|execFileSync|spawn|spawnSync|fork|write_text|write_bytes|rmtree|removedirs|makedirs|touch|check_output|check_call|Popen'
 // Modules whose destructured exports mutate; a bare `truncate(` or `rename(`
@@ -1406,7 +1437,8 @@ const EVAL_WRITE_FREE_FN = /(?<![.\w$])(?:unlink|mkdir|rmdir|rename|copy|system|
 const FREE_FN_HEADS = new Set(['php', 'perl'])
 function evalProgram(c) {
   const args = c.args ?? []
-  const idx = args.findIndex((a) => EVAL_FLAGS.has(a))
+  const headFlags = EVAL_FLAGS_BY_HEAD[c.head]
+  const idx = args.findIndex((a) => EVAL_FLAGS.has(a) || headFlags?.has(a) === true)
   if (idx !== -1) {
     // A script FILE argument before the flag (node script.js -e) is not a probe.
     if (args.slice(0, idx).some((a) => !a.startsWith('-') && /\.(js|mjs|cjs|ts|py|rb|php|pl)$/.test(a))) return null
@@ -1432,10 +1464,14 @@ export function isInvestigation(command, opts = {}) {
   const list = splitCommands(command, opts)
   if (list.length === 0) return false
   return list.every((c) => {
+    // Elevation and a mutating redirect disqualify a segment BEFORE anything
+    // else: a headless segment is still a write when it carries one, so
+    // `> ~/.zshrc` and `ls && > file` must not reach the `!c.head` pass below.
+    if (c.elevated || c.mutatingRedirect) return false
     if (!c.head) return true
     if (isReadOnlyCommand(c)) return true
-    if (c.elevated || c.mutatingRedirect) return false
     if (isEvalProbe(c)) return true
+    if (rewritesWhileChecking(c)) return false
     return CHECK_LABELS.has(describeOne(c).label)
   })
 }

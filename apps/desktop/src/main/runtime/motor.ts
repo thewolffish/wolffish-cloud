@@ -366,7 +366,7 @@ export class Motor {
         step.output = await this.bound(
           result.output ?? '',
           call.name,
-          result.meta?.truncated === true
+          result.meta?.outputBounded === true
         )
         step.error = null
         step.finishedAt = Date.now()
@@ -392,7 +392,7 @@ export class Motor {
       // Without surfacing it the model sees only "exited with code N" and
       // has to re-run the command just to learn the cause.
       const failureOutput = result.output
-        ? await this.bound(result.output, call.name, result.meta?.truncated === true)
+        ? await this.bound(result.output, call.name, result.meta?.outputBounded === true)
         : ''
       if (failureOutput) step.output = failureOutput
       this.corpus?.emit('tool.failed', {
@@ -639,7 +639,9 @@ export class Motor {
    * Bound a tool's output for the model: head-biased 2000 lines / 50 KB,
    * the full text spilled to <workspace>/tool-output/ with a hint naming the
    * file (see tool-output.ts). Tools that already bounded their own output
-   * (the shell, tail-biased) say so via meta.truncated and pass through.
+   * (the shell, tail-biased) say so via meta.outputBounded and pass through.
+   * NOT meta.truncated — that one only means "there was more", which a capped
+   * `file_grep` also says while its text is still unbounded.
    */
   private async bound(text: string, tool: string, alreadyBounded = false): Promise<string> {
     if (alreadyBounded) return text

@@ -167,14 +167,6 @@ export function ToolCard({
   )
 }
 
-/** The code tools that earn a compact activity row on the clean feed. */
-export const CODE_ACTIVITY_TOOLS: ReadonlySet<string> = new Set([
-  'file_edit',
-  'file_write',
-  'file_patch',
-  'shell_exec'
-])
-
 function defaultLabel(tool: string): string | null {
   switch (tool) {
     case 'file_edit':

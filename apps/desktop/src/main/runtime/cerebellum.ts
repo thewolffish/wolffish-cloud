@@ -99,8 +99,8 @@ export type SkillFrontmatter = {
   description: string
   triggers?: string[]
   tools?: SkillToolDescriptor[]
-  danger_patterns?: Array<{ pattern: string; level: DangerLevel; reason: string }>
-  confirm_patterns?: Array<{ pattern: string; reason: string }>
+  danger_patterns?: Array<{ pattern: string; level: DangerLevel; reason: string; args?: string[] }>
+  confirm_patterns?: Array<{ pattern: string; reason: string; args?: string[] }>
   requires?: string[]
   packages?: Record<string, string>
   /**
@@ -2710,12 +2710,22 @@ export class Cerebellum {
       for (const d of dangers) {
         const re = safeRegExp(d.pattern)
         if (!re) continue
-        dangerPatterns.push({ match: re, level: d.level, reason: d.reason })
+        dangerPatterns.push({
+          match: re,
+          level: d.level,
+          reason: d.reason,
+          args: patternArgs(d.args)
+        })
       }
       for (const c of confirms) {
         const re = safeRegExp(c.pattern)
         if (!re) continue
-        dangerPatterns.push({ match: re, level: 'confirm', reason: c.reason })
+        dangerPatterns.push({
+          match: re,
+          level: 'confirm',
+          reason: c.reason,
+          args: patternArgs(c.args)
+        })
       }
       if (dangerPatterns.length > 0) this.options.amygdala.registerPatterns(dangerPatterns)
     }
@@ -2960,6 +2970,17 @@ function safeRegExp(pattern: string): RegExp | null {
   } catch {
     return null
   }
+}
+
+/**
+ * A pattern's optional `args:` scope — the argument names it should be
+ * tested against instead of the whole call (see DangerPattern.args). Anything
+ * that is not a non-empty list of strings means "unscoped", the old behaviour.
+ */
+function patternArgs(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const names = value.filter((v): v is string => typeof v === 'string' && v.length > 0)
+  return names.length > 0 ? names : undefined
 }
 
 function titleCase(toolName: string): string {

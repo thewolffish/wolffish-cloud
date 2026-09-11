@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { diagnoseFile, formatDiagnostics } from './diagnostics.mjs'
+import { diagnoseFile, formatDiagnostics, shutdownDiagnostics } from './diagnostics.mjs'
 import { formatFile } from './format.mjs'
 import {
   convertToLineEnding,
@@ -861,13 +861,23 @@ const plugin = {
   name: 'filesystem',
   tools: toolDefinitions,
   describeAction,
+  // ONE init: the object literal carried two `async init` keys, so the second
+  // silently won and contextWorkspaceRoot was never set — every path fell back
+  // to ~/.wfc/workspace instead of the root the cerebellum hands us.
   async init(context) {
     contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
-  },
-  async init(context) {
     if (typeof context?.getWorkingFolders === 'function') {
       getWorkingFolders = context.getWorkingFolders
     }
+  },
+  /**
+   * Cerebellum.stop() awaits this. The after-edit diagnostics keep a
+   * long-lived tsserver per project (diagnostics.mjs); without a destroy hook
+   * nothing app-side ever asked them to exit, and they only died because
+   * their piped stdin happened to close with us.
+   */
+  async destroy() {
+    await shutdownDiagnostics()
   },
   async execute(toolName, args) {
     switch (toolName) {

@@ -763,7 +763,12 @@ function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }
         cwd,
         durationMs: Date.now() - startedAt,
         exitCode: base.exitCode ?? null,
-        truncated: bounded.cut || capture.dropped
+        truncated: bounded.cut || capture.dropped,
+        // We already applied the model-context cap, tail-biased — the motor
+        // must not head-bound this text again and throw away the failure at
+        // the bottom. (`truncated` alone cannot say this: file_grep sets it
+        // to mean "more matches than the limit" on text that IS unbounded.)
+        outputBounded: bounded.cut || capture.dropped
       }
       if (outputPath) meta.outputPath = outputPath
       return { ...base, output: output || base.output, meta }

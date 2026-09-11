@@ -130,7 +130,21 @@ export type ToolResultMeta = {
   durationMs?: number
   /** Absolute path of the full output when it was spilled to disk. */
   outputPath?: string
+  /**
+   * There was more than the result shows — a capped result set, a cut log.
+   * DISPLAY ONLY, and deliberately loose: each tool means it its own way
+   * (the shell means "the log was cut", `file_grep` means "more matches than
+   * the limit"). Never read this to decide whether the text still needs
+   * bounding for the model — that is `outputBounded`.
+   */
   truncated?: boolean
+  /**
+   * The tool ALREADY applied the model-context cap to `output` (2000 lines /
+   * 50 KB) and spilled the rest itself, so the motor must pass the text
+   * through untouched rather than head-bounding a tail-biased log a second
+   * time. Only a tool that really did the work sets this.
+   */
+  outputBounded?: boolean
   /** The directory a command ran in. */
   cwd?: string
   /** A short human label chosen by the tool (e.g. "Run tests"). */

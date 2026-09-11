@@ -278,13 +278,16 @@ function internalRoots(): string[] {
   return [WORKSPACE_ROOT, path.join(home, 'brain')]
 }
 
+/** Every file tool that can land on wolffish's own storage — `file_edit` included. */
+const INTERNAL_TOOLS = new Set(['file_read', 'file_write', 'file_edit', 'file_patch'])
+
 /**
  * True when a tool call targets wolffish's own storage and should run
  * without surfacing any UI. Path-traversal attempts (`..`) are never
  * silenced — those still hit the normal danger-pattern flow.
  */
 export function isInternalToolCall(name: string, args: Record<string, unknown>): boolean {
-  if (name !== 'file_read' && name !== 'file_write' && name !== 'file_patch') return false
+  if (!INTERNAL_TOOLS.has(name)) return false
   const raw = args.path
   if (typeof raw !== 'string' || raw.length === 0) return false
   if (raw.includes('..')) return false

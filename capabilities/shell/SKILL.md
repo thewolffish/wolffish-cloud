@@ -181,6 +181,19 @@ confirm_patterns:
     reason: Pushing code
   - pattern: 'docker\s+rm'
     reason: Removing containers
+  # The filesystem capability's system-path rules used to guard the shell too,
+  # because every capability's patterns land in one shared list and those were
+  # unscoped. They are scoped to a path argument now (an edit's replacement text
+  # is not a path), so the shell declares its own against the command it runs.
+  - pattern: '/etc/'
+    args: [command]
+    reason: Touching system configuration
+  - pattern: '/usr/'
+    args: [command]
+    reason: Touching system files
+  - pattern: '/private/'
+    args: [command]
+    reason: Touching a protected system area
 ---
 
 # Shell

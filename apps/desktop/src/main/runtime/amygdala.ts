@@ -25,6 +25,15 @@ export type DangerPattern = {
   match: RegExp
   level: DangerLevel
   reason: string
+  /**
+   * Restrict the pattern to these argument names instead of the whole
+   * serialized call. A path pattern like `\.\./` belongs on `path` alone:
+   * matched against every argument it also fires on a `file_edit` whose
+   * replacement text merely contains `../lib/x`, raising "Path traversal
+   * attempt" over an ordinary relative import. Omit to match the tool name
+   * plus all arguments, which is what a command pattern (shell) wants.
+   */
+  args?: string[]
 }
 
 export type ApprovalRequest = {
@@ -91,23 +100,75 @@ const TWO_TOKEN_HEADS = new Set([
 ])
 
 /**
+ * Does this pattern fire on this call? An unscoped pattern tests the whole
+ * haystack (tool name + serialized args) as it always has. A pattern with
+ * `args` tests ONLY those arguments' own string values — so `\.\./` on
+ * `path` catches `file_write` to `../../../etc/hosts` and stays quiet on a
+ * `file_edit` whose replacement text happens to contain a relative import.
+ * A scoped pattern whose arguments are all absent simply does not fire.
+ */
+function patternHits(pattern: DangerPattern, call: ToolCall, haystack: string): boolean {
+  if (!pattern.args || pattern.args.length === 0) return pattern.match.test(haystack)
+  return pattern.args.some((name) => {
+    const value = call.args?.[name]
+    return typeof value === 'string' && pattern.match.test(value)
+  })
+}
+
+/**
+ * Every way one command line can carry a second command: the boolean and
+ * sequencing operators, a pipe, a background `&`, and a bare newline. Ordered
+ * so the two-character forms win over their one-character prefixes.
+ */
+const COMMAND_SEPARATORS = /\s*(?:&&|\|\||;|\||&|\r?\n)\s*/
+/** `2>&1`, `>&2`, `<&0` — an `&` that belongs to a redirect, not a separator. */
+const REDIRECT_AMP = /(\d*[<>])&/g
+/** A substitution runs a command this function cannot see: `$(…)`, `${…}`, backticks. */
+const SUBSTITUTION = /\$\(|\$\{|`/
+/** `> file` / `>> file` — writes a file the head alone says nothing about. `2>&1` is not one. */
+const WRITE_REDIRECT = />(?!&)/
+
+/**
  * The rule a "Allow for this conversation" grant records for a call: the
- * tool name, and for the shell the command's leading token(s) with wrappers
- * (sudo, env, nohup…) stripped. Pure and conservative — anything unusual
- * falls back to the whole first token.
+ * tool name, and for the shell the leading token(s) of EVERY command in the
+ * line, wrappers (sudo, env, nohup…) stripped, joined in order.
+ *
+ * Every segment, not just the first: keying on the head alone meant one grant
+ * for `npm install` silently covered `npm install && rm -rf ~/Documents` later
+ * in the same conversation, because the two produced the same rule. A chain
+ * keys as `npm install && rm`, which matches no grant made for the plain
+ * command, so the second call asks again. `&`, a newline and a pipe are
+ * separators for exactly the same reason — each one hides a second command.
+ *
+ * A command substitution defeats head-listing entirely (`npm install $(rm -rf
+ * ~/Documents)` has one head and runs two commands), so a line carrying one
+ * keys on its whole collapsed text: granting it allows that exact line again
+ * and nothing else.
  */
 export function sessionAllowRule(call: ToolCall): string {
   if (call.name !== 'shell_exec') return call.name
   const command = typeof call.args?.command === 'string' ? call.args.command.trim() : ''
-  const first = command.split(/\s*(?:&&|\|\||;|\|)\s*/)[0] ?? ''
-  const words = first.split(/\s+/).filter((w) => w.length > 0)
-  while (words.length > 0 && /^(sudo|doas|env|nohup|time|nice)$/.test(words[0])) words.shift()
-  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift()
-  const head = words[0] ?? ''
-  if (!head) return 'shell_exec'
-  const sub =
-    words[1] && !words[1].startsWith('-') && TWO_TOKEN_HEADS.has(head) ? ` ${words[1]}` : ''
-  return `shell_exec:${head}${sub}`
+  if (!command) return 'shell_exec'
+  if (SUBSTITUTION.test(command)) return `shell_exec=${command.replace(/\s+/g, ' ')}`
+  const segments = command
+    .replace(REDIRECT_AMP, '$1 ')
+    .split(COMMAND_SEPARATORS)
+    .filter((s) => s.trim().length > 0)
+  const heads = segments.map((segment) => {
+    const words = segment.split(/\s+/).filter((w) => w.length > 0)
+    while (words.length > 0 && /^(sudo|doas|env|nohup|time|nice)$/.test(words[0])) words.shift()
+    while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift()
+    const head = words[0] ?? ''
+    if (!head) return ''
+    const sub =
+      words[1] && !words[1].startsWith('-') && TWO_TOKEN_HEADS.has(head) ? ` ${words[1]}` : ''
+    return `${head}${sub}`
+  })
+  const rule = heads.filter((h) => h.length > 0).join(' && ')
+  if (!rule) return 'shell_exec'
+  // A redirect writes a file of the command's choosing — `npm install > ~/.zshrc`
+  // shares every head with `npm install` — so it cannot ride that grant either.
+  return `shell_exec:${rule}${WRITE_REDIRECT.test(command) ? ' >' : ''}`
 }
 
 export class Amygdala {
@@ -167,7 +228,7 @@ export class Amygdala {
       return 'safe'
     }
     for (const pattern of this.patterns) {
-      if (pattern.match.test(haystack)) return pattern.level
+      if (patternHits(pattern, call, haystack)) return pattern.level
     }
     return 'safe'
   }
@@ -188,7 +249,7 @@ export class Amygdala {
     // a specific tool (e.g. `test_dangerous_action`) would never fire.
     const haystack = `${call.name} ${argsString}`
     for (const pattern of this.patterns) {
-      if (pattern.match.test(haystack)) return pattern
+      if (patternHits(pattern, call, haystack)) return pattern
     }
     return null
   }

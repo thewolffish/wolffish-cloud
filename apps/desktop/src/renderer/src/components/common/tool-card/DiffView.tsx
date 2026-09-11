@@ -22,10 +22,17 @@ function parseUnifiedDiff(patch: string): DiffLine[] {
   const out: DiffLine[] = []
   let oldNo = 0
   let newNo = 0
+  // The `--- a/…` / `+++ b/…` header only exists BEFORE the first hunk. Past
+  // that point a line starting with those characters is real content — a
+  // deleted `-- comment` (SQL, Lua, Haskell) arrives as `--- comment` — and
+  // dropping it would silently remove a changed line from the diff the user
+  // is reading to check the edit.
+  let inHunk = false
   for (const raw of patch.split('\n')) {
-    if (raw.startsWith('--- ') || raw.startsWith('+++ ')) continue
+    if (!inHunk && (raw.startsWith('--- ') || raw.startsWith('+++ '))) continue
     const hunk = HUNK_RE.exec(raw)
     if (hunk) {
+      inHunk = true
       oldNo = Number(hunk[1])
       newNo = Number(hunk[3])
       out.push({ kind: 'hunk', text: raw })

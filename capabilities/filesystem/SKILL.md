@@ -211,14 +211,18 @@ requires:
   - node
 danger_patterns:
   - pattern: '\.\./'
+    args: [path]
     level: destructive
     reason: Path traversal attempt
 confirm_patterns:
   - pattern: '/etc/'
+    args: [path]
     reason: Modifying system configuration
   - pattern: '/usr/'
+    args: [path]
     reason: Modifying system files
   - pattern: '/private/'
+    args: [path]
     reason: Modifying protected system area
 ---
 

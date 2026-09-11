@@ -53,9 +53,45 @@ async function main(): Promise<void> {
       'shell_exec:apt-get install'
   )
   ok(
-    'only the first command of a chain keys the rule',
+    'every command of a chain keys the rule',
     sessionAllowRule(call('shell_exec', { command: 'npm install && rm -rf dist' })) ===
-      'shell_exec:npm install'
+      'shell_exec:npm install && rm'
+  )
+  ok(
+    'a chain never matches a grant made for its first command alone',
+    sessionAllowRule(call('shell_exec', { command: 'npm install' })) !==
+      sessionAllowRule(call('shell_exec', { command: 'npm install && rm -rf ~/Documents' }))
+  )
+  // Every other way a second command hides on one line. `&&` was the obvious
+  // one; each of these reached the same rule as the plain command and so rode
+  // a grant made for it.
+  {
+    const plain = sessionAllowRule(call('shell_exec', { command: 'npm install' }))
+    const hidden = [
+      'npm install\nrm -rf ~/Documents',
+      'npm install & rm -rf ~/Documents',
+      'npm install; rm -rf ~/Documents',
+      'npm install | tee /tmp/log',
+      'npm install $(rm -rf ~/Documents)',
+      'npm install `rm -rf ~/Documents`'
+    ]
+    for (const command of hidden) {
+      ok(
+        `a second command behind ${JSON.stringify(command.slice(12, 20))} does not ride the grant`,
+        sessionAllowRule(call('shell_exec', { command })) !== plain,
+        sessionAllowRule(call('shell_exec', { command }))
+      )
+    }
+  }
+  ok(
+    'a write redirect does not ride a plain grant',
+    sessionAllowRule(call('shell_exec', { command: 'npm install > ~/.zshrc' })) !==
+      sessionAllowRule(call('shell_exec', { command: 'npm install' }))
+  )
+  ok(
+    'a redirect is not a second command',
+    sessionAllowRule(call('shell_exec', { command: 'npm test 2>&1' })) ===
+      sessionAllowRule(call('shell_exec', { command: 'npm test' }))
   )
   ok(
     'a flag is not a subcommand',

@@ -19,7 +19,7 @@ import { ProviderErrorCards } from '@components/common/provider-error-card/Provi
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
-import { CODE_ACTIVITY_TOOLS, ToolCard } from '@components/common/tool-card/ToolCard'
+import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TodoCard } from '@components/common/todo-card/TodoCard'
@@ -39,6 +39,7 @@ import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
 import { collectTouchedFolders } from '@lib/touched-folders/touchedFolders'
 import {
+  CODE_ACTIVITY_TOOLS,
   todoListId,
   latestTodoLists,
   upsertTodoSegment,
