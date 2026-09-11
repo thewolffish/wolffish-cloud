@@ -105,7 +105,6 @@ jest.mock('@/components/settings/TabSummaries', () => {
     'AppearanceSummary',
     'CapabilitiesSummary',
     'ChannelsSummary',
-    'ConversationsSummary',
     'DataSummary',
     'KnowledgeSummary',
     'McpSummary',

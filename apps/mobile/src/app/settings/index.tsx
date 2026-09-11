@@ -8,7 +8,6 @@ import {
   DnaIcon,
   Key01Icon,
   McpServerIcon,
-  MessageMultiple01Icon,
   Globe02Icon,
   NeuralNetworkIcon,
   PaintBoardIcon,
@@ -18,7 +17,6 @@ import {
   AppearanceSummary,
   CapabilitiesSummary,
   ChannelsSummary,
-  ConversationsSummary,
   DataSummary,
   KnowledgeSummary,
   McpSummary,
@@ -83,21 +81,10 @@ export default function SettingsScreen(): React.JSX.Element {
           }
         ]
       : []),
-    // Projects, Procedures, Automations and Customization are NOT here. They
+    // The Library, Customization and the Conversations page are NOT here. They
     // are things the user MAKES with the app rather than knobs on it, and they
     // are reached from the conversations sheet in chat — one tap from the only
     // screen the app really has, instead of two through a list of settings.
-    //
-    // Conversations IS here, and it is not the same thing as the sheet. The
-    // sheet is a navigator: it opens a conversation and nothing else. This is
-    // the full page — the one place a conversation can be searched through and
-    // deleted — so it stays reachable from the list every other page is on.
-    {
-      key: 'conversations',
-      href: '/history',
-      icon: <MessageMultiple01Icon size={18} className="text-muted" />,
-      trailing: <ConversationsSummary />
-    },
     {
       key: 'model',
       href: '/settings/model',

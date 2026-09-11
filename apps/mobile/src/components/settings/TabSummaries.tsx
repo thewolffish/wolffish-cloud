@@ -1,6 +1,5 @@
 import { ComputerIcon, SmartPhone01Icon } from '@/components/core/icons'
 import { CodeChip } from '@/components/settings/SettingsUI'
-import { useConversationList } from '@/lib/conversations/hooks'
 import { formatBytes } from '@/lib/files/fileKinds'
 import { useDataUsage } from '@/lib/files/useDataUsage'
 import { computeUsageStats } from '@/lib/usage/stats'
@@ -133,22 +132,6 @@ export function McpSummary(): React.JSX.Element {
       value={`${names.filter((name) => servers[name]).length}/${names.length}`}
     />
   )
-}
-
-/**
- * Conversations — a plain count of what is on this device.
- *
- * `isLoading` renders an em dash rather than a `0`: "none" and "not read yet"
- * are different facts, and printing the first while the second is true is how a
- * list that has content reads as empty for a beat.
- *
- * Projects, Procedures, Automations and Customization used to have summaries
- * here too. They left Settings for the chat sheet, which renders label + icon
- * only, and their summaries left with them.
- */
-export function ConversationsSummary(): React.JSX.Element {
-  const { data, isLoading } = useConversationList()
-  return <CodeChip mono className="shrink-0" value={isLoading ? '—' : `${data?.length ?? 0}`} />
 }
 
 /** Variables — a plain count: a variable is defined or it is not. */

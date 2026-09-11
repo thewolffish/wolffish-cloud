@@ -3,6 +3,7 @@ import { chipText, chipTone, Pulse } from '@/components/conversations/Conversati
 import {
   AiBrain01Icon,
   ChampionIcon,
+  Clock01Icon,
   LibraryIcon,
   Settings02Icon,
   UserGroupIcon,
@@ -122,6 +123,15 @@ const NAV: NavRowSpec[] = [
     href: '/settings/customization',
     Icon: AiBrain01Icon,
     labelKey: 'settings.tabs.customization'
+  },
+  // The full Conversations page — search and delete, which the list below
+  // cannot do — last, where the desktop's sheet keeps it. It used to live in
+  // Settings, but it is a place you go, not a knob you turn.
+  {
+    key: 'conversations',
+    href: '/history',
+    Icon: Clock01Icon,
+    labelKey: 'settings.tabs.conversations'
   }
 ]
 
