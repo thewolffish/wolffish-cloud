@@ -2,12 +2,26 @@ import { CopyButton } from '@components/core/CopyButton'
 import { MARKDOWN_SANITIZE_SCHEMA } from '@lib/markdown/sanitize'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, FolderOpenIcon } from 'hugeicons-react'
-import { memo, type ReactNode } from 'react'
-import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from 'react-markdown'
+import { createContext, memo, useContext, type ComponentProps, type ReactNode } from 'react'
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+  type ExtraProps,
+  type Options
+} from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
+
+/**
+ * True while rendering the children of a fenced block. A fence with no language
+ * tag yields a <code> with no `language-` class, so class sniffing alone would
+ * style it as inline code and paint a second, content-width background inside
+ * the <pre> (visible as a darker inner box in light mode). Position, not class,
+ * decides block-ness.
+ */
+const InPreContext = createContext(false)
 
 function extractText(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return ''
@@ -19,6 +33,36 @@ function extractText(node: ReactNode): string {
     return props ? extractText(props.children) : ''
   }
   return ''
+}
+
+/**
+ * The <code> renderer, lifted out of the components map below: it reads
+ * InPreContext, and a hook may not live in a lowercase `code` entry — React
+ * keys component-hood off the name, so the map's own entries are plain
+ * functions to the linter.
+ */
+function CodeNode({
+  children,
+  className,
+  ...rest
+}: ComponentProps<'code'> & ExtraProps): React.JSX.Element {
+  const isBlock = useContext(InPreContext) || /\blanguage-/.test(className ?? '')
+  if (isBlock) {
+    return (
+      <code dir="ltr" className={cn('font-mono', className)} {...rest}>
+        {children}
+      </code>
+    )
+  }
+  return (
+    <code
+      dir="ltr"
+      className="bg-border/40 text-fg inline-block max-w-full rounded px-1 py-0.5 font-mono text-[0.85em] wrap-anywhere"
+      {...rest}
+    >
+      {children}
+    </code>
+  )
 }
 
 const components: Components = {
@@ -91,30 +135,12 @@ const components: Components = {
             className
           )}
         >
-          {children}
+          <InPreContext.Provider value={true}>{children}</InPreContext.Provider>
         </pre>
       </div>
     )
   },
-  code: ({ children, className, ...rest }) => {
-    const isBlock = /\blanguage-/.test(className ?? '')
-    if (isBlock) {
-      return (
-        <code dir="ltr" className={cn('font-mono', className)} {...rest}>
-          {children}
-        </code>
-      )
-    }
-    return (
-      <code
-        dir="ltr"
-        className="bg-border/40 text-fg inline-block max-w-full rounded px-1 py-0.5 font-mono text-[0.85em] wrap-anywhere"
-        {...rest}
-      >
-        {children}
-      </code>
-    )
-  },
+  code: CodeNode,
   img: ({ src, alt }) => {
     if (!src) return null
     const relativePath = src.startsWith('wolffish-media://')
