@@ -21,6 +21,10 @@ import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import {
   Add01Icon,
+  Briefcase01Icon,
+  Calendar01Icon,
+  Calendar03Icon,
+  Calendar04Icon,
   Clock01Icon,
   Delete02Icon,
   Edit02Icon,
@@ -28,7 +32,12 @@ import {
   HelpCircleIcon,
   InformationCircleIcon,
   PlayIcon,
-  Refresh01Icon
+  Refresh01Icon,
+  RepeatIcon,
+  RocketIcon,
+  SourceCodeIcon,
+  Sun01Icon,
+  Timer01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -476,6 +485,32 @@ const nextRunChipClass = cn(
   'inline-flex h-7 max-w-full items-center gap-1.5 self-start rounded-lg px-2',
   'text-[11px] leading-tight font-medium'
 )
+/**
+ * The schedule chip: the countdown chip's shape in the card's quiet palette,
+ * so the two stack as one pair and the armed countdown still leads. The rule
+ * an automation runs by is not reference detail — it is the second thing a
+ * card says after its name, so it wears a chip instead of sitting in the mono
+ * well with the date and the edit stamp.
+ */
+const scheduleChipClass = cn(nextRunChipClass, 'border-border bg-bg text-fg border')
+/**
+ * The glyph a schedule chip wears — one per form the heading can take, so the
+ * period registers before its text is read: a rocket for launch, a stopwatch
+ * for the hourly tick, the sun for a daily run, a briefcase for Monday-to-
+ * Friday, week and month calendars, angle brackets for raw cron. Keyed by the
+ * type `parseSchedule` returns; an unrecognized one falls back to the clock.
+ */
+const SCHEDULE_ICONS: Record<string, typeof Clock01Icon> = {
+  startup: RocketIcon,
+  once: Calendar01Icon,
+  every: RepeatIcon,
+  hourly: Timer01Icon,
+  daily: Sun01Icon,
+  weekday: Briefcase01Icon,
+  weekly: Calendar03Icon,
+  monthly: Calendar04Icon,
+  cron: SourceCodeIcon
+}
 /** h-8 — the remove button's h-6 plus the row's former py-1, top and bottom. */
 const fileRowHeight = 'h-8'
 const fileRowClass = cn(fileRowHeight, 'flex items-center gap-2 rounded-md px-1.5')
@@ -1664,10 +1699,10 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
 
   const jobMetaLine = useCallback(
     (job: SidebarJob): string => {
-      // With a name in the title slot the heading's own syntax would otherwise
-      // vanish from the card — "next run in 21 hours" does not say "weekly".
-      // A job with no name still has it as its title, so don't repeat it.
-      const parts = job.name?.trim() ? [job.label] : []
+      // The schedule heading left this line for its own chip above — what
+      // stays is the reference detail nobody reads at a glance: the moment,
+      // the project, the edit stamp.
+      const parts: string[] = []
       // The chip carries the relative countdown; the wall-clock moment it
       // lands on stays here, where it doesn't have to re-render every second.
       if (job.active && job.type !== 'startup' && job.nextRunMs != null) {
@@ -1730,6 +1765,7 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                   // Can come back empty (an unnamed, inactive, unbound job) —
                   // the chip above already says everything it would have.
                   const metaLine = jobMetaLine(job)
+                  const ScheduleIcon = SCHEDULE_ICONS[job.type] ?? Clock01Icon
                   return (
                     <li key={job.label} className="min-w-0">
                       <div
@@ -1876,33 +1912,55 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                             {/* The name takes the whole row and ellipses on one
                                 line however long it runs; the interval badge
                                 holds the end edge, so every card's badge lands
-                                on the same column. */}
+                                on the same column. It is the period in the
+                                reader's language — the schedule chip below
+                                spells the same rule in the editor's English
+                                syntax, which is the one thing on the card that
+                                never translates. */}
                             <bdi className="min-w-0 flex-1 truncate">{title}</bdi>
                             <Badge variant="primary" size="sm" className="shrink-0">
                               {t(`heartbeat.type.${job.type}`)}
                             </Badge>
                           </span>
-                          {/* The countdown, worn as the composer's active-model
-                              chip: same soft primary tint, same size. It sits
-                              straight under the name because it is the card's
-                              headline fact — when this thing runs next. An
-                              automation that is switched off wears the muted
-                              variant instead of promising a run that isn't
-                              coming. */}
-                          <span
-                            title={
-                              job.active && job.nextRunMs != null
-                                ? formatAbsolute(job.nextRunMs, locale)
-                                : undefined
-                            }
-                            className={cn(
-                              nextRunChipClass,
-                              job.active ? 'bg-primary/10 text-primary' : 'bg-border/40 text-muted'
-                            )}
-                          >
-                            <Clock01Icon size={13} className="shrink-0" />
-                            <span className="truncate">{nextRunLabel(job)}</span>
-                          </span>
+                          {/* When it runs next and the rule it runs by, pushed
+                              to the card's two edges the way the switch and the
+                              mode row above them are — so the four controls
+                              frame one column. Both are worn as the composer's
+                              active-model chip: the countdown in soft primary
+                              because it is the card's headline fact, the rule
+                              outlined and quiet beside it. They wrap to their
+                              own lines rather than squeeze, which is what gives
+                              a long cron the card's full width. */}
+                          <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
+                            {/* An automation that is switched off wears the
+                                muted variant instead of promising a run that
+                                isn't coming. */}
+                            <span
+                              title={
+                                job.active && job.nextRunMs != null
+                                  ? formatAbsolute(job.nextRunMs, locale)
+                                  : undefined
+                              }
+                              className={cn(
+                                nextRunChipClass,
+                                job.active
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'bg-border/40 text-muted'
+                              )}
+                            >
+                              <Clock01Icon size={13} className="shrink-0" />
+                              <span className="truncate">{nextRunLabel(job)}</span>
+                            </span>
+                            {/* The rule itself, in the syntax the editor takes
+                                — "Weekly (Mon 09:00)" — under its own glyph. It
+                                used to open the mono well below, where a
+                                two-line clamp could swallow it behind the
+                                date. */}
+                            <span title={job.label} className={scheduleChipClass}>
+                              <ScheduleIcon size={13} className="shrink-0" />
+                              <bdi className="truncate">{job.label}</bdi>
+                            </span>
+                          </div>
                           {busy && (
                             <span
                               className={cn(
