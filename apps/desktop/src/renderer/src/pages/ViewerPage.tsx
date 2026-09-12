@@ -299,7 +299,10 @@ export function ViewerPage(): React.JSX.Element {
       setOriginalContent(content)
       setEditorContent(content)
       setMtimeMs(statInfo.mtimeMs)
-      setViewMode(isMedia || isReadOnlyPath(relativePath) ? 'preview' : 'edit')
+      // An HTML file opens on its rendered self — the page is the point of it,
+      // same default the chat's HTML card takes. Edit still holds the markup.
+      const isHtmlFile = languageFor(relativePath) === 'html'
+      setViewMode(isMedia || isHtmlFile || isReadOnlyPath(relativePath) ? 'preview' : 'edit')
     } catch (err) {
       if (loadCounter.current !== id) return
       const message = err instanceof Error ? err.message : String(err)
@@ -381,6 +384,7 @@ export function ViewerPage(): React.JSX.Element {
   const mediaType = selectedPath ? detectMediaType(selectedPath) : null
   const readOnly = selectedPath ? isReadOnlyPath(selectedPath) : false
   const isMarkdown = language === 'markdown'
+  const isHtml = language === 'html'
   const isDirty = editorContent !== originalContent
   const fileName = selectedPath ? (selectedPath.split('/').pop() ?? selectedPath) : null
   const hasContent = language || mediaType
@@ -512,6 +516,18 @@ export function ViewerPage(): React.JSX.Element {
                     relativePath={selectedPath}
                     fileName={fileName!}
                     mediaType={mediaType}
+                  />
+                ) : viewMode === 'preview' && isHtml ? (
+                  // The same sandboxed frame the chat's HTML card renders into:
+                  // opaque origin (no allow-same-origin), and the app's own CSP
+                  // is inherited by the srcDoc document, so inline page scripts
+                  // do not execute. Never add allow-same-origin beside
+                  // allow-scripts — that would defeat the sandbox.
+                  <iframe
+                    title={fileName ?? 'preview'}
+                    srcDoc={editorContent}
+                    sandbox="allow-scripts allow-popups allow-forms allow-modals"
+                    className="min-h-0 w-full flex-1 border-0 bg-white"
                   />
                 ) : viewMode === 'preview' ? (
                   <div className="bg-surface text-fg min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm">
