@@ -143,8 +143,12 @@ export const WorkflowCard = memo(function WorkflowCard({
       ? ArrowLeft01Icon
       : ArrowRight01Icon
 
+  // Deliberately narrower than the desktop's WorkflowCard, which stays full
+  // width: on the phone the agent's cards all share one edge, and a card that
+  // reaches the feed's border stops reading as the agent's output. The phone
+  // reason is the whole reason — keep the header and phase pills inside.
   return (
-    <View className="bg-surface border-border w-full flex-col gap-2 rounded-xl border px-3 py-2.5">
+    <View className="bg-surface border-border w-[85%] flex-col gap-2 self-start rounded-xl border px-3 py-2.5">
       <Text
         onPress={() => setExpanded((value) => !value)}
         suppressHighlighting

@@ -192,7 +192,11 @@ export const ToolCard = memo(function ToolCard({
   return (
     <View
       className={cn(
-        'bg-surface border-border w-full max-w-full flex-col gap-2 self-start rounded-xl border',
+        // The agent's width, like every other card in the feed (85%, the same
+        // cap the desktop's ToolCard carries): a tool card that runs the feed
+        // edge to edge reads as the feed's own furniture rather than as
+        // something the agent did.
+        'bg-surface border-border w-[85%] flex-col gap-2 self-start rounded-xl border',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5'
       )}
     >

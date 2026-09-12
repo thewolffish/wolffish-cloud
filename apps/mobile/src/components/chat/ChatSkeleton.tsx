@@ -155,7 +155,7 @@ function ModelChip(): React.JSX.Element {
 /** Tool card: status pill, tool name, elapsed, chevron, headline code strip. */
 function ToolRunCard(): React.JSX.Element {
   return (
-    <Card className="w-full flex-col gap-2 self-start rounded-xl px-3 py-2.5">
+    <Card className="w-[85%] flex-col gap-2 self-start rounded-xl px-3 py-2.5">
       <View className="flex-row items-center gap-2">
         <Bar className="h-4 w-14" />
         <Bar className="h-3 w-24 opacity-60" />
@@ -174,7 +174,7 @@ function ToolRunCard(): React.JSX.Element {
 /** Workflow summary: title line over a wrapped row of outlined phase pills. */
 function WorkflowCard(): React.JSX.Element {
   return (
-    <Card className="w-full flex-col gap-2 self-start rounded-xl px-3 py-2.5">
+    <Card className="w-[85%] flex-col gap-2 self-start rounded-xl px-3 py-2.5">
       <Bar className="h-3 w-[74%]" />
       <View className="flex-row flex-wrap gap-1.5">
         <View className="border-border h-5 w-16 rounded-full border" />
