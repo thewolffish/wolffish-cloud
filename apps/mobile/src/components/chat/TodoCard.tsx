@@ -2,14 +2,14 @@ import {
   Cancel01Icon,
   CheckmarkCircle02Icon,
   CircleIcon,
-  Loading03Icon,
   Task01Icon
 } from '@/components/core/icons'
 import type { TodoItem, TodoStatus } from '@/lib/conversations/types'
 import { cn } from '@/lib/utils/cn'
+import { useTokens } from '@/providers/theme/useTheme'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Text, View } from 'react-native'
+import { ActivityIndicator, Text, View, type ViewStyle } from 'react-native'
 
 /**
  * The model's task list (todo_write) as a checklist card — the mobile twin of
@@ -20,12 +20,36 @@ import { Text, View } from 'react-native'
  * is output FOR the user, not tool mechanics, so it renders on the clean feed.
  */
 
+// ActivityIndicator's smallest is 'small' — 20pt — so it is scaled by 16/20 to
+// sit in the same 16pt box as the status glyphs on the rows around it. A numeric
+// size is not used because ActivityIndicator only honours one on some platforms.
+const SPINNER_BOX: ViewStyle = {
+  width: 16,
+  height: 16,
+  alignItems: 'center',
+  justifyContent: 'center'
+}
+const SPINNER: ViewStyle = { transform: [{ scale: 0.8 }] }
+
+/**
+ * The status glyph on a row. In progress is a REAL spinner: every glyph in the
+ * icon set is a static SVG and react-native-svg has no rotation animation, so
+ * the `animate-pulse` this row used to carry only faded the icon in place — a
+ * spinner that never spun, which reads as a frozen row. ActivityIndicator is
+ * native, so it turns on its own.
+ */
 function StatusIcon({ status }: { status: TodoStatus }): React.JSX.Element {
+  const tokens = useTokens()
+
   switch (status) {
     case 'completed':
       return <CheckmarkCircle02Icon size={16} className="text-emerald-600 dark:text-emerald-400" />
     case 'in_progress':
-      return <Loading03Icon size={16} className="text-primary animate-pulse" />
+      return (
+        <View style={SPINNER_BOX}>
+          <ActivityIndicator size="small" color={tokens.primary} style={SPINNER} />
+        </View>
+      )
     case 'cancelled':
       return <Cancel01Icon size={16} className="text-muted" />
     default:
