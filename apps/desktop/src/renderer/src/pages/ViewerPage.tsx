@@ -512,7 +512,6 @@ export function ViewerPage(): React.JSX.Element {
                     relativePath={selectedPath}
                     fileName={fileName!}
                     mediaType={mediaType}
-                    onDownload={handleDownload}
                   />
                 ) : viewMode === 'preview' ? (
                   <div className="bg-surface text-fg min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm">
@@ -556,13 +555,11 @@ export function ViewerPage(): React.JSX.Element {
 function WorkspaceMediaViewer({
   relativePath,
   fileName,
-  mediaType,
-  onDownload
+  mediaType
 }: {
   relativePath: string
   fileName: string
   mediaType: MediaType
-  onDownload: () => Promise<void>
 }): React.JSX.Element {
   const mime = mimeFor(fileName)
   switch (mediaType) {
@@ -571,14 +568,7 @@ function WorkspaceMediaViewer({
     case 'video':
       return <WorkspaceVideo relativePath={relativePath} fileName={fileName} mime={mime} />
     case 'audio':
-      return (
-        <WorkspaceAudio
-          relativePath={relativePath}
-          fileName={fileName}
-          mime={mime}
-          onDownload={onDownload}
-        />
-      )
+      return <WorkspaceAudio relativePath={relativePath} mime={mime} />
     case 'pdf':
       return <WorkspacePdf relativePath={relativePath} fileName={fileName} />
     case 'docx':
@@ -614,24 +604,24 @@ function WorkspaceImage({
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {url ? (
-          <div className="flex flex-1 items-center justify-center p-4">
-            <button
-              type="button"
-              onClick={() => setModalOpen(true)}
-              className="block cursor-pointer"
-            >
-              <img
-                src={url}
-                alt={fileName}
-                className="max-h-[75vh] w-full object-contain"
-                draggable={false}
-                onLoad={(e) => {
-                  const { naturalWidth, naturalHeight } = e.currentTarget
-                  if (naturalWidth && naturalHeight) setRatio(naturalWidth / naturalHeight)
-                }}
-              />
-            </button>
-          </div>
+          // The page takes the picture at full width and lets its own ratio set
+          // the height; click still opens it in the lightbox.
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="block w-full cursor-pointer"
+          >
+            <img
+              src={url}
+              alt={fileName}
+              className="block h-auto w-full"
+              draggable={false}
+              onLoad={(e) => {
+                const { naturalWidth, naturalHeight } = e.currentTarget
+                if (naturalWidth && naturalHeight) setRatio(naturalWidth / naturalHeight)
+              }}
+            />
+          </button>
         ) : (
           <div className="flex-1" />
         )}
@@ -672,17 +662,9 @@ function WorkspaceVideo({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       {url ? (
-        <div className="flex flex-1 items-center justify-center bg-black">
-          <video
-            src={url}
-            controls
-            preload="metadata"
-            className="w-full"
-            style={{ maxHeight: '80vh' }}
-          >
-            <track kind="captions" label={fileName} />
-          </video>
-        </div>
+        <video src={url} controls preload="metadata" className="h-auto w-full bg-black">
+          <track kind="captions" label={fileName} />
+        </video>
       ) : (
         <div className="flex-1" />
       )}
@@ -692,14 +674,10 @@ function WorkspaceVideo({
 
 function WorkspaceAudio({
   relativePath,
-  fileName,
-  mime,
-  onDownload
+  mime
 }: {
   relativePath: string
-  fileName: string
   mime: string
-  onDownload: () => Promise<void>
 }): React.JSX.Element {
   const { url, error } = useViewerBlob(relativePath, mime)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -785,9 +763,6 @@ function WorkspaceAudio({
           'rounded-2xl border px-4 py-3'
         )}
       >
-        <div className="text-muted truncate text-[11px] font-medium" title={fileName}>
-          {fileName}
-        </div>
         <div className="flex items-center gap-3">
           {url && <audio ref={audioRef} src={url} preload="metadata" />}
 
@@ -833,18 +808,6 @@ function WorkspaceAudio({
           >
             <DashboardSpeed01Icon size={12} />
             {playbackRate}x
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void onDownload()}
-            title="Download"
-            className={cn(
-              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
-              'focus-visible:ring-2 focus-visible:ring-accent'
-            )}
-          >
-            <Download01Icon size={14} />
           </button>
         </div>
       </div>
