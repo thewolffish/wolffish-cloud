@@ -155,7 +155,9 @@ export const Rpc = {
   overlaysRead: 'desktop.overlays.read',
   updaterState: 'desktop.updater.state',
   updaterCheck: 'desktop.updater.check',
-  updaterInstall: 'desktop.updater.install'
+  updaterInstall: 'desktop.updater.install',
+  /** Abort a pending turn-end countdown (the countdown card's Abort). `{ ok }`. */
+  countdownAbort: 'desktop.countdown.abort'
 } as const
 
 /** Event topics pushed without a request. */
@@ -194,7 +196,14 @@ export const Event = {
   automationRunsChanged: 'automations.runs',
   diagnosticsProgress: 'diagnostics.progress',
   reindexChanged: 'reindex.status',
-  updaterChanged: 'updater.state'
+  updaterChanged: 'updater.state',
+  /**
+   * A turn-end countdown changed state after its turn ended (`{ snapshot }`)
+   * — counting, fired, aborted, failed. Folded into the stored message that
+   * holds the matching `countdown` segment; the desktop also nudges a body
+   * re-read once its own file write has landed.
+   */
+  countdownChanged: 'countdown.changed'
 } as const
 
 export type RpcMethod = (typeof Rpc)[keyof typeof Rpc]

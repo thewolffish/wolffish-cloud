@@ -129,6 +129,9 @@ import { McpManager } from '@main/runtime/mcp/manager'
 import type { McpAddInput, McpHeader } from '@main/runtime/mcp/types'
 import { sudoSession } from '@main/runtime/sudoSession'
 import { Thalamus } from '@main/runtime/thalamus'
+import { turnScope } from '@main/runtime/corpus'
+import { countdowns } from '@main/runtime/countdown'
+import { registerCountdownCapability } from '@main/runtime/countdown-capability'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { detectSystem, type SystemInfo } from '@main/system'
@@ -771,6 +774,7 @@ const mobileChannel = new MobileChannel({
   compactionRuns: () => agent.brainstem.getCompactionRuns(),
   // What the OS has ACTUALLY registered, not the stored intent — the two
   // disagree whenever a registration failed, which on Linux used to be always.
+  countdownAbort: (countdownId) => countdowns.abort(countdownId, 'user'),
   launchAtStartupActive: async () => (await readAutostartStatus()).active,
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
@@ -1444,7 +1448,8 @@ const MOBILE_CONFIG_SILENT = new Set([
   // guard), so the five-minute revalidations cost nothing.
   'model:pullProgress',
   'projects:copyProgress',
-  'reindex:progress'
+  'reindex:progress',
+  'countdown:changed'
 ])
 
 /**
@@ -2548,6 +2553,52 @@ app.whenReady().then(async () => {
   // same channel a click here would — no second write path, no surface left
   // holding a stale value. Validation of WHICH values are acceptable lives in
   // the plugins, against the catalogs the panels render.
+  // ── Turn-end countdowns ──────────────────────────────────────────────
+  // The manager fires an armed tool call after the arming turn ends (see
+  // runtime/countdown.ts). `system_power` arms through the host below; the
+  // model arms anything else through the generic `countdown_start` tool.
+  countdowns.setExecutor((tool, args) => agent.cerebellum.executeTool(tool, args))
+  agent.cerebellum.setCountdownHost({
+    arm: (input) => {
+      const scope = turnScope.getStore()
+      if (scope?.autonomous) {
+        return Promise.resolve({
+          ok: false as const,
+          error:
+            'Countdowns are refused in an automation run: nobody is watching the card to abort it.'
+        })
+      }
+      return countdowns.arm(
+        agent.cerebellum.getCurrentConversationId(),
+        scope?.turnId ?? null,
+        input
+      )
+    },
+    isFiring: () => countdowns.isFiring(),
+    pending: () => countdowns.pending()
+  })
+  registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
+  // Every transition reaches the renderer and the phone — the arming turn's
+  // broca carries only the `armed` state; counting/fired/aborted happen after
+  // the turn ended and have no stream to ride. → MOBILE_CONFIG_SILENT.
+  countdowns.onSnapshot((snapshot) => {
+    broadcast('countdown:changed', snapshot)
+    if (mobileChannel.hasPeer) mobileChannel.pushCountdownChanged(snapshot)
+  })
+  // Once the write-through has refreshed the on-disk body, nudge the phone to
+  // re-read it: the push above folds the card live when the phone already
+  // holds the message, this covers the case where it does not yet.
+  countdowns.onWritten((snapshot) => {
+    if (snapshot.conversationId && mobileChannel.hasPeer) {
+      mobileChannel.pushMessageAppended(snapshot.conversationId, undefined)
+    }
+  })
+  void countdowns.init()
+  // Countdown-card Abort button: stops a pending turn-end countdown for good.
+  handle('countdown:abort', async (_e, payload: { countdownId: string }) => {
+    return countdowns.abort(payload.countdownId, 'user')
+  })
+
   agent.cerebellum.setVoiceHost({
     getTts: () => getTtsConfig(),
     setTts: async (patch) => {

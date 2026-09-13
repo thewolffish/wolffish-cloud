@@ -28,6 +28,7 @@ import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pressable, Text, View } from 'react-native'
 import { ApprovalCard } from '@/components/chat/ApprovalCard'
+import { CountdownCard } from '@/components/chat/CountdownCard'
 import {
   CompactionCard,
   ModelChip,
@@ -449,6 +450,9 @@ function renderBlock(
       return <PathCard path={block.path} kind={block.kind} />
     case 'workflow':
       return <WorkflowCard snapshot={block.snapshot} />
+    case 'countdown':
+      // Turn-end countdown — output FOR the user, never verbose-gated.
+      return <CountdownCard snapshot={block.snapshot} />
     case 'todo':
       // The model's task list — output FOR the user, so never verbose-gated.
       return <TodoCard items={block.items} />

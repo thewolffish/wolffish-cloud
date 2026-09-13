@@ -928,6 +928,28 @@
       "cachedShare": "{{percent}}% of ingested context came from cache"
     },
     "offlineReply": "I can't answer while your desktop is out of reach — it runs the model and holds your workspace. Your message is saved here; send it again once the link is back.",
+    "countdown": {
+      "status": {
+        "armed": "Armed",
+        "counting": "Counting down",
+        "fired": "Ran",
+        "failed": "Failed",
+        "aborted": "Aborted"
+      },
+      "remaining_one": "{{count}} second",
+      "remaining_other": "{{count}} seconds",
+      "abort": "Abort",
+      "armedHint_one": "Starts {{count}} second after this reply finishes.",
+      "armedHint_other": "Starts {{count}} seconds after this reply finishes.",
+      "countingHint": "Abort to stop it. Nothing runs until the bar empties.",
+      "firedHint": "Done.",
+      "abortedBy": {
+        "user": "Aborted by you.",
+        "stop": "Dropped because the turn was stopped before its reply landed.",
+        "superseded": "Replaced by a newer countdown.",
+        "relaunch": "Dropped because Wolffish was relaunched before it fired."
+      }
+    },
     "approval": {
       "level": {
         "safe": "Safe",

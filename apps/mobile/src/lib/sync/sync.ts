@@ -1,6 +1,6 @@
 import { hydrateOverflow, rebuildConversation, type RebuiltConversation } from '@/lib/sync/rebuild'
 import { coalesceTextSegments, messageFilePaths } from '@/lib/conversations/segments'
-import type { ConversationMessage, Segment } from '@/lib/conversations/types'
+import type { ConversationMessage, CountdownSnapshot, Segment } from '@/lib/conversations/types'
 import { getDb, withExclusiveTransaction } from '@/lib/db/database'
 import { resolveWorkspaceFile } from '@/lib/files/fileCache'
 import { bridgeClient } from '@/lib/cloud/bridge'
@@ -35,6 +35,7 @@ import { useChatRuntime } from '@/state/chatRuntime'
 import { clearConversationBadges, getActiveConversation } from '@/lib/notifications/push'
 import { clearConversationDirty } from '@/lib/sync/dirty'
 import { invalidateConversation, invalidateConversationList } from '@/lib/conversations/cache'
+import { getConversation, replaceMessage } from '@/lib/conversations/repo'
 import { beginSync } from '@/lib/sync/activity'
 
 /**
@@ -491,6 +492,16 @@ export function attachLiveUpdates(): () => void {
     applyUpdaterPush(readUpdaterState(payload))
   })
 
+  // A turn-end countdown moved (counting → fired/aborted/failed) after its
+  // turn ended. Fold the snapshot into the stored message that carries the
+  // card so an open conversation flips at once; a body the phone does not
+  // hold yet is covered by the nudge the desktop sends after its own write.
+  bridge.onEvent(Event.countdownChanged, (payload) => {
+    const snapshot = (payload as { snapshot?: CountdownSnapshot } | null)?.snapshot
+    if (!snapshot?.countdownId || !snapshot.conversationId) return
+    void foldCountdownSnapshot(snapshot.conversationId, snapshot)
+  })
+
   return () => undefined
 }
 
@@ -835,4 +846,29 @@ export async function getSyncCursor(): Promise<string> {
 
 async function setSyncCursor(cursor: string): Promise<void> {
   await setMeta('cursor', cursor)
+}
+
+/** Replace the matching `countdown` segment's snapshot in the stored body. */
+async function foldCountdownSnapshot(
+  conversationId: string,
+  snapshot: CountdownSnapshot
+): Promise<void> {
+  const conversation = await getConversation(conversationId).catch(() => null)
+  if (!conversation) return
+  let changed = false
+  for (const message of conversation.messages) {
+    const segments = message.segments ?? []
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      if (seg.kind === 'countdown' && seg.snapshot.countdownId === snapshot.countdownId) {
+        segments[i] = { ...seg, snapshot }
+        changed = true
+      }
+    }
+    if (changed) {
+      await replaceMessage(conversationId, message).catch(() => undefined)
+      break
+    }
+  }
+  if (changed) invalidateConversation(conversationId)
 }

@@ -9,7 +9,12 @@ import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import { mintMessageId, type ConversationMessage } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import { appendTextSegment, upsertTodoSegment, upsertWorkflowSegment } from '@main/runtime/broca'
+import {
+  appendTextSegment,
+  upsertCountdownSegment,
+  upsertTodoSegment,
+  upsertWorkflowSegment
+} from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -430,13 +435,15 @@ export class ElectronChannel {
         if (!conversationId || (!this.mirrorListener && !checkpoint)) return
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
+        else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
-        scheduleMirror(false)
+        // A countdown card flipping should not wait out the text throttle.
+        scheduleMirror(segment.kind === 'countdown')
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a workflow snapshot, the
         // turn's end — is the slow, expensive part of a run and takes the

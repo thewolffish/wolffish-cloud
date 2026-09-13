@@ -1600,6 +1600,36 @@
       "error": "فشل التسجيل"
     },
     "admin": "الإدارة",
+    "countdown": {
+      "status": {
+        "armed": "جاهز",
+        "counting": "عدّ تنازلي",
+        "fired": "نُفِّذ",
+        "failed": "فشل",
+        "aborted": "أُلغي"
+      },
+      "remaining_zero": "{{count}} ثانية",
+      "remaining_one": "ثانية واحدة",
+      "remaining_two": "ثانيتان",
+      "remaining_few": "{{count}} ثوانٍ",
+      "remaining_many": "{{count}} ثانية",
+      "remaining_other": "{{count}} ثانية",
+      "abort": "إلغاء",
+      "armedHint_zero": "يبدأ بعد {{count}} ثانية من انتهاء هذا الرد.",
+      "armedHint_one": "يبدأ بعد ثانية واحدة من انتهاء هذا الرد.",
+      "armedHint_two": "يبدأ بعد ثانيتين من انتهاء هذا الرد.",
+      "armedHint_few": "يبدأ بعد {{count}} ثوانٍ من انتهاء هذا الرد.",
+      "armedHint_many": "يبدأ بعد {{count}} ثانية من انتهاء هذا الرد.",
+      "armedHint_other": "يبدأ بعد {{count}} ثانية من انتهاء هذا الرد.",
+      "countingHint": "اضغط إلغاء لإيقافه. لا يُنفَّذ شيء قبل أن يفرغ الشريط.",
+      "firedHint": "تم.",
+      "abortedBy": {
+        "user": "ألغيته أنت.",
+        "stop": "أُسقط لأن الدور أُوقف قبل أن يصل رده.",
+        "superseded": "استُبدل بعدّ تنازلي أحدث.",
+        "relaunch": "أُسقط لأن Wolffish أُعيد تشغيله قبل أن يُنفَّذ."
+      }
+    },
     "planMode": {
       "label": "خطة",
       "onTitle": "وضع التخطيط مفعّل: هذا الدور يبحث ويكتب خطة فقط. اضغط للسماح بالتغييرات.",

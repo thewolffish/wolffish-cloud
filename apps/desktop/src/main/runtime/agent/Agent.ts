@@ -1,3 +1,4 @@
+import { countdowns } from '@main/runtime/countdown'
 import {
   createConversation,
   loadConversation,
@@ -36,6 +37,7 @@ import {
   Broca,
   appendTextSegment,
   upsertWorkflowSegment,
+  upsertCountdownSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
   type SegmentSink,
@@ -893,9 +895,20 @@ export class Agent {
           }
         )
       : null
-    return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
-      this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
+    // A turn-end countdown armed in this turn rides this broca as its
+    // `armed` card; the clock starts (and every later state flows through
+    // main's listeners) only once the TurnRunner reports the turn ended —
+    // see countdowns.turnEnded.
+    const unregisterCountdownEmitter = countdowns.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitCountdown(turn.turnId, snapshot)
     )
+    try {
+      return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
+        this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
+      )
+    } finally {
+      unregisterCountdownEmitter()
+    }
   }
 
   /**
@@ -2472,6 +2485,7 @@ export class Agent {
       // Workflow snapshots supersede each other — keep only the latest per
       // run in the sealed conversation, mirroring every other persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
+      else if (seg.kind === 'countdown') upsertCountdownSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta

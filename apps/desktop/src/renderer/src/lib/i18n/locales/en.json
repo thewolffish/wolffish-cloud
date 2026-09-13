@@ -1475,6 +1475,28 @@
       "error": "Recording failed"
     },
     "admin": "Admin",
+    "countdown": {
+      "status": {
+        "armed": "Armed",
+        "counting": "Counting down",
+        "fired": "Ran",
+        "failed": "Failed",
+        "aborted": "Aborted"
+      },
+      "remaining_one": "{{count}} second",
+      "remaining_other": "{{count}} seconds",
+      "abort": "Abort",
+      "armedHint_one": "Starts {{count}} second after this reply finishes.",
+      "armedHint_other": "Starts {{count}} seconds after this reply finishes.",
+      "countingHint": "Abort to stop it. Nothing runs until the bar empties.",
+      "firedHint": "Done.",
+      "abortedBy": {
+        "user": "Aborted by you.",
+        "stop": "Dropped because the turn was stopped before its reply landed.",
+        "superseded": "Replaced by a newer countdown.",
+        "relaunch": "Dropped because Wolffish was relaunched before it fired."
+      }
+    },
     "planMode": {
       "label": "Plan",
       "onTitle": "Plan mode is on: this turn only investigates and writes a plan. Click to allow changes.",

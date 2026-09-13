@@ -4,6 +4,7 @@ import {
   WORKFLOW_TOOL_NAMES,
   latestTodoLists,
   todoListId,
+  type CountdownSnapshot,
   type TodoItem,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
@@ -224,6 +225,17 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">workflow · ${escapeHtml(snapshot.status)}</span></div>${snapshot.note ? `<div class="wf-note" dir="auto">${escapeHtml(snapshot.note)}</div>` : ''}${phases}${table}</div>`
 }
 
+/** The countdown card as a static block — label, state, what it ran. */
+function countdownBlock(snapshot: CountdownSnapshot): string {
+  const detail =
+    snapshot.status === 'aborted'
+      ? `aborted (${snapshot.abortedBy ?? 'user'})`
+      : snapshot.status === 'failed' && snapshot.error
+        ? snapshot.error
+        : (snapshot.result ?? '')
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">countdown · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.label)} — ${escapeHtml(snapshot.target.tool)} after ${snapshot.seconds}s${detail ? ` — ${escapeHtml(detail)}` : ''}</div></div>`
+}
+
 /** The todo checklist as a static block — mirrors TodoCard, always printed. */
 function todoBlock(items: TodoItem[]): string {
   const mark: Record<TodoItem['status'], string> = {
@@ -283,6 +295,9 @@ function assistantParts(
     } else if (seg.kind === 'workflow') {
       flushText()
       parts.push(workflowBlock(seg.snapshot))
+    } else if (seg.kind === 'countdown') {
+      flushText()
+      parts.push(countdownBlock(seg.snapshot))
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
       flushText()

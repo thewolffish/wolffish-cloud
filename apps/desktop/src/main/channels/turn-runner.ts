@@ -1,3 +1,4 @@
+import { countdowns } from '@main/runtime/countdown'
 import { turnRouter, type TurnSink } from '@main/channels/channel'
 import { lastConversationMessageAt, type ConversationChannel } from '@main/conversations'
 import { ensureConversationTitle, TITLE_DEADLINE_REASON } from '@main/conversation-titler'
@@ -487,6 +488,7 @@ export class TurnRunner {
         : 0
       const lastMessageAt = Math.max(diskLastMessageAt, sessionLastEndedAt) || null
 
+      let completed = false
       try {
         // The turnScope entry is what keys everything per-turn downstream:
         // the corpus relays above, approval/ask routing in turnRouter, and
@@ -511,6 +513,7 @@ export class TurnRunner {
           })
         )
         sink.onDone()
+        completed = result.stopReason !== 'canceled'
         this.emitLifecycle({
           phase: result.stopReason === 'canceled' ? 'canceled' : 'done',
           turnId,
@@ -537,6 +540,10 @@ export class TurnRunner {
         if (conversationId) this.lastTurnEndedAt.set(conversationId, Date.now())
         for (const off of offs) off()
         turnRouter.unregister(turnId)
+        // A countdown armed in this turn starts its clock now — or is dropped
+        // if the turn was stopped or died, since the reply that warned the
+        // user never landed.
+        countdowns.turnEnded(turnId, completed)
         opts.onTurnEnded?.({ turnId })
       }
     })()

@@ -167,6 +167,48 @@ export const CODE_ACTIVITY_TOOLS: ReadonlySet<string> = new Set([
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
 /**
+ * Lifecycle of a turn-end countdown (see runtime/countdown.ts). `armed`
+ * while the arming turn is still running; `counting` from the moment that
+ * turn ended until the deadline; then exactly one of `fired` (the target
+ * ran), `failed` (it ran and reported an error) or `aborted` (the user, a
+ * Stop on the arming turn, a newer countdown, or an app relaunch stopped it).
+ */
+export type CountdownStatus = 'armed' | 'counting' | 'fired' | 'aborted' | 'failed'
+
+export type CountdownAbortReason = 'user' | 'stop' | 'superseded' | 'relaunch'
+
+/**
+ * Full state of a turn-end countdown — the payload of the `countdown`
+ * segment. Everything the card shows comes from here; the model narrates
+ * nothing. The card derives its bar from fireAt/seconds locally, so main
+ * pushes only state transitions, never ticks.
+ */
+export type CountdownSnapshot = {
+  countdownId: string
+  conversationId: string | null
+  /** The turn that armed it — the one whose end starts the clock. */
+  turnId: string | null
+  /** What happens when it fires, in the user's words ("Restart this Mac"). */
+  label: string
+  /** Grace period between the arming turn's end and the fire. */
+  seconds: number
+  status: CountdownStatus
+  armedAt: number
+  /** Set when the clock starts (status `counting`); the deadline. */
+  fireAt: number | null
+  /** Set on every terminal status. */
+  endedAt: number | null
+  /** The tool call that fires — shown so the user knows exactly what runs. */
+  target: { tool: string; args: Record<string, unknown> }
+  /** The fired tool's first output line, when it returned one. */
+  result?: string
+  /** Why it failed (status `failed`). */
+  error?: string
+  /** Who or what stopped it (status `aborted`). */
+  abortedBy?: CountdownAbortReason
+}
+
+/**
  * One item of the model's task list (todo_write). The whole list rides every
  * `todo` segment; consumers upsert by turnId so a turn shows exactly ONE
  * checklist card, at the position of its first write, in its latest state.
@@ -206,6 +248,25 @@ export function upsertWorkflowSegment(
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i]
     if (s.kind === 'workflow' && s.snapshot.workflowId === segment.snapshot.workflowId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+/**
+ * Replace-by-id upsert for countdown snapshot segments — the workflow
+ * contract, keyed by snapshot.countdownId. One card per countdown on every
+ * surface.
+ */
+export function upsertCountdownSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'countdown' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'countdown' && s.snapshot.countdownId === segment.snapshot.countdownId) {
       segments[i] = segment
       return
     }
@@ -408,6 +469,17 @@ export type Segment =
       turnId: string
       segmentId: string
       snapshot: WorkflowSnapshot
+    }
+  | {
+      /**
+       * Full-state snapshot of a turn-end countdown (see CountdownSnapshot).
+       * Replace-by-countdownId semantics on every surface. Display-only:
+       * both model-context rebuild paths ignore it.
+       */
+      kind: 'countdown'
+      turnId: string
+      segmentId: string
+      snapshot: CountdownSnapshot
     }
   | {
       kind: 'compaction_started'
@@ -702,6 +774,17 @@ export class Broca {
   emitWorkflow(turnId: string, snapshot: WorkflowSnapshot): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'workflow', turnId, segmentId: this.nextId(), snapshot })
+  }
+
+  /**
+   * Emit a countdown snapshot into the active turn — the arming turn's card,
+   * via the turn emitter Agent registers for live turns. Post-turn
+   * transitions (counting, fired, aborted) never reach a broca; they ride
+   * the countdown:changed broadcast and the conversation-file write-through.
+   */
+  emitCountdown(turnId: string, snapshot: CountdownSnapshot): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'countdown', turnId, segmentId: this.nextId(), snapshot })
   }
 
   emitCompactionStarted(

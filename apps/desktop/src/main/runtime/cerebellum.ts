@@ -18,7 +18,8 @@ import type {
   McpTestResult
 } from '@main/runtime/mcp/types'
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
-import type { WorkflowAgentView } from '@main/runtime/broca'
+import type { CountdownSnapshot, WorkflowAgentView } from '@main/runtime/broca'
+import type { CountdownArmInput, CountdownArmResult } from '@main/runtime/countdown'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -731,6 +732,31 @@ export type CloudHost = {
  * never wired one — the plugins refuse the settings tools rather than falling
  * back to a raw config write, which would land on disk with no surface told.
  */
+/**
+ * Turn-end countdown surface (see runtime/countdown.ts), injected into every
+ * plugin's init context as PluginContext.countdown. A plugin whose effect
+ * would take the app or machine down (the `system` power actions) arms a
+ * countdown here instead of running the effect, so the turn ends and its
+ * transcript lands first; the manager fires the armed tool call after the
+ * grace period unless the user aborts it from the card.
+ */
+export type CountdownHost = {
+  /**
+   * Register `tool(args)` to run `seconds` after the current turn ends. The
+   * host stamps the active conversation/turn. Fails outside a turn, and in
+   * an autonomous (automation) turn — nobody is watching that card.
+   */
+  arm: (input: CountdownArmInput) => Promise<CountdownArmResult>
+  /**
+   * True while the manager is executing an armed target. A plugin that arms
+   * on the model's call reads this to run for real when the countdown
+   * calls it back.
+   */
+  isFiring: () => boolean
+  /** The single armed-or-counting countdown, if any. */
+  pending: () => CountdownSnapshot | null
+}
+
 export type VoiceHost = {
   /** Current TTS defaults, normalized field-by-field. */
   getTts: () => Promise<{ defaultVoice: string; defaultSpeed: string; voiceReplies: boolean }>
@@ -858,6 +884,11 @@ export type PluginContext = {
    */
   voice?: VoiceHost
   /**
+   * Turn-end countdown surface. Present once the host wired one in via
+   * setCountdownHost — see CountdownHost.
+   */
+  countdown?: CountdownHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -933,6 +964,10 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'tool-discovery',
+  // Turn-end countdowns (countdown_start) — the safe way to run anything that
+  // would cut off the reply announcing it; `system` (core) arms through the
+  // same manager, so the generic tool must be callable without a hop too.
+  'countdown',
   // Undo for file edits (changes_list / changes_revert) — always callable so
   // "put it back" never needs a discovery hop.
   'changes',
@@ -989,6 +1024,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'workflow',
+  'countdown',
   'todo',
   'automations',
   'projects',
@@ -1063,6 +1099,7 @@ export class Cerebellum {
   private knowledgeHost?: KnowledgeHost
   private cloudHost?: CloudHost
   private voiceHost?: VoiceHost
+  private countdownHost?: CountdownHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1268,6 +1305,19 @@ export class Cerebellum {
    * init context. Set once at startup; survives reload() so the bridge keeps
    * working after either plugin is re-imported.
    */
+  /** Is this tool name registered by any loaded capability right now? */
+  hasTool(name: string): boolean {
+    return this.toolToCapability.has(name)
+  }
+
+  /**
+   * Wire the turn-end countdown host (implemented in the main process over
+   * the CountdownManager singleton). Set once at startup; survives reload().
+   */
+  setCountdownHost(host: CountdownHost): void {
+    this.countdownHost = host
+  }
+
   setVoiceHost(host: VoiceHost): void {
     this.voiceHost = host
   }
@@ -2568,6 +2618,7 @@ export class Cerebellum {
         knowledge: this.knowledgeHost,
         cloud: this.cloudHost,
         voice: this.voiceHost,
+        countdown: this.countdownHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

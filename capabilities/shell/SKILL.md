@@ -320,10 +320,10 @@ Notes:
   enforces this, but assume nothing.
 - **Never restart or shut the machine down from here.** `shutdown /r`,
   `Restart-Computer`, `reboot`, `systemctl reboot`, `osascript ... to restart` —
-  all of them skip the approval card AND the built-in delay that gives this turn
-  time to be written to disk before the machine goes. A reboot fired from the
-  shell takes the conversation's answer, tool cards and timeline down with it.
-  Use `system_power` (`.system`), which schedules it instead.
+  all of them skip the approval card AND the turn-end countdown that gives this
+  turn time to be written to disk before the machine goes. A reboot fired from
+  the shell takes the conversation's answer, tool cards and timeline down with
+  it. Use `system_power` (`.system`), which arms it on the countdown instead.
 
 ## Windows PowerShell pitfalls
 

@@ -155,7 +155,12 @@ export const Rpc = {
   overlaysRead: 'desktop.overlays.read',
   updaterState: 'desktop.updater.state',
   updaterCheck: 'desktop.updater.check',
-  updaterInstall: 'desktop.updater.install'
+  updaterInstall: 'desktop.updater.install',
+  /**
+   * Abort a pending turn-end countdown (the card's Abort button on the
+   * phone). `{ ok }` — false once it already fired or was aborted.
+   */
+  countdownAbort: 'desktop.countdown.abort'
 } as const
 
 /** Event topics pushed without a request. */
@@ -194,7 +199,14 @@ export const Event = {
   automationRunsChanged: 'automations.runs',
   diagnosticsProgress: 'diagnostics.progress',
   reindexChanged: 'reindex.status',
-  updaterChanged: 'updater.state'
+  updaterChanged: 'updater.state',
+  /**
+   * A turn-end countdown changed state (`{ snapshot }`) — counting, fired,
+   * aborted, failed. Its arming state rides the turn mirror like any other
+   * segment; this push is for the transitions after the turn ended. The
+   * phone folds it into the matching `countdown` segment by countdownId.
+   */
+  countdownChanged: 'countdown.changed'
 } as const
 
 export type RpcMethod = (typeof Rpc)[keyof typeof Rpc]

@@ -1,5 +1,6 @@
 import type {
   ConversationMessage,
+  CountdownSnapshot,
   NoProviderAvailableInfo,
   Segment,
   SegmentTurnEndReason,
@@ -80,6 +81,7 @@ export type RenderBlock =
   | { type: 'file'; key: string; relPath: string; kind: DeliveredFileKind }
   | { type: 'path'; key: string; path: string; kind: 'folder' | 'file' }
   | { type: 'workflow'; key: string; snapshot: WorkflowSnapshot }
+  | { type: 'countdown'; key: string; snapshot: CountdownSnapshot }
   /** The model's task list for one turn, in its latest state. */
   | { type: 'todo'; key: string; items: TodoItem[] }
   | {
@@ -293,6 +295,7 @@ export function buildRenderBlocks(
   const openTools = new Map<string, number>() // toolCallId -> block index
   const emittedFiles = new Set<string>()
   const workflowIndexById = new Map<string, number>()
+  const countdownIndexById = new Map<string, number>()
   const todoIndexByTurn = new Map<string, number>()
   let textBuffer = ''
   let textKey = ''
@@ -432,6 +435,20 @@ export function buildRenderBlocks(
         } else {
           workflowIndexById.set(id, blocks.length)
           blocks.push({ type: 'workflow', key: `w:${id}`, snapshot: segment.snapshot })
+        }
+        break
+      }
+      case 'countdown': {
+        // Turn-end countdown card — replace-by-countdownId, the workflow fold.
+        flushText()
+        const id = segment.snapshot?.countdownId
+        if (!id) break
+        const existing = countdownIndexById.get(id)
+        if (existing !== undefined) {
+          blocks[existing] = { type: 'countdown', key: `cd:${id}`, snapshot: segment.snapshot }
+        } else {
+          countdownIndexById.set(id, blocks.length)
+          blocks.push({ type: 'countdown', key: `cd:${id}`, snapshot: segment.snapshot })
         }
         break
       }

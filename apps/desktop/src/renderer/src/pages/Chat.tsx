@@ -25,6 +25,7 @@ import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
+import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
@@ -42,9 +43,11 @@ import {
   CODE_ACTIVITY_TOOLS,
   todoListId,
   latestTodoLists,
+  upsertCountdownSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
+  type CountdownSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import {
@@ -1443,6 +1446,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       cancelled = true
     }
   }, [activeConversationId, remoteRunning])
+
+  // Countdown transitions after the arming turn ended (counting, fired,
+  // aborted, failed) arrive as pushes, not segments — fold them in place.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.countdown.onChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldCountdownSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'countdown' && seg.snapshot.countdownId === snapshot.countdownId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
 
   const shouldPersistRef = useRef(false)
 
@@ -4662,6 +4686,15 @@ function renderSegments(
       // conversations render identically.
       flushText()
       blocks.push(<WorkflowCard key={`wf-${seg.snapshot.workflowId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'countdown') {
+      // The turn-end countdown card: one per countdown, upserted by
+      // countdownId on append (the `armed` state, live) and folded from
+      // countdown:changed pushes after the turn ends. Output FOR the user —
+      // renders regardless of verbose, like the workflow card.
+      flushText()
+      blocks.push(
+        <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
+      )
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
       flushText()
@@ -6013,6 +6046,34 @@ function isUser(m: ChatMessage): m is Extract<ChatMessage, { role: 'user' }> {
  * matching `task` segment. No-op when the task isn't in this transcript
  * (e.g. a push for another conversation raced the open).
  */
+/**
+ * Fold a post-turn countdown-snapshot push into whichever message holds the
+ * matching `countdown` segment, keyed by countdownId.
+ */
+function foldCountdownSnapshot(
+  messages: ChatMessage[],
+  snapshot: CountdownSnapshot
+): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (
+      !m.segments.some(
+        (s) => s.kind === 'countdown' && s.snapshot.countdownId === snapshot.countdownId
+      )
+    ) {
+      return m
+    }
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'countdown' && s.snapshot.countdownId === snapshot.countdownId
+          ? { ...s, snapshot }
+          : s
+      )
+    }
+  })
+}
+
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
@@ -6023,6 +6084,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       // not render-layer dedup. Everything else appends.
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
+      else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }

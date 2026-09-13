@@ -1,4 +1,6 @@
 import type {
+  CountdownSnapshot,
+  CountdownStatus,
   Segment,
   SegmentTurnEndReason,
   TodoItem,
@@ -10,6 +12,8 @@ import type {
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export type {
+  CountdownSnapshot,
+  CountdownStatus,
   Segment,
   SegmentTurnEndReason,
   TodoItem,
@@ -782,6 +786,18 @@ export type ModelSelectApi = {
 // Canonical reasoning scale (see src/main/runtime/reasoning.ts). Inlined here
 // to keep the preload bundle decoupled from main.
 export type ThinkingMode = 'off' | 'on' | 'high' | 'max'
+
+export type CountdownApi = {
+  /** The countdown card's Abort: stops a pending turn-end countdown for good. */
+  abort: (countdownId: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Fired on every countdown transition (countdown:changed) — counting,
+   * fired, aborted, failed — all of which happen after the arming turn
+   * ended. The renderer folds the snapshot into the matching `countdown`
+   * segment (by countdownId) and into its in-memory conversation.
+   */
+  onChanged: (listener: (snapshot: CountdownSnapshot) => void) => () => void
+}
 
 export type ChatApi = {
   send: (payload: {
@@ -2143,6 +2159,7 @@ export type WolffishApi = {
   modelSelect: ModelSelectApi
   provider: ProviderApi
   chat: ChatApi
+  countdown: CountdownApi
   conversation: ConversationApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
@@ -2243,6 +2260,10 @@ const api: WolffishApi = {
   provider: {
     setMode: (mode) => ipcRenderer.invoke('provider:setMode', mode),
     onUpdated: (listener) => subscribe('provider:updated', listener)
+  },
+  countdown: {
+    abort: (countdownId) => ipcRenderer.invoke('countdown:abort', { countdownId }),
+    onChanged: (listener) => subscribe('countdown:changed', listener)
   },
   chat: {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),

@@ -1,6 +1,6 @@
 import os from 'node:os'
 import path from 'node:path'
-import { execFile as execFileCb, spawn } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFileCb)
@@ -74,7 +74,7 @@ const toolDefinitions = [
   {
     name: 'system_power',
     description:
-      'Control the machine power state: restart, shutdown, sleep, lock, or logout. restart/shutdown/logout require user confirmation and will close apps. restart/shutdown are SCHEDULED a few seconds out by default so this turn can finish saving before the machine goes down.',
+      'Control the machine power state: restart, shutdown, sleep, lock, or logout. restart/shutdown/logout require user confirmation and close every app INCLUDING this one — so they are never run by this call: they are ARMED on a turn-end countdown that starts only after your reply is finished, shows the user a card with an Abort button, and fires a few seconds later. After arming, make your reply the final action of the turn and tell the user what happens in N seconds.',
     parameters: {
       type: 'object',
       properties: {
@@ -86,7 +86,12 @@ const toolDefinitions = [
         delaySeconds: {
           type: 'integer',
           description:
-            'How long to wait before a restart/shutdown actually runs, 0-600. Defaults to 20 — enough for this turn to be written to disk (and synced) before the machine goes down. Only pass 0 if the user explicitly asked to go down immediately and accepts losing the tail of this turn. Ignored for sleep/lock/logout.'
+            'Grace period between the end of this turn and the restart/shutdown/logout, 3-600. Defaults to 10 — enough for this turn to be written to disk (and synced) first. Raise it if a download or a long write you started is still running. Ignored for sleep/lock.'
+        },
+        immediate: {
+          type: 'boolean',
+          description:
+            'Skip the countdown and go down right now. ONLY when the user explicitly asked for immediately and accepts losing the tail of this turn. Default false.'
         }
       },
       required: ['action']
@@ -286,77 +291,35 @@ async function openPath(args) {
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap a POSIX power command in a `sleep N` so it fires after this turn has
- * been written. Shell-quoting is not a concern: every argument here is a
- * literal from powerCommand below, never caller input.
- */
-function defer(resolved, delay) {
-  if (delay <= 0) return resolved
-  const quoted = [resolved.cmd, ...resolved.args].map((a) => `'${a.replace(/'/g, `'\\''`)}'`)
-  return {
-    cmd: 'sh',
-    args: ['-c', `sleep ${delay}; exec ${quoted.join(' ')}`],
-    deferred: true
-  }
-}
-
-/**
- * Start a deferred power command so it OUTLIVES this process. Detached with no
- * stdio, and unref'd, so the app quitting (or being killed by the shutdown it
- * just scheduled) doesn't take the timer down with it — the whole point is that
- * we go away and the machine still restarts.
- */
-function scheduleDetached(resolved) {
-  const child = spawn(resolved.cmd, resolved.args, {
-    detached: true,
-    stdio: 'ignore'
-  })
-  child.unref()
-}
-
-/**
- * Default seconds between "yes, restart" and the machine actually going down.
+ * Default grace period between the end of the turn that asked for a
+ * restart/shutdown/logout and the machine actually going down.
  *
- * A power action is the one tool call whose side effect outlives the turn that
- * made it. Going down at t+0 kills this process mid-turn: the answer, the tool
- * cards and the task timeline are still being written when the OS pulls the
- * floor out, and on a cloud client they have not reached the org either. Twenty
- * seconds is far more than the fold needs and short enough that nobody notices
- * they waited.
+ * A power action is the one tool call whose side effect outlives the turn
+ * that made it. Going down at t+0 kills this process mid-turn: the answer,
+ * the tool cards and the task timeline are still being written when the OS
+ * pulls the floor out. So these actions are never run by the tool call
+ * itself: they are ARMED on the app's turn-end countdown (ctx.countdown),
+ * which starts its clock only once the turn has ended and its transcript is
+ * on disk, shows the user a card with an Abort button, and calls this tool
+ * back — with the manager's isFiring() true — to run the command for real.
  */
-const POWER_DELAY_DEFAULT_S = 20
-const POWER_DELAY_MAX_S = 600
+const POWER_DELAY_DEFAULT_S = 10
 
-/** Clamp a caller's delay; only restart/shutdown can be scheduled. */
-function powerDelay(action, raw) {
-  if (action !== 'restart' && action !== 'shutdown') return 0
-  const n = Number(raw)
-  if (!Number.isFinite(n)) return POWER_DELAY_DEFAULT_S
-  return Math.max(0, Math.min(POWER_DELAY_MAX_S, Math.round(n)))
-}
+/** The actions that take this app down with them, and so are always deferred. */
+const DEFERRED_ACTIONS = new Set(['restart', 'shutdown', 'logout'])
 
 // Resolve the concrete command per platform/action. Shared by execute() and
-// describeAction() so the approval card shows exactly what will run.
-//
-// `delay` (seconds, restart/shutdown only) is honored differently per platform:
-// Windows has a native scheduler (`shutdown /t`, abortable with `shutdown /a`),
-// so it goes straight into the command. macOS and Linux have no unprivileged
-// equivalent, so the caller detaches a `sleep N; <cmd>` instead — see
-// scheduleDetached(). `deferred: true` marks that second shape.
-function powerCommand(action, delay = 0) {
+// describeAction() so the approval card shows exactly what will run. Every
+// command here is the immediate form: scheduling is the countdown's job, the
+// same on all three platforms.
+function powerCommand(action) {
   const p = process.platform
   if (p === 'darwin') {
     switch (action) {
       case 'restart':
-        return defer(
-          { cmd: 'osascript', args: ['-e', 'tell app "System Events" to restart'] },
-          delay
-        )
+        return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to restart'] }
       case 'shutdown':
-        return defer(
-          { cmd: 'osascript', args: ['-e', 'tell app "System Events" to shut down'] },
-          delay
-        )
+        return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to shut down'] }
       case 'logout':
         return { cmd: 'osascript', args: ['-e', 'tell app "System Events" to log out'] }
       case 'sleep':
@@ -373,9 +336,9 @@ function powerCommand(action, delay = 0) {
   } else if (p === 'win32') {
     switch (action) {
       case 'restart':
-        return { cmd: 'shutdown', args: ['/r', '/t', String(delay)] }
+        return { cmd: 'shutdown', args: ['/r', '/t', '0'] }
       case 'shutdown':
-        return { cmd: 'shutdown', args: ['/s', '/t', String(delay)] }
+        return { cmd: 'shutdown', args: ['/s', '/t', '0'] }
       case 'logout':
         return { cmd: 'shutdown', args: ['/l'] }
       case 'sleep':
@@ -386,9 +349,9 @@ function powerCommand(action, delay = 0) {
   } else {
     switch (action) {
       case 'restart':
-        return defer({ cmd: 'systemctl', args: ['reboot'] }, delay)
+        return { cmd: 'systemctl', args: ['reboot'] }
       case 'shutdown':
-        return defer({ cmd: 'systemctl', args: ['poweroff'] }, delay)
+        return { cmd: 'systemctl', args: ['poweroff'] }
       case 'logout':
         return { cmd: 'loginctl', args: ['terminate-user', os.userInfo().username] }
       case 'sleep':
@@ -408,7 +371,7 @@ const POWER_VERB = {
   logout: 'Logging out'
 }
 
-// Imperative titles for the approval card (reads better than the -ing verb).
+// Imperative titles for the approval card AND the countdown card's label.
 const POWER_TITLE = {
   restart: 'Restart this machine',
   shutdown: 'Shut down this machine',
@@ -417,29 +380,50 @@ const POWER_TITLE = {
   logout: 'Log out of this machine'
 }
 
+function machineWord() {
+  return process.platform === 'darwin' ? 'Mac' : 'machine'
+}
+
+function powerLabel(action) {
+  return (POWER_TITLE[action] ?? 'Power action').replace('this machine', `this ${machineWord()}`)
+}
+
+let countdownHost = null
+
 async function systemPower(args) {
   const action = typeof args?.action === 'string' ? args.action.toLowerCase() : ''
   if (!POWER_VERB[action]) {
     return fail(`system_power: action must be one of restart, shutdown, sleep, lock, logout.`)
   }
-  const delay = powerDelay(action, args?.delaySeconds)
-  const resolved = powerCommand(action, delay)
+  const resolved = powerCommand(action)
   if (!resolved) return fail(`system_power: ${action} is not supported on ${process.platform}.`)
 
-  // A deferred POSIX command is a sleep we must NOT wait on — it has to survive
-  // this process. Windows schedules in the OS, so its command still runs inline
-  // and returns at once.
-  if (resolved.deferred) {
-    try {
-      scheduleDetached(resolved)
-    } catch (err) {
-      return fail(`system_power ${action} failed to schedule: ${errText(err)}`)
+  // restart/shutdown/logout take this app down with them, so on the model's
+  // call they are armed on the turn-end countdown, not run. The countdown
+  // calls this same tool back when it fires (isFiring() true) — and
+  // `immediate: true` is the model's escape hatch for a user who explicitly
+  // asked to go down right now and accepts losing the tail of the turn.
+  const deferred = DEFERRED_ACTIONS.has(action) && args?.immediate !== true
+  if (deferred && countdownHost && !countdownHost.isFiring()) {
+    const seconds = clampDelay(args?.delaySeconds)
+    const armed = await countdownHost.arm({
+      label: powerLabel(action),
+      seconds,
+      tool: 'system_power',
+      args: { action, immediate: true }
+    })
+    if (!armed.ok) return fail(`system_power ${action} could not be armed: ${armed.error}`)
+    return {
+      success: true,
+      output:
+        `Armed: ${POWER_VERB[action].toLowerCase()} the ${machineWord()} ${seconds} seconds after this reply is complete. ` +
+        'Do not run it yourself. Make this reply the LAST action of the turn — finish, then tell the user in one line that the ' +
+        `${machineWord()} ${action === 'logout' ? 'logs out' : action + 's'} in ${seconds} seconds and that the card in the chat has an Abort button. Nothing happens until the turn ends; a Stop drops it.`
     }
-    return { success: true, output: powerScheduledText(action, delay) }
   }
 
   try {
-    // Short timeout: an undelayed restart/shutdown may never return because
+    // Short timeout: an immediate restart/shutdown may never return because
     // we're going down — that's success, not failure.
     await run(resolved.cmd, resolved.args, { timeout: 6000 })
   } catch (err) {
@@ -447,17 +431,14 @@ async function systemPower(args) {
       return fail(`system_power ${action} failed: ${errText(err)}`)
     }
   }
-  if (delay > 0) return { success: true, output: powerScheduledText(action, delay) }
-  return { success: true, output: `${POWER_VERB[action]} the machine now.` }
+  return { success: true, output: `${POWER_VERB[action]} the ${machineWord()} now.` }
 }
 
-/** What the model tells the user: when it happens, and how to stop it. */
-function powerScheduledText(action, delay) {
-  const cancel =
-    process.platform === 'win32'
-      ? ' Run `shutdown /a` to cancel.'
-      : ' It runs in a detached process — closing this app will not stop it.'
-  return `${POWER_VERB[action]} the machine in ${delay} second${delay === 1 ? '' : 's'}.${cancel}`
+/** Clamp the model's grace period; the countdown manager clamps again. */
+function clampDelay(raw) {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return POWER_DELAY_DEFAULT_S
+  return Math.max(3, Math.min(600, Math.round(n)))
 }
 
 function isGoingDownError(err, action) {
@@ -476,17 +457,16 @@ function isGoingDownError(err, action) {
 function describeAction(toolName, args) {
   if (toolName === 'system_power') {
     const action = typeof args?.action === 'string' ? args.action.toLowerCase() : ''
-    const delay = powerDelay(action, args?.delaySeconds)
-    const resolved = powerCommand(action, delay)
+    const resolved = powerCommand(action)
     const command = resolved ? `${resolved.cmd} ${resolved.args.join(' ')}` : undefined
-    const destructive = action === 'restart' || action === 'shutdown' || action === 'logout'
-    const machine = process.platform === 'darwin' ? 'Mac' : 'machine'
+    const destructive = DEFERRED_ACTIONS.has(action)
+    const deferred = destructive && args?.immediate !== true
+    const seconds = clampDelay(args?.delaySeconds)
     return {
-      title: (POWER_TITLE[action] ?? 'Power action').replace('this machine', `this ${machine}`),
-      description:
-        delay > 0
-          ? `Run a ${action} on the local machine, ${delay} seconds from now.`
-          : `Run a ${action} on the local machine, immediately.`,
+      title: powerLabel(action),
+      description: deferred
+        ? `Run a ${action} on the local machine, ${seconds} seconds after this reply is finished. A countdown card with an Abort button appears in the chat first.`
+        : `Run a ${action} on the local machine, immediately.`,
       command,
       impact: destructive
         ? 'All open apps will close. Unsaved work may be lost.'
@@ -525,6 +505,9 @@ const plugin = {
   name: 'system',
   tools: toolDefinitions,
   describeAction,
+  async init(ctx) {
+    countdownHost = ctx?.countdown ?? null
+  },
   async execute(toolName, args) {
     switch (toolName) {
       case 'app_open':
