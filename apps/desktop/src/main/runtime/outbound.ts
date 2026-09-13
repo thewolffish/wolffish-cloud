@@ -149,6 +149,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // vehicle; stable across the turn, so it never churns the tail.
     (runtime.voiceReply ? `${runtime.voiceReply} ` : '') +
     (runtime.phoneNotify ? `${runtime.phoneNotify} ` : '') +
+    // Screen-indicator notice (this turn raised the computer-use glow and has
+    // not lowered it) — same vehicle. Changes at most twice per turn.
+    (runtime.screenIndicator ? `${runtime.screenIndicator} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

@@ -24,6 +24,13 @@ import {
 } from '@main/runtime/agent/control-token-guard'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
 import {
+  MAX_SCREEN_INDICATOR_NUDGES,
+  screenIndicatorNudge,
+  SCREEN_INDICATOR_NOTICE,
+  SCREEN_INDICATOR_OFF_TOOL,
+  trackScreenIndicator
+} from '@main/runtime/agent/screen-indicator-guard'
+import {
   NoProgressTracker,
   noProgressNotice,
   NO_PROGRESS_MASTER_REPEATS,
@@ -991,6 +998,13 @@ export class Agent {
     // resets per respond() call; it is the only thing that stops such a turn
     // from looping (the outer while(true) has no numeric iteration cap).
     let emptyTurnNudges = 0
+    // Computer-use screen indicator ("Wolffish is capturing your screen"),
+    // raised and lowered by the model alone. Tracked per run — never probed
+    // globally — so a concurrent conversation's live session is never mistaken
+    // for this turn's, and so neither guard below can act on a glow this run
+    // did not raise. See screen-indicator-guard.
+    let screenIndicatorOn = false
+    let screenIndicatorNudges = 0
     // No-progress guard: observes tool-call repetition and surfaces it to the
     // model via the runtime tail (never caps or aborts). Loop-scoped, reset per
     // respond() call. `noProgressReported` dedups the master escalation to once
@@ -1257,6 +1271,15 @@ export class Agent {
         // the cached prompt prefix. Undefined (the common case) renders nothing.
         const controlTokenText = drainControlTokenNotice(turn.conversationId ?? null)
 
+        // Screen-indicator notice: present on every iteration from the moment
+        // this turn raises the computer-use glow until it lowers it. The
+        // user's screen is currently saying they are being captured, so the
+        // rule that takes it down rides at the request's most salient
+        // position — the same observe-and-notify vehicle, and the same
+        // shipped failure (a rule read once in a long prompt, then lost to a
+        // task that went well), as the phone and voice notices.
+        const screenIndicatorText = screenIndicatorOn ? SCREEN_INDICATOR_NOTICE : undefined
+
         // Phone-notification notice for THIS iteration: the cadence reminder
         // until something goes out, then the don't-repeat guard. Undefined
         // when no phone is reachable — see phoneNotifyAvailable.
@@ -1295,7 +1318,8 @@ export class Agent {
             inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
           controlToken: controlTokenText,
           voiceReply: voiceReplyNotice,
-          phoneNotify: phoneNotifyText
+          phoneNotify: phoneNotifyText,
+          screenIndicator: screenIndicatorText
         }
 
         let systemPrompt: string
@@ -1447,7 +1471,8 @@ export class Agent {
               voiceReplyNotice ||
               noProgressText ||
               controlTokenText ||
-              phoneNotifyText)
+              phoneNotifyText ||
+              screenIndicatorText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
@@ -1461,7 +1486,8 @@ export class Agent {
                       : undefined,
                   controlToken: controlTokenText,
                   voiceReply: voiceReplyNotice,
-                  phoneNotify: phoneNotifyText
+                  phoneNotify: phoneNotifyText,
+                  screenIndicator: screenIndicatorText
                 }) +
                 (workingFoldersBlock ? `\n${workingFoldersBlock}` : '') +
                 (readOnlyBlock ? `\n${readOnlyBlock}` : '')
@@ -1667,6 +1693,31 @@ export class Agent {
                 `continue (${emptyTurnNudges}/${MAX_EMPTY_TURN_NUDGES}, iter ${iterationCount})`
             )
             messages.push(...nudge)
+            continue
+          }
+
+          // The turn is ending with the computer-use screen indicator this run
+          // raised still on the user's display, telling them they are being
+          // captured by an agent that has stopped. Send it back once (twice at
+          // most) so the model closes it itself — the lifecycle stays the
+          // model's, this only refuses to let the turn end while the claim is
+          // live. See screen-indicator-guard.
+          const glowNudge = screenIndicatorNudge(screenIndicatorOn, parsed, screenIndicatorNudges)
+          if (glowNudge) {
+            screenIndicatorNudges += 1
+            console.log(
+              `[agent] end_turn with the screen indicator still on — nudging for ` +
+                `${SCREEN_INDICATOR_OFF_TOOL} (${screenIndicatorNudges}/${MAX_SCREEN_INDICATOR_NUDGES}, iter ${iterationCount})`
+            )
+            // The nudge tells the model its reply is already delivered and to
+            // end empty once the indicator is down. Honour that: an empty
+            // close is now the instructed outcome, not the glitched dropout
+            // emptyTurnNudge exists to catch, and nudging it for obeying would
+            // buy two more model calls and a closing message the user does not
+            // need. The turn is one tool call from over, so the budget this
+            // spends has nothing left to protect.
+            emptyTurnNudges = MAX_EMPTY_TURN_NUDGES
+            messages.push(...glowNudge)
             continue
           }
 
@@ -1935,6 +1986,11 @@ export class Agent {
           }
           totalToolCalls += 1
           if (result.ok && MUTATING_FOLDER_TOOLS.has(call.name)) folderFactsStale = true
+          // Follow the computer-use screen indicator this run raised: the tail
+          // notice, the turn-end nudge and the terminal failsafe all read this
+          // one flag. Successful calls only — a glow that failed to appear is
+          // not on the user's screen.
+          screenIndicatorOn = trackScreenIndicator(screenIndicatorOn, call.name, result.ok)
 
           const status: ToolResultStatus = result.ok ? 'success' : 'failed'
 
@@ -2099,6 +2155,22 @@ export class Agent {
       }
       throw err
     } finally {
+      // The computer-use screen indicator is a statement standing on the
+      // user's display — "Wolffish is capturing your screen" — and this turn
+      // is now over on every path that reaches here, so the statement is
+      // false. The model owns the lifecycle wherever it can still act (the
+      // runtime-tail notice every iteration, the turn-end nudge above); this
+      // fires only where no model step is possible any more: a cancel, an
+      // error, or a spent nudge budget. Not a timer and never mid-session —
+      // only this run's own glow is ever cleared, so a concurrent
+      // conversation's live session is untouched.
+      if (screenIndicatorOn) {
+        screenIndicatorOn = false
+        console.log(
+          `[agent] turn ended (${stopReason}) with the screen indicator still on — clearing it`
+        )
+        await this.cerebellum.executeTool(SCREEN_INDICATOR_OFF_TOOL, {}).catch(() => undefined)
+      }
       // Ledger truth must survive every exit path. This used to run only on
       // the success path, so a turn that errored on iteration 51 silently
       // dropped 50 iterations of real billed usage from the ledger while the

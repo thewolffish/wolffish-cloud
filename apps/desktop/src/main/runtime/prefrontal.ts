@@ -147,6 +147,17 @@ export type RuntimeContext = {
    */
   voiceReply?: string
   phoneNotify?: string
+  /**
+   * Screen-indicator notice — present on every iteration from the moment the
+   * turn raises the computer-use glow ("Wolffish is capturing your screen")
+   * until it lowers it. The user's display is making a claim only
+   * computer_glow_off retracts, so the rule rides at the request's most
+   * salient position rather than relying on the tool description alone. Same
+   * vehicle and cache rationale as noProgress; it changes at most twice per
+   * turn (on, then off). Undefined — every turn that never touches the
+   * screen — renders nothing. See agent/screen-indicator-guard.
+   */
+  screenIndicator?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -821,6 +832,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Phone-notification notice (a phone is paired) — same vehicle, same
     // reason.
     if (runtime.phoneNotify) lines.push(`  ${runtime.phoneNotify}`)
+    // Screen-indicator notice (a computer-use glow this turn raised is up) —
+    // same vehicle, same reason.
+    if (runtime.screenIndicator) lines.push(`  ${runtime.screenIndicator}`)
   }
   return lines.join('\n')
 }

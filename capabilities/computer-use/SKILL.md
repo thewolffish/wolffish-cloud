@@ -85,18 +85,18 @@ requires:
   - node
 tools:
   - name: computer_glow_on
-    description: 'Turn ON the screen indicator: a blue glow along the display''s edges plus a centered translucent notice telling the user their screen is being captured and controlled. CRITICAL: this MUST be your FIRST action in every computer-use session — call it before the first computer_screenshot, so the user is never watched or controlled without the signal. Once on, the indicator follows your actions across displays automatically and stays on until you call computer_glow_off; NOTHING turns it off for you. It is invisible in screenshots and never blocks clicks — turning it on costs nothing and skipping it is a trust violation, not an optimization.'
+    description: 'Turn ON the screen indicator: a blue glow along the display''s edges plus a centered translucent notice telling the user their screen is being captured and controlled. CRITICAL: this MUST be your FIRST action in every computer-use session — call it before the first computer_screenshot, so the user is never watched or controlled without the signal. This is enforced, not just asked: every capture and input tool (screenshot, zoom, mouse, keyboard) REFUSES to run until the indicator is on, and tells you to call this — so forgetting costs you a wasted round-trip on the very first step. Once on, the indicator follows your actions across displays automatically and stays on until you call computer_glow_off. It is invisible in screenshots and never blocks clicks — turning it on costs nothing and skipping it is a trust violation, not an optimization.'
     parameters:
       display_index:
         type: number
         required: false
         description: 'Display to show the indicator on first (default 0 = primary). It follows your captures and actions to other displays automatically.'
   - name: computer_glow_off
-    description: 'Turn OFF the screen indicator. CRITICAL: this MUST be your LAST action when you finish controlling the screen — and equally when you give up, hit an error you cannot recover from, or hand back to the user. Nothing clears the indicator automatically: if you end a session without calling this, the user is falsely told their screen is still being watched. On = first action, off = last action, every session, no exceptions.'
+    description: 'Turn OFF the screen indicator. CRITICAL: this MUST be your LAST action when you finish controlling the screen — and equally when you give up, hit an error you cannot recover from, or hand back to the user so they can do something. Nothing clears the indicator for you and there is no timer: while it is up, the user is being told their screen is still being watched. Ending your turn is finishing — a turn that ends with the indicator still on is handed straight back to you to close it, so the only thing skipping this buys is a wasted round-trip and a user who was lied to in the meantime. On = first action, off = last action, every session, no exceptions.'
     parameters: {}
   - name: computer_screenshot
     readOnly: true
-    description: 'See the screen. If the screen indicator is not on yet, call computer_glow_on FIRST — it must precede the first capture of every session. Captures the chosen display (default 0 = primary) and returns the image plus a Frame line stating its exact pixel size and the cursor position (marked with a magenta crosshair). This image becomes the CURRENT FRAME. Every mouse coordinate you give afterwards must be a pixel position read from the current frame, with (0,0) at its top-left — translation to real screen position (display scaling, Retina, monitor offsets) is fully automatic, so never use screen-resolution values and never add display offsets yourself. Screenshot again whenever the screen may have changed (after clicks that open things, typing, scrolling, app switches, page loads) — acting on an outdated image is the main cause of wrong clicks. If the target is small, crowded, or you are not certain of its exact position, do not guess: zoom into it with computer_zoom first. If this tool ever reports that its image was omitted because the active model cannot view images, computer use is impossible — stop immediately and tell the user to switch to a vision-capable model. CAPTURE QUALITY IS YOURS TO SET, per capture, through max_width and format — there is no user setting for either, so a capture that is not good enough for the job is yours to fix by taking it again, and a user asking for a higher-resolution or lossless screenshot is a parameter you pass on the next call, never something you explain you cannot do. Default 1280/jpeg for ordinary navigation; go to 1920-2560 and/or png the moment detail decides the outcome. Neither setting sticks — pass it again on every capture that needs it, for as long as the task needs it.'
+    description: 'See the screen. If the screen indicator is not on yet, call computer_glow_on FIRST — it must precede the first capture of every session, and this tool refuses to run until it does. Captures the chosen display (default 0 = primary) and returns the image plus a Frame line stating its exact pixel size and the cursor position (marked with a magenta crosshair). This image becomes the CURRENT FRAME. Every mouse coordinate you give afterwards must be a pixel position read from the current frame, with (0,0) at its top-left — translation to real screen position (display scaling, Retina, monitor offsets) is fully automatic, so never use screen-resolution values and never add display offsets yourself. Screenshot again whenever the screen may have changed (after clicks that open things, typing, scrolling, app switches, page loads) — acting on an outdated image is the main cause of wrong clicks. If the target is small, crowded, or you are not certain of its exact position, do not guess: zoom into it with computer_zoom first. If this tool ever reports that its image was omitted because the active model cannot view images, computer use is impossible — stop immediately and tell the user to switch to a vision-capable model. CAPTURE QUALITY IS YOURS TO SET, per capture, through max_width and format — there is no user setting for either, so a capture that is not good enough for the job is yours to fix by taking it again, and a user asking for a higher-resolution or lossless screenshot is a parameter you pass on the next call, never something you explain you cannot do. Default 1280/jpeg for ordinary navigation; go to 1920-2560 and/or png the moment detail decides the outcome. Neither setting sticks — pass it again on every capture that needs it, for as long as the task needs it.'
     parameters:
       display_index:
         type: number
@@ -360,14 +360,41 @@ screen reading "Wolffish is capturing your screen" (localized to the app's
 UI language, English or Arabic). The glow breathes continuously, brightens
 briefly on every capture, fades in on arrival and fades out when dismissed.
 
-**Its lifecycle is 100% model-owned.** `computer_glow_on` is the mandatory
-FIRST action of every computer-use session — before the first screenshot —
-and `computer_glow_off` the mandatory LAST action, whether the task
-succeeded, failed, or was abandoned. There is no idle timer and no
-harness-side clearing: leaving the indicator on falsely tells the user their
-screen is still being watched, and capturing before turning it on means they
-were watched without the signal. While on, the indicator follows whichever
-display the agent captures or acts on; the model never needs to move it.
+**Its lifecycle is model-owned.** `computer_glow_on` is the mandatory FIRST
+action of every computer-use session — before the first screenshot — and
+`computer_glow_off` the mandatory LAST action, whether the task succeeded,
+failed, or was abandoned. There is no idle timer: leaving the indicator on
+falsely tells the user their screen is still being watched, and capturing
+before turning it on means they were watched without the signal. While on,
+the indicator follows whichever display the agent captures or acts on; the
+model never needs to move it.
+
+The model still calls both tools — nothing shows or hides the indicator on
+its behalf while a session is alive — but neither half is left to prose
+alone, because both failures land on a person's screen rather than in a log.
+
+**On — a gate (`indicatorGate`, this plugin).** Every capture and input tool
+(`computer_screenshot`, `computer_zoom`, the mouse tools, the keyboard
+tools) refuses to run while the indicator is off, and the refusal names
+`computer_glow_on`. `computer_list_displays` and `computer_wait` see nothing
+and touch nothing, so they stay open. A compliant session never meets the
+gate; a forgetful one pays one round-trip on its first step instead of
+watching someone silently. A machine that genuinely cannot draw the
+indicator is not locked out of computer use: a failed `computer_glow_on`
+sets `overlay.unavailable`, which opens the gate for that session and tells
+the model to say the indicator is unavailable.
+
+**Off — a nudge, then a failsafe (`agent/screen-indicator-guard.ts`).** While
+the indicator is up, a line rides the runtime tail on every iteration
+restating the one exit. If the model still ends its turn with the glow up,
+the tool loop injects a system aside and runs again so the model closes it
+itself — bounded at two attempts, so it can never spin. Only when the turn is
+over on a path where no model step is possible at all (a cancel, an error, or
+a spent nudge budget) does the Agent's `finally` clear the indicator. That is
+not an idle timer and it never fires mid-session: it is the harness declining
+to leave "Wolffish is capturing your screen" standing on a display after the
+agent that put it there has stopped running. It clears only a glow that same
+run raised, so a concurrent conversation's live session is untouched.
 
 The glow is drawn as narrow edge gradients (not a giant box-shadow, which
 Chromium can drop per compositor tile on display-sized transparent

@@ -62,11 +62,15 @@ const ZOOM_TARGET_FACTOR = 2
 const CHANGE_PATCH_MIN_PCT = 0.2
 const CHANGE_DISPLAY_MIN_PCT = 0.2
 
-// The screen glow's lifecycle is 100% model-owned: computer_glow_on turns it
-// on (mandated FIRST action of a session), computer_glow_off turns it off
-// (mandated LAST action, success or surrender). There is no idle timer and
-// no harness-side clearing — while on, it only follows the display being
-// controlled.
+// The screen glow's lifecycle is model-owned: computer_glow_on turns it on
+// (mandated FIRST action of a session), computer_glow_off turns it off
+// (mandated LAST action, success or surrender). There is no idle timer —
+// while on, it only follows the display being controlled. Neither half is
+// left to prose alone, though: indicatorGate below refuses every capture and
+// input tool until the glow is up, and the Agent's screen-indicator guard
+// refuses to let a turn END with one still up (nudging the model to close it,
+// and clearing it itself only once the turn is over and no model step can
+// happen any more).
 const OVERLAY_FADE_MS = 650
 
 /**
@@ -347,15 +351,22 @@ function cursorDip() {
 // model: the window is content-protected so it never appears in captures
 // (on Linux, where protection is unsupported, it hides for the instant of
 // each capture instead). Click-through and non-focusable, so input synthesis
-// is completely unaffected. Purely harness-side — no tool exposes it and
-// the model never has to know it exists.
+// is completely unaffected. The model raises and lowers it itself
+// (computer_glow_on / computer_glow_off); indicatorGate below is what makes
+// the "on" half of that contract enforced rather than merely instructed.
 
 const overlay = {
   win: null,
   displayId: null,
   assertBounds: null,
   wantedBounds: null,
-  locale: null
+  locale: null,
+  // Set when the model's own computer_glow_on could not put anything on
+  // screen (no Electron window API, a creation failure). It opens the gate
+  // below: the indicator is the price of looking at someone's screen, but a
+  // machine that cannot draw it must not lose computer use entirely — the
+  // model is told to say so instead. Cleared the moment a glow does appear.
+  unavailable: false
 }
 
 // Human-facing status line shown in the glow's pill, per app UI locale.
@@ -1476,13 +1487,16 @@ async function keyboardPress(args) {
 async function glowOn(args) {
   try {
     if (!electronScreen || !electronBrowserWindow) {
-      return { success: false, error: 'Screen indicator unavailable (Electron APIs not loaded).' }
+      overlay.unavailable = true
+      return { success: false, error: 'Screen indicator unavailable (Electron APIs not loaded). Continue the task and tell the user the indicator could not be shown.' }
     }
     const displayIndex = Number(args?.display_index) || 0
     const { display } = getDisplayByIndex(displayIndex)
     if (!overlayShow(display)) {
+      overlay.unavailable = true
       return { success: false, error: 'Screen indicator could not be shown — continue the task and tell the user the indicator is unavailable.' }
     }
+    overlay.unavailable = false
     return {
       success: true,
       output:
@@ -1498,6 +1512,10 @@ async function glowOn(args) {
 async function glowOff() {
   const wasOn = !!overlay.win
   hideOverlay()
+  // The unavailable escape is scoped to the session that earned it: the next
+  // session has to call computer_glow_on and find out for itself, rather than
+  // inheriting an open gate from an earlier failure.
+  overlay.unavailable = false
   return {
     success: true,
     output: wasOn
@@ -1534,6 +1552,61 @@ async function listDisplays() {
   } catch (err) {
     return { success: false, error: `Failed to list displays: ${err?.message ?? String(err)}` }
   }
+}
+
+/**
+ * Tools that either look at the user's screen or move their mouse and
+ * keyboard — everything the indicator exists to disclose. Listing displays
+ * and waiting are neither, so they stay open; so, obviously, do the two glow
+ * tools themselves.
+ */
+export const INDICATOR_REQUIRED = new Set([
+  'computer_screenshot',
+  'computer_zoom',
+  'computer_mouse_move',
+  'computer_mouse_click',
+  'computer_mouse_drag',
+  'computer_mouse_scroll',
+  'computer_keyboard_type',
+  'computer_keyboard_press'
+])
+
+/**
+ * The "on" half of the indicator contract, enforced instead of merely
+ * instructed: nothing captures or controls this machine until the user can
+ * see that it is happening. SKILL.md has always commanded computer_glow_on
+ * as the first action of a session, and a model that follows it never meets
+ * this gate — but a rule whose only enforcement is prose is a rule that gets
+ * skipped exactly when a task is going fast, and the cost of skipping it is
+ * a person watched without being told.
+ *
+ * Returns the refusal text for the model, or null to let the call through.
+ * One corrective call reopens it, so the worst case is a single wasted
+ * round-trip, never a dead end — and a machine that genuinely cannot draw
+ * the indicator (`unavailable`, set by the model's own failed
+ * computer_glow_on) passes straight through.
+ *
+ * Pure given (toolName, state) so the rule can be tested without an Electron
+ * window, the same way resolveCapture is.
+ */
+export function indicatorGateReason(toolName, { indicatorOn, unavailable }) {
+  if (!INDICATOR_REQUIRED.has(toolName)) return null
+  if (unavailable) return null
+  if (indicatorOn) return null
+  return (
+    `Screen indicator is OFF, so ${toolName} did not run — the user has not been told their screen is ` +
+    `being captured and controlled. Call computer_glow_on first (the FIRST action of every computer-use ` +
+    `session), then repeat this call; computer_glow_off is the last action when you finish or give up.`
+  )
+}
+
+/** Live binding: the rule above, applied to the current overlay state. */
+function indicatorGate(toolName) {
+  const reason = indicatorGateReason(toolName, {
+    indicatorOn: !!(overlay.win && !overlay.win.isDestroyed()),
+    unavailable: overlay.unavailable
+  })
+  return reason ? { success: false, error: reason } : null
 }
 
 const TOOL_MAP = {
@@ -1852,6 +1925,10 @@ const plugin = {
     if (!handler) {
       return { success: false, error: `computer-use: unknown tool ${toolName}` }
     }
+    // One chokepoint for the whole capability: nothing sees or touches the
+    // screen before the user is told it is happening.
+    const gated = indicatorGate(toolName)
+    if (gated) return gated
     return handler(args)
   }
 }
