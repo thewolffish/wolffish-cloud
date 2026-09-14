@@ -54,7 +54,7 @@ A fix is not done until the check that failed now passes AND the broader checks 
 
 ## Tracking and reporting
 
-- Three or more steps → `todo_write` at the start, exactly one item in progress, an item completed only after its own verification ran.
+- Three or more steps → `todo_write` at the start, exactly one item in progress, an item completed only after its own verification ran — written the moment it lands, and the list closed out (every finished item `completed`) before the wrap-up.
 - Reference code as `path:line`. Keep the user's commands verbatim.
 - The wrap-up names what changed (files), what you ran and what it showed, and what is left. A check you could not get green is reported, never hidden.
 </coding>

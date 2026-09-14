@@ -88,7 +88,7 @@ tools:
     parameters: {}
   - name: channel_status
     readOnly: true
-    description: Check whether each chat channel (the paired phone, in-app) is currently connected, with reconnect steps for any that are down
+    description: Check whether each chat channel (the paired phone, the terminal, in-app) is currently connected, with reconnect steps for any that are down
     parameters: {}
   - name: wolffish_performance
     readOnly: true
@@ -161,7 +161,7 @@ tools:
         description: Max records for prefix refs (default 50)
   - name: conversation_list
     readOnly: true
-    description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
+    description: 'Enumerate your past conversations, newest first: id, channel (electron/mobile/cli/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
     parameters:
       channel:
         type: string

@@ -1930,6 +1930,7 @@ export class Cerebellum {
               'States: pending (not started) · in_progress (exactly ONE at a time) · completed (finished) · cancelled (no longer needed).',
               'Rules: update status in real time, never batch completions; mark completed ONLY after the work is actually done, including any verification it needed — never on intent; keep exactly one in_progress while work remains; if blocked or partial, keep it in_progress and add a follow-up todo naming the blocker; preserve user-provided commands verbatim; items are specific and actionable — break big work into smaller steps.',
               'Each call REPLACES the whole list, so send every item every time. When in doubt, use it.',
+              "The list is the user's progress bar on every surface (app, phone, terminal), so it is never left stale: write a step's completion the moment it lands, before starting the next one, and make your last todo_write of the turn carry the true final state — the runtime will not let a turn end with items you actually finished still open.",
               'A list left unfinished by an earlier turn (an interrupted run) is yours to carry on: the runtime tells you what is still open, and your next todo_write updates THAT card in place — so when you finish that work, write the list with those items completed. Pass fresh: true only when this turn starts unrelated work that deserves its own list.'
             ].join('\n'),
             parameters: {

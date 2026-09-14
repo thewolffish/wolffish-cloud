@@ -252,6 +252,13 @@ export type DemoConfigValues = {
   /** mobile.verbose — what this phone's feed shows mid-turn: off (default)
    *  is the clean feed, on relays every tool call and activity card. */
   mobileVerbose: boolean
+  /**
+   * cli.verbose — what the TERMINAL's feed prints on the desktop, not this
+   * device's. The only editable field on the CLI card: everything else there
+   * is either a machine fact or the autostart registration, which this device
+   * reports for the same reason it reports `launchAtStartup` (see CliStatus).
+   */
+  cliVerbose: boolean
   // --- services (remotely controllable values) ---
   /**
    * Web search is the organization's lane — one key at the API edge, none on
@@ -375,6 +382,7 @@ const DEFAULTS: DemoConfigValues = {
   inappReasoning: false,
   mobileNotifications: true,
   mobileVerbose: false,
+  cliVerbose: false,
   braveEnabled: true,
   sttModel: 'large-v3-turbo',
   sttLanguage: 'en',
@@ -549,6 +557,22 @@ export type ConfigSnapshot = {
     /** Absent in bundles published before the in-app feed setting shipped;
      */
     inapp?: { verbose?: boolean; reasoning?: boolean }
+    /**
+     * The terminal channel. `verbose` is the only editable field; the other
+     * four describe the desktop machine and are absent whenever that desktop
+     * could not probe them (a PATH walk and a launchctl/systemctl/schtasks
+     * query, both of which are allowed to fail) or predates this section.
+     */
+    cli?: {
+      verbose?: boolean
+      runMode?: string
+      /** Can a shell on that machine resolve `wfc`? */
+      pathInstalled?: boolean
+      /** Is autostart REGISTERED — the same fact preferences.launchAtStartupActive reports. */
+      serviceActive?: boolean
+      /** What the current run mode registers: launchd / systemd / schtasks. */
+      mechanism?: string
+    }
     /** This phone's own channel. Absent in bundles (and on desktops) from
      *  before these two settings reached the snapshot; notifications then
      *  falls back to ON and the feed to clean, as the desktop defaults them. */
@@ -693,6 +717,29 @@ export type ApplySnapshotOptions = {
   keepLocal?: ReadonlyArray<keyof DemoConfigValues>
 }
 
+/**
+ * The terminal half of the paired desktop — desktop-managed and display-only,
+ * exactly like `desktop` and `desktopData`.
+ *
+ * None of it is a knob this device may turn, and each for its own reason.
+ * `pathInstalled` is a fact about that machine's shell, not a setting.
+ * `serviceActive` and `runMode` are the OS autostart registration — the same
+ * one `launchAtStartup` describes, which this app has always REPORTED rather
+ * than driven, because registering a launchd/systemd/schtasks entry is an act
+ * on a machine this device cannot see the consequences of. `mechanism` just
+ * names which of the three is in play.
+ *
+ * `null` is meaningful and distinct from `false`: the desktop is allowed to
+ * fail its probe (both shell out), and a card that says "unknown" beats one
+ * that says "not installed" about a command that is fine.
+ */
+export type CliStatus = {
+  pathInstalled: boolean | null
+  serviceActive: boolean | null
+  runMode: 'gui' | 'headless'
+  mechanism: string | null
+}
+
 /** One connected browser, as the desktop's extension panel shows it. */
 export type ExtensionBrowser = {
   /** Slug for the logo: chrome / brave / edge / chromium / firefox / safari. */
@@ -748,6 +795,8 @@ export type DemoConfigState = DemoConfigValues & {
   usage: UsageDay[]
   /** The paired desktop app's own version and platform — display only. */
   desktop: DesktopInfo
+  /** That desktop's terminal channel — display only, see CliStatus. */
+  cli: CliStatus
   /**
    * The desktop Data panel's numbers — desktop-managed, display only, same
    * contract as `desktop`: this device cannot measure that machine, so the
@@ -985,6 +1034,14 @@ const INITIAL_STATE = {
   compactionRuns: { daily: null, weekly: null } as CompactionRuns,
   usage: [] as UsageDay[],
   desktop: { version: null, platform: null, timezone: null, syncedAt: null } as DesktopInfo,
+  // Nulls, not falses: nothing has been probed yet, and "unknown" is the only
+  // honest thing to say about a machine this device has not synced with.
+  cli: {
+    pathInstalled: null,
+    serviceActive: null,
+    runMode: 'gui',
+    mechanism: null
+  } as CliStatus,
   desktopData: sanitizeDesktopData(undefined),
   desktopChangelogMonths: [] as string[],
   customizationOversized: [] as string[],
@@ -1101,6 +1158,27 @@ export const useDemoConfig = create<DemoConfigState>()(
             mobileNotifications:
               snapshot.channels.mobile?.notifications ?? DEFAULTS.mobileNotifications,
             mobileVerbose: snapshot.channels.mobile?.verbose ?? DEFAULTS.mobileVerbose,
+            cliVerbose: snapshot.channels.cli?.verbose ?? DEFAULTS.cliVerbose,
+            // The three probed fields keep `null` when the source omitted them
+            // — a desktop whose PATH walk or launchctl query failed, or one
+            // from before the CLI card shipped. The card says "unknown" for
+            // those rather than inventing a machine state.
+            cli: {
+              pathInstalled:
+                typeof snapshot.channels.cli?.pathInstalled === 'boolean'
+                  ? snapshot.channels.cli.pathInstalled
+                  : null,
+              serviceActive:
+                typeof snapshot.channels.cli?.serviceActive === 'boolean'
+                  ? snapshot.channels.cli.serviceActive
+                  : null,
+              runMode: snapshot.channels.cli?.runMode === 'headless' ? 'headless' : 'gui',
+              mechanism:
+                typeof snapshot.channels.cli?.mechanism === 'string' &&
+                snapshot.channels.cli.mechanism
+                  ? snapshot.channels.cli.mechanism
+                  : null
+            },
             launchAtStartup: snapshot.preferences.launchAtStartup,
             bypassPermissions: snapshot.preferences.bypassPermissions,
             blockCredentials: snapshot.preferences.blockCredentials,
@@ -1206,6 +1284,7 @@ export const useDemoConfig = create<DemoConfigState>()(
           compactionRuns: state.compactionRuns,
           usage: state.usage,
           desktop: state.desktop,
+          cli: state.cli,
           desktopData: state.desktopData,
           desktopChangelogMonths: state.desktopChangelogMonths,
           customizationOversized: state.customizationOversized,
@@ -1265,6 +1344,12 @@ const DESKTOP_EDITABLE: ReadonlySet<keyof DemoConfigValues> = new Set<keyof Demo
   // in force for the next turn, and moves the desktop panel's control too.
   'mobileNotifications',
   'mobileVerbose',
+  // The terminal's feed. Written on the desktop through setCliConfig and
+  // announced on cli:configChange — the same push its own Channels → CLI panel
+  // re-seeds from, so a flip here moves that panel's control too. The rest of
+  // that card is deliberately absent: `runMode` and the autostart switch are
+  // the OS registration `launchAtStartup` is, which this device reports.
+  'cliVerbose',
   // Services — the editable surface of that screen. Two absences are
   // deliberate on both sides: the extension PORT (moving it restarts the
   // desktop's local pairing server) and web search (`braveEnabled` is the
@@ -1503,6 +1588,15 @@ export function useUsageDays(): UsageDay[] {
 /** The paired desktop app — all-null until a config snapshot has landed. */
 export function useDesktopInfo(): DesktopInfo {
   return useDemoConfig((state) => state.desktop)
+}
+
+/**
+ * The paired desktop's terminal channel — all-unknown until a snapshot has
+ * landed. Display only; the one editable field of that card is `cliVerbose`,
+ * which is an ordinary config key and subscribes through useConfigValue.
+ */
+export function useCliStatus(): CliStatus {
+  return useDemoConfig((state) => state.cli)
 }
 
 /** The desktop's Data-panel numbers — all-null until a snapshot has landed. */

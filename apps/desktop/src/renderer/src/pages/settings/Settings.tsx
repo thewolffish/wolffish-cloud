@@ -12,6 +12,7 @@ import { ModelsPanel } from '@pages/settings/ModelsPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
 import { ReflectionPanel } from '@pages/settings/ReflectionPanel'
 import { DataPanel } from '@pages/settings/DataPanel'
+import { CliPanel } from '@pages/settings/CliPanel'
 import { InAppPanel } from '@pages/settings/InAppPanel'
 import { McpPanel } from '@pages/settings/McpPanel'
 import { MobilePanel } from '@pages/settings/MobilePanel'
@@ -31,6 +32,7 @@ import {
   BrowserIcon,
   BubbleChatIcon,
   ComputerIcon,
+  ComputerTerminal01Icon,
   Database02Icon,
   DnaIcon,
   Key01Icon,
@@ -360,6 +362,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'channels' && channel === 'inapp'}>
           <InAppPanel />
         </TabPanel>
+        <TabPanel active={active === 'channels' && channel === 'cli'}>
+          <CliPanel />
+        </TabPanel>
         <TabPanel active={active === 'channels' && channel === 'browser'}>
           <BrowserExtensionPanel />
         </TabPanel>
@@ -396,7 +401,8 @@ type NavIconComponent = React.ComponentType<{ size?: number }>
 const NAV_ICON_SIZE = 14
 const NAV_ICON_SIZE_OVERRIDES = new Map<NavIconComponent, number>([
   [BraveLogo, 13],
-  [BrowserIcon, 15]
+  [BrowserIcon, 15],
+  [ComputerTerminal01Icon, 15]
 ])
 
 /**
@@ -412,13 +418,14 @@ function NavIcon({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Element 
   )
 }
 
-type Channel = 'inapp' | 'mobile' | 'browser'
-// Wolffish's own surfaces first (In-App, Mobile, Browser), then the
+type Channel = 'inapp' | 'cli' | 'mobile' | 'browser'
+// Wolffish's own surfaces first (In-App, CLI, Mobile, Browser), then the
 // external messengers.
-const CHANNELS: Channel[] = ['inapp', 'mobile', 'browser']
+const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'browser']
 
 const CHANNEL_ICONS: Record<Channel, NavIconComponent> = {
   inapp: ComputerIcon,
+  cli: ComputerTerminal01Icon,
   mobile: SmartPhone01Icon,
   browser: BrowserIcon
 }

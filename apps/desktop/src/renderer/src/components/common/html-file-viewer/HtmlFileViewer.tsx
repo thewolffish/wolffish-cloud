@@ -13,14 +13,17 @@ export type HtmlFileViewerProps = {
 }
 
 /**
- * Inline renderer for HTML attachments and generated .html files. Mirrors
- * MarkdownFileViewer: loads the file text over the upload IPC channel and
- * reuses the CodeFileViewer card, but with `htmlPreview` so the inline card
- * shows clean, syntax-highlighted markup and the expanded sheet can render the
- * page live (sandboxed). Falls back to the plain FileCard while loading, on
- * read failure, or for files too large to render inline.
+ * Inline renderer for HTML attachments and generated .html files. Reuses the
+ * CodeFileViewer card with `htmlPreview`: the Preview view is a <webview>
+ * guest loading the file from disk by its file: URL (scripts, canvas,
+ * keyboard, audio — the page as a browser shows it), the Source view is the
+ * highlighted markup read over the upload IPC channel. The size gate below
+ * only applies to that Source read — the guest streams a file of any size —
+ * so an oversized page still previews and its Source view says why it is
+ * empty. Falls back to the plain FileCard while resolving, on failure, or
+ * when the file is gone.
  */
-const MAX_INLINE_BYTES = 512 * 1024
+const MAX_SOURCE_BYTES = 512 * 1024
 
 export function HtmlFileViewer({
   filePath,
@@ -51,8 +54,27 @@ export function HtmlFileViewer({
   }, [filePath, sizeBytes, fileExists])
 
   const sizeKnown = resolvedSize !== null
-  const oversized = sizeKnown && resolvedSize > MAX_INLINE_BYTES
+  const oversized = sizeKnown && resolvedSize > MAX_SOURCE_BYTES
   const { text, error } = useUploadText(fileExists && sizeKnown && !oversized ? filePath : null)
+
+  // The file: URL the live preview guest loads. Resolved in main so the path
+  // stays workspace-scoped; null means the path was refused.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!fileExists) return
+    let cancelled = false
+    window.api.upload
+      .fileUrl(filePath)
+      .then((url) => {
+        if (!cancelled) setPreviewUrl(url)
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewUrl(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [filePath, fileExists])
 
   const download = useCallback(() => {
     window.api.upload.download(filePath).catch(() => {
@@ -66,16 +88,18 @@ export function HtmlFileViewer({
     })
   }, [filePath])
 
-  // Hand the .html to the OS, which opens it in the default browser — the live
-  // page from its real location, so relative assets resolve and page scripts
-  // run (neither of which the sandboxed in-card preview can do).
+  // Hand the .html to the OS, which opens it in the default browser — the same
+  // live page in a full window.
   const openExternal = useCallback(() => {
     window.api.upload.openExternal(filePath).catch(() => {
       // best-effort
     })
   }, [filePath])
 
-  if (text === null) {
+  // Ready once the source is in hand, or once we know it never will be (too
+  // large) — either way the preview needs only the URL.
+  const ready = previewUrl !== null && (text !== null || oversized)
+  if (!ready) {
     return (
       <FileCard
         filePath={filePath}
@@ -89,10 +113,12 @@ export function HtmlFileViewer({
 
   return (
     <CodeFileViewer
-      content={text}
+      content={text ?? ''}
       fileName={fileName}
       language="html"
       htmlPreview
+      previewUrl={previewUrl}
+      sourceUnavailable={oversized}
       sizeBytes={resolvedSize || undefined}
       onDownload={download}
       onReveal={revealInFolder}

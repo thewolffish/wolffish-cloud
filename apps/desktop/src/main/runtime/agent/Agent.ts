@@ -31,6 +31,11 @@ import {
   trackScreenIndicator
 } from '@main/runtime/agent/screen-indicator-guard'
 import {
+  MAX_TODO_NUDGES,
+  openTaskListNotice,
+  todoCloseoutNudge
+} from '@main/runtime/agent/todo-guard'
+import {
   NoProgressTracker,
   noProgressNotice,
   NO_PROGRESS_MASTER_REPEATS,
@@ -1081,6 +1086,10 @@ export class Agent {
         : null
     let todoListId: string | null = inheritedTodo?.listId ?? null
     let todoWrittenThisTurn = false
+    // The list as this turn last wrote it. Drives the task-list tail notice
+    // and the turn-end close-out nudge (see todo-guard).
+    let todoItemsThisTurn: TodoItem[] | null = null
+    let todoNudges = 0
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -1316,6 +1325,7 @@ export class Agent {
           noProgress: noProgressText,
           openTodo:
             inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
+          taskList: todoItemsThisTurn ? openTaskListNotice(todoItemsThisTurn) : undefined,
           controlToken: controlTokenText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText,
@@ -1721,6 +1731,24 @@ export class Agent {
             continue
           }
 
+          // The turn is ending with the task list it wrote this turn still
+          // showing open items — the card the user reads as "still working".
+          // Send it back once so the model writes the true final state itself
+          // (completed / cancelled / blocked-with-follow-up). See todo-guard.
+          const todoNudge = todoCloseoutNudge(todoItemsThisTurn, parsed, todoNudges)
+          if (todoNudge) {
+            todoNudges += 1
+            console.log(
+              `[agent] end_turn with the task list still open — nudging for a todo_write ` +
+                `close-out (${todoNudges}/${MAX_TODO_NUDGES}, iter ${iterationCount})`
+            )
+            // Same honour as the indicator nudge: an empty close after the
+            // write is the instructed outcome, not a dropout to chase.
+            emptyTurnNudges = MAX_EMPTY_TURN_NUDGES
+            messages.push(...todoNudge)
+            continue
+          }
+
           lastAssistantText = parsed.text
           stopReason = mapProviderStopReason(parsed.stopReason)
           break
@@ -2029,6 +2057,7 @@ export class Agent {
               const listId = call.args.fresh === true ? turn.turnId : (todoListId ?? turn.turnId)
               todoListId = listId
               todoWrittenThisTurn = true
+              todoItemsThisTurn = items
               broca.emitTodo(turn.turnId, items, listId)
             }
           }

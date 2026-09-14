@@ -77,6 +77,19 @@ export type SnapshotSources = {
    * must never fail on it — absent simply omits the field.
    */
   launchAtStartupActive?: () => Promise<boolean>
+  /**
+   * Can a shell on this machine actually resolve `wolffish`? Optional for the
+   * same reason as the probe above: it reads the filesystem and walks PATH, so
+   * a failure omits the field and the phone's card says nothing rather than
+   * claiming the command is broken.
+   */
+  cliPathInstalled?: () => Promise<boolean>
+  /**
+   * What the CURRENT run mode registers on this machine — 'launchd',
+   * 'systemd', 'schtasks'. A name, so the phone can say which mechanism is in
+   * play instead of the generic word the desktop panel also refuses to use.
+   */
+  cliMechanism?: () => Promise<string>
 }
 
 const str = (value: unknown, fallback = ''): string =>
@@ -253,7 +266,12 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   // the cerebellum's plugins, and at boot it can be mid-load. A `.catch` alone
   // covers a rejection but not a hang.
   const capabilities = (await attempt(sources.serializeCapabilities)) ?? []
-  const launchAtStartupActive = await attempt(sources.launchAtStartupActive)
+  // Three shell-outs between them, so they go together rather than in series.
+  const [launchAtStartupActive, cliPathInstalled, cliMechanism] = await Promise.all([
+    attempt(sources.launchAtStartupActive),
+    attempt(sources.cliPathInstalled),
+    attempt(sources.cliMechanism)
+  ])
 
   const llm = (config.llm ?? {}) as Cfg
   const mobile = (config.mobile ?? {}) as Cfg
@@ -382,6 +400,28 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         // Whether the thinking card renders at all. One workspace answer for
         // both surfaces (the phone obeys the same key), off by default.
         reasoning: bool(config.inapp?.reasoning)
+      },
+      // The terminal channel. `runMode` is what decides which autostart
+      // registration this machine gets, so it belongs beside the setting it
+      // explains rather than hidden in config.json.
+      //
+      // The three probed fields below are what make the phone's CLI card worth
+      // opening at all. `verbose` is the only thing here anyone can edit; the
+      // question actually worth asking from a phone is whether the terminal
+      // half of this desktop is WORKING — is `wfc` findable in a shell,
+      // did the autostart registration take, and by which mechanism. Those
+      // three cannot be read off config.json (they are a PATH probe and a
+      // launchctl/systemctl/schtasks query), so they are optional sources and a
+      // desktop that cannot answer omits them rather than guessing.
+      cli: {
+        verbose: bool(config.cli?.verbose),
+        runMode: config.cli?.runMode === 'headless' ? 'headless' : 'gui',
+        ...(cliPathInstalled === undefined ? {} : { pathInstalled: cliPathInstalled }),
+        // The SAME registration `preferences.launchAtStartupActive` reports —
+        // one probe, read twice, so the CLI card and the Preferences row can
+        // never disagree about whether this machine starts on its own.
+        ...(launchAtStartupActive === undefined ? {} : { serviceActive: launchAtStartupActive }),
+        ...(cliMechanism === undefined ? {} : { mechanism: cliMechanism })
       },
       // The phone's own channel — the two settings the Mobile panel here
       // carries, so the phone can render and edit them rather than being the

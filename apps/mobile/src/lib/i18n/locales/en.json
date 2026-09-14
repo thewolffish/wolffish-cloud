@@ -100,6 +100,28 @@
       "taskResults": "Task results",
       "taskResultsDescription": "Off keeps the phone's feed clean: replies, delivered files, questions and approvals, reasoning, and errors. On relays every tool call and its result. Connection logging is always on and is not affected by this.",
       "enabled": "Enabled",
+      "cli": {
+        "title": "CLI",
+        "description": "Wolffish in a terminal on your desktop — the same agent, the same settings, the same conversations, no window needed.",
+        "command": "The wfc command",
+        "commandDescription": "Whether a shell on your desktop can find it.",
+        "commandReady": "Ready",
+        "commandMissing": "Not on PATH",
+        "unknown": "Unknown",
+        "verboseDescription": "Off prints a clean feed in the terminal: what the agent says, the files it delivers, and anything that failed. On adds every tool call and result.",
+        "service": "Start on its own",
+        "serviceState": "Autostart",
+        "serviceDescription": "Whether your desktop registered Wolffish to come back after a restart.",
+        "serviceRegistered": "Registered",
+        "serviceNotRegistered": "Not registered",
+        "mode": "Start it as",
+        "modes": {
+          "gui": "Login item",
+          "headless": "Background service"
+        },
+        "mechanism": "Mechanism",
+        "serviceOnDesktop": "Registering with the operating system is your desktop's own act, so this device reports it rather than changing it — the same as Launch at startup. Change it in Settings › Channels › CLI over there."
+      },
       "reasoning": "Show reasoning",
       "reasoningDescription": "Show the model's thinking as a collapsible card in the chat, here and on the desktop. Off (the default) hides it — the model still thinks, and the reasoning is still saved with the conversation."
     },

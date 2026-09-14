@@ -40,18 +40,41 @@ export default defineConfig(
     }
   },
   {
-    // The CLI client is plain ESM JavaScript, not TypeScript: it is read
-    // straight off disk and run under ELECTRON_RUN_AS_NODE, with no build
-    // step to strip annotations. Only the TypeScript-shaped rules are off —
+    // The classic CLI verbs are plain ESM JavaScript, not TypeScript: the
+    // compiled client imports them as they are, with no build step to strip
+    // annotations. Only the TypeScript-shaped rules are off —
     // everything else (unused vars, correctness, prettier) still applies.
     //
     // electron-builder hooks in build/ are the same kind of file for the same
     // reason: Node loads them directly, so there is nothing to strip
     // annotations. Exempting the rule rather than adding them to `ignores`
     // (where scripts/ sits) keeps every non-TypeScript rule on them.
-    files: ['build/**/*.mjs'],
+    files: ['src/cli/**/*.mjs', 'build/**/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
+    // The terminal client is Solid + OpenTUI, not React: its JSX elements are
+    // terminal renderables (`<box>`, `<text>`), `<For>` needs no keys, and
+    // there are no React hooks to police. The React rule sets are off here;
+    // every TypeScript and correctness rule stays on. Daemon payloads cross
+    // this boundary as untyped JSON, hence `any` is allowed at the seam.
+    files: ['src/cli/**/*.{ts,tsx}'],
+    rules: {
+      'react/no-unknown-property': 'off',
+      'react/jsx-key': 'off',
+      'react/no-children-prop': 'off',
+      'react-hooks/rules-of-hooks': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/static-components': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-refresh/only-export-components': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'off'
     }
   },
   eslintConfigPrettier

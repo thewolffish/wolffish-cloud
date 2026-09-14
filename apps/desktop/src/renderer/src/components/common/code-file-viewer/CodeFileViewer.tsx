@@ -1,19 +1,22 @@
 import { MarkdownContent } from '@components/common/markdown-content/MarkdownContent'
 import { CopyButton } from '@components/core/CopyButton'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
+import { HtmlPreview, type HtmlPreviewHandle } from '@components/common/html-preview/HtmlPreview'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL } from '@lib/utils/format'
 import hljs from 'highlight.js/lib/common'
 import {
   ArrowExpandIcon,
+  Bug01Icon,
   CodeIcon,
   Download01Icon,
   EyeIcon,
   File01Icon,
   FolderOpenIcon,
-  LinkSquare02Icon
+  LinkSquare02Icon,
+  RefreshIcon
 } from 'hugeicons-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const EXT_LANG: Record<string, string> = {
@@ -76,6 +79,8 @@ export function CodeFileViewer({
   language,
   sizeBytes,
   htmlPreview = false,
+  previewUrl,
+  sourceUnavailable = false,
   onDownload,
   onReveal,
   onOpenExternal
@@ -86,13 +91,20 @@ export function CodeFileViewer({
   /** When set, shown next to the language label in the footer. */
   sizeBytes?: number
   /**
-   * HTML files only. When true, the expanded sheet gains a Source⇄Preview
-   * toggle that renders the markup in a sandboxed iframe — a clean, static
-   * render of the page's structure and styles (the HTML analogue of the
-   * markdown card; inline page scripts don't run, see the iframe below). The
-   * inline card stays as clean, syntax-highlighted source.
+   * HTML files only. When true, the card and the expanded sheet gain a
+   * Preview⇄Source toggle: Preview renders the page live in a <webview>
+   * guest loaded from `previewUrl` (scripts, canvas, keyboard, audio — a
+   * browser tab), Source shows the highlighted markup.
    */
   htmlPreview?: boolean
+  /** file: URL the live preview loads. Required for the preview to render. */
+  previewUrl?: string
+  /**
+   * The file was too large to read into the renderer: `content` is empty and
+   * the Source view says so instead of showing an empty listing. The live
+   * preview is unaffected — the guest streams the file itself.
+   */
+  sourceUnavailable?: boolean
   /** When set, a download button appears in the footer (attachment cards). */
   onDownload?: () => void
   /** When set, a "reveal in folder" button appears in the footer (attachment cards). */
@@ -106,11 +118,15 @@ export function CodeFileViewer({
   const { t } = useTranslation()
   const [sheetOpen, setSheetOpen] = useState(false)
   // HTML preview⇄source view, shared by the inline card and the expanded sheet
-  // so toggling one keeps the other in step. 'preview' renders the markup live
-  // (sandboxed iframe), 'source' shows the highlighted body. Defaults to
+  // so toggling one keeps the other in step. 'preview' renders the page live
+  // (<webview> guest), 'source' shows the highlighted body. Defaults to
   // preview — the rendered page is the whole point of an HTML file. Only used
   // when htmlPreview is set (HTML files); other code/markdown files ignore it.
   const [view, setView] = useState<'preview' | 'source'>('preview')
+  // One live guest at a time: while the sheet is open the inline card shows a
+  // placeholder instead of a second copy of the page (a game running twice).
+  const previewRef = useRef<HtmlPreviewHandle>(null)
+  const livePreview = htmlPreview && view === 'preview' && !!previewUrl
 
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   const lang = language ?? langHintFromExt(ext)
@@ -138,7 +154,11 @@ export function CodeFileViewer({
   // The rendered body — markdown as rich text, everything else as
   // line-numbered source. Shared verbatim between the inline card (clamped to
   // a max height) and the full-size expanded sheet.
-  const body = isMarkdown ? (
+  const body = sourceUnavailable ? (
+    <div className="text-muted px-3 py-6 text-center text-xs">
+      {t('chat.htmlViewer.sourceTooLarge')}
+    </div>
+  ) : isMarkdown ? (
     <MarkdownContent content={content} />
   ) : (
     <div className="flex min-w-max">
@@ -167,21 +187,19 @@ export function CodeFileViewer({
     </div>
   )
 
-  // Static, sandboxed live preview, shared verbatim by the inline card and the
-  // expanded sheet. Two layers keep it safe: the frame has an opaque origin (no
-  // allow-same-origin) so it can't touch the renderer, its storage, or IPC; and
-  // the app's own CSP (script-src 'self') is inherited by the srcDoc document,
-  // so inline page scripts don't execute either. The result is a clean render
-  // of the markup and styles. Never add allow-same-origin next to allow-scripts
-  // — that would defeat the sandbox.
-  const previewFrame = (
-    <iframe
-      title={fileName}
-      srcDoc={content}
-      sandbox="allow-scripts allow-popups allow-forms allow-modals"
-      className="h-full w-full border-0 bg-white"
-    />
-  )
+  // Live preview: a <webview> guest loading the file from disk. The inline
+  // card shrinks a too-wide page to fit; the sheet shows it at 1×. Only one
+  // is mounted at a time (see livePreview), so a single ref serves both.
+  const inlinePreview = livePreview ? (
+    sheetOpen ? (
+      <div className="text-muted flex h-full items-center justify-center text-xs">
+        {t('chat.htmlViewer.openInSheet')}
+      </div>
+    ) : (
+      <HtmlPreview ref={previewRef} src={previewUrl} fit />
+    )
+  ) : null
+  const sheetPreview = livePreview ? <HtmlPreview ref={previewRef} src={previewUrl} /> : null
 
   // Individual action controls, composed in opposite orders per surface.
   const iconButton =
@@ -215,18 +233,44 @@ export function CodeFileViewer({
       {view === 'preview' ? <CodeIcon size={14} /> : <EyeIcon size={14} />}
     </button>
   ) : null
+  // Preview only: reload the page (a game back to its start screen) and open
+  // the guest's own DevTools — the two things a browser tab gives that a card
+  // otherwise wouldn't.
+  const reloadButton = livePreview ? (
+    <button
+      type="button"
+      onClick={() => previewRef.current?.reload()}
+      title={t('chat.htmlViewer.reload')}
+      aria-label={t('chat.htmlViewer.reload')}
+      className={cn(iconButton)}
+    >
+      <RefreshIcon size={14} />
+    </button>
+  ) : null
+  const devToolsButton = livePreview ? (
+    <button
+      type="button"
+      onClick={() => previewRef.current?.openDevTools()}
+      title={t('chat.htmlViewer.devTools')}
+      aria-label={t('chat.htmlViewer.devTools')}
+      className={cn(iconButton)}
+    >
+      <Bug01Icon size={14} />
+    </button>
+  ) : null
   // Website cards drop copy: what the card shows is a rendered page, not source
   // worth putting on the clipboard — open/download/reveal cover what's useful.
-  const copyButton = htmlPreview ? null : (
-    <CopyButton
-      text={content}
-      variant="inline"
-      ariaLabelKey="chat.copy"
-      className="text-muted hover:text-fg"
-    />
-  )
+  const copyButton =
+    htmlPreview || sourceUnavailable ? null : (
+      <CopyButton
+        text={content}
+        variant="inline"
+        ariaLabelKey="chat.copy"
+        className="text-muted hover:text-fg"
+      />
+    )
   // Hands the file to the OS. For an .html file that means the default browser
-  // — the live page, scripts and all, which the sandboxed preview can't run.
+  // — the same live page in a full window.
   const openExternalButton = onOpenExternal ? (
     <button
       type="button"
@@ -289,6 +333,8 @@ export function CodeFileViewer({
   const sheetActions = (
     <>
       {sheetViewToggle}
+      {reloadButton}
+      {devToolsButton}
       {copyButton}
       {downloadButton}
       {revealButton}
@@ -312,17 +358,15 @@ export function CodeFileViewer({
         <span className="text-fg truncate text-xs font-medium" title={fileName}>
           {fileName}
         </span>
-        <span className="text-muted shrink-0 text-[10px]">
-          {lineCount} {lineCount === 1 ? 'line' : 'lines'}
-        </span>
+        {!sourceUnavailable && (
+          <span className="text-muted shrink-0 text-[10px]">
+            {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+          </span>
+        )}
       </div>
 
-      <div
-        className={
-          htmlPreview && view === 'preview' ? 'h-80 overflow-hidden' : 'max-h-80 overflow-auto'
-        }
-      >
-        {htmlPreview && view === 'preview' ? previewFrame : body}
+      <div className={livePreview ? 'h-80 overflow-hidden' : 'max-h-80 overflow-auto'}>
+        {livePreview ? inlinePreview : body}
       </div>
 
       <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
@@ -331,6 +375,8 @@ export function CodeFileViewer({
           {sizeBytes != null ? ` · ${formatBytesL(sizeBytes, t)}` : ''}
         </span>
         {previewToggleButton}
+        {devToolsButton}
+        {reloadButton}
         {openExternalButton}
         {revealButton}
         {downloadButton}
@@ -344,7 +390,7 @@ export function CodeFileViewer({
         title={fileName}
         actions={sheetActions}
       >
-        {htmlPreview && view === 'preview' ? previewFrame : body}
+        {livePreview ? sheetPreview : body}
       </ExpandedSheet>
     </div>
   )

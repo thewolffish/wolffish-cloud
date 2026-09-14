@@ -114,6 +114,14 @@ export type RuntimeContext = {
    */
   openTodo?: string
   /**
+   * Task-list notice — the list THIS turn wrote still has open items, so
+   * the model is reminded, every iteration until it closes the list, that
+   * the card the user watches must be rewritten as steps land and closed
+   * before the final reply (see agent/todo-guard). Same vehicle and cache
+   * rationale as noProgress. Undefined renders nothing.
+   */
+  taskList?: string
+  /**
    * Control-token notice for this iteration — this conversation's previous
    * model call ended its user-visible text in a literal tokenizer control
    * token (e.g. a plain-text `<|eos|>`), which reached the user as gibberish,
@@ -819,6 +827,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // No-progress notice rides the same vehicle for the same reason.
     if (runtime.noProgress) lines.push(`  ${runtime.noProgress}`)
     if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
+    if (runtime.taskList) lines.push(`  ${runtime.taskList}`)
     // Channel-format notice (prose delivered to a phone with raw markup) —
     // same vehicle, same reason.
     // Control-token notice (a control token leaked into user-visible text) —

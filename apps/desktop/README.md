@@ -12,11 +12,11 @@ The Wolffish Cloud desktop app — a fork of the personal [wolffish-app](https:/
 
 ## Status
 
-| Phase | Scope | State |
-| --- | --- | --- |
-| Prune | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity; the bundled provider config keys and the vendor code paths swept out; the terminal CLI channel and headless run mode removed entirely, leaving the window and the phone as the only surfaces (2026-09) | ✅ done |
-| Auth | Sign-in screen (email + password, forced first-login reset), PIN quick-lock, keychain-sealed session storage + refresh loop, admin PIN clear / revoke | ✅ done |
-| API integration | Server-driven model catalog, streaming through `/ai/v1/chat/completions`, config LWW row, conversations + workspace files as the outbox, restore on sign-in, usage from the metering table, capabilities from the registry | ✅ done |
+| Phase           | Scope                                                                                                                                                                                                                                                                                                               | State   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Prune           | Providers, Ollama/local models, signing/release/updater machinery, changelog removed; single cloud lane; bypass toggle moved into the chat composer; `.wfc` home; `wfc-desktop` identity; the CLI's provider/Ollama verbs and cards, the bundled provider config keys and the vendor code paths swept out (2026-09) | ✅ done |
+| Auth            | Sign-in screen (email + password, forced first-login reset), PIN quick-lock, keychain-sealed session storage + refresh loop, admin PIN clear / revoke                                                                                                                                                               | ✅ done |
+| API integration | Server-driven model catalog, streaming through `/ai/v1/chat/completions`, config LWW row, conversations + workspace files as the outbox, restore on sign-in, usage from the metering table, capabilities from the registry                                                                                          | ✅ done |
 
 ### The cloud-first contract
 
@@ -35,6 +35,23 @@ npm run dev
 ```
 
 `npm run typecheck` and `npm run lint` are the gates; there is no build script on purpose.
+
+### The terminal
+
+`wfc` is a full terminal client, built for a monitorless box as much as for a laptop next to the app. It is a Bun + OpenTUI program under `src/cli` that talks to the running desktop over the local socket, so it holds no agent state of its own: close the terminal and the turn keeps running.
+
+```
+wfc                     the session screen: streaming feed, cards, live context meter
+wfc -p "…" [-f file]    one shot — print and exit (pipes: cat log | wfc -p "why?")
+wfc resume [id]         continue a conversation
+wfc conversations …     the app's screens as verbs, with --json for scripts
+wfc settings …          every setting, and every action the app has
+wfc status | usage | service | path | pair
+wfc login | logout | unlock | account   the same sign-in as the window: email + password, then your PIN
+wfc reset-password | activate | change-password | change-pin
+```
+
+While `npm run dev` is running, the desktop writes a `wfc` shim into `~/.wfc/bin` that runs the client straight from `src/cli` under Bun, so every launch is the code on disk — no build step. Inside the session: `ctrl+p` opens the command palette, `/` completes slash commands, `@path` attaches a file, `shift+enter` inserts a newline, `esc esc` interrupts, and the footer shows the model, mode, thinking effort, plan mode, project, elapsed time, context used and cost. Approvals, questions, todos, diffs and countdowns render as cards. Settings open as a page → card → row browser with search across every row. `npm run cli:typecheck` and `npm run cli:test` are its gates; `npm run cli:build` compiles the host binary into `build/cli/host` for a look at the artifact a client fork would ship.
 
 ## Layout
 

@@ -142,6 +142,12 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Control-token notice (the model's previous reply ended in a literal
     // control token the user saw as text) — same vehicle, same cache reason.
     (runtime.controlToken ? `${runtime.controlToken} ` : '') +
+    // Open-task-list notice (a list from an earlier turn is still unfinished
+    // on the user's card) and the task-list notice (the list THIS turn wrote
+    // still has open items) — same vehicle; each changes at most a few times
+    // per turn, on a todo_write. See agent/todo-guard.
+    (runtime.openTodo ? `${runtime.openTodo} ` : '') +
+    (runtime.taskList ? `${runtime.taskList} ` : '') +
     // Phone-notification notice (a phone is paired and notify_phone is
     // registered) — same vehicle. Changes at most once per turn, when the
     // first notification goes out.
