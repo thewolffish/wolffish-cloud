@@ -396,25 +396,25 @@ function whichOnWindows(callerPath?: string | null): string | null {
   const dirs = (callerPath ?? process.env.PATH ?? '').split(';').filter(Boolean)
   const exts = (process.env.PATHEXT || DEFAULT_PATHEXT).split(';').filter(Boolean)
   for (const dir of dirs) {
+    // One listing per directory, matched case-insensitively: cmd.exe does not
+    // care about case, PATHEXT is conventionally uppercase, and the name on
+    // disk is neither — so the match is by folded name and the REAL name is
+    // what gets handed back (it is printed at the user). Folding here rather
+    // than probing `existsSync` per extension also makes the walk behave the
+    // same on a case-sensitive host filesystem, where the tests run it.
+    let entries: string[]
+    try {
+      entries = readdirSync(dir)
+    } catch {
+      continue
+    }
+    const onDisk = new Map(entries.map((entry) => [entry.toLowerCase(), entry]))
     for (const ext of exts) {
-      // PATHEXT is conventionally uppercase and the filesystem does not care,
-      // so the name that MATCHED is not necessarily the name on disk. This path
-      // gets printed at the user, so hand back the real one.
-      const candidate = path.join(dir, `wfc${ext}`)
-      if (existsSync(candidate)) return onDiskName(dir, `wfc${ext}`)
+      const actual = onDisk.get(`wfc${ext}`.toLowerCase())
+      if (actual) return path.join(dir, actual)
     }
   }
   return null
-}
-
-/** `dir/name` with the casing the directory actually uses. */
-function onDiskName(dir: string, name: string): string {
-  try {
-    const actual = readdirSync(dir).find((entry) => entry.toLowerCase() === name.toLowerCase())
-    return path.join(dir, actual ?? name)
-  } catch {
-    return path.join(dir, name)
-  }
 }
 
 /** What `wfc` resolves to right now, if anything. */

@@ -619,10 +619,12 @@ async function main(): Promise<void> {
     assert.ok(appImageShim.includes(copied), `shim does not name the copy:\n${appImageShim}`)
   })
   check('appimage: the copy respects the rm -rf ~/.wfc rule', () => {
-    // The shell profile carries the PATH entry (see the footprint checks above).
+    // The shell profile carries the PATH entry (see the footprint checks
+    // above) — whichever one $SHELL picks on the machine running this.
+    const profiles = new Set(['.zshrc', '.bashrc', '.bash_profile', '.profile'])
     const stray = fs
       .readdirSync(appImageHome)
-      .filter((entry) => entry !== '.wfc' && entry !== '.zshrc')
+      .filter((entry) => entry !== '.wfc' && !profiles.has(entry))
     assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
   })
   check('appimage: a mounted launch does not make the shim self-extract', () => {
