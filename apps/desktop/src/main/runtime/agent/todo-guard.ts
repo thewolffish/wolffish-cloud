@@ -97,7 +97,8 @@ export function todoCloseoutNudge(
       `[System: You are ending your turn, but your task list still shows ${describeOpen(items)} — ` +
       'that is the checklist card the user is looking at right now. If that work is done, call todo_write ' +
       'now with every item in its true final state (completed, or cancelled if dropped), then end with an ' +
-      'entirely empty response — zero characters, and no written stand-in for the silence, since anything ' +
+      'entirely empty response — zero characters, and no written stand-in for the silence, not even a ' +
+      'parenthesised note saying there is nothing further, since anything ' +
       'you write is delivered to the user verbatim. If the work is genuinely not done, continue it now; if ' +
       'you are blocked, call todo_write leaving that item in_progress with a follow-up item naming the blocker, ' +
       'then end empty. Your reply has already been delivered — nothing further needs saying.]'

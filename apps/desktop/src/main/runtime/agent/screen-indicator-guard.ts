@@ -90,7 +90,8 @@ const SCREEN_INDICATOR_NUDGE_TEXT =
   'else will, ever. Call computer_glow_off now. (If you are in fact not finished with their screen, carry on with ' +
   'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
   'user, so once the indicator is off there is nothing further to say: end with an entirely empty response — zero ' +
-  'characters, and no written stand-in for the silence, since anything you write is delivered to them verbatim.]'
+  'characters, and no written stand-in for the silence — not even a parenthesised note saying there is nothing ' +
+  'further, since anything you write is delivered to them verbatim.]'
 
 /**
  * Fold one completed tool call into the "is the indicator up?" flag.

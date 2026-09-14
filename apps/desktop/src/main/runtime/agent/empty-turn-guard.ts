@@ -56,7 +56,11 @@ const EMPTY_TURN_NUDGE_TEXT =
   'Do NOT write a stand-in for the silence: no bracketed status note, no written ' +
   'statement that you are staying silent, no lone "." or "…", no control token, ' +
   'and never a trailing marker on the end of a reply that has content — anything ' +
-  'you write is delivered to the user verbatim as a reply. Otherwise, continue the ' +
+  'you write is delivered to the user verbatim as a reply. A parenthesis is not a ' +
+  'side channel either: a bracketed note explaining that there is nothing further, ' +
+  'or that the message above was the reply, is still a message to the user, and ' +
+  'however well-reasoned it reads, writing it IS the failure it describes. Save ' +
+  'parentheses for real asides inside a sentence you are genuinely saying. Otherwise, continue the ' +
   'next step now — either call the appropriate tool(s) or give your final answer.]'
 
 /**

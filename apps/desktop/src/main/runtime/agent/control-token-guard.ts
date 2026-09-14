@@ -101,7 +101,8 @@ export function controlTokenNotice(token: string): string {
     `is nothing left to say, end the turn with an entirely empty reply instead — zero ` +
     `characters, a complete and valid ending. Write no stand-in for that silence: a ` +
     `bracketed status note, a written statement that you are staying silent, a lone "." ` +
-    `and a stray token like this one are all output, and all reach the user as a message. If the stray token may ` +
+    `and a stray token like this one are all output, and all reach the user as a message. Parentheses are for real ` +
+    `asides inside a sentence you are genuinely saying, never a channel for narrating your own output. If the stray token may ` +
     `have confused the user, clear it up briefly in your next reply; if you wrote it ` +
     `deliberately as content (for example, quoting a token to explain it), disregard this.`
   )
@@ -154,7 +155,8 @@ export function contentFreeReplyNotice(reply: string): string {
     `When everything is delivered and there is nothing left to say, end the turn with an ` +
     `entirely empty reply instead — zero characters, a complete and valid ending — and ` +
     `write no stand-in for the silence. A lone \`.\`, \`…\` or \`-\` is output, and so is any ` +
-    `written note that stands in for saying nothing. ` +
+    `written note that stands in for saying nothing — a parenthesis does not make it out-of-band, ` +
+    `and however well-reasoned such a note reads, writing it IS the failure it describes. ` +
     `If you wrote it deliberately as content, disregard this.`
   )
 }
@@ -243,7 +245,9 @@ export function silencePlaceholderNotice(placeholder: SilencePlaceholder): strin
     `Nothing is ever structurally required in your reply. When everything is delivered and there is nothing left ` +
     `to say, end the turn with an entirely empty reply — zero characters, a complete and valid ending — and write ` +
     `no stand-in for it: a bracketed status note, a written statement that you are staying silent, a lone ` +
-    `punctuation mark and a stray control token are all output, and all reach the user. ` +
+    `punctuation mark and a stray control token are all output, and all reach the user. Parentheses do not make ` +
+    `a note out-of-band — they are for real asides inside a sentence you are genuinely saying — and however ` +
+    `well-reasoned the note is, writing it IS the failure it describes. ` +
     `If you wrote it deliberately as content, disregard this.`
   )
 }

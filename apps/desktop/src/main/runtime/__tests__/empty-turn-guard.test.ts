@@ -106,6 +106,16 @@ async function main(): Promise<void> {
     'nudge denies the structural-requirement premise and names the trailing-marker shape',
     /structurally required/.test(nudgeText) && /trailing marker/.test(nudgeText)
   )
+  // The eloquent variant: a model that agrees silence is right and then writes
+  // a reasoned parenthetical saying so (observed live: a bracketed sentence
+  // explaining that the recap above was the reply and the phone notice was
+  // already sent). Arguing the case well is not an exemption, so the nudge has
+  // to deny the side-channel premise outright and say what parentheses ARE for.
+  ok(
+    'nudge denies the parenthesis side channel and names its legitimate use',
+    /side channel/.test(nudgeText) && /real asides/.test(nudgeText),
+    nudgeText
+  )
   ok(
     'nothing injected carries a tool call (no orphaned tool_use)',
     nudge?.every((m) => m.role !== 'assistant' || m.toolUses === undefined) === true

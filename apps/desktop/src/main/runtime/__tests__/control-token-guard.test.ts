@@ -61,6 +61,7 @@ function testNoticeNamesTokenAndDefers(): void {
   assert.match(notice, /<\|eos\|>/, 'the notice names the leaked token')
   assert.match(notice, /disregard/, 'the notice defers to deliberate quoting')
   assert.match(notice, /empty reply/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /Parentheses are for real/, 'and says what brackets are actually for')
   assert.doesNotMatch(
     notice,
     /\(no output\)|\(nothing to add\)/i,
@@ -130,6 +131,7 @@ function testContentFreeNoticeEchoesAndDefers(): void {
     'the notice never prints a stand-in it forbids'
   )
   assert.match(notice, /disregard/, 'the notice defers to deliberate punctuation')
+  assert.match(notice, /parenthesis/, 'brackets do not make a note out-of-band')
   console.log('ok: the content-free notice echoes, offers the silent exit, and defers')
 }
 
@@ -201,6 +203,13 @@ function testSilencePlaceholderNoticeSeparatesTheTwoShapes(): void {
   assert.match(alone, /zero characters/, 'names the silent ending as the fix')
   assert.match(alone, /entire previous reply/, 'says the whole reply was the stand-in')
   assert.match(alone, /disregard/, 'defers to deliberate content')
+
+  assert.match(alone, /Parentheses/, 'brackets do not make a note out-of-band')
+  assert.match(
+    alone,
+    /writing it IS the failure it describes/,
+    'a well-argued note about the silence is still the failure'
+  )
 
   const stapled = silencePlaceholderNotice({ text: '(no output)', trailing: true })
   assert.match(stapled, /last real character/, 'names the appended-marker shape')
