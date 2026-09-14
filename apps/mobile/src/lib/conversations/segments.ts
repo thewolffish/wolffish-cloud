@@ -78,6 +78,13 @@ export type RenderBlock =
   /** A tool_result with no tool_call in the stream — see the emit site. */
   | { type: 'toolAnchor'; key: string; toolCallId: string; result: ToolResultInfo }
   | { type: 'model'; key: string; provider: string; model: string }
+  /**
+   * A message the user sent mid-turn, at the point the agent read it — drawn
+   * as a user bubble INSIDE the assistant card, in clean and verbose feeds
+   * alike (it is the user's own words, never mechanics). Carried as a full
+   * user message so the bubble renderer needs no second shape.
+   */
+  | { type: 'userMessage'; key: string; message: ConversationMessage }
   | { type: 'file'; key: string; relPath: string; kind: DeliveredFileKind }
   | { type: 'path'; key: string; path: string; kind: 'folder' | 'file' }
   | { type: 'workflow'; key: string; snapshot: WorkflowSnapshot }
@@ -425,6 +432,17 @@ export function buildRenderBlocks(
           model: segment.model
         })
         break
+      case 'user_message':
+        // The prose before it is one reply, the prose after it the answer
+        // to this — never one buffer across the two. Keyed by the message
+        // id, the same key the pending bubble it retires was drawn under.
+        flushText()
+        blocks.push({
+          type: 'userMessage',
+          key: `u:${segment.messageId}`,
+          message: interjectionMessage(segment)
+        })
+        break
       case 'workflow': {
         flushText()
         const id = segment.snapshot?.workflowId
@@ -534,6 +552,47 @@ export function buildRenderBlocks(
   return blocks
 }
 
+/** The user message a `user_message` segment records, in the feed's own shape. */
+export function interjectionMessage(
+  segment: Extract<Segment, { kind: 'user_message' }>
+): ConversationMessage {
+  return {
+    id: segment.messageId,
+    role: 'user',
+    content: segment.text ?? '',
+    timestamp: segment.timestamp,
+    ...(segment.attachments && segment.attachments.length > 0
+      ? { attachments: segment.attachments }
+      : {}),
+    ...(segment.voicePrompt ? { voicePrompt: true } : {}),
+    ...(segment.voiceLang ? { voiceLang: segment.voiceLang } : {})
+  }
+}
+
+/**
+ * Every mid-turn message id the transcript already holds as a
+ * `user_message` segment — in the stored assistant messages and in the live
+ * one. What the feed checks a pending row against (feed.ts): a row whose id
+ * is here has been read by the agent and is drawn inside the assistant card.
+ */
+export function deliveredInterjectionIds(
+  messages: ConversationMessage[],
+  live?: ConversationMessage
+): Set<string> {
+  const ids = new Set<string>()
+  const collect = (message: ConversationMessage | undefined): void => {
+    if (!message || message.role !== 'assistant') return
+    for (const segment of message.segments ?? []) {
+      if (segment && typeof segment === 'object' && segment.kind === 'user_message') {
+        ids.add(segment.messageId)
+      }
+    }
+  }
+  for (const message of messages) collect(message)
+  collect(live)
+  return ids
+}
+
 /**
  * Merge consecutive text and reasoning segments into one per run (same kind
  * only, never across kinds) — the desktop does this at persist time (a raw
@@ -575,6 +634,13 @@ export function messageFilePaths(message: ConversationMessage): string[] {
   if (message.role === 'assistant') {
     for (const block of buildRenderBlocks(message)) {
       if (block.type === 'file' || block.type === 'media') paths.add(block.relPath)
+      // A mid-turn message's own files, so its bubble inside the card renders
+      // from cache exactly as a user row's does.
+      if (block.type === 'userMessage') {
+        for (const attachment of block.message.attachments ?? []) {
+          if (attachment?.filePath) paths.add(toWorkspaceRelative(attachment.filePath))
+        }
+      }
     }
   }
   // Only paths the desktop can serve: anything still absolute would spend

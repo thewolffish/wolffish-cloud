@@ -35,7 +35,6 @@ jest.mock('expo-audio', () => ({
 jest.mock('@/components/chat/ChatControls', () => {
   const { Text } = require('react-native')
   return {
-    PlanModeControl: () => <Text>plan-mode</Text>,
     ContextMeterCard: () => <Text>context-meter</Text>,
     ModeAndThinkingControls: () => <Text>mode-and-thinking</Text>,
     PermissionsSwitch: () => <Text>permissions-switch</Text>
@@ -135,9 +134,8 @@ async function drawComposer(): Promise<void> {
       <Composer
         streaming={false}
         conversation={null}
-        queued={[]}
+        conversationId={null}
         onSubmit={jest.fn()}
-        onCancelQueued={jest.fn()}
         onStop={jest.fn()}
         onNewConversation={jest.fn()}
       />

@@ -166,6 +166,15 @@ export type RuntimeContext = {
    * screen — renders nothing. See agent/screen-indicator-guard.
    */
   screenIndicator?: string
+  /**
+   * Mid-turn user-message notice — set for the ONE iteration that delivers
+   * an interjection (a message the user sent while this turn was running,
+   * now the most recent user text in history). Tells the model to read it
+   * before its next step and to acknowledge it. Same vehicle and cache
+   * rationale as noProgress. Undefined renders nothing. See
+   * agent/interjection.ts.
+   */
+  interjection?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -844,6 +853,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Screen-indicator notice (a computer-use glow this turn raised is up) —
     // same vehicle, same reason.
     if (runtime.screenIndicator) lines.push(`  ${runtime.screenIndicator}`)
+    // Mid-turn user-message notice (an interjection was just delivered) —
+    // same vehicle, same reason; present on one iteration.
+    if (runtime.interjection) lines.push(`  ${runtime.interjection}`)
   }
   return lines.join('\n')
 }

@@ -110,6 +110,7 @@ import {
   type Segment
 } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { InterjectResult, InterjectionEvent } from '@main/runtime/agent/interjection'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
 import path from 'node:path'
@@ -1351,6 +1352,74 @@ export class MobileChannel {
       return { conversationId: cid }
     })
 
+    /**
+     * The phone's mid-turn send. Validated exactly like Rpc.sendMessage —
+     * the same attachment sanitizer (bytes must already be on disk from the
+     * upload RPCs; the inbox rule is that media is real before it parks) and
+     * the same voice-note gate — but nothing is persisted here: the message
+     * goes to the turn runner's inbox and lands in the transcript as a
+     * `user_message` segment when the agent reads it. The phone minted the
+     * id; it is what lets the phone's pending bubble be replaced by the
+     * segment rather than joined by it.
+     *
+     * A voice note is transcribed BEFORE it parks, because the transcript is
+     * the message. The liveness check runs first so a note into an idle
+     * conversation is refused instantly rather than after a transcription
+     * the phone would then repeat on its normal send. The answer is awaited
+     * (not fire-and-forget like sendMessage) because the phone needs the
+     * verdict — pending, or start a normal turn — and the phone allows STT
+     * its time on this call.
+     */
+    tunnel.onRpc(Rpc.interject, async (params) => {
+      const conversationId = wireText(params.conversationId, ID_MAX)
+      if (!conversationId) throw new Error('interject needs a conversation')
+      const text = String(params.text ?? '').trim()
+      const attachments = await this.sanitizeAttachments(params.attachments)
+      const voicePrompt = params.voicePrompt === true && attachments.some((a) => a.type === 'audio')
+      const voiceLangHint =
+        typeof params.voiceLang === 'string' && params.voiceLang.trim()
+          ? params.voiceLang.trim()
+          : undefined
+      if (!text && attachments.length === 0) throw new Error('empty prompt')
+      const messageId = /^m_\d{1,17}_[0-9a-f]{6}$/.test(String(params.messageId ?? ''))
+        ? String(params.messageId)
+        : mintMessageId()
+      if (!this.deps.runner.isConversationActive(conversationId)) {
+        return { status: 'no_live_turn' } satisfies InterjectResult
+      }
+      let content = text
+      let voiceLang = voiceLangHint
+      if (voicePrompt && !content) {
+        const transcribed = await this.transcribeVoiceNote(conversationId, attachments, voiceLang)
+        content = transcribed.content
+        voiceLang = transcribed.voiceLang
+      }
+      const result = this.deps.runner.interject(conversationId, {
+        messageId,
+        text: content,
+        attachments,
+        ...(voicePrompt ? { voicePrompt: true } : {}),
+        ...(voiceLang ? { voiceLang } : {}),
+        channel: 'mobile',
+        sentAt: Date.now()
+      })
+      this.log(`interjection ${messageId} from the phone in ${conversationId} — ${result.status}`)
+      return result
+    })
+
+    tunnel.onRpc(Rpc.withdrawInterjection, async (params) => {
+      const conversationId = wireText(params.conversationId, ID_MAX)
+      const messageId = wireText(params.messageId, ID_MAX)
+      if (!conversationId || !messageId) return { ok: false }
+      return { ok: this.deps.runner.withdrawInterjection(conversationId, messageId, 'user') }
+    })
+
+    tunnel.onRpc(Rpc.pendingInterjections, async (params) => {
+      const conversationId = wireText(params.conversationId, ID_MAX)
+      if (!conversationId) return { pending: [] }
+      return { pending: this.deps.runner.pendingInterjections(conversationId) }
+    })
+
     tunnel.onRpc(Rpc.countdownAbort, async (params) => {
       const countdownId = String(params.countdownId ?? '')
       if (!this.deps.countdownAbort || !countdownId) return { ok: false }
@@ -1819,20 +1888,10 @@ export class MobileChannel {
     let voiceLang = voiceLangHint
 
     if (voicePrompt && !content) {
-      const audio = attachments.find((a) => a.type === 'audio')
-      if (!audio) throw new Error('voice note without an audio attachment')
       try {
-        // Conversation-scoped so the transcript files under speech/conv-…,
-        // ffmpeg ensured because a direct tool call bypasses the agent loop's
-        // dependency resolution.
-        await this.deps.agent.cerebellum.ensureSystemTool('ffmpeg')
-        const result = await this.deps.agent.cerebellum.runWithConversation(conversationId, () =>
-          this.deps.agent.cerebellum.executeTool('stt_transcribe', { filePath: audio.filePath })
-        )
-        if (!result.success) throw new Error(result.error ?? 'transcription failed')
-        content = extractTranscript(result.output ?? '')
-        if (!content) throw new Error('voice message transcribed to nothing')
-        voiceLang = extractVoiceLanguage(result.output ?? '') || voiceLang
+        const transcribed = await this.transcribeVoiceNote(conversationId, attachments, voiceLang)
+        content = transcribed.content
+        voiceLang = transcribed.voiceLang
       } catch (error) {
         // The recording must survive its failed transcription: persist the
         // message (empty content, audio attached) so both transcripts keep
@@ -2010,6 +2069,32 @@ export class MobileChannel {
       out.push(attachment)
     }
     return out
+  }
+
+  /**
+   * A phone voice note's transcript — the prompt the model reads. Same
+   * pipeline as a Telegram voice note: conversation-scoped so the transcript
+   * files under speech/conv-…, ffmpeg ensured because a direct tool call
+   * bypasses the agent loop's dependency resolution. Shared by the send path
+   * and the mid-turn interject path, which must transcribe identically —
+   * the only difference between them is where the text goes afterwards.
+   */
+  private async transcribeVoiceNote(
+    conversationId: string,
+    attachments: MessageAttachment[],
+    voiceLangHint: string | undefined
+  ): Promise<{ content: string; voiceLang: string | undefined }> {
+    const audio = attachments.find((a) => a.type === 'audio')
+    if (!audio) throw new Error('voice note without an audio attachment')
+    await this.deps.agent.cerebellum.ensureSystemTool('ffmpeg')
+    const result = await this.deps.agent.cerebellum.runWithConversation(conversationId, () =>
+      this.deps.agent.cerebellum.executeTool('stt_transcribe', { filePath: audio.filePath })
+    )
+    if (!result.success) throw new Error(result.error ?? 'transcription failed')
+    const content = extractTranscript(result.output ?? '')
+    if (!content) throw new Error('voice message transcribed to nothing')
+    const voiceLang = extractVoiceLanguage(result.output ?? '') || voiceLangHint
+    return { content, voiceLang }
   }
 
   /**
@@ -2539,6 +2624,17 @@ export class MobileChannel {
     this.mirrorDeltaSeq.delete(conversationId)
     this.lastMirrors.delete(conversationId)
     this.bridge?.emit(Event.turnStatus, { conversationId, state, detail })
+  }
+
+  /**
+   * A mid-turn user message changed state (pending / delivered / withdrawn).
+   * Deliberately NOT pushTurnStatus: a pending message is not a turn
+   * boundary, and resetting the live overlay for it would blank the run the
+   * phone is watching. The phone draws it as a pending bubble after the
+   * streaming card and retires it when the `user_message` segment lands.
+   */
+  pushInterjection(ev: InterjectionEvent): void {
+    this.bridge?.emit(Event.interjection, ev)
   }
 
   /**

@@ -5,24 +5,34 @@ import { ChatSkeleton } from '@/components/chat/ChatSkeleton'
 import { Composer, type ComposerSubmit } from '@/components/chat/Composer'
 import { ConversationsSheet } from '@/components/chat/ConversationsSheet'
 import { FLOATING_AREA, FLOATING_GAP, FloatingChrome } from '@/components/chat/FloatingChrome'
-import type { QueuedPrompt } from '@/components/chat/QueuedPrompts'
+import { PendingInterjectionBubble } from '@/components/chat/PendingInterjections'
 import { buildFeed, LIVE_KEY } from '@/lib/conversations/feed'
 import { failedTurnEnd, latestTodoLists, todoListId } from '@/lib/conversations/segments'
 import { useConversation } from '@/lib/conversations/hooks'
-import { mintMessageId, type ConversationMessage } from '@/lib/conversations/types'
+import {
+  mintMessageId,
+  type ConversationMessage,
+  type MessageAttachment
+} from '@/lib/conversations/types'
 import { deriveTitle, ensureDemoConversation, sendDemoPrompt, stopDemoTurn } from '@/lib/demo/agent'
 import { discardStagedFile, importLocalFile, stageOutgoingFile } from '@/lib/files/fileCache'
 import type { PickedFile } from '@/lib/files/pickAttachments'
 import { DEFAULT_PROJECT_ICON } from '@/components/workspace/ProjectDialog'
 import { PromptPreview } from '@/components/workspace/PromptSheet'
-import { useChatRuntime } from '@/state/chatRuntime'
+import { NEW_CHAT_PENDING_KEY, selectPending, useChatRuntime } from '@/state/chatRuntime'
 import { useConfigValue } from '@/state/demoConfig'
 import { Image } from 'expo-image'
 import { useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { clearConversationBadges, setActiveConversation } from '@/lib/notifications/push'
 import { useActiveProject } from '@/lib/sync/projects'
 import { seedPlanMode } from '@/lib/sync/planMode'
-import { abortTurn, beginTurn, sendPrompt } from '@/lib/sync/prompt'
+import {
+  abortTurn,
+  beginTurn,
+  interject,
+  sendPrompt,
+  withdrawInterjection
+} from '@/lib/sync/prompt'
 import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
 import {
   discardStaged,
@@ -85,15 +95,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
  * turn the moment there is an id to file it under. Neither the hero nor a bare
  * feed is ever shown while a turn is in flight.
  *
- * SENDING MID-TURN is the desktop's queue, ported whole: a submit that arrives
- * while a turn is running is not refused and does not enter the feed — it waits
- * in a cancelable row above the composer and is sent, through this very same
- * path, when the turn ends. See `queued` below.
+ * SENDING MID-TURN goes INTO the running turn, not behind it: a submit that
+ * arrives while a turn is running is handed to the desktop's turn runner
+ * (Rpc.interject) and the agent reads it at its next step — "skip the tests
+ * folder", "use the other file" — instead of after the work it was meant to
+ * steer is finished. It enters the feed at once, as the user's own bubble
+ * after the live assistant row with a "read at the next step" caption, and
+ * moves inside the assistant card when the agent reads it. See
+ * `interjectSubmit` below, and sync/prompt.ts interject.
  */
-
-/** Identity for a queued row. Local and disposable — the queue never leaves
- *  this screen, so these ids never have to agree with anything. */
-let queueSequence = 0
 
 export default function ChatScreen(): React.JSX.Element {
   const { t } = useTranslation()
@@ -135,13 +145,16 @@ export default function ChatScreen(): React.JSX.Element {
     hadRowsRef.current = false
     // Nothing in flight follows the user out of the conversation they left. The
     // TURN does keep running — it lives in chatRuntime under its own id, and
-    // walking away is not stopping — but this screen's copy of the last prompt,
-    // and messages queued as replies to a turn no longer on screen, do not. The
-    // desktop wipes its queue on the same transition.
+    // walking away is not stopping — but this screen's copy of the last prompt
+    // does not, nor do mid-turn messages written into a chat that had no id
+    // yet (they were never handed to the desktop; the ones that were are the
+    // desktop's facts, keyed by their conversation, and are drawn again on
+    // the way back).
     setPendingUser(null)
     sendingRef.current = false
     setSending(false)
-    setQueued([])
+    heldRef.current = []
+    useChatRuntime.getState().clearPending(NEW_CHAT_PENDING_KEY)
   }, [opened])
   /**
    * Unread badges end where reading begins. While this screen is FOCUSED on a
@@ -212,10 +225,23 @@ export default function ChatScreen(): React.JSX.Element {
    * decision is made inside that frame — never to render.
    */
   const sendingRef = useRef(false)
-  // Submits held back because a turn was running when they arrived. In memory
-  // only, and never written anywhere: a queued row is a message that has not
-  // been sent, and the app has exactly one place for messages that have.
-  const [queued, setQueued] = useState<QueuedPrompt[]>([])
+  /**
+   * Mid-turn messages of the conversation on screen that the agent has not
+   * read yet — the desktop's inbox, mirrored (sync/prompt.ts). For a chat
+   * with no id yet they file under NEW_CHAT_PENDING_KEY until the first send
+   * comes back with one; see `heldRef`.
+   */
+  const pending = useChatRuntime(selectPending(conversationId ?? NEW_CHAT_PENDING_KEY))
+  /**
+   * Mid-turn submits written while this chat had NO conversation id — during
+   * the first send's round trip. There is no turn to hand them to until the
+   * desktop answers with the id, so their payloads wait here (their bubbles
+   * are already up, under NEW_CHAT_PENDING_KEY) and go the moment `settle`
+   * has one. Cleared, with the bubbles, when the user walks away.
+   */
+  const heldRef = useRef<{ messageId: string; payload: ComposerSubmit }[]>([])
+  /** Ids withdrawn while their upload was still running — the delivery skips them. */
+  const withdrawnRef = useRef(new Set<string>())
   // The navigator — every core page, and every conversation. Closed by default
   // and mounted lazily by the sheet itself, so it costs nothing until opened.
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -226,8 +252,8 @@ export default function ChatScreen(): React.JSX.Element {
   const streaming = live?.status === 'streaming' || sending
 
   const feed = useMemo(
-    () => buildFeed({ messages: conversation?.messages, live, pendingUser, sending }),
-    [conversation, live, pendingUser, sending]
+    () => buildFeed({ messages: conversation?.messages, live, pendingUser, sending, pending }),
+    [conversation, live, pendingUser, sending, pending]
   )
   // Every task list in its latest state, keyed by list id: a later turn's
   // todo_write that continues an earlier list resolves THAT card in place.
@@ -420,10 +446,163 @@ export default function ChatScreen(): React.JSX.Element {
   )
 
   /**
-   * Send one submit, now. The queue calls this too — a queued row is sent by
-   * exactly the path it would have taken had it been written a moment later,
-   * which is the whole reason the queue holds the composer's payload verbatim
-   * rather than anything half-sent.
+   * Carry one mid-turn message to the running turn. The bubble is already up
+   * (interjectSubmit put it there at the tap); this stages and uploads its
+   * files exactly as sendWithFiles and the voice branch of performSubmit do
+   * for a normal send — re-publishing the bubble with each — then hands the
+   * message to the desktop's inbox. Nothing here touches the turn on screen:
+   * no beginTurn, no endStream, no `sending`. The turn being steered keeps
+   * its overlay throughout, which is the whole point.
+   *
+   * Two ways it is NOT an interjection after all, both ending in a normal
+   * send under the same id and with the files already uploaded: the desktop
+   * reports no live turn (it ended in the sliver between the tap and the
+   * hand-over), or it predates the method. A failed transfer, or a desktop
+   * that refused, drops the bubble and hands the words back to the composer.
+   */
+  const deliverInterjection = useCallback(
+    async (cid: string, messageId: string, payload: ComposerSubmit): Promise<void> => {
+      const runtime = useChatRuntime.getState()
+      let text = payload.kind === 'text' ? payload.text : ''
+      const giveBack = (): void => {
+        runtime.dropPending(cid, messageId)
+        if (text) runtime.restoreDraft(cid, text)
+        toast.show({ tone: 'error', message: t('chat.interject.failed') })
+      }
+      try {
+        let attachments: MessageAttachment[] = []
+        let voicePrompt = false
+        if (payload.kind === 'text' && payload.files.length > 0) {
+          const staged = await stageForSend(payload.files)
+          const optimistic = staged.map(stagedAttachment)
+          if (optimistic.length > 0) {
+            runtime.putPending(cid, {
+              id: messageId,
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+              attachments: optimistic
+            })
+          }
+          if (staged.length === 0 && !text) {
+            toast.show({ tone: 'error', message: t('chat.attach.error') })
+            runtime.dropPending(cid, messageId)
+            return
+          }
+          if (!bridgeClient.connected) {
+            discardStaged(staged)
+            giveBack()
+            return
+          }
+          const result = await uploadForSend(staged, cid)
+          if (result.failed.length > 0) {
+            toast.show({
+              tone: 'error',
+              message: t('chat.attach.failed', { names: result.failed.join(', ') })
+            })
+          }
+          if (result.attachments.length === 0 && !text) {
+            runtime.dropPending(cid, messageId)
+            return
+          }
+          attachments = result.attachments
+        } else if (payload.kind === 'voice') {
+          // A take is an ordinary audio attachment with the voice flag on: it
+          // rides the same staging → upload pipeline every file does (the
+          // idiom performSubmit's voice branch uses), so the bubble, the
+          // cache and the org copy behave identically. The desktop
+          // transcribes it before the message parks.
+          const timestamp = Date.now()
+          const staged = await stageForSend([
+            {
+              id: `voice_${timestamp}`,
+              uri: payload.uri,
+              name: `voice-${timestamp}.m4a`,
+              mimeType: 'audio/mp4',
+              sizeBytes: 0,
+              durationSeconds: payload.durationSeconds
+            }
+          ])
+          if (staged.length === 0) {
+            toast.show({ tone: 'error', message: t('chat.voice.error') })
+            runtime.dropPending(cid, messageId)
+            return
+          }
+          runtime.putPending(cid, {
+            id: messageId,
+            role: 'user',
+            content: '',
+            timestamp,
+            voicePrompt: true,
+            attachments: staged.map(stagedAttachment)
+          })
+          if (!bridgeClient.connected) {
+            discardStaged(staged)
+            runtime.dropPending(cid, messageId)
+            toast.show({ tone: 'error', message: t('chat.voice.error') })
+            return
+          }
+          const result = await uploadForSend(staged, cid)
+          if (result.attachments.length === 0) {
+            runtime.dropPending(cid, messageId)
+            toast.show({ tone: 'error', message: t('chat.voice.error') })
+            return
+          }
+          attachments = result.attachments
+          voicePrompt = true
+          // The desktop transcribes; the text this phone holds for a give-back
+          // is nothing, so a failed voice hand-over is a toast, not a draft.
+          text = ''
+        }
+        // Taken back while the bytes were still moving: it never reaches the
+        // desktop, and the row is already down.
+        if (withdrawnRef.current.delete(messageId)) return
+        const result = await interject({
+          conversationId: cid,
+          messageId,
+          text,
+          attachments,
+          voicePrompt
+        })
+        if (result.status === 'pending') return
+        await sendPrompt({ conversationId: cid, text, attachments, voicePrompt, messageId })
+      } catch {
+        giveBack()
+      }
+    },
+    [toast, t]
+  )
+
+  /**
+   * The id-less window closing. A first send came back — with the id the
+   * held messages were waiting for, or without one (it failed): under an id
+   * the bubbles move under it and each message goes to the turn it opened;
+   * without, the words go back to the composer, since nothing ran.
+   */
+  const releaseHeld = useCallback(
+    (id?: string): void => {
+      const held = heldRef.current
+      heldRef.current = []
+      if (held.length === 0) return
+      const runtime = useChatRuntime.getState()
+      if (!id) {
+        runtime.clearPending(NEW_CHAT_PENDING_KEY)
+        for (const item of held) {
+          if (item.payload.kind === 'text' && item.payload.text) {
+            runtime.restoreDraft(NEW_CHAT_PENDING_KEY, item.payload.text)
+          }
+        }
+        return
+      }
+      runtime.movePending(NEW_CHAT_PENDING_KEY, id)
+      for (const item of held) void deliverInterjection(id, item.messageId, item.payload)
+    },
+    [deliverInterjection]
+  )
+
+  /**
+   * Send one submit, now: the idle path. A mid-turn submit takes
+   * interjectSubmit instead — see handleSubmit.
    */
   const performSubmit = useCallback(
     (payload: ComposerSubmit): void => {
@@ -472,6 +651,7 @@ export default function ChatScreen(): React.JSX.Element {
         setPendingUser(null)
         setSending(false)
         if (id) setConversationId(id)
+        releaseHeld(id)
       }
       void (async () => {
         if (payload.kind === 'text' && !attaching) {
@@ -514,11 +694,42 @@ export default function ChatScreen(): React.JSX.Element {
         await sendWithFiles(payload.text, payload.files, settle)
       })()
     },
-    [conversationId, paired, t, toast, abandon, sendWithFiles]
+    [conversationId, paired, t, toast, abandon, sendWithFiles, releaseHeld]
   )
 
   /**
-   * What the composer hands over. Idle it goes; mid-turn it waits.
+   * A submit while a turn is running: into that turn. The bubble goes up in
+   * THIS tick under the id the desktop will echo back — the same tap-to-screen
+   * rule as a normal send — and the hand-over runs behind it. A chat with no
+   * id yet has no turn to hand it to; the payload waits in `heldRef` for the
+   * first send's answer (releaseHeld), its bubble already showing.
+   */
+  const interjectSubmit = useCallback(
+    (payload: ComposerSubmit): void => {
+      feedRef.current?.scrollToEnd()
+      const timestamp = Date.now()
+      const messageId = mintMessageId(timestamp)
+      const key = conversationId ?? NEW_CHAT_PENDING_KEY
+      useChatRuntime
+        .getState()
+        .putPending(
+          key,
+          payload.kind === 'text'
+            ? { id: messageId, role: 'user', content: payload.text, timestamp }
+            : { id: messageId, role: 'user', content: '', timestamp, voicePrompt: true }
+        )
+      if (!conversationId) {
+        heldRef.current.push({ messageId, payload })
+        return
+      }
+      void deliverInterjection(conversationId, messageId, payload)
+    },
+    [conversationId, deliverInterjection]
+  )
+
+  /**
+   * What the composer hands over. Idle it goes as a turn; mid-turn it goes
+   * INTO the turn.
    *
    * "Mid-turn" is `streaming`, which is both a turn running in this
    * conversation — this phone's, the desktop's, a channel's — and a send of
@@ -527,27 +738,45 @@ export default function ChatScreen(): React.JSX.Element {
    * That second half matters: without it a fast second tap would race the
    * first send's round trip, and the two prompts would reach the desktop in
    * whichever order the network settled on.
+   *
+   * Demo mode has no inbox to steer — its agent runs on this phone — so a
+   * mid-turn submit there is simply the next demo prompt.
    */
   const handleSubmit = useCallback(
     (payload: ComposerSubmit): void => {
-      if (streaming || sendingRef.current) {
-        queueSequence += 1
-        // Minted here, not inside the updater: React runs updaters later, and
-        // two submits in one frame would both read the sequence AFTER both
-        // increments — one id for two rows, which React draws as two rows that
-        // cancel as one and flush as one, leaving the twin behind.
-        const id = `q_${queueSequence}`
-        setQueued((prev) => [...prev, { ...payload, id }])
+      if ((streaming || sendingRef.current) && paired) {
+        interjectSubmit(payload)
         return
       }
       performSubmit(payload)
     },
-    [streaming, performSubmit]
+    [streaming, paired, interjectSubmit, performSubmit]
   )
 
-  const cancelQueued = useCallback((id: string): void => {
-    setQueued((prev) => prev.filter((item) => item.id !== id))
-  }, [])
+  /**
+   * Take a pending message back. Handed to the desktop already: it decides
+   * (the agent may have read it a beat ago), and its `withdrawn` push hands
+   * the words back to the composer. Still held for an id: it never left this
+   * screen, so the give-back is local.
+   */
+  const handleWithdraw = useCallback(
+    (messageId: string): void => {
+      const runtime = useChatRuntime.getState()
+      if (!conversationId) {
+        const index = heldRef.current.findIndex((item) => item.messageId === messageId)
+        if (index < 0) return
+        const [item] = heldRef.current.splice(index, 1)
+        runtime.dropPending(NEW_CHAT_PENDING_KEY, messageId)
+        if (item.payload.kind === 'text' && item.payload.text) {
+          runtime.restoreDraft(NEW_CHAT_PENDING_KEY, item.payload.text)
+        }
+        return
+      }
+      withdrawnRef.current.add(messageId)
+      void withdrawInterjection(conversationId, messageId)
+    },
+    [conversationId]
+  )
 
   /**
    * The desktop's retry, verbatim: not a re-send of the failed prompt but a
@@ -567,34 +796,6 @@ export default function ChatScreen(): React.JSX.Element {
     [streaming, performSubmit, t]
   )
 
-  /**
-   * The flush: while nothing is running and something is waiting, the head of
-   * the queue goes. One per idle moment, not the whole queue — each send makes
-   * the screen busy again, and the next row leaves when THAT turn ends, so the
-   * conversation stays one ordered transcript.
-   *
-   * Stated as an invariant ("idle and non-empty ⇒ send") rather than as a
-   * reaction to the turn ending, because the edge is missable: a prompt
-   * submitted in the same frame the turn finishes would be queued just after
-   * the transition it was waiting for, and would then sit there until some
-   * later turn happened to end. Every path out of a turn — finished, stopped,
-   * failed, offline — lands here the same way.
-   *
-   * `sendingRef` covers the one race the invariant cannot see: a manual send
-   * that grabbed this same gap, from a tap in the frame the turn ended. The
-   * queue simply holds and flushes when THAT turn ends — never needing a
-   * dependency of its own, since the ref is cleared by the settle that also
-   * clears `sending`, and that is a state change this effect already wakes on.
-   */
-  useEffect(() => {
-    if (streaming || sendingRef.current || queued.length === 0) return
-    const [next, ...rest] = queued
-    setQueued(rest)
-    // Synchronous: performSubmit marks the screen sending in this same commit,
-    // so this effect cannot run again on the render it causes.
-    performSubmit(next)
-  }, [streaming, queued, performSubmit])
-
   const handleStop = useCallback((): void => {
     if (!conversationId) return
     // Paired, the turn runs on the desktop — stopping is an RPC, not a local
@@ -607,7 +808,8 @@ export default function ChatScreen(): React.JSX.Element {
    * Back to an empty chat. A turn still running in the conversation being left
    * keeps its own live entry, keyed by its id — leaving is not stopping. What
    * must not follow the user is this screen's copy of the last prompt, or
-   * messages queued behind a turn they are walking away from.
+   * mid-turn messages still waiting for a conversation id that will now
+   * never be theirs.
    *
    * Shared with project mode, whose two actions both land here: another
    * conversation in the project, and closing the project (which has already
@@ -617,7 +819,8 @@ export default function ChatScreen(): React.JSX.Element {
     setPendingUser(null)
     sendingRef.current = false
     setSending(false)
-    setQueued([])
+    heldRef.current = []
+    useChatRuntime.getState().clearPending(NEW_CHAT_PENDING_KEY)
     setConversationId(null)
     // Both, deliberately. `opened` re-gates the feed and is what the effect
     // above keys on; `conversationId` is what the screen actually sends into,
@@ -672,8 +875,8 @@ export default function ChatScreen(): React.JSX.Element {
   /**
    * A procedure's run: the prompt is left in the runtime by the Procedures
    * screen and sent from HERE, because this screen owns sending — it holds the
-   * live turn, the optimistic bubble and the queue, and a prompt sent behind its
-   * back would render as a reply to nothing.
+   * live turn and the optimistic bubble, and a prompt sent behind its back
+   * would render as a reply to nothing.
    *
    * TWO PHASES, and the split is the whole point. `startNewChat` clears the open
    * conversation through state, so it is only true from the next commit —
@@ -811,7 +1014,14 @@ export default function ChatScreen(): React.JSX.Element {
               onReady={() => setFeedRevealed(true)}
             >
               {feed.map((item) =>
-                item.message.role === 'user' ? (
+                item.pending ? (
+                  <PendingInterjectionBubble
+                    key={item.key}
+                    message={item.message}
+                    conversationId={conversationId ?? undefined}
+                    onWithdraw={() => handleWithdraw(item.key)}
+                  />
+                ) : item.message.role === 'user' ? (
                   <UserBubble
                     key={item.key}
                     message={item.message}
@@ -855,9 +1065,8 @@ export default function ChatScreen(): React.JSX.Element {
           <Composer
             streaming={streaming}
             conversation={conversation}
-            queued={queued}
+            conversationId={conversationId}
             onSubmit={handleSubmit}
-            onCancelQueued={cancelQueued}
             onStop={handleStop}
             onNewConversation={startNewChat}
           />

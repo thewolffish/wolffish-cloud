@@ -141,9 +141,51 @@ export type ConversationCards = {
  */
 export const NEW_CHAT_PLAN_KEY = '\u0000new-chat'
 
+/**
+ * The key a mid-turn message files under while the chat it was written in
+ * has no conversation id yet — the round trip in which a first send mints
+ * one. The screen moves the rows under the real id the moment it has it
+ * (movePending) and hands each one to the desktop then.
+ */
+export const NEW_CHAT_PENDING_KEY = '\u0000new-chat-pending'
+
 export type ChatRuntimeState = {
   streams: Record<string, LiveStream>
   cards: Record<string, ConversationCards>
+  /**
+   * MID-TURN MESSAGES per conversation — sent while a turn was running and
+   * not yet read by the agent. Each is the user's own message under the id
+   * this phone minted for it (or the id another surface minted, when the
+   * desktop reports one of theirs), drawn as a pending bubble after the live
+   * assistant row (conversations/feed.ts).
+   *
+   * A sibling of `streams`, not a field on one, for the same reason the cards
+   * are: the live entry is replaced wholesale by every mirror snapshot and
+   * by every putLive, and a list riding on it would be wiped twice a second.
+   * It also has to outlive the entry — a pending row exists from the tap,
+   * which for a chat with no id yet is before any stream does — and must NOT
+   * be dropped when the turn's overlay is (endStream): the desktop, not the
+   * overlay, says when a message stops being pending (Event.interjection).
+   */
+  pending: Record<string, ConversationMessage[]>
+  /** Put one pending row up, or replace the one with the same id in place. */
+  putPending: (key: string, message: ConversationMessage) => void
+  /** Replace a conversation's whole pending list — the cold-start seed. */
+  setPending: (key: string, messages: ConversationMessage[]) => void
+  dropPending: (key: string, messageId: string) => void
+  clearPending: (key: string) => void
+  /** Re-file rows written before the conversation had an id under the id it now has. */
+  movePending: (from: string, to: string) => void
+  /**
+   * Text handed BACK to the composer: a mid-turn message withdrawn (by the
+   * user, or by the turn being stopped) is the user's draft again, not a
+   * message that was sent. Keyed like `pending`; the composer of the chat
+   * that key names takes it on its next render (takeDraftRestore) and
+   * appends it to whatever is being typed.
+   */
+  draftRestores: Record<string, string>
+  restoreDraft: (key: string, text: string) => void
+  takeDraftRestore: (key: string) => void
   /**
    * PLAN MODE per conversation — the desktop composer's Plan chip, mirrored:
    * a stance for the next turns (read-only, the agent only writes its plan
@@ -220,6 +262,63 @@ const NO_CARDS: ConversationCards = { asks: {}, approvals: {} }
 export const useChatRuntime = create<ChatRuntimeState>()((set) => ({
   streams: {},
   cards: {},
+  pending: {},
+  putPending: (key, message) =>
+    set((state) => {
+      const current = state.pending[key] ?? []
+      const index = current.findIndex((m) => m.id === message.id)
+      const next =
+        index >= 0 ? current.map((m, i) => (i === index ? message : m)) : [...current, message]
+      return { pending: { ...state.pending, [key]: next } }
+    }),
+  setPending: (key, messages) =>
+    set((state) => {
+      if (messages.length === 0) {
+        if (!state.pending[key]) return state
+        const { [key]: _gone, ...rest } = state.pending
+        return { pending: rest }
+      }
+      return { pending: { ...state.pending, [key]: messages } }
+    }),
+  dropPending: (key, messageId) =>
+    set((state) => {
+      const current = state.pending[key]
+      if (!current?.some((m) => m.id === messageId)) return state
+      const next = current.filter((m) => m.id !== messageId)
+      if (next.length === 0) {
+        const { [key]: _gone, ...rest } = state.pending
+        return { pending: rest }
+      }
+      return { pending: { ...state.pending, [key]: next } }
+    }),
+  clearPending: (key) =>
+    set((state) => {
+      if (!state.pending[key]) return state
+      const { [key]: _gone, ...rest } = state.pending
+      return { pending: rest }
+    }),
+  movePending: (from, to) =>
+    set((state) => {
+      const moving = state.pending[from]
+      if (!moving || from === to) return state
+      const { [from]: _gone, ...rest } = state.pending
+      return { pending: { ...rest, [to]: [...(rest[to] ?? []), ...moving] } }
+    }),
+  draftRestores: {},
+  restoreDraft: (key, text) =>
+    set((state) => {
+      if (!text) return state
+      const current = state.draftRestores[key]
+      return {
+        draftRestores: { ...state.draftRestores, [key]: current ? `${current}\n${text}` : text }
+      }
+    }),
+  takeDraftRestore: (key) =>
+    set((state) => {
+      if (!state.draftRestores[key]) return state
+      const { [key]: _gone, ...rest } = state.draftRestores
+      return { draftRestores: rest }
+    }),
   planModes: {},
   setPlanMode: (conversationId, value) =>
     set((state) => ({
@@ -313,6 +412,8 @@ export const useChatRuntime = create<ChatRuntimeState>()((set) => ({
     set({
       streams: {},
       cards: {},
+      pending: {},
+      draftRestores: {},
       planModes: {},
       pendingProjectId: null,
       activeProjectId: null,
@@ -338,6 +439,21 @@ export function selectCards(
 /** Read one conversation's live turn outside React (event handlers, tests). */
 export function liveStreamFor(conversationId: string): LiveStream | undefined {
   return useChatRuntime.getState().streams[conversationId]
+}
+
+const NO_PENDING: ConversationMessage[] = []
+
+/** Selector for one conversation's pending mid-turn rows — a stable empty
+ *  array when there are none, so a subscriber re-renders only on a change. */
+export function selectPending(
+  key: string | null | undefined
+): (state: ChatRuntimeState) => ConversationMessage[] {
+  return (state) => (key ? state.pending[key] : undefined) ?? NO_PENDING
+}
+
+/** The same, outside React. */
+export function pendingFor(key: string | null | undefined): ConversationMessage[] {
+  return selectPending(key)(useChatRuntime.getState())
 }
 
 /** One conversation's plan stance (the fresh chat's when there is no id). */

@@ -6,8 +6,13 @@ import {
 } from '@main/channels/channel'
 import { TurnCheckpoint } from '@main/channels/turn-checkpoint'
 import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
-import { mintMessageId, type ConversationMessage } from '@main/conversations'
+import {
+  mintMessageId,
+  type ConversationMessage,
+  type MessageAttachment
+} from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
+import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   appendTextSegment,
@@ -278,6 +283,33 @@ export class ElectronChannel {
       this.pendingAsks.delete(id)
       entry.resolve({ kind: 'canceled' })
     }
+  }
+
+  /**
+   * chat:interject IPC handler. A message typed while the conversation's
+   * turn is still running — hands it to the runner's inbox so the agent
+   * reads it at its next stop point (see runtime/agent/interjection.ts).
+   * Attachments arrive already staged on disk, exactly as chat:send's do.
+   * `no_live_turn` tells the renderer to fall back to a normal send.
+   */
+  interject(payload: {
+    conversationId: string
+    messageId: string
+    text: string
+    attachments?: MessageAttachment[]
+    voicePrompt?: boolean
+    voiceLang?: string
+  }): InterjectResult {
+    const item: Interjection = {
+      messageId: payload.messageId,
+      text: payload.text,
+      attachments: payload.attachments ?? [],
+      ...(payload.voicePrompt ? { voicePrompt: true } : {}),
+      ...(payload.voiceLang ? { voiceLang: payload.voiceLang } : {}),
+      channel: 'electron',
+      sentAt: Date.now()
+    }
+    return this.runner.interject(payload.conversationId, item)
   }
 
   /**

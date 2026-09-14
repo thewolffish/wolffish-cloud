@@ -1,6 +1,6 @@
 /**
  * The everyday dialogs: palette, conversations, model, thinking, mode,
- * project, theme, help, queue, pending cards, status, files, keybinds.
+ * project, theme, help, pending cards, status, files, keybinds.
  * Every one is the same select list with a different data source.
  */
 import { authGate, describeAccount } from '../../lib/auth.mjs'
@@ -452,30 +452,7 @@ export function KeybindsDialog(): JSX.Element {
   )
 }
 
-/* ───────────────────────── queue and pending ───────────────────────── */
-
-export function QueueDialog(): JSX.Element {
-  const app = useApp()
-  const [state] = app.store
-  const options = () =>
-    state.queue.map((q, i) => ({
-      title: truncate(q.text.replace(/\s+/g, ' '), 70),
-      value: q.id,
-      footer: `#${i + 1}`,
-      description: q.attachments.length ? plural(q.attachments.length, 'file') : undefined
-    }))
-  return (
-    <DialogSelect
-      title="Queued prompts"
-      options={options()}
-      emptyText="Nothing queued — type while a turn runs to queue"
-      onSelect={() => app.dialog.clear()}
-      actions={[
-        { key: 'dialog_delete', title: 'drop', onTrigger: (o) => app.actions.dropQueued(o.value) }
-      ]}
-    />
-  )
-}
+/* ───────────────────────── pending cards ───────────────────────── */
 
 export function PendingDialog(): JSX.Element {
   const app = useApp()

@@ -11,7 +11,9 @@
  *    running where it was sent (that IS concurrency), but its result must not
  *    drag the user back into a chat they have left, and must not mark a send
  *    they have since started in the NEW one as finished.
- *  - a queue that belonged to the turn being walked away from.
+ *  - a mid-turn message sent into the turn being walked away from. It has
+ *    already left the phone, so it stays with ITS conversation rather than
+ *    following the user into the new one.
  *
  * Both are silent when wrong: the screen simply shows the wrong conversation, or
  * refuses to send, with nothing thrown anywhere.
@@ -67,19 +69,14 @@ jest.mock('@/components/chat/Composer', () => {
   return {
     Composer: ({
       onSubmit,
-      streaming,
-      queued
+      streaming
     }: {
       onSubmit: (p: { kind: 'text'; text: string; files: [] }) => void
       streaming: boolean
-      queued: unknown[]
     }) => (
-      <>
-        <Text testID="send" onPress={() => onSubmit({ kind: 'text', text: 'hello', files: [] })}>
-          {streaming ? 'stop' : 'send'}
-        </Text>
-        <Text testID="queued">{String(queued.length)}</Text>
-      </>
+      <Text testID="send" onPress={() => onSubmit({ kind: 'text', text: 'hello', files: [] })}>
+        {streaming ? 'stop' : 'send'}
+      </Text>
     )
   }
 })
@@ -108,6 +105,8 @@ jest.mock('@/lib/sync/prompt', () => ({
   sendPrompt: jest.fn(
     () => new Promise<{ conversationId: string }>((resolve) => (mockResolveSend = resolve))
   ),
+  interject: jest.fn(async () => ({ status: 'pending' })),
+  withdrawInterjection: jest.fn(async () => undefined),
   beginTurn: jest.fn(),
   abortTurn: jest.fn()
 }))
@@ -145,7 +144,6 @@ async function mount(): Promise<void> {
   )
 }
 
-const queuedCount = (): string => view.getByTestId('queued').props.children as string
 const sendLabel = (): string => view.getByTestId('send').props.children as string
 const press = (testID: string): Promise<void> => fireEvent.press(view.getByTestId(testID))
 
@@ -161,7 +159,7 @@ const runTurn = async (conversationId: string): Promise<void> => {
 
 beforeEach(() => {
   useAppStore.setState({ paired: true })
-  useChatRuntime.setState({ streams: {} })
+  useChatRuntime.setState({ streams: {}, pending: {} })
   mockConversation.data = null
   mockConversation.isFetching = false
 })
@@ -190,14 +188,19 @@ describe('switching conversations in place', () => {
     expect(sendLabel()).toBe('stop')
   })
 
-  it('drops messages queued behind the turn being left', async () => {
+  it('leaves a mid-turn message with the conversation it was sent into', async () => {
     await mount()
     await runTurn('conv-a')
+    // Mid-turn, so this goes INTO conv-a's turn rather than starting one.
     await press('send')
-    expect(queuedCount()).toBe('1')
+    expect(view.queryAllByTestId('pending-interjection')).toHaveLength(1)
+    expect(useChatRuntime.getState().pending['conv-a']).toHaveLength(1)
 
+    // Walking away does not take it back — it is the desktop's fact now,
+    // filed under conv-a, and conv-b shows none of it.
     await press('open-b')
-    expect(queuedCount()).toBe('0')
+    expect(view.queryAllByTestId('pending-interjection')).toHaveLength(0)
+    expect(useChatRuntime.getState().pending['conv-a']).toHaveLength(1)
   })
 
   it('a send settling after the switch does not drag the user back', async () => {

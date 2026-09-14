@@ -9,8 +9,7 @@ import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-na
 import {
   ContextMeterCard,
   ModeAndThinkingControls,
-  PermissionsSwitch,
-  PlanModeControl
+  PermissionsSwitch
 } from '@/components/chat/ChatControls'
 import { ModelSwitch } from '@/components/chat/ModelSwitch'
 
@@ -160,7 +159,9 @@ function ProjectChips({
 /**
  * The chat controls themselves — everything that flanks the desktop composer
  * (model, permissions, mode, thinking, project, context meter), scrolling in
- * one column.
+ * one column. Plan mode is NOT here: it is a stance on the very next turn, so
+ * it lives on the surface that sends it — the composer's own Plan chip (see
+ * Composer), exactly where the desktop keeps it.
  *
  * Separate from the sheet below because project mode shows the SAME panel from
  * inside the project dialog (the composer's menu button becomes the project
@@ -195,9 +196,6 @@ export function ChatControlsPanel({
       <ModelSwitch />
       <PermissionsSwitch />
       <ModeAndThinkingControls />
-      {/* The conversation's own stance — a fresh chat's until its first send
-          creates one. Hidden when no desktop can run the turn. */}
-      <PlanModeControl conversationId={conversation?.id ?? null} />
       {showProject && <ProjectChips conversation={conversation} onPicked={onProjectPicked} />}
       <ContextMeterCard conversation={conversation} />
     </ScrollView>

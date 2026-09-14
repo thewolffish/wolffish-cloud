@@ -28,7 +28,7 @@ import {
   summarizeArgs,
   truncate
 } from '../format'
-import type { AssistantMessage, Part, UserMessage } from '../store'
+import type { AssistantMessage, Attachment, Part, UserMessage } from '../store'
 import { theme } from '../theme'
 import { Spinner } from '../ui/Spinner'
 
@@ -59,7 +59,11 @@ export function Feed(props: FeedProps): JSX.Element {
         {(item) => (
           <Switch>
             <Match when={item.kind === 'user'}>
-              <UserRow message={item as UserMessage} />
+              <UserRow
+                text={(item as UserMessage).text}
+                attachments={(item as UserMessage).attachments}
+                timestamp={(item as UserMessage).timestamp}
+              />
             </Match>
             <Match when={item.kind === 'assistant'}>
               <AssistantRow
@@ -71,22 +75,16 @@ export function Feed(props: FeedProps): JSX.Element {
           </Switch>
         )}
       </For>
-      <Show when={state.queue.length > 0}>
-        <For each={state.queue}>
-          {(q) => (
-            <box
-              flexDirection="column"
-              borderStyle="single"
-              border={['left']}
-              borderColor={theme().dim}
-              paddingLeft={2}
-              paddingTop={0}
-            >
-              <text fg={theme().muted}>
-                {truncate(q.text.replace(/\s+/g, ' '), 100)}
-                <span style={{ fg: theme().warn, bold: true }}>{'  QUEUED'}</span>
-              </text>
-            </box>
+      {/* Mid-turn messages the agent has not read yet: below the streaming
+          reply, where they will land once read (as a user row inside it). */}
+      <Show when={state.pending.length > 0}>
+        <For each={state.pending}>
+          {(row) => (
+            <UserRow
+              text={row.text}
+              attachments={row.attachments.map((path) => ({ name: basename(path), path }))}
+              tag="READ AT NEXT STEP"
+            />
           )}
         </For>
       </Show>
@@ -96,7 +94,17 @@ export function Feed(props: FeedProps): JSX.Element {
 
 /* ───────────────────────── user ───────────────────────── */
 
-function UserRow(props: { message: UserMessage }): JSX.Element {
+/**
+ * One user bubble. Three callers share it: a feed-level message (with its
+ * clock), a mid-turn message the agent already read (inline in the assistant
+ * row, with its clock), and one still waiting (a dim tag instead).
+ */
+function UserRow(props: {
+  text: string
+  attachments: Attachment[]
+  timestamp?: number
+  tag?: string
+}): JSX.Element {
   const p = theme
   return (
     <box
@@ -111,11 +119,11 @@ function UserRow(props: { message: UserMessage }): JSX.Element {
       paddingBottom={1}
     >
       <text fg={p().text} wrapMode="word">
-        {props.message.text}
+        {props.text}
       </text>
-      <Show when={props.message.attachments.length > 0}>
+      <Show when={props.attachments.length > 0}>
         <box flexDirection="row" gap={1} marginTop={1} flexWrap="wrap">
-          <For each={props.message.attachments}>
+          <For each={props.attachments}>
             {(a) => (
               <text>
                 <span style={{ fg: p().accentFg, bg: p().accent }}>{` ${a.type ?? 'file'} `}</span>
@@ -126,7 +134,9 @@ function UserRow(props: { message: UserMessage }): JSX.Element {
         </box>
       </Show>
       <box marginTop={1} flexDirection="row" justifyContent="flex-end">
-        <text fg={p().dim}>{clock(props.message.timestamp)}</text>
+        <text fg={p().dim}>
+          {props.tag ?? (props.timestamp !== undefined ? clock(props.timestamp) : '')}
+        </text>
       </box>
     </box>
   )
@@ -230,6 +240,15 @@ function AssistantRow(props: {
             </Match>
             <Match when={part.kind === 'compaction'}>
               <CompactionPart part={part as Extract<Part, { kind: 'compaction' }>} />
+            </Match>
+            <Match when={part.kind === 'user'}>
+              <box marginTop={1}>
+                <UserRow
+                  text={(part as Extract<Part, { kind: 'user' }>).text}
+                  attachments={(part as Extract<Part, { kind: 'user' }>).attachments}
+                  timestamp={(part as Extract<Part, { kind: 'user' }>).timestamp}
+                />
+              </box>
             </Match>
             <Match when={part.kind === 'provider_errors'}>
               <box paddingLeft={3} marginTop={1} flexDirection="column">

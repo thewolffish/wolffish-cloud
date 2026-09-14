@@ -172,6 +172,24 @@ export type Segment =
       worker?: SegmentWorker
     }
   | { kind: 'active_model'; turnId: string; segmentId: string; provider: string; model: string }
+  /**
+   * A message the user sent MID-TURN, at the exact point the agent read it
+   * (desktop agent/interjection.ts). It lives inside the assistant message
+   * rather than as a user row of its own because that is where it happened:
+   * between one iteration and the next. `messageId` is the id the sending
+   * surface minted, which is what retires that surface's pending bubble.
+   */
+  | {
+      kind: 'user_message'
+      turnId: string
+      segmentId: string
+      messageId: string
+      text: string
+      attachments?: MessageAttachment[]
+      voicePrompt?: boolean
+      voiceLang?: string
+      timestamp: number
+    }
   /** The model's task list — one card per turn, replaced in place on every write. */
   | {
       kind: 'todo'

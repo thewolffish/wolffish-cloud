@@ -18,11 +18,18 @@ import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
 import {
   armContentFreeReplyNotice,
   armControlTokenNotice,
+  armSilencePlaceholderNotice,
   contentFreeReply,
   drainControlTokenNotice,
+  silencePlaceholder,
   trailingControlToken
 } from '@main/runtime/agent/control-token-guard'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
+import {
+  INTERJECTION_NOTICE,
+  interjectionToHistoryMessage,
+  type Interjection
+} from '@main/runtime/agent/interjection'
 import {
   MAX_SCREEN_INDICATOR_NUDGES,
   screenIndicatorNudge,
@@ -359,6 +366,16 @@ export type AgentTurnOptions = {
    * global setting for that run. Omitted ⇒ the global mode.
    */
   modeOverride?: 'single' | 'workflow'
+  /**
+   * Mid-turn user-message pull (see agent/interjection.ts). The TurnRunner
+   * keeps a per-conversation inbox of messages the user sent while this
+   * turn was running; the loop drains it at its two stop points — the top
+   * of every iteration and the would-end branch — and delivers each as a
+   * real user message plus a `user_message` segment. A pull, not a push, so
+   * it survives concurrent turns. Omitted for subagents and autonomous
+   * runs, which nobody can message.
+   */
+  takeInterjections?: () => Interjection[]
 }
 
 export type AgentTurnResult = {
@@ -998,6 +1015,67 @@ export class Agent {
     // via send_file — turn-scoped and reset per respond() call, and it rides the
     // post-cache-breakpoint tail so it never perturbs the cached history prefix.
     const deliveredThisTurn = new Set<string>()
+    // Mid-turn user messages (interjections). Drained at the loop's two stop
+    // points only — never inside a tool batch, where an unanswered tool_use
+    // would follow. Each delivered message is pushed as a real user entry
+    // (after the batch's tool results, so Anthropic-shaped wires merge it
+    // into that same user turn) and emitted as a `user_message` segment at
+    // the same moment, which is what puts it at its true position in every
+    // surface's transcript. The notice rides the volatile tail for exactly
+    // the iteration that delivered it.
+    let interjectionNoticeText: string | undefined
+    // Armed by either delivery point; the loop top turns it into the notice
+    // for the very next model call and disarms it, so a delivery at the
+    // would-end branch (which `continue`s back to the top) is not wiped by
+    // the top's own reset.
+    let interjectionNoticeArmed = false
+    const deliverInterjections = async (): Promise<boolean> => {
+      const items = turn.takeInterjections?.() ?? []
+      if (items.length === 0) return false
+      for (const item of items) {
+        const [msg] = await this.processHistoryAttachments(
+          [interjectionToHistoryMessage(item)],
+          turn.modelOverride ?? null
+        )
+        messages.push(msg)
+        broca.emitUserMessage(turn.turnId, item)
+        console.log(
+          `[agent] mid-turn message delivered (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)`
+        )
+      }
+      interjectionNoticeArmed = true
+      return true
+    }
+    // Stop point 2's variant: the model's reply (no tool calls) must sit in
+    // history BEFORE the message that arrived during it — the order the user
+    // saw. Reads the inbox first so a non-empty reply is only pushed when
+    // there is something to answer; an empty reply is skipped (providers
+    // reject empty assistant content) and the message still follows the last
+    // tool results.
+    let lastParsedReply: { text: string; thinking?: string } | null = null
+    const deliverInterjectionsAfterReply = async (): Promise<boolean> => {
+      const items = turn.takeInterjections?.() ?? []
+      if (items.length === 0) return false
+      const reply = lastParsedReply
+      if (reply && reply.text.trim()) {
+        const replyMsg: ChatMessage = { role: 'assistant', content: reply.text }
+        if (reply.thinking) replyMsg.reasoningContent = reply.thinking
+        messages.push(replyMsg)
+      }
+      for (const item of items) {
+        const [msg] = await this.processHistoryAttachments(
+          [interjectionToHistoryMessage(item)],
+          turn.modelOverride ?? null
+        )
+        messages.push(msg)
+        broca.emitUserMessage(turn.turnId, item)
+        console.log(
+          `[agent] mid-turn message delivered at end of reply (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)`
+        )
+      }
+      interjectionNoticeArmed = true
+      return true
+    }
     // Bounded guard against a silent empty end_turn (no tool calls, no text) —
     // see emptyTurnNudge. Loop-scoped so it persists across iterations and
     // resets per respond() call; it is the only thing that stops such a turn
@@ -1255,6 +1333,14 @@ export class Agent {
           break
         }
 
+        // Stop point 1: a message the user sent during the previous tool
+        // batch (or before the very first call) is read now, before the model
+        // picks its next step. The notice rides this iteration's tail only —
+        // armed here or by stop point 2, disarmed for the next pass.
+        await deliverInterjections()
+        interjectionNoticeText = interjectionNoticeArmed ? INTERJECTION_NOTICE : undefined
+        interjectionNoticeArmed = false
+
         iterationCount += 1
 
         // Host connectivity, sampled fresh each iteration — the same signal
@@ -1329,7 +1415,8 @@ export class Agent {
           controlToken: controlTokenText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText,
-          screenIndicator: screenIndicatorText
+          screenIndicator: screenIndicatorText,
+          interjection: interjectionNoticeText
         }
 
         let systemPrompt: string
@@ -1482,7 +1569,8 @@ export class Agent {
               noProgressText ||
               controlTokenText ||
               phoneNotifyText ||
-              screenIndicatorText)
+              screenIndicatorText ||
+              interjectionNoticeText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
@@ -1497,7 +1585,8 @@ export class Agent {
                   controlToken: controlTokenText,
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText,
-                  screenIndicator: screenIndicatorText
+                  screenIndicator: screenIndicatorText,
+                  interjection: interjectionNoticeText
                 }) +
                 (workingFoldersBlock ? `\n${workingFoldersBlock}` : '') +
                 (readOnlyBlock ? `\n${readOnlyBlock}` : '')
@@ -1636,28 +1725,32 @@ export class Agent {
 
         if (parsed.thinking) lastReasoningContent = parsed.thinking
 
-        // Control-token watch: a model that "says nothing" by typing its
-        // end-of-sequence marker (observed: grok-4.6 emitting a literal
-        // `<|eos|>`) has just sent the user visible gibberish. Observe-and-
+        // Faked-silence watch: a model that "says nothing" by typing a
+        // stand-in for it — an end-of-sequence marker (grok-4.6's literal
+        // `<|eos|>`), a lone punctuation mark, or a bracketed status note
+        // (`(no output)`, `(no content)`) — has just sent the user visible
+        // clutter in place of a clean empty ending. Observe-and-
         // notify only — the text streams on untouched; the armed notice tells
         // the model on its next call (this turn's next iteration, or the
         // conversation's next turn) and the model decides what to do. Worker
         // text never reaches the user, so agent roles don't arm.
         if (turn.role !== 'agent') {
           const leakedToken = trailingControlToken(parsed.text)
+          const placeholder = leakedToken ? null : silencePlaceholder(parsed.text)
+          const contentFree = leakedToken || placeholder ? null : contentFreeReply(parsed.text)
+          // Three shapes of one failure, checked in order of how specific the
+          // evidence is; they are mutually exclusive in practice (a token
+          // carries `<|…|>`, a placeholder carries words, a content-free reply
+          // carries only punctuation), so the order only decides which notice
+          // wins if a reply somehow managed to be two of them.
           if (leakedToken) armControlTokenNotice(turn.conversationId ?? null, leakedToken)
-          else {
-            // Same failure, the other shape: a reply that is punctuation and
-            // nothing else — the model meaning "nothing to add" and typing a
-            // lone `.` because it cannot emit an empty content channel. The
-            // control-token check runs first and wins; a token contains
-            // letters, so the two can never both match one reply.
-            const contentFree = contentFreeReply(parsed.text)
-            if (contentFree) armContentFreeReplyNotice(turn.conversationId ?? null, contentFree)
-          }
+          else if (placeholder)
+            armSilencePlaceholderNotice(turn.conversationId ?? null, placeholder)
+          else if (contentFree) armContentFreeReplyNotice(turn.conversationId ?? null, contentFree)
         }
 
         if (parsed.toolCalls.length === 0) {
+          lastParsedReply = { text: parsed.text, thinking: parsed.thinking }
           if (parsed.stopReason === 'max_tokens') {
             // A max_tokens stop normally means the reply was cut off mid-output,
             // so we let the model continue. But when the *input* already fills
@@ -1687,6 +1780,24 @@ export class Agent {
               content:
                 '[System: Your previous response was truncated by the output token limit. Do NOT repeat what you already said. Continue from where you stopped.]'
             })
+            continue
+          }
+
+          // Stop point 2: the model is done with what it was asked, but a
+          // message arrived while it was answering. The turn does not end
+          // with a user message unread — the reply so far stays in history
+          // (it already streamed to the user), the message lands after it,
+          // and the loop goes round once more so the model answers it here
+          // instead of the surface opening a fresh turn. An empty reply is
+          // skipped rather than pushed: providers reject empty assistant
+          // content, and the message still follows the last tool results.
+          const pendingBeforeEnd = turn.takeInterjections
+            ? await deliverInterjectionsAfterReply()
+            : false
+          if (pendingBeforeEnd) {
+            console.log(
+              `[agent] end_turn with a mid-turn message pending — continuing (iter ${iterationCount})`
+            )
             continue
           }
 

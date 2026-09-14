@@ -1224,11 +1224,10 @@
     "errorPrefix": "Something went wrong",
     "newChat": "New chat",
     "attachFile": "Attach file",
-    "queue": {
-      "placeholder": "Queue a message for when this turn ends",
-      "add": "Queue message",
-      "remove": "Remove from queue",
-      "attachmentCount": "{{count}} attachments"
+    "interject": {
+      "pending": "Read at the next step",
+      "withdraw": "Take this message back",
+      "placeholder": "Message Wolffish while it works…"
     },
     "downloadPdf": "Download chat as PDF",
     "pdfExport": {
@@ -1557,8 +1556,6 @@
     },
     "voice": {
       "record": "Record voice message",
-      "queue": "Queue voice message",
-      "queued": "Voice message",
       "noMic": "No microphone available",
       "permissionDenied": "Mic access denied — allow in system settings.",
       "recording": "Recording",

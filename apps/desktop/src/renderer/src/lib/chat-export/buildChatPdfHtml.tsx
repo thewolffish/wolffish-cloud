@@ -237,6 +237,31 @@ function countdownBlock(snapshot: CountdownSnapshot): string {
 }
 
 /** The todo checklist as a static block — mirrors TodoCard, always printed. */
+/**
+ * Print mirror of the feed's inline user bubble for a mid-turn message: the
+ * top-level user section's shape, nested at its position in the assistant's
+ * section. Empty (no text, no files) prints nothing.
+ */
+function userMessageBlock(
+  seg: Extract<Segment, { kind: 'user_message' }>,
+  userLabel: string
+): string {
+  const text = seg.text.trim()
+  const atts = seg.attachments ?? []
+  if (text.length === 0 && atts.length === 0) return ''
+  const body = text.length > 0 ? markdownPart(text) : ''
+  const attachments =
+    atts.length > 0
+      ? `<div class="attachments">${escapeHtml(atts.map((a) => a.originalName).join(' · '))}</div>`
+      : ''
+  return (
+    `<div class="msg user interjection"><div class="role">${escapeHtml(userLabel)}</div>` +
+    body +
+    attachments +
+    `</div>`
+  )
+}
+
 function todoBlock(items: TodoItem[]): string {
   const mark: Record<TodoItem['status'], string> = {
     completed: '☑',
@@ -266,7 +291,8 @@ function assistantParts(
   segments: Segment[],
   todoLists: Map<string, TodoItem[]>,
   verbose: boolean,
-  statusLabels: Record<ToolStatus, string>
+  statusLabels: Record<ToolStatus, string>,
+  userLabel: string
 ): string[] {
   const resultByToolCall = new Map<string, ToolResultSegment>()
   for (const s of segments) {
@@ -292,6 +318,13 @@ function assistantParts(
       if (todoListId(seg) !== seg.turnId) continue
       flushText()
       parts.push(todoBlock(todoLists.get(seg.turnId) ?? seg.items))
+    } else if (seg.kind === 'user_message') {
+      // A message the user sent mid-turn, at the point the agent read it —
+      // the feed always shows it (clean feed included), so it always prints,
+      // as its own user block inside the assistant's section.
+      flushText()
+      const block = userMessageBlock(seg, userLabel)
+      if (block) parts.push(block)
     } else if (seg.kind === 'workflow') {
       flushText()
       parts.push(workflowBlock(seg.snapshot))
@@ -335,7 +368,7 @@ export function hasExportableContent(messages: ChatMessage[], verbose: boolean):
   return messages.some((m) =>
     m.role === 'user'
       ? m.content.trim().length > 0 || (m.attachments?.length ?? 0) > 0
-      : assistantParts(m.segments, todoLists, verbose, noLabels).length > 0
+      : assistantParts(m.segments, todoLists, verbose, noLabels, '').length > 0
   )
 }
 
@@ -365,6 +398,7 @@ const STYLE = `
     box-decoration-break: clone; -webkit-box-decoration-break: clone;
   }
   .attachments { margin-top: 5px; font-size: 10.5px; color: #7a8190; overflow-wrap: anywhere; }
+  .interjection { margin: 10px 0; }
 
   /* Tool cards — print mirror of the feed's ToolCard. */
   .tool {
@@ -476,7 +510,8 @@ export function buildChatPdfHtml(options: ChatPdfOptions): string {
       message.segments,
       todoLists,
       options.verbose,
-      options.toolStatusLabels
+      options.toolStatusLabels,
+      options.userLabel
     )
     if (parts.length === 0) continue
     sections.push(

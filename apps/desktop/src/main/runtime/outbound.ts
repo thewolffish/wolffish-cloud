@@ -158,6 +158,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Screen-indicator notice (this turn raised the computer-use glow and has
     // not lowered it) — same vehicle. Changes at most twice per turn.
     (runtime.screenIndicator ? `${runtime.screenIndicator} ` : '') +
+    // Mid-turn user-message notice (an interjection was just delivered into
+    // this turn's history) — same vehicle; present on exactly one iteration.
+    (runtime.interjection ? `${runtime.interjection} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

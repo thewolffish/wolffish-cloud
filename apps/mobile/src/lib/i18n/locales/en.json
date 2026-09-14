@@ -749,11 +749,12 @@
     "send": "Send",
     "stop": "Stop",
     "hideKeyboard": "Hide keyboard",
-    "queue": {
-      "placeholder": "Queue for Wolffish",
-      "add": "Queue message",
-      "remove": "Remove from queue",
-      "attachmentCount": "{{count}} attachments"
+    "interject": {
+      "placeholder": "Message Wolffish while it works…",
+      "pending": "Read at the next step",
+      "withdraw": "Withdraw message",
+      "failed": "Your message could not reach the running task — it is back in the composer.",
+      "editorPlaceholder": "Message Wolffish while it works — take all the room you need."
     },
     "empty": {
       "title": "Wolffish is ready",
@@ -922,7 +923,6 @@
     "editor": {
       "title": "Edit prompt",
       "placeholder": "Message Wolffish — take all the room you need.",
-      "queuePlaceholder": "Queue for Wolffish — this goes out when the current turn ends.",
       "done": "Done",
       "close": "Close"
     },
@@ -999,8 +999,6 @@
       "delete": "Delete recording",
       "transcribing": "Transcribing…",
       "error": "Recording failed",
-      "queue": "Queue voice message",
-      "queued": "Voice message",
       "play": "Play",
       "pause": "Pause"
     },

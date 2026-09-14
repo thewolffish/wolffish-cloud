@@ -33,13 +33,13 @@ import { ChatControlsPanel, ChatMenuSheet } from '@/components/chat/ChatMenuShee
 import { ProviderMark } from '@/components/core/providerLogos'
 import { useConfigValue } from '@/state/demoConfig'
 import { PromptEditorModal } from '@/components/chat/PromptEditorModal'
-import { QueuedPromptTray, type QueuedPrompt } from '@/components/chat/QueuedPrompts'
 import { RainbowBorder } from '@/components/chat/RainbowBorder'
 import { DEFAULT_PROJECT_ICON, ProjectDialog } from '@/components/workspace/ProjectDialog'
 import { useActiveProject, useProjectsWritable } from '@/lib/sync/projects'
 import { setPlanModeSynced } from '@/lib/sync/planMode'
 import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
-import { selectPlanMode, useChatRuntime } from '@/state/chatRuntime'
+import { useAppStore } from '@/state/appStore'
+import { NEW_CHAT_PENDING_KEY, selectPlanMode, useChatRuntime } from '@/state/chatRuntime'
 
 /**
  * The chat composer — the desktop's composer card mapped to touch: ONE
@@ -62,10 +62,11 @@ import { selectPlanMode, useChatRuntime } from '@/state/chatRuntime'
  *
  * MID-TURN nothing here is refused: a prompt or a file submitted
  * while the agent is working is handed over exactly as it is when idle, and the
- * screen queues it (see chat.tsx). All that changes is what the composer SAYS —
- * the placeholder and the button labels name the queue — plus the red stop
- * sitting beside the primary button rather than replacing it, because a turn
- * you cannot stop while you are typing the next message would be a trap.
+ * screen sends it INTO the running turn (see chat.tsx) — the agent reads it at
+ * its next step. Send stays send. All that changes is the placeholder, which
+ * says the message goes to work already in progress, plus the red stop sitting
+ * beside the primary button rather than replacing it, because a turn you
+ * cannot stop while you are typing the next message would be a trap.
  */
 
 /** The single-line height of the field row at the top of the card. */
@@ -78,10 +79,13 @@ export type ComposerSubmit =
 export type ComposerProps = {
   streaming: boolean
   conversation: ConversationFile | null | undefined
-  /** Messages already handed over that are waiting for the turn to end. */
-  queued: QueuedPrompt[]
+  /**
+   * The conversation the field writes into — null for a chat with no id yet.
+   * Separate from `conversation`, which is the loaded file and is undefined
+   * for the frames before a body arrives; the draft-restore key must not be.
+   */
+  conversationId: string | null
   onSubmit: (payload: ComposerSubmit) => void
-  onCancelQueued: (id: string) => void
   onStop: () => void
   /**
    * Start a fresh chat — the header's + button, reached from here by project
@@ -94,9 +98,8 @@ export type ComposerProps = {
 export function Composer({
   streaming,
   conversation,
-  queued,
+  conversationId,
   onSubmit,
-  onCancelQueued,
   onStop,
   onNewConversation
 }: ComposerProps): React.JSX.Element {
@@ -106,6 +109,21 @@ export function Composer({
   // The field's own iOS keyboard-dismiss chevron, paired by id below.
   const accessoryID = useId()
   const [draft, setDraft] = useState('')
+  /**
+   * Words handed BACK: a mid-turn message withdrawn before the agent read it
+   * — by the user, or because the turn was stopped — is a draft again, not a
+   * message that went. It lands in the runtime store under this chat's key
+   * (chatRuntime.restoreDraft) and is appended to the field here, once, on
+   * the render that sees it; a message the user was already typing keeps its
+   * place above it.
+   */
+  const restoreKey = conversationId ?? NEW_CHAT_PENDING_KEY
+  const restored = useChatRuntime((state) => state.draftRestores[restoreKey])
+  useEffect(() => {
+    if (!restored) return
+    setDraft((current) => (current.trim() ? `${current}\n${restored}` : restored))
+    useChatRuntime.getState().takeDraftRestore(restoreKey)
+  }, [restored, restoreKey])
   const [menuOpen, setMenuOpen] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
   const activeProject = useActiveProject()
@@ -129,13 +147,21 @@ export function Composer({
   // the same trade. The untouched id stays on the accessibility label below.
   const chipModelName = brainModel ? shortModelName(brainModel) : activeModelName
 
-  // Plan mode is switched in the chat controls (the bottom row has no room for
-  // it); while it is ON a chip sits at the end of the row ABOVE the controls,
-  // so the stance is never invisible from the chat, and one tap turns it off.
-  // Gone entirely when no desktop can run the turn — the switch is too.
+  // Plan mode, worn where the desktop wears it: a chip in the bottom row
+  // beside the model chip, and the ONLY handle on the stance — it is switched
+  // here, on and off, rather than from a row inside the controls sheet. A
+  // stance that shapes the very next turn belongs on the surface that sends
+  // it, not two taps down.
+  //
+  // It always stands. What changes is whether it can be flipped: a PAIRED
+  // phone whose desktop is out of reach cannot write the stance over there,
+  // so the chip dims and a tap answers with the reason rather than a flip
+  // nobody would receive. Unpaired — demo — the stance stays local and the
+  // chip is live, exactly as the controls row was before it.
   const planMode = useChatRuntime(selectPlanMode(conversation?.id ?? null))
   const desktopReachable = useDesktopReachable()
-  const showPlanChip = planMode && desktopReachable && !recording
+  const paired = useAppStore((state) => state.paired)
+  const planWritable = !paired || desktopReachable
 
   // A file on its own is a message, exactly as it is on the desktop — the
   // prompt is optional once something is attached.
@@ -159,9 +185,9 @@ export function Composer({
     handedOver.current = false
   }, [draft, files])
 
-  // Not gated on `streaming`: mid-turn the submit is a queue, and the composer
-  // clears either way — what was written now belongs to the send in flight or
-  // to a queued row, not to the field. The expanded editor submits through
+  // Not gated on `streaming`: mid-turn the submit goes into the running turn,
+  // and the composer clears either way — what was written now belongs to the
+  // message on its way, not to the field. The expanded editor submits through
   // here too, passing the draft it holds, which is why the text is an argument
   // rather than read from state.
   const submit = (value: string): void => {
@@ -173,7 +199,7 @@ export function Composer({
     setFiles([])
     // A message on its way is the end of editing it: the expanded editor comes
     // down with the field it was standing in for, and the keyboard goes with
-    // it — sent or queued alike. Half the screen was being held for a field
+    // it — idle or mid-turn alike. Half the screen was being held for a field
     // that is now empty, and the reply is what the user wants to see.
     setEditorOpen(false)
     Keyboard.dismiss()
@@ -292,9 +318,6 @@ export function Composer({
           in tree order so even an auto-focused mount finds it registered. */}
       <KeyboardDismissAccessory nativeID={accessoryID} />
       {streaming && <RainbowBorder />}
-      {/* Queued messages sit above everything else in the composer, as they do
-          on the desktop — above the staged files, never in the feed. */}
-      <QueuedPromptTray prompts={queued} onCancel={onCancelQueued} />
       {/* Staged files sit above the input, as they do above the desktop
           textarea — visible, removable, and not yet anywhere but this phone. */}
       {!recording && <AttachmentTray files={files} onRemove={remove} />}
@@ -343,7 +366,7 @@ export function Composer({
                 value={draft}
                 onChangeText={setDraft}
                 placeholder={rtlPlaceholder(
-                  streaming ? t('chat.queue.placeholder') : t('chat.placeholder')
+                  streaming ? t('chat.interject.placeholder') : t('chat.placeholder')
                 )}
                 placeholderTextColor={tokens.muted}
                 selectionColor={tokens.accent}
@@ -353,30 +376,14 @@ export function Composer({
                   'text-fg',
                   INPUT_TEXT_ALIGN
                 )}
-                accessibilityLabel={streaming ? t('chat.queue.placeholder') : t('chat.placeholder')}
+                accessibilityLabel={
+                  streaming ? t('chat.interject.placeholder') : t('chat.placeholder')
+                }
                 // The dismiss chevron docked above the iPhone keyboard — the
                 // OS gives that keyboard no way down of its own. iOS-only
                 // prop; Android's navigation bar already carries the chevron.
                 inputAccessoryViewID={accessoryID}
               />
-            </View>
-          )}
-
-          {showPlanChip && (
-            <View className="flex-row items-center justify-end px-1.5 pb-1">
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: true }}
-                accessibilityLabel={t('chat.planMode.onTitle')}
-                hitSlop={6}
-                onPress={() => void setPlanModeSynced(conversation?.id ?? null, false)}
-                className="bg-primary-soft border-primary-line active:bg-primary-line h-6 flex-row items-center gap-1 rounded-full border px-2"
-              >
-                <Task01Icon size={12} className="text-primary" />
-                <Text className="text-primary font-sans-medium text-[11px]">
-                  {t('chat.planMode.label')}
-                </Text>
-              </Pressable>
             </View>
           )}
 
@@ -426,15 +433,62 @@ export function Composer({
                     accessibilityLabel={activeModelName}
                     hitSlop={6}
                     onPress={() => (activeProject ? setProjectOpen(true) : setMenuOpen(true))}
-                    className="bg-primary-soft border-primary-line active:bg-primary-line h-7 shrink flex-row items-center gap-1.5 rounded-lg border px-2"
+                    className="bg-primary-soft border-primary-line active:bg-primary-line h-7 min-w-0 shrink flex-row items-center gap-1.5 rounded-lg border px-2"
                   >
                     <ProviderMark provider={brainProvider} size={13} className="text-primary" />
+                    {/* The one elastic thing in the row. No width cap: every
+                      other control here — the plan chip included — keeps its
+                      natural size (RN shrinks nothing unless it is told to),
+                      so the name takes whatever is left over and gives it
+                      back, one ellipsis at a time, when a longer model is
+                      picked. That is the only way the longest model name and
+                      four controls share ~340pt on the narrowest phone
+                      without wrapping. */}
                     <Text
                       numberOfLines={1}
-                      className="text-primary font-sans-medium max-w-[162px] shrink text-[11px]"
+                      className="text-primary font-sans-medium shrink text-[11px]"
                       style={{ writingDirection: 'ltr' }}
                     >
                       {chipModelName}
+                    </Text>
+                  </Pressable>
+                  {/* Plan mode, beside the model it constrains — the desktop
+                    wears its Plan chip in this same row, and this one is a
+                    toggle exactly as that one is: ON it is tinted like the
+                    model chip beside it, OFF it is an outline, and either way
+                    the stance the next send carries is on screen. Out of
+                    reach it dims and answers a tap with the reason instead of
+                    a flip the desktop would never hear. */}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: planMode, disabled: !planWritable }}
+                    accessibilityLabel={
+                      planMode ? t('chat.planMode.onTitle') : t('chat.planMode.offTitle')
+                    }
+                    hitSlop={6}
+                    onPress={() => {
+                      if (!planWritable) {
+                        toast.show({ tone: 'warning', message: t('chat.planMode.offline') })
+                        return
+                      }
+                      void setPlanModeSynced(conversation?.id ?? null, !planMode)
+                    }}
+                    className={cn(
+                      'h-7 flex-row items-center gap-1 rounded-full border px-2',
+                      planMode
+                        ? 'bg-primary-soft border-primary-line active:bg-primary-line'
+                        : 'border-border bg-surface active:bg-border-soft',
+                      !planWritable && 'opacity-50'
+                    )}
+                  >
+                    <Task01Icon size={12} className={planMode ? 'text-primary' : 'text-muted'} />
+                    <Text
+                      className={cn(
+                        'font-sans-medium text-[11px]',
+                        planMode ? 'text-primary' : 'text-muted'
+                      )}
+                    >
+                      {t('chat.planMode.label')}
                     </Text>
                   </Pressable>
                 </>
@@ -481,15 +535,13 @@ export function Composer({
                     mutating its variable-bearing className.
 
                     The mic stays live mid-turn, as it does on the desktop: a
-                    take recorded while the agent is working joins the queue
-                    rather than being refused. */}
+                    take recorded while the agent is working goes into the
+                    running turn rather than being refused. */}
                   {!canSend && (
                     <Pressable
                       key="composer-mic"
                       accessibilityRole="button"
-                      accessibilityLabel={
-                        streaming ? t('chat.voice.queue') : t('chat.voice.record')
-                      }
+                      accessibilityLabel={t('chat.voice.record')}
                       hitSlop={6}
                       onPress={() => void startRecording()}
                       className="h-7 w-7 items-center justify-center rounded-md active:bg-border-soft"
@@ -498,13 +550,13 @@ export function Composer({
                     </Pressable>
                   )}
                   {/* The primary button keeps its place and its meaning mid-turn
-                    — it queues instead of sending. Stop is the separate red
+                    — it sends, into the running turn. Stop is the separate red
                     one beside it, never the same control wearing two hats. */}
                   {canSend && (
                     <Pressable
                       key="composer-send"
                       accessibilityRole="button"
-                      accessibilityLabel={streaming ? t('chat.queue.add') : t('chat.send')}
+                      accessibilityLabel={t('chat.send')}
                       onPress={submitText}
                       className="bg-primary h-8 w-8 items-center justify-center rounded-full active:opacity-90"
                     >

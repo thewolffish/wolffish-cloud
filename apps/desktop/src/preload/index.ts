@@ -9,6 +9,11 @@ import type {
   ToolResultMeta,
   ToolResultStatus
 } from '@main/runtime/broca'
+import type {
+  InterjectResult,
+  Interjection,
+  InterjectionEvent
+} from '@main/runtime/agent/interjection'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export type {
@@ -940,7 +945,33 @@ export type ChatApi = {
   onCredentialBlocked: (listener: (event: ChatCredentialBlockedEvent) => void) => () => void
   /** Turn lifecycle across ALL channels — backs the sidebar status chips. */
   onTurnState: (listener: (event: ChatTurnStateEvent) => void) => () => void
+  /**
+   * Hand a message to the conversation's RUNNING turn (any channel's — the
+   * inbox is keyed by conversation). The agent reads it at its next stop
+   * point and echoes it back as a `user_message` segment carrying the same
+   * messageId. `no_live_turn` means exactly that: send it as a normal turn.
+   * Attachments are staged on disk first, exactly as for `send`.
+   */
+  interject: (payload: {
+    conversationId: string
+    messageId: string
+    text: string
+    attachments?: MessageAttachment[]
+    voicePrompt?: boolean
+    voiceLang?: string
+  }) => Promise<InterjectResult>
+  /** Take a still-unread message back. False once the agent has read it. */
+  withdrawInterjection: (payload: { conversationId: string; messageId: string }) => Promise<boolean>
+  /** Messages parked for a conversation and not read yet — the cold-start seed for the pending bubbles. */
+  pendingInterjections: (conversationId: string) => Promise<ChatInterjection[]>
+  /** Mid-turn message lifecycle (pending / delivered / withdrawn), every surface's messages included. */
+  onInterjection: (listener: (event: ChatInterjectionEvent) => void) => () => void
 }
+
+/** Lifecycle event of one mid-turn message — mirrors runtime/agent/interjection.ts InterjectionEvent. */
+export type ChatInterjectionEvent = InterjectionEvent
+/** One parked mid-turn message, as chat:pendingInterjections returns it. */
+export type ChatInterjection = Interjection
 
 export type ConversationSummaryUpdate = {
   conversationId: string
@@ -2348,7 +2379,12 @@ const api: WolffishApi = {
     onApprovalRequest: (listener) => subscribe('chat:approvalRequest', listener),
     onAskRequest: (listener) => subscribe('chat:askRequest', listener),
     onCredentialBlocked: (listener) => subscribe('chat:credentialBlocked', listener),
-    onTurnState: (listener) => subscribe('chat:turnState', listener)
+    onTurnState: (listener) => subscribe('chat:turnState', listener),
+    interject: (payload) => ipcRenderer.invoke('chat:interject', payload),
+    withdrawInterjection: (payload) => ipcRenderer.invoke('chat:withdrawInterjection', payload),
+    pendingInterjections: (conversationId) =>
+      ipcRenderer.invoke('chat:pendingInterjections', conversationId),
+    onInterjection: (listener) => subscribe('chat:interjection', listener)
   },
   conversation: {
     list: () => ipcRenderer.invoke('conversation:list'),

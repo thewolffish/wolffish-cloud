@@ -320,6 +320,13 @@ export function Prompt(props: { onSubmit?: () => void }): JSX.Element {
       }
       case 'session_interrupt': {
         if (!state.working) return false
+        // A mid-turn message of ours still unread comes back first: Escape
+        // takes the LAST one back into the prompt. Only with none left does
+        // Escape mean "interrupt the turn".
+        if (state.pending.some((row) => row.mine)) {
+          void app.actions.withdrawPending()
+          return true
+        }
         const armedAt = interruptArmedAt()
         if (armedAt && Date.now() - armedAt < 5000) {
           setInterruptArmedAt(0)
@@ -336,12 +343,16 @@ export function Prompt(props: { onSubmit?: () => void }): JSX.Element {
   }
 
   createEffect(on(text, () => refreshCompletions()))
-  // A send that never reached the daemon comes back as the draft.
+  // A send that never reached the daemon, or a mid-turn message taken back,
+  // comes home as the draft — appended on its own line when something is
+  // already being typed, never dropped.
   createEffect(() => {
     const draft = state.restoreDraft
     if (!draft) return
     set('restoreDraft', null)
-    if (textarea && textarea.plainText.trim().length === 0) app.prompt?.setText(draft)
+    if (!textarea) return
+    const current = textarea.plainText
+    app.prompt?.setText(current.trim().length === 0 ? draft : `${current}\n${draft}`)
   })
 
   /* ───────── layout ───────── */
@@ -351,15 +362,13 @@ export function Prompt(props: { onSubmit?: () => void }): JSX.Element {
   const pct = () =>
     state.meter.budget > 0 ? Math.round((state.meter.tokens / state.meter.budget) * 100) : 0
   const interruptHint = () =>
-    interruptArmedAt() && Date.now() - interruptArmedAt() < 5000
-      ? 'esc again to interrupt'
-      : 'esc interrupt'
+    state.pending.some((row) => row.mine)
+      ? 'esc takes back'
+      : interruptArmedAt() && Date.now() - interruptArmedAt() < 5000
+        ? 'esc again to interrupt'
+        : 'esc interrupt'
   const placeholder = () =>
-    state.working
-      ? 'Type to queue for after this turn…'
-      : state.conversationId
-        ? 'Reply…'
-        : 'Ask anything…'
+    state.working ? 'Message while it works…' : state.conversationId ? 'Reply…' : 'Ask anything…'
   const border = () => (state.working ? p().accent : p().border)
 
   return (
@@ -506,8 +515,8 @@ export function Prompt(props: { onSubmit?: () => void }): JSX.Element {
           </Show>
         </box>
         <text fg={p().muted} wrapMode="none" flexShrink={0}>
-          <Show when={state.queue.length > 0}>
-            <span style={{ fg: p().warn }}>{`${state.queue.length} queued · `}</span>
+          <Show when={state.pending.length > 0}>
+            <span style={{ fg: p().warn }}>{`${state.pending.length} pending · `}</span>
           </Show>
           <Show when={state.meter.budget > 0}>
             <span style={{ fg: p().dim }}>ctx </span>

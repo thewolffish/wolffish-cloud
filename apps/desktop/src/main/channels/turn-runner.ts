@@ -5,6 +5,12 @@ import { ensureConversationTitle, TITLE_DEADLINE_REASON } from '@main/conversati
 import type { Agent } from '@main/runtime/agent'
 import { turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
+import type {
+  Interjection,
+  InterjectionEvent,
+  InterjectionWithdrawReason,
+  InterjectResult
+} from '@main/runtime/agent/interjection'
 import type { ChatHistoryMessage } from '@preload/index'
 
 /**
@@ -133,6 +139,15 @@ export type TurnLifecycleEvent = {
 }
 
 /**
+ * A message the user sent while its conversation's turn was running, parked
+ * for the agent to read at its next stop point (see agent/interjection.ts).
+ * Kept per conversation, not per turn: a phone can message a desktop run,
+ * and a turn queued behind its predecessor on the lane inherits whatever
+ * the predecessor never got to.
+ */
+type Inbox = Interjection[]
+
+/**
  * Single agent-wide dispatcher. Drives every turn through agent.respond
  * regardless of which channel originated it. Owns:
  *  - the sensitive-data gate,
@@ -188,6 +203,9 @@ export class TurnRunner {
   private blockCredentials: boolean = false
   private locale: 'en' | 'ar' = 'en'
   private lifecycleListener: ((ev: TurnLifecycleEvent) => void) | null = null
+  private readonly interjectionListeners = new Set<(ev: InterjectionEvent) => void>()
+  /** Mid-turn user messages parked per conversation — see interject(). */
+  private readonly inboxes = new Map<string, Inbox>()
   /**
    * Deadline (ms) for the title-first LLM call. Titling is awaited BEFORE
    * agent.respond, so this is dead air on the front of a new conversation — a
@@ -235,9 +253,119 @@ export class TurnRunner {
     this.lifecycleListener = listener
   }
 
+  /**
+   * Observe mid-turn message events. Its own channel, deliberately not
+   * chat:turnState: that listener maps every phase it does not know to
+   * "failed", and a pending message is not a run-state transition. Many
+   * listeners: the broadcast to the surfaces is one, and each channel that
+   * can SEND an interjection is another (a Telegram message returned with
+   * reason turn_ended is re-dispatched by the Telegram channel). Returns
+   * the unsubscribe.
+   */
+  onInterjection(listener: (ev: InterjectionEvent) => void): () => void {
+    this.interjectionListeners.add(listener)
+    return () => {
+      this.interjectionListeners.delete(listener)
+    }
+  }
+
   /** True while any turn for this conversation is queued or running. */
   isConversationActive(conversationId: string): boolean {
     return (this.activeTurns.get(conversationId) ?? 0) > 0
+  }
+
+  /**
+   * Hand a user message to the conversation's RUNNING turn. Accepted whenever
+   * a turn is registered on the lane — including the window between send()
+   * and the first model call, and a turn still queued behind its
+   * predecessor, since the loop drains the inbox before its first call too.
+   * `no_live_turn` means exactly that: the caller starts a normal turn.
+   */
+  interject(conversationId: string, item: Interjection): InterjectResult {
+    if (!this.isConversationActive(conversationId)) return { status: 'no_live_turn' }
+    const inbox = this.inboxes.get(conversationId)
+    if (inbox) inbox.push(item)
+    else this.inboxes.set(conversationId, [item])
+    this.emitInterjection(conversationId, item, 'pending')
+    return { status: 'pending' }
+  }
+
+  /**
+   * Take a still-undelivered message back out. False once the agent has
+   * already read it — a delivered message is history and cannot be unsent.
+   */
+  withdrawInterjection(
+    conversationId: string,
+    messageId: string,
+    reason: InterjectionWithdrawReason = 'user'
+  ): boolean {
+    const inbox = this.inboxes.get(conversationId)
+    if (!inbox) return false
+    const idx = inbox.findIndex((i) => i.messageId === messageId)
+    if (idx < 0) return false
+    const [item] = inbox.splice(idx, 1)
+    if (inbox.length === 0) this.inboxes.delete(conversationId)
+    this.emitInterjection(conversationId, item, 'withdrawn', reason)
+    return true
+  }
+
+  /** Messages parked for a conversation and not yet read (cold-start snapshots). */
+  pendingInterjections(conversationId: string): Interjection[] {
+    return [...(this.inboxes.get(conversationId) ?? [])]
+  }
+
+  /**
+   * Drain the inbox for the agent loop. Called only from inside the turn
+   * (threaded as AgentTurnOptions.takeInterjections); each item is on its
+   * way into the model's messages the moment this returns, so `delivered`
+   * is broadcast here.
+   */
+  private takeInterjections(conversationId: string): Interjection[] {
+    const inbox = this.inboxes.get(conversationId)
+    if (!inbox || inbox.length === 0) return []
+    this.inboxes.delete(conversationId)
+    for (const item of inbox) this.emitInterjection(conversationId, item, 'delivered')
+    return inbox
+  }
+
+  /**
+   * End-of-lane sweep: whatever the turn never got to (the sliver between
+   * the loop's final drain and this point, or a Stop) goes back to its
+   * sender with the reason — unless another turn is already queued on this
+   * lane, in which case it stays and that turn reads it before its first
+   * call.
+   */
+  private sweepInterjections(conversationId: string, reason: InterjectionWithdrawReason): void {
+    const inbox = this.inboxes.get(conversationId)
+    if (!inbox || inbox.length === 0) return
+    this.inboxes.delete(conversationId)
+    for (const item of inbox) this.emitInterjection(conversationId, item, 'withdrawn', reason)
+  }
+
+  private emitInterjection(
+    conversationId: string,
+    item: Interjection,
+    state: InterjectionEvent['state'],
+    reason?: InterjectionWithdrawReason
+  ): void {
+    const ev: InterjectionEvent = {
+      conversationId,
+      messageId: item.messageId,
+      channel: item.channel,
+      text: item.text,
+      attachments: item.attachments,
+      ...(item.voicePrompt ? { voicePrompt: true } : {}),
+      ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+      state,
+      ...(reason ? { reason } : {})
+    }
+    for (const listener of this.interjectionListeners) {
+      try {
+        listener(ev)
+      } catch {
+        // a broken listener must never tear down a turn
+      }
+    }
   }
 
   /** Total queued+running turns across all conversations (quit-drain). */
@@ -338,6 +466,9 @@ export class TurnRunner {
 
     const agent = this.agent
     const conversationId = opts.conversationId ?? null
+    // Why the turn's undelivered mid-turn messages go back to their senders
+    // — set when the turn settles, read by the lane tail's sweep below.
+    let sweepReason: InterjectionWithdrawReason = 'turn_ended'
     // Turns for the SAME conversation serialize (one transcript, one order);
     // a turn with no conversation gets a private lane and runs immediately.
     const laneKey = conversationId ?? `turn:${turnId}`
@@ -490,6 +621,7 @@ export class TurnRunner {
 
       let completed = false
       try {
+        // (sweepReason is set in the finally below and read by the lane tail.)
         // The turnScope entry is what keys everything per-turn downstream:
         // the corpus relays above, approval/ask routing in turnRouter, and
         // the daily-log attribution — all read the emitter's scope.
@@ -509,7 +641,10 @@ export class TurnRunner {
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,
             modeOverride: opts.modeOverride,
-            planMode: opts.planMode === true
+            planMode: opts.planMode === true,
+            takeInterjections: conversationId
+              ? () => this.takeInterjections(conversationId)
+              : undefined
           })
         )
         sink.onDone()
@@ -538,6 +673,7 @@ export class TurnRunner {
         // seconds ago in all three, and the queued successor turn reads this
         // map strictly after this finally runs (it awaits our promise tail).
         if (conversationId) this.lastTurnEndedAt.set(conversationId, Date.now())
+        sweepReason = controller.signal.aborted ? 'canceled' : completed ? 'turn_ended' : 'error'
         for (const off of offs) off()
         turnRouter.unregister(turnId)
         // A countdown armed in this turn starts its clock now — or is dropped
@@ -559,6 +695,16 @@ export class TurnRunner {
         const runs = this.liveRuns.get(conversationId)
         runs?.delete(turnId)
         if (runs && runs.size === 0) this.liveRuns.delete(conversationId)
+        // Undelivered mid-turn messages: kept for a successor already queued
+        // on this lane (it drains them before its first call); otherwise
+        // returned to their senders with why — a Stop restores the draft, a
+        // natural finish re-sends as a fresh turn. Swept HERE, after the lane
+        // count drops, not in the turn's finally: between the two, interject()
+        // still said "pending" for a lane nobody would ever drain, and a
+        // message accepted in that window sat unread until the next turn.
+        // Now everything accepted up to the decrement is swept with it, and
+        // anything after is refused with no_live_turn.
+        if (remaining <= 0) this.sweepInterjections(conversationId, sweepReason)
       }
     })
 

@@ -381,6 +381,28 @@ export type Segment =
   | { kind: 'text'; turnId: string; segmentId: string; delta: string; worker?: SegmentWorker }
   | {
       /**
+       * A user message delivered to the model MID-TURN — sent while the run
+       * was working and read at the agent's next stop point (see
+       * agent/interjection.ts). NOT display-only: both model-context rebuild
+       * paths (channel.ts assistantSegmentsToHistory, the renderer's
+       * textHistory) flush the iteration so far and emit a `role: 'user'`
+       * entry here, so the next turn's history carries it at its true
+       * position. Every renderer draws it as a user bubble inline in the
+       * assistant's card. `messageId` is the sender's own id — the surface
+       * retires its optimistic pending bubble when this arrives.
+       */
+      kind: 'user_message'
+      turnId: string
+      segmentId: string
+      messageId: string
+      text: string
+      attachments?: import('@main/conversations').MessageAttachment[]
+      voicePrompt?: boolean
+      voiceLang?: string
+      timestamp: number
+    }
+  | {
+      /**
        * A run of the model's thinking, streamed in place — one delta per
        * provider tick, folded per run by appendTextSegment exactly like text,
        * so the whole turn's reasoning renders at its true position (before
@@ -704,6 +726,38 @@ export class Broca {
       segmentId: this.nextId(),
       items,
       ...(listId && listId !== turnId ? { listId } : {})
+    })
+  }
+
+  /**
+   * Emit a user message the agent just delivered into the running turn
+   * (an interjection). The Agent is the only caller, and it calls this at
+   * the moment the message is pushed into the model's messages — so the
+   * segment lands strictly after the tool results it follows and before the
+   * next iteration's active_model marker, which is what the rebuild rule in
+   * both history paths relies on.
+   */
+  emitUserMessage(
+    turnId: string,
+    item: {
+      messageId: string
+      text: string
+      attachments?: import('@main/conversations').MessageAttachment[]
+      voicePrompt?: boolean
+      voiceLang?: string
+    }
+  ): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({
+      kind: 'user_message',
+      turnId,
+      segmentId: this.nextId(),
+      messageId: item.messageId,
+      text: item.text,
+      ...(item.attachments && item.attachments.length > 0 ? { attachments: item.attachments } : {}),
+      ...(item.voicePrompt ? { voicePrompt: true } : {}),
+      ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+      timestamp: Date.now()
     })
   }
 

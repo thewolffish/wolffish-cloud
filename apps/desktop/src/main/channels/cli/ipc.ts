@@ -33,6 +33,7 @@ import type { AuthState } from '@main/cloud/session'
 import type { MessageAttachmentType } from '@main/conversations'
 import type { IpcHandler } from '@main/ipc-registry'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
+import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { validateFile } from '@main/uploads/validation'
 import { saveUploadFromFile } from '@main/uploads/uploads'
@@ -382,6 +383,50 @@ export function registerCliIpc(deps: CliIpcDeps): void {
         modeOverride: payload?.modeOverride
       })
     }
+  )
+
+  /**
+   * A message typed while the turn runs. Attachments stage through the same
+   * helper `cli:send` uses, then the runner parks the message for the agent's
+   * next stop point. `no_live_turn` tells the terminal to send normally.
+   */
+  handle(
+    'cli:interject',
+    async (
+      _e,
+      payload: {
+        conversationId?: string | null
+        messageId: string
+        text: string
+        attachmentPaths?: string[]
+      }
+    ): Promise<InterjectResult> => {
+      const conversationId = payload?.conversationId ?? null
+      if (!conversationId) return { status: 'no_live_turn' }
+      const attachments = payload?.attachmentPaths?.length
+        ? await stageAttachments(payload.attachmentPaths, conversationId)
+        : []
+      return channel.interject({
+        conversationId,
+        messageId: String(payload?.messageId ?? ''),
+        text: String(payload?.text ?? ''),
+        attachments
+      })
+    }
+  )
+
+  handle(
+    'cli:withdrawInterjection',
+    (_e, payload: { conversationId: string; messageId: string }): { ok: boolean } => ({
+      ok: channel.withdrawInterjection(
+        String(payload?.conversationId ?? ''),
+        String(payload?.messageId ?? '')
+      )
+    })
+  )
+
+  handle('cli:pendingInterjections', (_e, conversationId: string): Interjection[] =>
+    conversationId ? channel.pendingInterjections(String(conversationId)) : []
   )
 
   /**

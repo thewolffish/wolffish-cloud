@@ -1,5 +1,6 @@
 import type { LiveStream } from '@/state/chatRuntime'
 import type { ConversationMessage } from '@/lib/conversations/types'
+import { deliveredInterjectionIds } from '@/lib/conversations/segments'
 
 /**
  * The chat feed's row list: the stored transcript with the in-flight turn laid
@@ -37,6 +38,12 @@ export type FeedItem = {
   message: ConversationMessage
   /** True while this row is being written — drives the thinking indicator. */
   streaming: boolean
+  /**
+   * A user message sent mid-turn that the agent has not read yet. Drawn as a
+   * user bubble with a "read at the next step" caption and a withdraw
+   * control, AFTER the live assistant row — it is waiting on that row's turn.
+   */
+  pending?: boolean
 }
 
 export type BuildFeedInput = {
@@ -51,9 +58,23 @@ export type BuildFeedInput = {
   pendingUser?: ConversationMessage | null
   /** True between pressing Send and the desktop accepting the turn. */
   sending?: boolean
+  /**
+   * Mid-turn messages not yet read by the agent (chatRuntime.pending). Each
+   * is emitted after the live row under its own id, and dropped the moment
+   * that id is found anywhere in the transcript: as a stored message, or as
+   * a `user_message` segment inside an assistant message — stored or live.
+   * That second match is what makes a missed `delivered` push harmless.
+   */
+  pending?: ConversationMessage[]
 }
 
-export function buildFeed({ messages, live, pendingUser, sending }: BuildFeedInput): FeedItem[] {
+export function buildFeed({
+  messages,
+  live,
+  pendingUser,
+  sending,
+  pending
+}: BuildFeedInput): FeedItem[] {
   const items: FeedItem[] = []
   const stored = new Set<string>()
   // While the overlay is up, its copy of the turn's message is the one to draw.
@@ -82,19 +103,30 @@ export function buildFeed({ messages, live, pendingUser, sending }: BuildFeedInp
 
   if (live) {
     items.push({ key: LIVE_KEY, message: live.message, streaming: live.status === 'streaming' })
-    return items
-  }
-
-  // Sending, but the desktop has not answered yet: there is no turn to show
-  // and no id to file it under, so the thinking row stands in for both. It is
-  // the same row the live turn will occupy, under the same key, so the handover
-  // is invisible — the typed words never restart.
-  if (sending) {
+  } else if (sending) {
+    // Sending, but the desktop has not answered yet: there is no turn to show
+    // and no id to file it under, so the thinking row stands in for both. It is
+    // the same row the live turn will occupy, under the same key, so the handover
+    // is invisible — the typed words never restart.
     items.push({
       key: LIVE_KEY,
       message: { role: 'assistant', content: '', timestamp: Date.now() },
       streaming: true
     })
+  }
+
+  // Mid-turn messages, after the row whose turn they are waiting on. Same
+  // id discipline as the prompt: a row is dropped by the transcript holding
+  // its id, never by a timer or an ordering — so a `delivered` push and the
+  // mirror carrying the segment can arrive in either order, or one of them
+  // not at all, and the feed reads the same.
+  if (pending && pending.length > 0) {
+    const delivered = deliveredInterjectionIds(messages ?? [], live?.message)
+    for (const message of pending) {
+      if (!message.id) continue
+      if (stored.has(message.id) || delivered.has(message.id)) continue
+      items.push({ key: message.id, message, streaming: false, pending: true })
+    }
   }
   return items
 }

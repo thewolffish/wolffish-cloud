@@ -206,11 +206,15 @@ async function run(): Promise<void> {
     )
   })
 
-  await check('an empty reply still gets a non-empty assistant message', () => {
-    // Anthropic rejects empty text blocks and enforces strict alternation.
+  await check('an empty reply gets the aside alone — no invented placeholder', () => {
+    // The `(continuing)` filler that used to stand in here was a parenthesized
+    // stand-in for an empty turn in the model's own voice, and it leaked back
+    // out to users as `(no output)` / `(no content)`. Anthropic no longer needs
+    // it: toAnthropicMessages merges a user message into the preceding turn.
     const nudge = screenIndicatorNudge(true, endTurn('   '), 0)
     assert.ok(nudge)
-    assert.ok(String(nudge[0].content).length > 0)
+    assert.equal(nudge.length, 1)
+    assert.equal(nudge[0].role, 'user')
   })
 
   await check('reasoning content is carried through, as the max_tokens continuation does', () => {

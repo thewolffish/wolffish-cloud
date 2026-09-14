@@ -110,6 +110,65 @@ describe('segment reducer', () => {
     expect(last.parts[0].kind === 'tool' && last.parts[0].status).toBe('error')
   })
 
+  test('a user_message lands inside the open assistant item, retires its pending row, and the next delta still folds there', () => {
+    const store = createAppStore()
+    const [state, set] = store
+    set('pending', [
+      { id: 'm1', text: 'skip the tests folder', attachments: [], mine: true },
+      { id: 'm2', text: 'later', attachments: [], mine: false }
+    ])
+    applySegment(store, seg('text', { delta: 'first' }), { live: true })
+    applySegment(
+      store,
+      seg('user_message', {
+        messageId: 'm1',
+        text: 'skip the tests folder',
+        attachments: [
+          { type: 'document', filePath: 'uploads/c/a.pdf', originalName: 'a.pdf', sizeBytes: 3 }
+        ],
+        timestamp: 5
+      }),
+      { live: true }
+    )
+    applySegment(store, seg('text', { delta: 'ok' }), { live: true })
+    expect(state.feed.length).toBe(1)
+    const last = state.feed[0]
+    if (last.kind !== 'assistant') throw new Error('expected assistant')
+    expect(last.parts.map((p) => p.kind)).toEqual(['text', 'user', 'text'])
+    const user = last.parts[1]
+    if (user.kind !== 'user') throw new Error('expected user part')
+    expect(user.messageId).toBe('m1')
+    expect(user.attachments).toEqual([
+      { name: 'a.pdf', path: 'uploads/c/a.pdf', type: 'document', size: 3 }
+    ])
+    expect(last.parts[2].kind === 'text' && last.parts[2].text).toBe('ok')
+    expect(state.pending.map((row) => row.id)).toEqual(['m2'])
+  })
+
+  test('loadConversation replays a user_message segment at its position', () => {
+    const store = createAppStore()
+    loadConversation(store, [
+      { role: 'user', content: 'hi', timestamp: 1 },
+      {
+        role: 'assistant',
+        content: '',
+        timestamp: 3,
+        segments: [
+          seg('text', { delta: 'working' }),
+          seg('user_message', { messageId: 'm9', text: 'use the other file', timestamp: 2 }),
+          seg('text', { delta: 'done' }),
+          seg('turn_end', { stopReason: 'end_turn', iterationCount: 2 })
+        ]
+      }
+    ])
+    const [state] = store
+    const replayed = state.feed[1]
+    if (replayed.kind !== 'assistant') throw new Error('expected assistant')
+    expect(replayed.parts.map((p) => p.kind)).toEqual(['text', 'user', 'text'])
+    expect(replayed.parts[1].kind === 'user' && replayed.parts[1].text).toBe('use the other file')
+    expect(replayed.parts[2].kind === 'text' && replayed.parts[2].text).toBe('done')
+  })
+
   test('loadConversation replays stored segments and flat content', () => {
     const store = createAppStore()
     loadConversation(store, [

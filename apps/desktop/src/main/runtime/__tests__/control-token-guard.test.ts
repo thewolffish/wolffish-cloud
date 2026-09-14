@@ -1,7 +1,8 @@
 /**
- * Behavior tests for the control-token guard — the two detectors that surface
- * (never strip) a model faking silence: a trailing tokenizer control token,
- * and a reply that is punctuation and nothing else.
+ * Behavior tests for the control-token guard — the three detectors that
+ * surface (never strip) a model faking silence: a trailing tokenizer control
+ * token, a reply that is punctuation and nothing else, and a bracketed phrase
+ * typed in place of an empty reply.
  *
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/control-token-guard.test.ts
  */
@@ -9,10 +10,13 @@ import assert from 'node:assert/strict'
 import {
   armContentFreeReplyNotice,
   armControlTokenNotice,
+  armSilencePlaceholderNotice,
   contentFreeReply,
   contentFreeReplyNotice,
   controlTokenNotice,
   drainControlTokenNotice,
+  silencePlaceholder,
+  silencePlaceholderNotice,
   trailingControlToken
 } from '@main/runtime/agent/control-token-guard'
 
@@ -56,7 +60,12 @@ function testNoticeNamesTokenAndDefers(): void {
   const notice = controlTokenNotice('<|eos|>')
   assert.match(notice, /<\|eos\|>/, 'the notice names the leaked token')
   assert.match(notice, /disregard/, 'the notice defers to deliberate quoting')
-  assert.match(notice, /no output at all/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /empty reply/, 'the notice names the silent ending as the fix')
+  assert.doesNotMatch(
+    notice,
+    /\(no output\)|\(nothing to add\)/i,
+    'the notice never prints a stand-in it forbids — printing one is how the model learns it'
+  )
   console.log('ok: the notice names the token, offers the silent exit, and defers')
 }
 
@@ -115,6 +124,11 @@ function testContentFreeNoticeEchoesAndDefers(): void {
   const notice = contentFreeReplyNotice('.')
   assert.match(notice, /`\.`/, 'the notice echoes the characters the user saw')
   assert.match(notice, /zero characters/, 'the notice names the silent ending as the fix')
+  assert.doesNotMatch(
+    notice,
+    /\(no output\)|\(nothing to add\)/i,
+    'the notice never prints a stand-in it forbids'
+  )
   assert.match(notice, /disregard/, 'the notice defers to deliberate punctuation')
   console.log('ok: the content-free notice echoes, offers the silent exit, and defers')
 }
@@ -129,6 +143,81 @@ function testContentFreeSharesTheNoticeSlot(): void {
   console.log('ok: the content-free notice rides the same per-conversation slot')
 }
 
+function testSilencePlaceholderDetectsTheObservedLeaks(): void {
+  // The two shapes that actually shipped to users.
+  assert.deepEqual(silencePlaceholder('(no content)'), { text: '(no content)', trailing: false })
+  assert.deepEqual(silencePlaceholder('(no output)'), { text: '(no output)', trailing: false })
+  assert.deepEqual(silencePlaceholder('  (No Output)\n'), {
+    text: '(No Output)',
+    trailing: false
+  })
+  // Stapled under a real reply, which is how 2026-09-12 landed.
+  assert.deepEqual(
+    silencePlaceholder('Done — the report is on your desktop.\n\n(no output)'),
+    { text: '(no output)', trailing: true },
+    'a marker on its own line after prose is the trailing shape'
+  )
+  // The rest of the vocabulary, in every bracket the models reach for.
+  for (const reply of [
+    '(nothing to add)',
+    '[no reply]',
+    '(empty response)',
+    '(staying silent)',
+    '(end of turn)',
+    '(silence)',
+    '(no further output)',
+    '{nothing further}'
+  ]) {
+    assert.ok(silencePlaceholder(reply), `detects ${reply}`)
+  }
+  console.log('ok: bracketed stand-ins trip, alone and stapled onto prose')
+}
+
+function testSilencePlaceholderNeverTripsOnContent(): void {
+  assert.equal(silencePlaceholder(''), null)
+  assert.equal(silencePlaceholder('Done.'), null)
+  assert.equal(silencePlaceholder('.'), null, "punctuation is the other detector's job")
+  // An ordinary parenthetical inside a sentence is content, not a marker.
+  assert.equal(
+    silencePlaceholder('The command printed nothing (no output) and exited 0.'),
+    null,
+    'mid-sentence parentheticals are English, not a faked silence'
+  )
+  assert.equal(
+    silencePlaceholder('The build ran clean (no output)'),
+    null,
+    'a trailing parenthetical on the SAME line as its sentence is still prose'
+  )
+  // Phrases with an ordinary use as content stay off the vocabulary.
+  assert.equal(silencePlaceholder('Blockers: (none)'), null)
+  assert.equal(silencePlaceholder('(n/a)'), null)
+  assert.equal(silencePlaceholder('(see the attached diff for the full list of changes)'), null)
+  console.log('ok: parentheticals, (none) and long asides never trip')
+}
+
+function testSilencePlaceholderNoticeSeparatesTheTwoShapes(): void {
+  const alone = silencePlaceholderNotice({ text: '(no content)', trailing: false })
+  assert.match(alone, /`\(no content\)`/, 'echoes what the user saw')
+  assert.match(alone, /zero characters/, 'names the silent ending as the fix')
+  assert.match(alone, /entire previous reply/, 'says the whole reply was the stand-in')
+  assert.match(alone, /disregard/, 'defers to deliberate content')
+
+  const stapled = silencePlaceholderNotice({ text: '(no output)', trailing: true })
+  assert.match(stapled, /last real character/, 'names the appended-marker shape')
+  assert.doesNotMatch(stapled, /entire previous reply/, 'a different mistake gets different copy')
+  console.log('ok: the notice echoes, splits the two shapes, and defers')
+}
+
+function testSilencePlaceholderSharesTheNoticeSlot(): void {
+  armSilencePlaceholderNotice('conv-e', { text: '(no content)', trailing: false })
+  const drained = drainControlTokenNotice('conv-e')
+  assert.ok(drained && drained.includes('SILENCE-PLACEHOLDER'), 'drains through the shared slot')
+  assert.equal(drainControlTokenNotice('conv-e'), undefined, 'drain clears')
+  armSilencePlaceholderNotice(null, { text: '(no content)', trailing: false })
+  assert.equal(drainControlTokenNotice(null), undefined, 'null conversation id is a no-op')
+  console.log('ok: the silence-placeholder notice rides the same per-conversation slot')
+}
+
 function main(): void {
   testCleanTextNeverTrips()
   testObservedLeakShapesTrip()
@@ -138,6 +227,10 @@ function main(): void {
   testContentFreeDetectsFakedSilence()
   testContentFreeNeverTripsOnContent()
   testContentFreeNoticeEchoesAndDefers()
+  testSilencePlaceholderDetectsTheObservedLeaks()
+  testSilencePlaceholderNeverTripsOnContent()
+  testSilencePlaceholderNoticeSeparatesTheTwoShapes()
+  testSilencePlaceholderSharesTheNoticeSlot()
   testContentFreeSharesTheNoticeSlot()
   console.log('\nAll control-token-guard tests passed.')
 }

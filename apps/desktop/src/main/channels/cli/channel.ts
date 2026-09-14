@@ -53,6 +53,7 @@ import {
   type Segment
 } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
+import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
@@ -113,6 +114,16 @@ export type CliSendPayload = {
   modeOverride?: 'single' | 'workflow'
   /** Plan mode: read-only turn that may only write its plan file. */
   planMode?: boolean
+}
+
+/** A message typed while the conversation's turn is still running. */
+export type CliInterjectPayload = {
+  conversationId: string
+  /** Minted by the terminal, so it can retire its own pending row on delivery. */
+  messageId: string
+  text: string
+  /** Absolute paths already staged into the workspace by the server. */
+  attachments?: MessageAttachment[]
 }
 
 type LiveTurn = {
@@ -305,6 +316,37 @@ export class CliChannel {
     fresh.channel = 'cli'
     await saveConversation(fresh)
     return fresh
+  }
+
+  /**
+   * Hand a message to the conversation's RUNNING turn instead of starting a
+   * new one (see runtime/agent/interjection.ts). Unlike `send`, this never
+   * preempts: the whole point is that the work in flight keeps going and
+   * reads the message at its next stop point. The runner answers
+   * `no_live_turn` when nothing is running on that conversation — including
+   * a turn some other surface owns, which is fine: the inbox is per
+   * conversation, not per channel, so a terminal can steer an app-started
+   * run on the same transcript.
+   */
+  interject(payload: CliInterjectPayload): InterjectResult {
+    const item: Interjection = {
+      messageId: payload.messageId,
+      text: payload.text,
+      attachments: payload.attachments ?? [],
+      channel: 'cli',
+      sentAt: Date.now()
+    }
+    return this.runner.interject(payload.conversationId, item)
+  }
+
+  /** Take a still-unread mid-turn message back. False once the agent read it. */
+  withdrawInterjection(conversationId: string, messageId: string): boolean {
+    return this.runner.withdrawInterjection(conversationId, messageId, 'user')
+  }
+
+  /** Mid-turn messages parked on a conversation — for a terminal attaching cold. */
+  pendingInterjections(conversationId: string): Interjection[] {
+    return this.runner.pendingInterjections(conversationId)
   }
 
   /** Stop a conversation's live turn (or every one when unscoped). */

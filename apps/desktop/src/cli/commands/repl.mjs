@@ -528,14 +528,54 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       setImmediate(() => {
         const joined = burst.join('\n')
         burst = null
-        queue.push(joined)
-        void pump()
+        dispatchLine(joined)
       })
+      return
+    }
+    dispatchLine(line)
+  })
+
+  /**
+   * A line typed while a turn is running is a MID-TURN MESSAGE, not the next
+   * turn: the daemon parks it for the agent's next stop point (see
+   * runtime/agent/interjection.ts) and the work in flight reads it there. It
+   * cannot travel through the pump — the pump is busy inside the running
+   * turn's handleLine and would only surface the line after the reply, when
+   * there is nothing left to steer. `no_live_turn` means the turn ended under
+   * us: the line becomes an ordinary next turn. Slash commands keep their old
+   * path; they act on the session, not the work.
+   */
+  function dispatchLine(line) {
+    const text = line.trim()
+    if (running && text.length > 0 && !text.startsWith('/')) {
+      void interjectLine(text)
       return
     }
     queue.push(line)
     void pump()
-  })
+  }
+
+  async function interjectLine(text) {
+    let result = null
+    try {
+      result = await client.invoke('cli:interject', {
+        conversationId: state.conversationId,
+        messageId: `i_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        text,
+        attachmentPaths: state.pendingAttachments.length ? state.pendingAttachments : undefined
+      })
+    } catch (error) {
+      out(`${icon.fail()} ${c.red(error?.message ?? String(error))}`)
+      return
+    }
+    if (result?.status === 'pending') {
+      state.pendingAttachments = []
+      out(c.gray('  read at the next step'))
+      return
+    }
+    queue.push(text)
+    void pump()
+  }
 
   /**
    * Ctrl-C, owned here.
@@ -622,10 +662,10 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       return null
     }
     if (running) {
-      // Guard rather than queue: a second prompt mid-turn would race the
-      // renderer's stdout. The daemon does queue channel messages; here the
-      // honest answer is to say the turn is busy.
-      out(c.gray('  still working — /cancel to stop it'))
+      // Normally unreachable — dispatchLine routes mid-turn lines before the
+      // pump — but a line that does land here mid-turn is still a message
+      // for the running turn, never a second concurrent turn racing stdout.
+      void interjectLine(input)
       return null
     }
 

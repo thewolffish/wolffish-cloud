@@ -49,6 +49,20 @@ export type Part =
       messagesCount?: number
     }
   | { kind: 'provider_errors'; id: string; errors: Array<Record<string, unknown>> }
+  /**
+   * A message the user sent MID-TURN, at the point the agent read it. It sits
+   * inside the assistant message because that is where it happened: the
+   * daemon persists it as a `user_message` segment of the same turn, so a
+   * reload draws it in the same place.
+   */
+  | {
+      kind: 'user'
+      id: string
+      messageId: string
+      text: string
+      attachments: Attachment[]
+      timestamp: number
+    }
 
 export type TodoItem = { id?: string; content: string; status: string }
 
@@ -115,7 +129,13 @@ export type AskQuestion = {
   custom?: boolean
 }
 
-export type QueuedPrompt = { id: string; text: string; attachments: string[] }
+/**
+ * A message sent while the turn runs and not yet read by the agent. `mine`
+ * marks one this terminal sent: those are the rows Escape can take back and
+ * whose text comes home to the prompt when the daemon hands them back; a row
+ * from another surface (the app, the phone) only renders.
+ */
+export type PendingMessage = { id: string; text: string; attachments: string[]; mine: boolean }
 
 export type RunState = {
   conversationId: string
@@ -190,7 +210,8 @@ export type State = {
   /** Files the session has delivered, numbered for /open. */
   files: Delivery[]
   stagedAttachments: string[]
-  queue: QueuedPrompt[]
+  /** Mid-turn messages parked for the agent's next stop point, in send order. */
+  pending: PendingMessage[]
   working: boolean
   turnId: string | null
   sendAt: number | null
@@ -244,7 +265,7 @@ export function initialState(): State {
     feed: [],
     files: [],
     stagedAttachments: [],
-    queue: [],
+    pending: [],
     working: false,
     turnId: null,
     sendAt: null,
@@ -604,9 +625,54 @@ export function applySegment(
       })
       return
     }
+    // The agent read a mid-turn message: it becomes a user row INSIDE this
+    // assistant message, and the optimistic pending row it retires is found
+    // by the id the sender minted. The next text delta opens a fresh text
+    // part after it — the fold-into-last-text rule sees a `user` part last.
+    case 'user_message': {
+      const messageId = String(segment.messageId ?? segmentId)
+      const raw = Array.isArray(segment.attachments)
+        ? (segment.attachments as Array<Record<string, unknown>>)
+        : []
+      const timestamp = typeof segment.timestamp === 'number' ? segment.timestamp : Date.now()
+      editParts((parts) => {
+        for (const p of parts) if (p.kind === 'reasoning' && !p.endedAt) p.endedAt = Date.now()
+        parts.push({
+          kind: 'user',
+          id: segmentId,
+          messageId,
+          text: String(segment.text ?? ''),
+          attachments: raw.map(attachmentOf),
+          timestamp
+        })
+      })
+      set('pending', (rows) => rows.filter((row) => row.id !== messageId))
+      if (options.live) set('activity', 'Thinking')
+      return
+    }
     case 'separator':
     default:
       return
+  }
+}
+
+/** A persisted MessageAttachment (or the store's own shape) as a feed attachment. */
+function attachmentOf(a: Record<string, unknown>): Attachment {
+  const path =
+    typeof a.filePath === 'string' ? a.filePath : typeof a.path === 'string' ? a.path : ''
+  const name =
+    typeof a.originalName === 'string'
+      ? a.originalName
+      : typeof a.name === 'string'
+        ? a.name
+        : basenameOf(path)
+  const size =
+    typeof a.sizeBytes === 'number' ? a.sizeBytes : typeof a.size === 'number' ? a.size : undefined
+  return {
+    name,
+    path: path || undefined,
+    type: typeof a.type === 'string' ? a.type : undefined,
+    size
   }
 }
 

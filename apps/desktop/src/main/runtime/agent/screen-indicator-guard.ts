@@ -118,13 +118,15 @@ export function trackScreenIndicator(on: boolean, toolName: string, ok: boolean)
  * normally (indicator already down, the model is still calling tools, this
  * wasn't an end_turn, or the nudge budget is spent).
  *
- * The injected pair follows empty-turn-guard's provider-safe shape: a
- * non-empty assistant message (Anthropic rejects empty text blocks and
- * enforces strict alternation) with no `toolUses` attached, then the aside as
- * a user message. Unlike the empty-turn case the model usually HAS produced
- * text here, so its real reply is echoed back rather than a placeholder —
- * that text already streamed to the user, and replacing it in the history
- * would make the model think it never said it.
+ * Shape follows empty-turn-guard: the aside is a `role: 'user'` message, and
+ * an assistant turn is interposed ONLY when the model actually produced text.
+ * Echoing a real reply back is right — it already streamed to the user, and
+ * leaving it out of the history would make the model think it never said it.
+ * Inventing one when the reply was empty is not: a literal `(continuing)`
+ * placeholder used to stand in there, and a parenthesized stand-in for an
+ * empty turn written in the model's own voice is exactly the thing that keeps
+ * leaking back out as user-visible text. Nothing on this fork's wire needs the
+ * filler either — see empty-turn-guard.
  */
 export function screenIndicatorNudge(
   indicatorOn: boolean,
@@ -135,11 +137,11 @@ export function screenIndicatorNudge(
   if (!indicatorOn || nudgeCount >= maxNudges) return null
   if (parsed.stopReason !== 'end_turn' || parsed.toolCalls.length > 0) return null
 
-  const assistant: ChatMessage = {
-    role: 'assistant',
-    content: parsed.text.trim() || '(continuing)'
-  }
-  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
   const user: ChatMessage = { role: 'user', content: SCREEN_INDICATOR_NUDGE_TEXT }
+  const delivered = parsed.text.trim()
+  if (!delivered) return [user]
+
+  const assistant: ChatMessage = { role: 'assistant', content: delivered }
+  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
   return [assistant, user]
 }

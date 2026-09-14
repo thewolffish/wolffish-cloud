@@ -5,7 +5,12 @@
  * inside one Solid batch — the first frame after quiet flushes immediately,
  * so a token stream costs at most one render per 16 ms and never adds
  * latency. Actions are the verbs the screens call: send, cancel, approve,
- * answer, open, queue.
+ * answer, open, withdraw.
+ *
+ * There is no prompt queue. A message typed while a turn runs goes to the
+ * daemon NOW (`cli:interject`) and the running agent reads it at its next
+ * stop point — see runtime/agent/interjection.ts for the contract and the
+ * `user_message` segment that marks where it landed.
  */
 import { authGate } from '../lib/auth.mjs'
 import { batch } from 'solid-js'
@@ -23,6 +28,7 @@ import {
   type AskQuestion,
   type ChatMode,
   type PendingCard,
+  type PendingMessage,
   type Segment,
   type Store,
   type StoredMessage,
@@ -56,8 +62,14 @@ export type Actions = {
   refreshSnapshot: () => Promise<void>
   openConversation: (id: string | null) => Promise<void>
   newConversation: () => void
+  /** Starts a turn — or, while one runs, hands the text to it mid-turn. */
   send: (text: string, options?: SendOptions) => Promise<void>
-  flushQueue: () => Promise<void>
+  /**
+   * Take a still-unread mid-turn message back into the prompt: the given
+   * one, or the last one this terminal sent. Nothing happens once the agent
+   * has read it — the inline user row is history.
+   */
+  withdrawPending: (id?: string) => Promise<void>
   cancel: () => Promise<void>
   respondApproval: (id: string, decision: 'approved' | 'denied', always?: boolean) => Promise<void>
   respondAsk: (id: string, response: unknown) => Promise<void>
@@ -69,7 +81,6 @@ export type Actions = {
   setBrain: (provider: string, model: string) => Promise<void>
   loadPending: () => Promise<void>
   answerParked: (card: PendingCard) => void
-  dropQueued: (id: string) => void
   compact: () => Promise<void>
   dispose: () => void
 }
@@ -81,6 +92,16 @@ type Deps = {
 }
 
 const alwaysApproved = new Set<string>()
+
+/** The daemon's MessageAttachment[] as the paths a pending row carries. */
+function attachmentPaths(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((a) =>
+      a && typeof a === 'object' ? String((a as { filePath?: string }).filePath ?? '') : ''
+    )
+    .filter(Boolean)
+}
 
 export function createActions({ client, store, notify }: Deps): Actions {
   const [get, set] = store
@@ -238,7 +259,7 @@ export function createActions({ client, store, notify }: Deps): Actions {
       })
     }
     void refreshStats()
-    void flushQueue()
+    void flushAfterTurn()
   }
 
   /* ───────────── app-wide events ───────────── */
@@ -247,13 +268,16 @@ export function createActions({ client, store, notify }: Deps): Actions {
     switch (frame.channel) {
       case 'chat:turnState': {
         const id = String(payload.conversationId ?? '')
-        const state = String(payload.state ?? payload.status ?? '')
+        // The runner's TurnLifecycleEvent names it `phase`; `state`/`status`
+        // stay for any older shape. Reading only the latter left this empty
+        // for every real event, so `runs` never gained a live entry.
+        const state = String(payload.phase ?? payload.state ?? payload.status ?? '')
         if (!id) return
+        const running = state === 'started' || state === 'running' || state === 'streaming'
         set(
           'runs',
           produce((runs) => {
             const i = runs.findIndex((r) => r.conversationId === id)
-            const running = state === 'started' || state === 'running' || state === 'streaming'
             if (running) {
               const entry = {
                 conversationId: id,
@@ -268,6 +292,50 @@ export function createActions({ client, store, notify }: Deps): Actions {
         )
         // A run ending on the open conversation refreshes its title/stats.
         if (id === get.conversationId && !(state === 'started')) void refreshTitle()
+        // A run this terminal ADOPTED (no turn id of its own) ends here: the
+        // CLI channel only streams `done` for its own turns, so this
+        // broadcast is the only end an app- or channel-started run sends
+        // us. Left unsealed, `working` stuck and every later message went
+        // mid-turn to a turn that no longer existed.
+        if (id === get.conversationId && !running && get.working && !get.turnId && !preSend)
+          finishTurn()
+        return
+      }
+      case 'chat:interjection': {
+        if (String(payload.conversationId ?? '') !== get.conversationId) return
+        const id = String(payload.messageId ?? '')
+        const phase = String(payload.state ?? '')
+        if (!id) return
+        if (phase === 'pending') {
+          // Ours is already on screen (pushed before the invoke); another
+          // surface's shows up here for the first time.
+          if (!get.pending.some((row) => row.id === id)) {
+            set('pending', (rows) => [
+              ...rows,
+              {
+                id,
+                text: String(payload.text ?? ''),
+                attachments: attachmentPaths(payload.attachments),
+                mine: false
+              }
+            ])
+          }
+          return
+        }
+        // delivered (the user_message segment retires ours too — belt and
+        // braces) or withdrawn: the row leaves either way.
+        const entry = takePending(id)
+        if (phase !== 'withdrawn' || !entry?.mine) return
+        const reason = String(payload.reason ?? '')
+        if (reason === 'user' || reason === 'canceled') restoreDraft(entry.text, entry.attachments)
+        else {
+          // turn_ended / error: the turn finished before reading it, so it
+          // becomes the next turn — once the open one is sealed locally.
+          // This event usually beats the `done` frame (the runner sweeps in
+          // its finally; the sink's done rides an async persist).
+          afterTurn.push({ text: entry.text, attachments: entry.attachments })
+          if (!get.working && !get.card) void flushAfterTurn()
+        }
         return
       }
       case 'cli:configChange':
@@ -468,6 +536,14 @@ export function createActions({ client, store, notify }: Deps): Actions {
       notify('could not load that conversation', 'error')
       return
     }
+    // Re-opening the same conversation (a reconnect) must not forget which
+    // pending rows are ours — Escape and the draft restore depend on it, and
+    // the daemon's copy only knows the channel, not the terminal.
+    const ours = new Map(
+      get.conversationId === id
+        ? get.pending.filter((row) => row.mine).map((row) => [row.id, row] as const)
+        : []
+    )
     batch(() => {
       set({
         conversationId: id,
@@ -477,7 +553,7 @@ export function createActions({ client, store, notify }: Deps): Actions {
         sendAt: null,
         activity: null,
         card: null,
-        queue: [],
+        pending: [],
         cost: 0,
         turnUsage: null,
         lastTurn: null,
@@ -502,8 +578,30 @@ export function createActions({ client, store, notify }: Deps): Actions {
         .catch(() => [])
       set('projectTitle', projects.find((p) => p.id === get.projectId)?.title ?? null)
     } else set('projectTitle', null)
-    // If a turn is running on this conversation elsewhere, adopt its state.
-    if (get.runs.some((r) => r.conversationId === id)) set({ working: true, sendAt: Date.now() })
+    // If a turn is running on this conversation elsewhere, adopt its state —
+    // and the mid-turn messages already parked on it, so the rows below the
+    // reply are complete from the first paint.
+    if (get.runs.some((r) => r.conversationId === id)) {
+      set({ working: true, sendAt: Date.now() })
+      const parked = await client
+        .invoke<
+          Array<{ messageId: string; text: string; attachments?: unknown }>
+        >('cli:pendingInterjections', id)
+        .catch(() => [])
+      if (get.conversationId !== id) return
+      set(
+        'pending',
+        parked.map((item) => {
+          const own = ours.get(String(item.messageId))
+          return {
+            id: String(item.messageId),
+            text: String(item.text ?? ''),
+            attachments: own?.attachments ?? attachmentPaths(item.attachments),
+            mine: own !== undefined
+          }
+        })
+      )
+    }
   }
 
   const newConversation = () => {
@@ -514,7 +612,7 @@ export function createActions({ client, store, notify }: Deps): Actions {
         feed: [],
         files: [],
         stagedAttachments: [],
-        queue: [],
+        pending: [],
         working: false,
         turnId: null,
         sendAt: null,
@@ -537,6 +635,41 @@ export function createActions({ client, store, notify }: Deps): Actions {
   }
 
   /* ───────────── verbs ───────────── */
+  /**
+   * Our own send still in flight. A second Enter before the daemon has
+   * registered the first turn must wait for it: its interject would find no
+   * live turn yet and fall through to a normal send, which PREEMPTS the very
+   * turn it was meant to steer.
+   */
+  let inflight: Promise<void> | null = null
+  /**
+   * Messages that become a fresh turn once the open one is sealed locally:
+   * a mid-turn message the daemon handed back with `turn_ended`/`error`, or
+   * one it refused with `no_live_turn` while our `done` frame was still on
+   * the wire. Not a queue the user sees — the sliver between the agent's
+   * last drain and the lane closing, made safe.
+   */
+  const afterTurn: Array<{ text: string; attachments: string[] }> = []
+
+  const flushNow = () => {
+    if (!timer) return
+    clearTimeout(timer)
+    flush()
+  }
+
+  const takePending = (id: string): PendingMessage | null => {
+    const entry = get.pending.find((row) => row.id === id) ?? null
+    if (entry) set('pending', (rows) => rows.filter((row) => row.id !== id))
+    return entry
+  }
+
+  /** Text back to the prompt (appended on its own line), files back to staging. */
+  const restoreDraft = (text: string, attachments: string[]) => {
+    if (text) set('restoreDraft', (draft) => (draft ? `${draft}\n${text}` : text))
+    if (attachments.length > 0)
+      set('stagedAttachments', (s) => [...s, ...attachments.filter((a) => !s.includes(a))])
+  }
+
   const send = async (text: string, options: SendOptions = {}) => {
     const trimmed = text.trim()
     const attachments = options.attachmentPaths ?? get.stagedAttachments
@@ -549,11 +682,69 @@ export function createActions({ client, store, notify }: Deps): Actions {
       set('restoreDraft', text)
       return
     }
+    if (inflight) await inflight
     if (get.working || get.card) {
-      set('queue', (q) => [...q, { id: mintId('q'), text: trimmed, attachments }])
       set('stagedAttachments', [])
+      await interject(trimmed, attachments)
       return
     }
+    const run = startTurn(trimmed, attachments, options)
+    inflight = run
+    try {
+      await run
+    } finally {
+      if (inflight === run) inflight = null
+    }
+  }
+
+  /**
+   * Hand a message to the running turn. The pending row goes up before the
+   * round trip (the daemon's own `pending` event finds it already there);
+   * `no_live_turn` takes it down again and the text becomes a normal turn —
+   * now if the turn is sealed locally, otherwise the moment it is.
+   */
+  const interject = async (text: string, attachments: string[]) => {
+    const conversationId = get.conversationId
+    if (!conversationId) {
+      restoreDraft(text, attachments)
+      return
+    }
+    const id = mintId('i')
+    set('pending', (rows) => [...rows, { id, text, attachments, mine: true }])
+    let result: { status?: string } | null = null
+    try {
+      result = await client.invoke<{ status?: string }>('cli:interject', {
+        conversationId,
+        messageId: id,
+        text,
+        attachmentPaths: attachments
+      })
+    } catch (error) {
+      takePending(id)
+      restoreDraft(text, attachments)
+      notify(
+        (error as Error).message === 'not connected'
+          ? 'not connected to the daemon — reconnecting'
+          : (error as Error).message,
+        'error'
+      )
+      return
+    }
+    if (result?.status === 'pending') return
+    takePending(id)
+    flushNow()
+    if (get.working || get.card) afterTurn.push({ text, attachments })
+    else await send(text, { attachmentPaths: attachments })
+  }
+
+  const flushAfterTurn = async () => {
+    // Sequential on purpose: the first becomes the turn, every later one
+    // goes to it mid-turn through send()'s own branch.
+    for (const next of afterTurn.splice(0))
+      await send(next.text, { attachmentPaths: next.attachments })
+  }
+
+  const startTurn = async (trimmed: string, attachments: string[], options: SendOptions) => {
     batch(() => {
       set('feed', (feed) => [
         ...feed,
@@ -629,11 +820,19 @@ export function createActions({ client, store, notify }: Deps): Actions {
     }
   }
 
-  const flushQueue = async () => {
-    if (get.working || get.card || get.queue.length === 0) return
-    const [next, ...rest] = get.queue
-    set('queue', rest)
-    await send(next.text, { attachmentPaths: next.attachments })
+  const withdrawPending = async (id?: string) => {
+    const conversationId = get.conversationId
+    const entry = id
+      ? get.pending.find((row) => row.id === id)
+      : [...get.pending].reverse().find((row) => row.mine)
+    if (!entry || !conversationId) return
+    const result = await client
+      .invoke<{ ok: boolean }>('cli:withdrawInterjection', { conversationId, messageId: entry.id })
+      .catch(() => ({ ok: false }))
+    // The daemon's `withdrawn` event may have beaten this reply and already
+    // restored the draft; taking the row is what makes the two idempotent.
+    // `ok: false` means the agent read it — the inline row is on its way.
+    if (result?.ok && takePending(entry.id)) restoreDraft(entry.text, entry.attachments)
   }
 
   const cancel = async () => {
@@ -737,8 +936,6 @@ export function createActions({ client, store, notify }: Deps): Actions {
 
   const answerParked = (card: PendingCard) => set('card', card)
 
-  const dropQueued = (id: string) => set('queue', (q) => q.filter((x) => x.id !== id))
-
   const compact = async () => {
     if (!get.conversationId) {
       notify('nothing to compact yet', 'info')
@@ -798,7 +995,7 @@ export function createActions({ client, store, notify }: Deps): Actions {
     openConversation,
     newConversation,
     send,
-    flushQueue,
+    withdrawPending,
     cancel,
     respondApproval,
     respondAsk,
@@ -810,7 +1007,6 @@ export function createActions({ client, store, notify }: Deps): Actions {
     setBrain,
     loadPending,
     answerParked,
-    dropQueued,
     compact,
     dispose
   }

@@ -31,7 +31,8 @@ import {
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
-  type ConversationMeta
+  type ConversationMeta,
+  type MessageAttachment
 } from '@main/conversations'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
 import {
@@ -415,6 +416,17 @@ turnRunner.setLifecycleListener((ev) => {
   // a turn started anywhere — in-app, the terminal, the phone itself —
   // has to show up there as it happens, exactly as it does in the sidebar.
   pushTurnToMobile(ev)
+})
+// Mid-turn user messages (pending / delivered / withdrawn) reach every
+// surface watching the conversation on their own channel — never through
+// chat:turnState, whose consumers read any unknown phase as a failed run.
+turnRunner.onInterjection((ev) => {
+  broadcast('chat:interjection', ev)
+  try {
+    mobileChannel.pushInterjection(ev)
+  } catch {
+    // never let a dead tunnel disturb a turn
+  }
 })
 // Autonomous heartbeat/procedure runs never pass through the TurnRunner —
 // they end inside Agent.processAutonomous. Broadcast their terminal lifecycle
@@ -4370,6 +4382,31 @@ app.whenReady().then(async () => {
         projectId?: string | null
       }
     ) => electronChannel.send(e.sender, payload)
+  )
+
+  // Mid-turn messages: the inbox is keyed by conversation, so a window
+  // watching a Telegram/automation run can steer it too — same handler.
+  handle(
+    'chat:interject',
+    (
+      _e,
+      payload: {
+        conversationId: string
+        messageId: string
+        text: string
+        attachments?: MessageAttachment[]
+        voicePrompt?: boolean
+        voiceLang?: string
+      }
+    ) => electronChannel.interject(payload)
+  )
+  handle(
+    'chat:withdrawInterjection',
+    (_e, payload: { conversationId: string; messageId: string }) =>
+      turnRunner.withdrawInterjection(payload.conversationId, payload.messageId, 'user')
+  )
+  handle('chat:pendingInterjections', (_e, conversationId: string) =>
+    turnRunner.pendingInterjections(conversationId)
   )
 
   handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {

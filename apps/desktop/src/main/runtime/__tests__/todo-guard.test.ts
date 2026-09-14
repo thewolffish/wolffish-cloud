@@ -93,9 +93,13 @@ check('ending a turn with open items is sent back once', () => {
   )
 })
 
-check('an empty final reply still gets a non-empty assistant placeholder', () => {
+check('an empty final reply gets the aside alone — no invented placeholder', () => {
+  // See screen-indicator.test.ts: the `(continuing)` filler taught the model
+  // the very shape this guard family exists to stop.
   const nudge = todoCloseoutNudge(open, ended(''), 0)
-  assert.ok(nudge && String(nudge[0].content).length > 0, 'Anthropic rejects empty text blocks')
+  assert.ok(nudge)
+  assert.equal(nudge.length, 1)
+  assert.equal(nudge[0].role, 'user')
 })
 
 check('no nudge without a list, with a closed list, or while tools are still being called', () => {

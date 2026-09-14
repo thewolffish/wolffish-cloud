@@ -8,8 +8,8 @@ import { NEW_CHAT_PLAN_KEY, useChatRuntime } from '@/state/chatRuntime'
  * The desktop holds one stance per conversation (its main process — the
  * composer chip reads it too). The phone mirrors it in chatRuntime.planModes:
  * a push (Event.planMode) lands whenever either side changes it, the chat
- * screen reads it once when a conversation opens (seedPlanMode), and a
- * switch flipped here writes through (setPlanModeSynced) — optimistically,
+ * screen reads it once when a conversation opens (seedPlanMode), and the
+ * composer's Plan chip writes through (setPlanModeSynced) — optimistically,
  * with the desktop's answer as the final word. A chat with no conversation
  * yet keeps its stance local until the first send creates one; the send
  * stamps it, and the desktop adopts it from there.
@@ -43,7 +43,7 @@ export async function seedPlanMode(conversationId: string): Promise<void> {
 }
 
 /**
- * Flip the switch: local first so the sheet answers the tap, then the
+ * Flip the stance: local first so the chip answers the tap, then the
  * desktop. Its answer (or the push it sends back) is authoritative; a write
  * the desktop never got is rolled back so the two never disagree.
  */

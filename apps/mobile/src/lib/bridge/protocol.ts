@@ -119,6 +119,20 @@ export const Rpc = {
    * under that id.
    */
   sendMessage: 'desktop.chat.send',
+  /**
+   * Hand a message to the conversation's RUNNING turn instead of starting a
+   * new one — the mid-turn send. Params mirror `sendMessage` minus the
+   * creation fields: `{ conversationId, messageId, text, attachments,
+   * voicePrompt?, voiceLang? }`. Answers `{ status: 'pending' }`, or
+   * `{ status: 'no_live_turn' }` when nothing is running and the phone
+   * should send a normal turn (see sync/prompt.ts interject). An older
+   * desktop answers with an unknown-method error, treated the same way.
+   */
+  interject: 'desktop.chat.interject',
+  /** Take an unread mid-turn message back — `{ conversationId, messageId }` → `{ ok }`. */
+  withdrawInterjection: 'desktop.chat.withdrawInterjection',
+  /** Unread mid-turn messages parked on a conversation — `{ conversationId }` → `{ pending }`. */
+  pendingInterjections: 'desktop.chat.pendingInterjections',
   abortTurn: 'desktop.chat.abort',
   activeRuns: 'desktop.chat.activeRuns',
   turnMirror: 'desktop.chat.turnMirror',
@@ -174,6 +188,13 @@ export const Event = {
   messageDelta: 'message.delta',
   messageAppended: 'message.appended',
   turnStatus: 'turn.status',
+  /**
+   * A mid-turn user message changed state — `{ conversationId, messageId,
+   * channel, text, attachments, state: 'pending' | 'delivered' | 'withdrawn',
+   * reason? }`. Its own event, not a turn status: a pending message is not
+   * a turn boundary and must not reset the live overlay.
+   */
+  interjection: 'interjection.status',
   /**
    * A conversation's plan-mode stance changed on any surface —
    * `{ conversationId, planMode }`. The phone mirrors it into its switch and

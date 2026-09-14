@@ -2,6 +2,7 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import { turnScope, type CorpusEvent, type CorpusEvents } from '@main/runtime/corpus'
+import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import {
   resolveSummaryMarkIndex,
   type ConversationFile,
@@ -290,6 +291,28 @@ export function stubStaleToolResults(
  * as the master's own. Workflow-mode `workflow` snapshot segments fall
  * through the kind dispatch below untouched — display-only by design.
  */
+/**
+ * The history entry for a `user_message` segment — the same shape the
+ * agent pushed into the model's messages when it delivered it (see
+ * agent/interjection.ts interjectionToHistoryMessage): a voice note as a
+ * `<voice_note>` block, attachments as the model-led reference list.
+ */
+export function interjectionSegmentToHistory(
+  s: Extract<Segment, { kind: 'user_message' }>
+): ChatHistoryMessage {
+  if (s.voicePrompt) {
+    const langAttr = s.voiceLang ? ` lang="${s.voiceLang}"` : ''
+    return { role: 'user', content: `<voice_note${langAttr}>\n${s.text}` }
+  }
+  const attachments = s.attachments ?? []
+  const entry: ChatHistoryMessage = {
+    role: 'user',
+    content: composeAttachmentContext(s.text, attachments)
+  }
+  if (attachments.length > 0) entry.attachments = attachments
+  return entry
+}
+
 export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistoryMessage[] {
   const segments = msg.segments?.filter((s) => !('worker' in s && s.worker))
   if (!segments || segments.length === 0) {
@@ -344,6 +367,14 @@ export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistor
     if (s.kind === 'active_model') {
       if (iterCount > 0) flush()
       iterCount++
+    } else if (s.kind === 'user_message') {
+      // A message the user sent mid-turn, read by the agent at this exact
+      // point (after the iteration's tool results, before the next model
+      // call). Close the iteration so far and replay it as the real user
+      // entry it was — the model saw it there. Mirrored in the renderer's
+      // textHistory (Chat.tsx); the two must stay identical.
+      flush()
+      out.push(interjectionSegmentToHistory(s))
     } else if (s.kind === 'text') {
       iterText += s.delta
       hasContent = true

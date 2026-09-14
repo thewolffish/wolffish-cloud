@@ -258,13 +258,22 @@ export const AssistantMessageView = memo(function AssistantMessageView({
 
   // Nothing renderable while the turn streams → typed thinking words. A parked
   // card counts as renderable: the turn is waiting on the user, not thinking.
+  // So does a mid-turn message the agent has just read: the user's words are
+  // on screen, and the thinking words go UNDER them (below) while the answer
+  // to them is being worked out.
   if (
     streaming &&
     orphans.length === 0 &&
-    visible.every((block) => block.type !== 'text' && block.type !== 'toolAnchor')
+    visible.every(
+      (block) =>
+        block.type !== 'text' && block.type !== 'toolAnchor' && block.type !== 'userMessage'
+    )
   ) {
     return <ThinkingIndicator />
   }
+  const last = visible[visible.length - 1]
+  const thinkingAfterInterjection =
+    streaming && orphans.length === 0 && last !== undefined && last.type === 'userMessage'
 
   return (
     <View className="flex-col gap-2">
@@ -288,6 +297,7 @@ export const AssistantMessageView = memo(function AssistantMessageView({
             : renderApproval(card, conversationId, true)}
         </View>
       ))}
+      {thinkingAfterInterjection && <ThinkingIndicator />}
       {!streaming && fullText.trim().length > 0 && (
         <CopyFooter text={fullText} timestamp={message.timestamp} align="start" />
       )}
@@ -446,6 +456,11 @@ function renderBlock(
       )
     case 'model':
       return <ModelChip provider={block.provider} model={block.model} />
+    case 'userMessage':
+      // The user's own mid-turn words, worn exactly as a user row is — the
+      // primary bubble, its files, the copy footer — sitting inside the
+      // assistant card at the point the agent read them.
+      return <UserBubble message={block.message} conversationId={conversationId} />
     case 'path':
       return <PathCard path={block.path} kind={block.kind} />
     case 'workflow':

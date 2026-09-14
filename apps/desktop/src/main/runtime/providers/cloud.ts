@@ -48,6 +48,40 @@ type OpenAIMessage =
     }
   | { role: 'tool'; tool_call_id: string; content: string }
 
+/**
+ * Append a user message, coalescing it into the previous turn when that was
+ * also a user message.
+ *
+ * Two user messages in a row are ordinary on this lane — the turn-end guards
+ * inject a `role: 'user'` aside after an empty end_turn, which lands right
+ * after the opening user message when the dropout happens on the very first
+ * call (see agent/empty-turn-guard.ts). The OpenAI wire format permits that,
+ * but the chat template on the far side of the router is the upstream's, not
+ * ours, and some templates raise on non-alternating roles. Merging here makes
+ * the shape moot instead of depending on a template we do not control.
+ *
+ * Nothing is lost by merging: a user turn's blocks concatenate in order, and
+ * this lane has no volatile tail message whose churn a merge could drag into
+ * an otherwise stable prefix.
+ */
+function pushUser(out: OpenAIMessage[], content: string | Array<Record<string, unknown>>): void {
+  const last = out[out.length - 1]
+  if (!last || last.role !== 'user') {
+    out.push({ role: 'user', content } as OpenAIMessage)
+    return
+  }
+  if (typeof last.content === 'string' && typeof content === 'string') {
+    out[out.length - 1] = {
+      role: 'user',
+      content: last.content.length > 0 ? `${last.content}\n\n${content}` : content
+    }
+    return
+  }
+  const parts = (c: string | Array<Record<string, unknown>>): Array<Record<string, unknown>> =>
+    typeof c === 'string' ? (c.length > 0 ? [{ type: 'text', text: c }] : []) : c
+  out[out.length - 1] = { role: 'user', content: [...parts(last.content), ...parts(content)] }
+}
+
 export function toOpenAIMessages(system: string, messages: ChatMessage[]): OpenAIMessage[] {
   const out: OpenAIMessage[] = []
   if (system) out.push({ role: 'system', content: system })
@@ -56,7 +90,7 @@ export function toOpenAIMessages(system: string, messages: ChatMessage[]): OpenA
       out.push({ role: 'system', content: m.content })
     } else if (m.role === 'user') {
       if (typeof m.content === 'string') {
-        out.push({ role: 'user', content: m.content })
+        pushUser(out, m.content)
       } else {
         const parts = m.content.map((b) => {
           if (b.type === 'text') return { type: 'text', text: b.text }
@@ -71,7 +105,7 @@ export function toOpenAIMessages(system: string, messages: ChatMessage[]): OpenA
           // so this is a defensive degrade, not the normal path.
           return { type: 'text', text: '[attached document omitted on this model]' }
         })
-        out.push({ role: 'user', content: parts })
+        pushUser(out, parts)
       }
     } else if (m.role === 'assistant') {
       if (m.toolUses && m.toolUses.length > 0) {

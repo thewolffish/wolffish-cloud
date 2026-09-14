@@ -133,27 +133,47 @@ const NEW_CHAT_PLAN_KEY = '\u0000new-chat'
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
 /**
- * A voice take waiting in the queue. The blob is held in memory (a webm/opus
- * recording is ~1KB/s) and only hits disk when its row flushes — upload and
- * transcription belong to the send, exactly as they do for a take sent
- * straight away. `blobUrl` backs the row's playback button and is owned by
- * the queue: an effect revokes it when the row leaves.
+ * A message sent while a turn was still running, waiting for the agent to
+ * read it at its next stop point (main: runtime/agent/interjection.ts). It
+ * renders as a user bubble at the TAIL of the feed — after the streaming
+ * assistant card, never inside `messages` (appendSegment writes into the
+ * last assistant message and must keep finding it) — until its
+ * `user_message` segment lands inside that card, which is where it lives
+ * from then on. `mine` marks the window that sent it: only that window puts
+ * the text back in its draft on a withdraw, or resends it when the turn
+ * closed before reading it. Rows for messages sent from the phone (or
+ * another window) show and hide, nothing more.
  */
-type QueuedVoice = { blob: Blob; blobUrl: string | null; durationSec: number }
-
-/**
- * A prompt submitted while a turn was still streaming. It waits in a
- * cancelable row above the composer (never in the feed) and is sent
- * through the normal send path when the running turn ends. A voice take
- * queues the same way — `voice` routes it through the recorder's send path
- * (upload → STT → turn) instead of sendContent.
- */
-type QueuedPrompt = {
-  id: string
+type PendingInterjection = {
+  conversationId: string
+  messageId: string
   text: string
   attachments: MessageAttachment[]
-  voice?: QueuedVoice
+  voicePrompt?: boolean
+  voiceLang?: string
+  /** A voice take whose transcript is still coming back — not handed to the runner yet. */
+  transcribing?: boolean
+  mine: boolean
 }
+
+/**
+ * A message that could not go out the instant it was submitted: sent inside
+ * sendContent's own window (a brand-new conversation has no id yet and the
+ * turn may not be registered on the runner), or bounced by the runner in the
+ * sliver where the turn had just closed but this window still reads busy.
+ * It waits here, in order, and goes out the moment the situation settles —
+ * as an interjection if a turn is live, as the next turn if not. A voice
+ * take waits un-uploaded; upload and transcription belong to its send.
+ */
+type HeldMessage =
+  | {
+      kind: 'text'
+      text: string
+      attachments: MessageAttachment[]
+      voicePrompt?: boolean
+      voiceLang?: string
+    }
+  | { kind: 'voice'; blob: Blob; blobUrl: string | null }
 
 /**
  * A file mid-copy into the conversation's uploads folder. It holds a chip in
@@ -553,13 +573,24 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const [stagingFiles, setStagingFiles] = useState<StagingFile[]>([])
   const staging = stagingFiles.length > 0
   /**
-   * Prompts queued while a turn streams. Each streaming→idle transition
-   * flushes exactly one — and because a user Stop also resolves the turn
-   * through chat:done, stopping a run advances the queue the same way a
-   * natural finish does. In-memory only: the queue does not survive an
-   * app restart.
+   * Mid-turn messages not yet read by the agent — this window's own and
+   * anyone else's on the same conversation (see PendingInterjection). Kept
+   * OUT of `messages` on purpose and drawn after the feed.
    */
-  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([])
+  const [pendingInterjections, setPendingInterjections] = useState<PendingInterjection[]>([])
+  // Event handlers (chat:interjection, the mirror) need the current list
+  // without re-subscribing per change.
+  const pendingInterjectionsRef = useRef<PendingInterjection[]>([])
+  useEffect(() => {
+    pendingInterjectionsRef.current = pendingInterjections
+  }, [pendingInterjections])
+  /** Messages waiting for a send in flight to settle — see HeldMessage. */
+  const heldMessagesRef = useRef<HeldMessage[]>([])
+  const flushingHeldRef = useRef(false)
+  /** Withdraw outcomes already applied (the X's reply and the broadcast both report the same one). */
+  const settledInterjectionsRef = useRef<Set<string>>(new Set())
+  /** Voice interjections the user took back while their transcript was still in flight. */
+  const abortedVoiceInterjectionsRef = useRef<Set<string>>(new Set())
   // Active model's name, fed to the context meter. Refreshed when the
   // active model changes. Uploads are never gated on model capability —
   // a non-vision model receives a text note about the file instead of
@@ -648,8 +679,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     for (const m of messages) {
       if (m.role === 'user') userAttachments += m.attachments?.length ?? 0
       else
-        for (const s of m.segments)
+        for (const s of m.segments) {
           if (s.kind === 'tool_result' || s.kind === 'tool_call') toolSegments += 1
+          else if (s.kind === 'user_message') userAttachments += s.attachments?.length ?? 0
+        }
     }
     const tail = messages[messages.length - 1]
     const tailMedia = tail && tail.role !== 'user' ? countMediaRefs(tail.segments) : 0
@@ -800,13 +833,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // Keep the provider's picture of this session current — the sidebar chips,
   // session reuse/eviction, and open-conversation routing all read it.
   // `dirty` marks unsent composer state (draft text, staged attachments,
-  // queued prompts, a voice take, or a message still transcribing) so
-  // eviction never silently destroys work the user hasn't sent.
+  // messages pending mid-turn, a voice take, or a message still transcribing)
+  // so eviction never silently destroys work the user hasn't sent.
   const sessionDirty =
     draft.trim().length > 0 ||
     pendingAttachments.length > 0 ||
     staging ||
-    queuedPrompts.length > 0 ||
+    pendingInterjections.length > 0 ||
     recPhase !== 'idle' ||
     messages.some((m) => m.role === 'user' && 'transcribing' in m && m.transcribing === true)
   // Reports `busy`, not `streaming`: a session mirroring a live channel run
@@ -1209,11 +1242,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (pendingTurnIdRef.current !== null && previousId !== targetId) {
           pendingTurnIdRef.current = null
           setStreaming(false)
-          // Prompts queued during the outgoing conversation's turn belong to
-          // it — the forced streaming flip above must not flush them here.
-          setQueuedPrompts([])
           if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
+        // Pending mid-turn bubbles belong to the conversation they were sent
+        // into (the runner still holds them there). A filter, not a wipe:
+        // this conversation's own cold-start seed may already have landed.
+        setPendingInterjections((prev) => prev.filter((p) => p.conversationId === targetId))
         // A remount re-seeds `messages` from the session descriptor — a
         // snapshot minted when the session was OPENED. Turns persisted since
         // then exist only on disk, and leaving the feed on the stale seed
@@ -1274,11 +1308,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (pendingTurnIdRef.current !== null) {
           pendingTurnIdRef.current = null
           setStreaming(false)
-          // Same reason as the load branch: the stray turn's queue must not
-          // flush into the fresh chat.
-          setQueuedPrompts([])
           if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
+        // A fresh chat has no run to be pending on.
+        setPendingInterjections([])
         resetTurnStats()
         turnStartedAtRef.current = null
         pendingTurnUsageRef.current = null
@@ -1414,8 +1447,57 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         next[idx] = mapped
         return next
       })
+      // A mid-turn message the run has now read arrives here as a
+      // `user_message` segment inside the mirrored card — the tail bubble
+      // that stood in for it retires (the own-turn path does this on
+      // chat:segment).
+      if (pendingInterjectionsRef.current.length > 0 && isAssistant(mapped)) {
+        const delivered = new Set<string>()
+        for (const s of mapped.segments) if (s.kind === 'user_message') delivered.add(s.messageId)
+        if (delivered.size > 0) {
+          setPendingInterjections((prev) => prev.filter((p) => !delivered.has(p.messageId)))
+        }
+      }
     })
   }, [activeConversationId])
+
+  // The same cold-start gap for mid-turn messages: a window opened (or
+  // switched) onto a running conversation missed every chat:interjection
+  // event so far. Ask the runner what is still parked. Never `mine` — this
+  // window did not send them, so a withdraw must not touch its draft.
+  useEffect(() => {
+    if (!activeConversationId || !remoteRunning) return
+    const targetId = activeConversationId
+    let cancelled = false
+    void window.api.chat
+      .pendingInterjections(targetId)
+      .then((items) => {
+        if (cancelled || items.length === 0 || conversationIdRef.current !== targetId) return
+        setPendingInterjections((prev) => {
+          const known = new Set(prev.map((p) => p.messageId))
+          const fresh = items.filter((i) => !known.has(i.messageId))
+          if (fresh.length === 0) return prev
+          return [
+            ...prev,
+            ...fresh.map(
+              (i): PendingInterjection => ({
+                conversationId: targetId,
+                messageId: i.messageId,
+                text: i.text,
+                attachments: i.attachments,
+                ...(i.voicePrompt ? { voicePrompt: true } : {}),
+                ...(i.voiceLang ? { voiceLang: i.voiceLang } : {}),
+                mine: false
+              })
+            )
+          ]
+        })
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [activeConversationId, remoteRunning])
 
   // The mirror above only carries what happens NEXT. A window opened — or
   // reloaded — while a run is already in flight has missed every tick so
@@ -1512,6 +1594,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     const offSegment = window.api.chat.onSegment((segment) => {
       if (!matchesTurn(segment.turnId, segment.conversationId)) return
       setMessages((prev) => appendSegment(prev, segment))
+      // The delivered copy of a mid-turn message now lives inside the
+      // assistant card, at the point the agent read it — the tail bubble
+      // that stood in for it retires.
+      if (segment.kind === 'user_message') {
+        const deliveredId = segment.messageId
+        setPendingInterjections((prev) =>
+          prev.some((p) => p.messageId === deliveredId)
+            ? prev.filter((p) => p.messageId !== deliveredId)
+            : prev
+        )
+      }
       // Every snapshot (including throttled token ticks) refreshes the meter's
       // workflow section — the timeline entry below is gated, this must not be.
       if (segment.kind === 'workflow') setWorkflowSpend(segment.snapshot)
@@ -1933,12 +2026,77 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     descriptor.icon
   ])
 
+  // Refs over the send paths for the cross-calls below (a held message is
+  // flushed from inside the send that held it; a voice interjection falls
+  // back to a turn): the callbacks are declared in dependency order, and a
+  // ref is how a later one is reached from an earlier one without a TDZ.
+  const flushHeldRef = useRef<() => Promise<void>>(async () => undefined)
+
+  /**
+   * Hand one message to the conversation's running turn. The optimistic
+   * bubble goes up first (as `mine`), then the runner is asked; `false`
+   * means no turn was live to read it — the bubble comes down and the
+   * caller starts a turn instead. `messageId` is minted here unless the
+   * caller already owns a row (a voice take that showed its transcribing
+   * bubble before the transcript came back).
+   */
+  const interjectNow = useCallback(
+    async (
+      conversationId: string,
+      item: {
+        text: string
+        attachments: MessageAttachment[]
+        voicePrompt?: boolean
+        voiceLang?: string
+      },
+      messageId: string = cryptoId()
+    ): Promise<boolean> => {
+      setPendingInterjections((prev) =>
+        prev.some((p) => p.messageId === messageId)
+          ? prev.map((p) =>
+              p.messageId === messageId ? { ...p, ...item, transcribing: false } : p
+            )
+          : [...prev, { conversationId, messageId, ...item, mine: true }]
+      )
+      let status: 'pending' | 'no_live_turn'
+      try {
+        status = (
+          await window.api.chat.interject({
+            conversationId,
+            messageId,
+            text: item.text,
+            attachments: item.attachments,
+            ...(item.voicePrompt ? { voicePrompt: true } : {}),
+            ...(item.voiceLang ? { voiceLang: item.voiceLang } : {})
+          })
+        ).status
+      } catch {
+        status = 'no_live_turn'
+      }
+      if (status === 'no_live_turn') {
+        setPendingInterjections((prev) => prev.filter((p) => p.messageId !== messageId))
+        return false
+      }
+      return true
+    },
+    []
+  )
+
   const sendContent = useCallback(
     async (
       content: string,
       attachments: MessageAttachment[] = [],
       opts?: {
         modeOverride?: 'single' | 'workflow'
+        /**
+         * An already-transcribed voice note (a voice interjection the turn
+         * closed on before reading it, or that found no live turn): the
+         * content is its transcript, `attachments` its audio. The feed and
+         * the history get exactly the shape sendVoiceBlob gives a take sent
+         * straight away — the transcript IS the prompt, the audio never
+         * reaches the model, the detected language rides the voice_note tag.
+         */
+        voice?: { lang?: string }
         /**
          * Procedure Play only. The conversation's folders and reference files
          * are seeded in the same tick this send fires, and React state does
@@ -1972,7 +2130,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           role: 'user',
           content: trimmed,
           timestamp: Date.now(),
-          ...(attachments.length > 0 ? { attachments } : {})
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(opts?.voice ? { voicePrompt: true } : {}),
+          ...(opts?.voice?.lang ? { voiceLang: opts.voice.lang } : {})
         }
         const assistantPlaceholder: AssistantMessage = {
           id: cryptoId(),
@@ -1990,7 +2150,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // user message every send and invalidated the provider prompt-cache
         // prefix. The folder paths travel in the chat:send payload instead and
         // the agent injects a fresh listing into the outbound volatile tail.
-        const historyContent = composeHistoryContent(trimmed, attachments, workspaceRoot)
+        const composed = composeHistoryContent(trimmed, attachments, workspaceRoot)
+        // Mirrors sendVoiceBlob's entry exactly for a transcribed voice note.
+        const historyContent = opts?.voice
+          ? `<voice_note${opts.voice.lang ? ` lang="${opts.voice.lang}"` : ''}>\n${composed}`
+          : composed
         const currentEntry: {
           role: 'user'
           content: string
@@ -2078,6 +2242,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // streaming session is already eviction-proof.
         sendingRef.current = false
         markSending(sessionKey, false)
+        // Anything submitted while this send was in flight goes out now —
+        // into the turn it just started, or as the next turn if that one
+        // already ended.
+        void flushHeldRef.current()
       }
     },
     [
@@ -2105,29 +2273,24 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // the Enter key, which doesn't go through them.
     if (staging) return
     const atts = pendingAttachments
-    // Mid-turn submits QUEUE instead of sending: the prompt waits in a row
-    // above the composer and flushes when the turn ends. sendingRef counts
-    // as mid-turn too — a send is already in flight, and clearing the
-    // composer into sendContent's re-entry guard would silently eat the
-    // message. A live channel turn queues identically: the reply
-    // goes out when that run finishes, in one ordered transcript.
+    // Mid-turn submits SEND: the message goes to the running turn, which
+    // reads it at its next step (a pending bubble at the tail of the feed
+    // until then). A live channel/automation run on this conversation is
+    // steered the same way — the runner's inbox is keyed by conversation.
+    // sendingRef counts as mid-turn too: a send is in flight and its turn
+    // may not be registered yet, so the message waits for it to settle
+    // (flushHeld) instead of being eaten by sendContent's re-entry guard.
     if (busy || sendingRef.current) {
-      setQueuedPrompts((prev) => [...prev, { id: cryptoId(), text: trimmed, attachments: atts }])
       setDraft('')
       setPendingAttachments([])
+      heldMessagesRef.current.push({ kind: 'text', text: trimmed, attachments: atts })
+      void flushHeldRef.current()
       return
     }
     setDraft('')
     setPendingAttachments([])
     await sendContent(trimmed, atts)
   }, [draft, pendingAttachments, staging, busy, sendContent])
-
-  // Discarding a queued prompt drops only the metadata — like discarded
-  // staged files, the already-uploaded bytes stay on disk (cheap; see the
-  // pendingAttachments doc comment).
-  const cancelQueued = useCallback((id: string) => {
-    setQueuedPrompts((prev) => prev.filter((q) => q.id !== id))
-  }, [])
 
   // "Try again" on a failed turn's error card: continue the conversation with
   // a message that names what went wrong, so the model resumes from where it
@@ -2349,6 +2512,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       } finally {
         sendingRef.current = false
         markSending(sessionKey, false)
+        // Same as sendContent: what was submitted meanwhile goes out now.
+        void flushHeldRef.current()
       }
     },
     [
@@ -2370,18 +2535,83 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   /**
-   * The review row's send button. Mid-turn it QUEUES the take instead of
-   * sending it — same rule as a typed prompt (see `send`), so a voice message
-   * recorded while the agent is working waits its turn in the same ordered
-   * queue rather than being refused. The recorder resets either way: the take
-   * now belongs to the queue row (or to the send in flight), not to the
+   * A voice take sent MID-TURN: upload the audio, show it as a pending
+   * bubble with the transcribing placeholder, run STT, then hand the
+   * transcript to the running turn as a voice-note interjection. Upload and
+   * STT happen here rather than at the send because the runner needs real
+   * on-disk paths and real text. If the turn is gone by the time the
+   * transcript is back, the take becomes the next turn (held, then sent
+   * through sendContent's voice shape) — never dropped.
+   */
+  const interjectVoiceBlob = useCallback(
+    async (blob: Blob, blobUrl: string | null, conversationId: string) => {
+      const messageId = cryptoId()
+      try {
+        const buffer = await blob.arrayBuffer()
+        const fileName = `recording-${Date.now()}.webm`
+        const meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
+        if (blobUrl) URL.revokeObjectURL(blobUrl)
+        const attachment: MessageAttachment = {
+          type: meta.type,
+          filePath: meta.filePath,
+          originalName: meta.originalName,
+          mimeType: meta.mimeType,
+          sizeBytes: meta.sizeBytes
+        }
+        setPendingInterjections((prev) => [
+          ...prev,
+          {
+            conversationId,
+            messageId,
+            text: '',
+            attachments: [attachment],
+            voicePrompt: true,
+            transcribing: true,
+            mine: true
+          }
+        ])
+        const sttResult = await window.api.stt.transcribe({
+          filePath: meta.filePath,
+          conversationId
+        })
+        // Taken back (the X) while the transcript was in flight — the row is
+        // already gone; the runner never heard of it.
+        if (abortedVoiceInterjectionsRef.current.delete(messageId)) return
+        if (!sttResult.ok) {
+          toast.show({ message: sttResult.error, tone: 'error' })
+          setPendingInterjections((prev) => prev.filter((p) => p.messageId !== messageId))
+          return
+        }
+        const item = {
+          text: sttResult.transcript,
+          attachments: [attachment],
+          voicePrompt: true as const,
+          ...(sttResult.language ? { voiceLang: sttResult.language } : {})
+        }
+        const accepted = await interjectNow(conversationId, item, messageId)
+        if (!accepted) {
+          heldMessagesRef.current.push({ kind: 'text', ...item })
+          void flushHeldRef.current()
+        }
+      } catch {
+        setPendingInterjections((prev) => prev.filter((p) => p.messageId !== messageId))
+        toast.show({ message: t('chat.voice.error'), tone: 'error' })
+      }
+    },
+    [interjectNow, toast, t]
+  )
+
+  /**
+   * The review row's send button. Mid-turn it SENDS the take to the running
+   * turn — same rule as a typed prompt (see `send`): uploaded and
+   * transcribed now, read by the agent at its next step. The recorder
+   * resets either way: the take now belongs to the send, not to the
    * composer.
    */
   const sendRecording = useCallback(async () => {
     const blob = recBlobRef.current
     if (!blob) return
     const blobUrl = recBlobUrl
-    const durationSec = recElapsed
     if (recAudioRef.current) {
       recAudioRef.current.pause()
       recAudioRef.current = null
@@ -2390,68 +2620,211 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setRecPlaying(false)
     setRecElapsed(0)
     recBlobRef.current = null
-    // Hand the object URL over WITHOUT revoking: the queue row plays it back,
-    // and sendVoiceBlob revokes it once the audio is on disk.
+    // Hand the object URL over WITHOUT revoking: whichever path uploads the
+    // audio revokes it once the bytes are on disk.
     setRecBlobUrl(null)
     if (busy || sendingRef.current) {
-      setQueuedPrompts((prev) => [
-        ...prev,
-        { id: cryptoId(), text: '', attachments: [], voice: { blob, blobUrl, durationSec } }
-      ])
+      heldMessagesRef.current.push({ kind: 'voice', blob, blobUrl })
+      void flushHeldRef.current()
       return
     }
     await sendVoiceBlob(blob, blobUrl)
-  }, [busy, recBlobUrl, recElapsed, sendVoiceBlob])
+  }, [busy, recBlobUrl, sendVoiceBlob])
 
-  // Queue flush: each streaming→idle transition sends the next queued
-  // prompt. Every end path lands here — chat:done covers natural completion
-  // AND user Stop (cancel resolves the turn as done), chat:error covers
-  // failures — so a stopped run still advances the queue by design. The
-  // sendingRef guard covers the one race: if a manual send grabbed this gap
-  // first, the queue holds and flushes when THAT turn ends instead of
-  // vanishing into sendContent's re-entry guard.
-  // A channel run ending is the same transition (its terminal chat:turnState
-  // clears `remoteRunning`), so a prompt typed while Telegram was mid-answer
-  // sends itself the moment that answer lands.
-  // Declared after sendVoiceBlob on purpose: the dependency array is read
-  // during render, so naming it any earlier would hit the const's TDZ.
-  const prevStreamingQueueRef = useRef(false)
+  // `busy` for the flush below, read at call time rather than captured:
+  // the flush is reached from inside sends and IPC callbacks whose closures
+  // are older than the latest render.
+  const busyRef = useRef(busy)
   useEffect(() => {
-    const wasStreaming = prevStreamingQueueRef.current
-    prevStreamingQueueRef.current = busy
-    if (!wasStreaming || busy) return
-    if (queuedPrompts.length === 0 || sendingRef.current) return
-    const [next, ...rest] = queuedPrompts
-    setQueuedPrompts(rest)
-    // A voice row carries no text — it flushes through the recorder path,
-    // which uploads the audio, transcribes it, then fires the turn. Both
-    // senders run inside the async IIFE (the repo's set-state-in-effect
-    // pattern): they mark the session sending, which is a setState the rule
-    // won't allow synchronously in an effect body.
-    const voice = next.voice
-    void (async () => {
-      if (voice) await sendVoiceBlob(voice.blob, voice.blobUrl)
-      else await sendContent(next.text, next.attachments)
-    })()
-  }, [busy, queuedPrompts, sendContent, sendVoiceBlob])
+    busyRef.current = busy
+  }, [busy])
 
-  // The queue owns its takes' object URLs: revoke each one as its row leaves
-  // (cancel, flush, or the defensive wipe on conversation switch) so a
-  // dropped recording doesn't pin its audio for the life of the session.
-  const liveVoiceUrlsRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const present = new Set<string>()
-    for (const q of queuedPrompts) if (q.voice?.blobUrl) present.add(q.voice.blobUrl)
-    for (const url of liveVoiceUrlsRef.current) {
-      if (!present.has(url)) URL.revokeObjectURL(url)
+  /**
+   * Send whatever is waiting in heldMessagesRef, in order. A live turn (this
+   * window's, or a channel run on the same conversation) takes each message
+   * as an interjection; with none, the first message becomes the next turn
+   * and that send's own finally flushes the rest. The one thing this must
+   * never do is hand a message to sendContent while the window still reads
+   * busy — the re-entry guard there would eat it — so a message the runner
+   * bounced while busy goes back to the head and waits for the busy→idle
+   * transition (the effect below) to retry.
+   */
+  const flushHeld = useCallback(async (): Promise<void> => {
+    if (flushingHeldRef.current || sendingRef.current) return
+    flushingHeldRef.current = true
+    try {
+      for (;;) {
+        const item = heldMessagesRef.current.shift()
+        if (!item) break
+        const conversationId = conversationIdRef.current
+        const live =
+          conversationId !== null && (pendingTurnIdRef.current !== null || busyRef.current)
+        if (live && conversationId) {
+          if (item.kind === 'voice') {
+            await interjectVoiceBlob(item.blob, item.blobUrl, conversationId)
+            continue
+          }
+          const accepted = await interjectNow(conversationId, item)
+          if (accepted) continue
+          // Bounced: the turn closed a moment ago. If this window still
+          // reads busy, the idle transition is imminent — wait for it.
+          if (busyRef.current || sendingRef.current) {
+            heldMessagesRef.current.unshift(item)
+            return
+          }
+        }
+        // No live turn: this message is the next turn. Release the flag
+        // first — that send's finally re-enters here for the rest.
+        flushingHeldRef.current = false
+        if (item.kind === 'voice') await sendVoiceBlob(item.blob, item.blobUrl)
+        else {
+          await sendContent(
+            item.text,
+            item.attachments,
+            item.voicePrompt ? { voice: { lang: item.voiceLang } } : undefined
+          )
+        }
+        return
+      }
+    } finally {
+      flushingHeldRef.current = false
     }
-    liveVoiceUrlsRef.current = present
-  }, [queuedPrompts])
+  }, [interjectNow, interjectVoiceBlob, sendContent, sendVoiceBlob])
   useEffect(() => {
-    // Reads the ref at teardown, not at mount: the effect above swaps the Set
-    // on every queue change, so capturing it here would revoke nothing.
-    return () => liveVoiceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
-  }, [])
+    flushHeldRef.current = flushHeld
+  }, [flushHeld])
+  // The busy→idle transition: a message the runner bounced while this
+  // window still read busy goes out now as the next turn. Runs inside the
+  // async callback (the repo's set-state-in-effect pattern).
+  useEffect(() => {
+    if (busy || heldMessagesRef.current.length === 0) return
+    void flushHeld()
+  }, [busy, flushHeld])
+
+  /**
+   * Apply a withdraw outcome once — the X's own reply and the broadcast
+   * event both report it. Only a message THIS window sent touches the
+   * composer: taken back (by the user, or by a Stop) it returns to the
+   * draft; closed on before being read (turn_ended / error — the sliver
+   * between the agent's last drain and the lane closing) it is sent again
+   * as the next turn. Anyone else's row just disappears.
+   */
+  const settleWithdrawn = useCallback(
+    (item: PendingInterjection, reason: 'user' | 'canceled' | 'turn_ended' | 'error') => {
+      if (settledInterjectionsRef.current.has(item.messageId)) return
+      settledInterjectionsRef.current.add(item.messageId)
+      setPendingInterjections((prev) => prev.filter((p) => p.messageId !== item.messageId))
+      if (!item.mine) return
+      if (reason === 'user' || reason === 'canceled') {
+        if (item.text.length > 0) {
+          setDraft((prev) => (prev.trim().length > 0 ? `${prev}\n${item.text}` : item.text))
+        }
+        // The audio of a voice note is not re-staged: its transcript is the
+        // message, and it is back in the draft.
+        if (!item.voicePrompt && item.attachments.length > 0) {
+          setPendingAttachments((prev) => [
+            ...prev,
+            ...item.attachments.filter((a) => !prev.some((b) => b.filePath === a.filePath))
+          ])
+        }
+        return
+      }
+      heldMessagesRef.current.push({
+        kind: 'text',
+        text: item.text,
+        attachments: item.attachments,
+        ...(item.voicePrompt ? { voicePrompt: true } : {}),
+        ...(item.voiceLang ? { voiceLang: item.voiceLang } : {})
+      })
+      void flushHeldRef.current()
+    },
+    []
+  )
+
+  /** The X on a pending bubble. False from the runner means the agent already read it — its segment retires the row. */
+  const withdrawPending = useCallback(
+    async (item: PendingInterjection) => {
+      if (item.transcribing) {
+        // Not at the runner yet — the transcript is still coming back.
+        abortedVoiceInterjectionsRef.current.add(item.messageId)
+        setPendingInterjections((prev) => prev.filter((p) => p.messageId !== item.messageId))
+        return
+      }
+      let taken = false
+      try {
+        taken = await window.api.chat.withdrawInterjection({
+          conversationId: item.conversationId,
+          messageId: item.messageId
+        })
+      } catch {
+        taken = false
+      }
+      if (taken) settleWithdrawn(item, 'user')
+    },
+    [settleWithdrawn]
+  )
+
+  // Mid-turn message lifecycle, every surface's included: the phone can
+  // steer a run this window is watching, and this window can steer a
+  // Telegram run. Pending rows show and hide for anyone's message; the
+  // draft restore and the resend happen only for a message THIS window sent.
+  useEffect(() => {
+    return window.api.chat.onInterjection((ev) => {
+      if (ev.conversationId !== conversationIdRef.current) return
+      if (ev.state === 'pending') {
+        setPendingInterjections((prev) =>
+          prev.some((p) => p.messageId === ev.messageId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  conversationId: ev.conversationId,
+                  messageId: ev.messageId,
+                  text: ev.text,
+                  attachments: ev.attachments,
+                  ...(ev.voicePrompt ? { voicePrompt: true } : {}),
+                  ...(ev.voiceLang ? { voiceLang: ev.voiceLang } : {}),
+                  mine: false
+                }
+              ]
+        )
+        return
+      }
+      if (ev.state === 'delivered') {
+        // Belt and braces with the `user_message` segment.
+        setPendingInterjections((prev) => prev.filter((p) => p.messageId !== ev.messageId))
+        return
+      }
+      const known = pendingInterjectionsRef.current.find((p) => p.messageId === ev.messageId)
+      settleWithdrawn(
+        known ?? {
+          conversationId: ev.conversationId,
+          messageId: ev.messageId,
+          text: ev.text,
+          attachments: ev.attachments,
+          mine: false
+        },
+        ev.reason ?? 'user'
+      )
+    })
+  }, [settleWithdrawn])
+
+  /**
+   * The pending bubbles the feed draws: this conversation's, minus any whose
+   * delivered copy is already in the streaming card (the segment can land
+   * before its `delivered` event is processed — never show both).
+   */
+  const visiblePendingInterjections = useMemo((): PendingInterjection[] => {
+    if (pendingInterjections.length === 0) return pendingInterjections
+    const tail = messages[messages.length - 1]
+    const delivered = new Set<string>()
+    if (tail && isAssistant(tail)) {
+      for (const s of tail.segments) if (s.kind === 'user_message') delivered.add(s.messageId)
+    }
+    return pendingInterjections.filter(
+      (p) => p.conversationId === activeConversationId && !delivered.has(p.messageId)
+    )
+  }, [pendingInterjections, messages, activeConversationId])
 
   const stop = useCallback(() => {
     // Scoped: only THIS session's conversation stops — the other sessions'
@@ -2924,6 +3297,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   }
                 />
               ))}
+              {/* Messages sent mid-turn and not yet read: AFTER the streaming
+                  card, at the tail — the agent reads them at its next step,
+                  and the bubble then moves inside the card at that exact
+                  point (the `user_message` segment). */}
+              {visiblePendingInterjections.map((p) => (
+                <PendingInterjectionBubble
+                  key={p.messageId}
+                  item={p}
+                  onWithdraw={() => void withdrawPending(p)}
+                />
+              ))}
             </InAppReasoningContext.Provider>
           </InAppVerboseContext.Provider>
           {hasMessages && !hasAnyModel && (
@@ -2970,33 +3354,22 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
       >
         {busy && <div className="rainbow-border" />}
-        {(queuedPrompts.length > 0 || pendingAttachments.length > 0 || staging) && (
+        {(pendingAttachments.length > 0 || staging) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
-            {/* Queued prompts live HERE, above the composer — never in the
-                feed. A message only enters the feed once its turn is sent. */}
-            {queuedPrompts.length > 0 && (
-              <div className="pointer-events-auto mx-auto flex max-h-40 w-full max-w-xl flex-col gap-1.5 overflow-y-auto">
-                {queuedPrompts.map((q) => (
-                  <QueuedPromptRow key={q.id} prompt={q} onCancel={() => cancelQueued(q.id)} />
-                ))}
-              </div>
-            )}
-            {(pendingAttachments.length > 0 || staging) && (
-              <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
-                {pendingAttachments.map((att) => (
-                  <PendingAttachmentChip
-                    key={att.filePath}
-                    attachment={att}
-                    onRemove={() => removePending(att.filePath)}
-                  />
-                ))}
-                {/* Copying chips sit at the end and are swapped for the real
-                    chip above as each file lands. */}
-                {stagingFiles.map((file) => (
-                  <StagingAttachmentChip key={file.id} file={file} />
-                ))}
-              </div>
-            )}
+            <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
+              {pendingAttachments.map((att) => (
+                <PendingAttachmentChip
+                  key={att.filePath}
+                  attachment={att}
+                  onRemove={() => removePending(att.filePath)}
+                />
+              ))}
+              {/* Copying chips sit at the end and are swapped for the real
+                  chip above as each file lands. */}
+              {stagingFiles.map((file) => (
+                <StagingAttachmentChip key={file.id} file={file} />
+              ))}
+            </div>
           </div>
         )}
         {/* One surface, Codex/Claude-style: the prompt IS the composer. The
@@ -3016,13 +3389,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
-                    // Mid-turn this queues instead of sending — send()
+                    // Mid-turn this sends to the running turn — send()
                     // branches on `busy`.
                     void send()
+                    return
+                  }
+                  // Escape while a turn runs is Stop — the keyboard twin of
+                  // the red button beside the textarea.
+                  if (e.key === 'Escape' && busy) {
+                    e.preventDefault()
+                    stop()
                   }
                 }}
                 rows={1}
-                placeholder={busy ? t('chat.queue.placeholder') : t('chat.placeholder')}
+                placeholder={busy ? t('chat.interject.placeholder') : t('chat.placeholder')}
                 dir={isRtl ? 'rtl' : 'ltr'}
                 className={cn(
                   'text-fg placeholder:text-muted max-h-40 min-h-[38px] min-w-0 flex-1 resize-none bg-transparent px-3.5 pt-2.5 pb-0.5 text-sm outline-none',
@@ -3072,16 +3452,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 >
                   <Delete02Icon size={14} />
                 </button>
-                {/* Mid-turn this queues the take rather than sending it —
-                    the icon swaps to a clock to say so. */}
+                {/* Mid-turn this sends the take to the running turn — the
+                    same send either way. */}
                 <button
                   type="button"
                   onClick={() => void sendRecording()}
                   className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:brightness-110"
-                  aria-label={busy ? t('chat.voice.queue') : t('chat.voice.send')}
-                  title={busy ? t('chat.voice.queue') : t('chat.voice.send')}
+                  aria-label={t('chat.voice.send')}
+                  title={t('chat.voice.send')}
                 >
-                  {busy ? <Clock01Icon size={14} /> : <ArrowUp02Icon size={14} />}
+                  <ArrowUp02Icon size={14} />
                 </button>
               </div>
             )}
@@ -3248,20 +3628,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Image02Icon size={16} />
             </button>
-            {/* Recording stays live mid-turn, like attaching: the take is
-                queued instead of sent, and goes out when the turn ends. */}
+            {/* Recording stays live mid-turn, like attaching: the take goes
+                to the running turn like a typed message does. */}
             <button
               type="button"
               onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
               disabled={!micAvailable || recPhase !== 'idle'}
-              title={
-                !micAvailable
-                  ? t('chat.voice.noMic')
-                  : busy
-                    ? t('chat.voice.queue')
-                    : t('chat.voice.record')
-              }
-              aria-label={busy ? t('chat.voice.queue') : t('chat.voice.record')}
+              title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
+              aria-label={t('chat.voice.record')}
               className={cn(
                 'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
                 'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
@@ -3272,9 +3646,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Mic01Icon size={16} />
             </button>
-            {/* Mid-turn the composer keeps a primary send: it QUEUES the
-                draft (send() branches on `busy`) while the red submit
-                button next to it stays the Stop. Enter matches the arrow. */}
+            {/* Mid-turn the composer keeps its send arrow — simply the send
+                again (it reaches the running turn; send() branches on
+                `busy`) — while the red submit button next to it stays the
+                Stop. Enter matches the arrow. */}
             {recPhase === 'idle' && busy && (
               <button
                 type="button"
@@ -3284,8 +3659,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   staging ||
                   (draft.trim().length === 0 && pendingAttachments.length === 0)
                 }
-                title={staging ? t('chat.upload.copyingWait') : t('chat.queue.add')}
-                aria-label={t('chat.queue.add')}
+                title={staging ? t('chat.upload.copyingWait') : t('chat.send')}
+                aria-label={t('chat.send')}
                 className={cn(
                   'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -4319,15 +4694,22 @@ export function UserBubble({
   transcribing,
   voicePrompt,
   timestamp,
-  t
+  footer,
+  t: tProp
 }: {
   content: string
   attachments?: MessageAttachment[]
   transcribing?: boolean
   voicePrompt?: boolean
   timestamp?: number
-  t: (k: string, opts?: Record<string, unknown>) => string
+  /** Replaces the copy + time footer (the pending row's status + withdraw). */
+  footer?: ReactNode
+  t?: (k: string, opts?: Record<string, unknown>) => string
 }): React.JSX.Element {
+  // ChatItem hands its `t` down so its memo re-renders on a locale change;
+  // the segment-level and pending-row callers have none to pass.
+  const { t: tHook } = useTranslation()
+  const t = tProp ?? tHook
   // A voice note's own player IS the prompt on screen. The transcript is still
   // what `content` stores — history, titling and export all read it, and the
   // model still receives it as `<voice_note>` — but printing it back under the
@@ -4357,23 +4739,63 @@ export function UserBubble({
           <AttachmentList attachments={attachments!} align="end" />
         </div>
       )}
-      {showFooter && (
-        <div className="flex items-center gap-1.5">
-          <CopyButton
-            text={content}
-            variant="inline"
-            ariaLabelKey="chat.copyMessage"
-            className="px-2"
-          />
-          {timeLabel && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted">
-              <Clock01Icon size={14} />
-              {timeLabel}
-            </span>
+      {footer !== undefined
+        ? footer
+        : showFooter && (
+            <div className="flex items-center gap-1.5">
+              <CopyButton
+                text={content}
+                variant="inline"
+                ariaLabelKey="chat.copyMessage"
+                className="px-2"
+              />
+              {timeLabel && (
+                <span className="inline-flex items-center gap-1 text-xs text-muted">
+                  <Clock01Icon size={14} />
+                  {timeLabel}
+                </span>
+              )}
+            </div>
           )}
-        </div>
-      )}
     </div>
+  )
+}
+
+/**
+ * A mid-turn message the agent hasn't read yet, at the tail of the feed.
+ * The same bubble as any user message, with a quiet status line and an X
+ * that takes it back (into the draft, when this window sent it) in place
+ * of the copy + time footer.
+ */
+function PendingInterjectionBubble({
+  item,
+  onWithdraw
+}: {
+  item: PendingInterjection
+  onWithdraw: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <UserBubble
+      content={item.text}
+      attachments={item.attachments.length > 0 ? item.attachments : undefined}
+      transcribing={item.transcribing}
+      voicePrompt={item.voicePrompt}
+      footer={
+        <div className="text-muted flex items-center gap-1.5 text-xs">
+          <span>{t('chat.interject.pending')}</span>
+          <button
+            type="button"
+            onClick={onWithdraw}
+            title={t('chat.interject.withdraw')}
+            aria-label={t('chat.interject.withdraw')}
+            className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent flex h-5 w-5 cursor-pointer items-center justify-center rounded"
+          >
+            <CancelCircleIcon size={14} />
+          </button>
+        </div>
+      }
+    />
   )
 }
 
@@ -4694,6 +5116,21 @@ function renderSegments(
       flushText()
       blocks.push(
         <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
+      )
+    } else if (seg.kind === 'user_message') {
+      // A message the user sent mid-turn, at the exact point the agent read
+      // it. Output FROM the user — always visible, clean feed included, and
+      // never folded into the prose around it: the bubble before it closes
+      // here and the next text segment opens a new one after.
+      flushText()
+      blocks.push(
+        <UserBubble
+          key={`um-${seg.segmentId}`}
+          content={seg.text}
+          attachments={seg.attachments}
+          voicePrompt={seg.voicePrompt}
+          timestamp={seg.timestamp}
+        />
       )
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
@@ -5243,92 +5680,6 @@ function formatRecTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-/**
- * One prompt waiting above the composer for the running turn to end. An
- * attachment-only prompt (no caption) labels itself with its file names; a
- * voice take shows its length and plays back, since there's no transcript to
- * show yet — it is transcribed when the row flushes, not when it's queued.
- */
-function QueuedPromptRow({
-  prompt,
-  onCancel
-}: {
-  prompt: QueuedPrompt
-  onCancel: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const [playing, setPlaying] = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const voiceUrl = prompt.voice?.blobUrl ?? null
-  // The URL is revoked when this row leaves the queue — stop playback with it.
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause()
-      audioRef.current = null
-    }
-  }, [])
-  const togglePlay = useCallback(() => {
-    if (!voiceUrl) return
-    if (playing && audioRef.current) {
-      audioRef.current.pause()
-      setPlaying(false)
-      return
-    }
-    const audio = new Audio(voiceUrl)
-    audioRef.current = audio
-    audio.onended = () => setPlaying(false)
-    void audio.play().catch(() => setPlaying(false))
-    setPlaying(true)
-  }, [voiceUrl, playing])
-
-  return (
-    <div className="border-border bg-surface text-fg flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs">
-      <Clock01Icon size={12} className="text-muted shrink-0" aria-hidden />
-      {prompt.voice ? (
-        <>
-          {voiceUrl && (
-            <button
-              type="button"
-              onClick={togglePlay}
-              aria-label={playing ? t('chat.voice.pause') : t('chat.voice.play')}
-              title={playing ? t('chat.voice.pause') : t('chat.voice.play')}
-              className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent shrink-0 cursor-pointer rounded"
-            >
-              {playing ? <PauseIcon size={12} /> : <PlayIcon size={12} />}
-            </button>
-          )}
-          <span className="min-w-0 flex-1 truncate">{t('chat.voice.queued')}</span>
-          <span className="text-muted shrink-0 tabular-nums text-[10px]">
-            {formatRecTime(prompt.voice.durationSec)}
-          </span>
-        </>
-      ) : (
-        <span className="min-w-0 flex-1 truncate" dir="auto" title={prompt.text}>
-          {prompt.text || prompt.attachments.map((a) => a.originalName).join(', ')}
-        </span>
-      )}
-      {prompt.attachments.length > 0 && (
-        <span
-          className="text-muted flex shrink-0 items-center gap-1 text-[10px] tabular-nums"
-          title={t('chat.queue.attachmentCount', { count: prompt.attachments.length })}
-        >
-          <Image02Icon size={11} aria-hidden />
-          {prompt.attachments.length}
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={onCancel}
-        title={t('chat.queue.remove')}
-        aria-label={t('chat.queue.remove')}
-        className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent shrink-0 cursor-pointer rounded"
-      >
-        <CancelCircleIcon size={14} />
-      </button>
-    </div>
-  )
-}
-
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
 const CODE_EXTS_RE =
   /\.(?:js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|rs|go|java|kt|kts|swift|c|cpp|h|hpp|cs|css|scss|less|sass|html|htm|xml|json|yaml|yml|toml|ini|conf|env|sh|bash|zsh|fish|bat|cmd|ps1|sql|graphql|gql|md|mdx|txt|log|php|lua|r|pl|dart|scala|groovy|proto|zig|ex|exs|erl|hs|clj|ml|dockerfile|makefile)$/i
@@ -5841,6 +6192,12 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
     // skipped — see CONTENT_READ_TOOLS.
     const callById = new Map<string, ToolCallSegment>()
     for (const seg of message.segments) {
+      // Files the user attached to a mid-turn message — the user's own, like
+      // a top-level message's attachments above.
+      if (seg.kind === 'user_message') {
+        for (const att of seg.attachments ?? []) push(att)
+        continue
+      }
       if (seg.kind !== 'tool_call') continue
       callById.set(seg.toolCallId, seg)
       if (CONTENT_READ_TOOLS.has(seg.name)) continue
@@ -6328,6 +6685,24 @@ function textHistory(
         if (s.kind === 'active_model') {
           if (iterCount > 0) flushIteration()
           iterCount++
+        } else if (s.kind === 'user_message') {
+          // A message the user sent mid-turn, read by the agent at this exact
+          // point. Close the iteration so far and replay it as the real user
+          // entry it was. Mirrors channels/channel.ts assistantSegmentsToHistory
+          // (interjectionSegmentToHistory) — the two must stay identical.
+          flushIteration()
+          if (s.voicePrompt) {
+            const langAttr = s.voiceLang ? ` lang="${s.voiceLang}"` : ''
+            out.push({ role: 'user', content: `<voice_note${langAttr}>\n${s.text}` })
+          } else {
+            const atts = s.attachments ?? []
+            const entry: ChatHistoryMessage = {
+              role: 'user',
+              content: composeHistoryContent(s.text, atts, workspaceRoot)
+            }
+            if (atts.length > 0) entry.attachments = atts
+            out.push(entry)
+          }
         } else if (s.kind === 'text') {
           iterText += s.delta
           hasContent = true

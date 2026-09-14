@@ -76,9 +76,10 @@ export function openTaskListNotice(items: readonly TodoItem[]): string | undefin
  * turn should end normally (no list this turn, nothing open, the model is
  * still calling tools, this wasn't an end_turn, or the nudge is spent).
  *
- * Provider-safe pair, exactly as the other guards: a non-empty assistant
- * message echoing the reply that already streamed (Anthropic rejects empty
- * text blocks and enforces alternation), then the aside as a user message.
+ * Shape, exactly as the other guards: the aside is a `role: 'user'` message,
+ * preceded by an assistant message echoing the reply that already streamed —
+ * and by nothing at all when the reply was empty. See screen-indicator-guard
+ * for why no placeholder is invented in that case.
  */
 export function todoCloseoutNudge(
   items: readonly TodoItem[] | null,
@@ -90,11 +91,6 @@ export function todoCloseoutNudge(
   if (openTodoItems(items).length === 0) return null
   if (parsed.stopReason !== 'end_turn' || parsed.toolCalls.length > 0) return null
 
-  const assistant: ChatMessage = {
-    role: 'assistant',
-    content: parsed.text.trim() || '(continuing)'
-  }
-  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
   const user: ChatMessage = {
     role: 'user',
     content:
@@ -106,5 +102,11 @@ export function todoCloseoutNudge(
       'you are blocked, call todo_write leaving that item in_progress with a follow-up item naming the blocker, ' +
       'then end empty. Your reply has already been delivered — nothing further needs saying.]'
   }
+
+  const delivered = parsed.text.trim()
+  if (!delivered) return [user]
+
+  const assistant: ChatMessage = { role: 'assistant', content: delivered }
+  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
   return [assistant, user]
 }

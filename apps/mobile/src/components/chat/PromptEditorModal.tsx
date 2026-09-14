@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
  * promise: a monospaced field behind a line-number rail says "syntax goes
  * here", and what is being written is a message. So the app's own sans face,
  * the platform's typo correction, and a placeholder that names the one thing
- * this field is for — messaging Wolffish, or queueing for it mid-turn.
+ * this field is for — messaging Wolffish, idle or while it works.
  *
  * It sends, too. The whole reason to open this is a prompt too long for the
  * composer's one row, and routing that prompt back through the composer to be
@@ -45,8 +45,8 @@ export function PromptEditorModal({
 }: {
   open: boolean
   initialValue: string
-  /** Mid-turn this queues rather than sends — the button and the placeholder
-   *  both say so, exactly as the composer's do. */
+  /** Mid-turn the message goes into the running turn — the placeholder says
+   *  so, exactly as the composer's does; Send stays Send. */
   streaming: boolean
   /** Hand the draft over now, as a message. The composer clears and closes. */
   onSend: (value: string) => void
@@ -73,7 +73,7 @@ export function PromptEditorModal({
   // nothing of its own to send — unlike the composer, where a staged file is
   // a message on its own.
   const canSend = value.trim().length > 0
-  const sendLabel = streaming ? t('chat.queue.add') : t('chat.send')
+  const sendLabel = t('chat.send')
 
   return (
     <RNModal visible={open} animationType="slide" onRequestClose={() => onDone(value)}>
@@ -122,7 +122,7 @@ export function PromptEditorModal({
               spellCheck
               autoCapitalize="sentences"
               placeholder={rtlPlaceholder(
-                streaming ? t('chat.editor.queuePlaceholder') : t('chat.editor.placeholder')
+                streaming ? t('chat.interject.editorPlaceholder') : t('chat.editor.placeholder')
               )}
               placeholderTextColor={tokens.muted}
               selectionColor={tokens.accent}

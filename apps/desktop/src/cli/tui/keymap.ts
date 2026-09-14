@@ -41,7 +41,6 @@ export const DEFINITIONS = {
   session_sidebar: { default: '<leader>b', description: 'Toggle sidebar' },
   session_thinking: { default: '<leader>r', description: 'Show or hide reasoning' },
   session_tools: { default: '<leader>v', description: 'Show or hide tool details' },
-  session_queue: { default: '<leader>w', description: 'Queued prompts' },
   model_list: { default: '<leader>m', description: 'Switch model' },
   thinking_cycle: { default: 'ctrl+t', description: 'Cycle thinking effort' },
   mode_cycle: { default: 'tab', description: 'Cycle chat mode' },

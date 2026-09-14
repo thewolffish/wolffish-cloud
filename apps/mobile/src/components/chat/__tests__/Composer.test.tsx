@@ -5,10 +5,14 @@
  * The subject is one press producing one message. The draft is React state, so
  * a second press landing before the first has committed still reads the text
  * that was already handed over — on a phone that is an ordinary double tap, and
- * it used to send (or queue) the same message twice.
+ * it used to send the same message twice.
+ *
+ * Mid-turn the composer is the same composer: Send is Send (the screen routes
+ * it into the running turn), the placeholder is the one thing that changes,
+ * and the field takes back the words of a withdrawn message.
  */
 
-import { cleanup, act, fireEvent, render } from '@testing-library/react-native'
+import { cleanup, act, fireEvent, render, waitFor } from '@testing-library/react-native'
 import { Keyboard } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { ThemeContext } from '@/providers/theme/useTheme'
@@ -44,13 +48,18 @@ import { Composer, type ComposerSubmit } from '@/components/chat/Composer'
 import { queryClient } from '@/lib/query/queryClient'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/providers/toast/ToastProvider'
+import { useAppStore } from '@/state/appStore'
+import { useChatRuntime } from '@/state/chatRuntime'
 
 /** The expanded editor's placeholder — its handle here, and the assertion that
  *  the long copy is the one this surface carries. */
 const EXPANDED = 'Message Wolffish — take all the room you need.'
-const EXPANDED_QUEUE = 'Queue for Wolffish — this goes out when the current turn ends.'
+/** Mid-turn, both fields say where the message is going. */
+const MID_TURN = 'Message Wolffish while it works…'
+const EXPANDED_MID_TURN = 'Message Wolffish while it works — take all the room you need.'
 
 const onSubmit = jest.fn<void, [ComposerSubmit]>()
+const CONVERSATION = 'conv-1'
 
 let view: Awaited<ReturnType<typeof render>>
 
@@ -70,9 +79,8 @@ async function mount(streaming = false): Promise<void> {
             <Composer
               streaming={streaming}
               conversation={null}
-              queued={[]}
+              conversationId={CONVERSATION}
               onSubmit={onSubmit}
-              onCancelQueued={jest.fn()}
               onStop={jest.fn()}
               onNewConversation={jest.fn()}
             />
@@ -111,6 +119,7 @@ afterEach(() => {
 beforeEach(() => {
   onSubmit.mockClear()
   dismissed.mockClear()
+  useChatRuntime.setState({ draftRestores: {} })
 })
 
 describe('handing a message over', () => {
@@ -150,21 +159,44 @@ describe('handing a message over', () => {
     expect(dismissed).toHaveBeenCalled()
   })
 
-  it('drops it for a queued message too', async () => {
+  it('drops it for a mid-turn message too', async () => {
     await mount(true)
-    await type('Queue for Wolffish', 'later')
-    await act(async () => press('Queue message'))
+    await type(MID_TURN, 'skip the tests folder')
+    await act(async () => press('Send'))
     expect(dismissed).toHaveBeenCalled()
   })
 
-  it('queues rather than sends mid-turn, and still only once per frame', async () => {
+  /**
+   * Mid-turn is not a different composer. Send is still Send — the screen
+   * decides that it goes into the running turn — and one press is still one
+   * message; only the placeholder says where it is going.
+   */
+  it('sends mid-turn under the same button, and still only once per frame', async () => {
     await mount(true)
-    await type('Queue for Wolffish', 'later')
+    await type(MID_TURN, 'use the other file')
+    expect(view.queryByLabelText('Queue message')).toBeNull()
     await act(async () => {
-      press('Queue message')
-      press('Queue message')
+      press('Send')
+      press('Send')
     })
     expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit).toHaveBeenCalledWith({ kind: 'text', text: 'use the other file', files: [] })
+  })
+
+  /**
+   * A mid-turn message taken back — by the user, or because the turn was
+   * stopped before the agent read it — is the draft again. It comes back
+   * through the runtime store (chatRuntime.restoreDraft) and joins whatever
+   * is being typed rather than replacing it; the store entry is spent.
+   */
+  it('takes a withdrawn message back into the field, after what is being typed', async () => {
+    await mount(true)
+    await type(MID_TURN, 'and then')
+    await act(async () => {
+      useChatRuntime.getState().restoreDraft(CONVERSATION, 'skip the tests folder')
+    })
+    expect(view.getByLabelText(MID_TURN).props.value).toBe('and then\nskip the tests folder')
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBeUndefined()
   })
 })
 
@@ -205,10 +237,16 @@ describe('the expanded editor', () => {
     expect(fieldValue()).toBe('')
   })
 
-  it('names the queue when a turn is running', async () => {
+  it('says where a mid-turn message goes, and still sends it as Send', async () => {
     await mount(true)
     await act(async () => press('Edit prompt'))
-    expect(view.getByPlaceholderText(EXPANDED_QUEUE)).toBeTruthy()
+    await type(EXPANDED_MID_TURN, 'actually, the other branch')
+    await act(async () => press('Send'))
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'text',
+      text: 'actually, the other branch',
+      files: []
+    })
   })
 
   it('commits without sending when Done is used instead', async () => {
@@ -224,38 +262,54 @@ describe('the expanded editor', () => {
 })
 
 /**
- * Plan mode's chip: switched in the chat controls, the composer wears a
- * "Plan" chip at the end of the row above the send/attach/mic row only while
- * the stance is ON and a desktop can run the turn — and one tap turns it off.
+ * Plan mode's chip — the stance's only handle, the way the desktop's composer
+ * carries it: it stands in the bottom row whether the stance is on or off, and
+ * one tap flips it. What changes with the link is whether it can be flipped: a
+ * PAIRED phone whose desktop is out of reach gets a dimmed chip that answers
+ * with the reason, while an unpaired one holds the stance locally and stays
+ * live — the same three states the controls row used to carry.
  */
 describe('the plan-mode chip', () => {
   const runtime = () => require('@/state/chatRuntime') as typeof import('@/state/chatRuntime')
+  const ON = 'Plan mode is on: this turn only investigates and writes a plan. Tap to allow changes.'
+  const OFF = 'Plan first: read-only turns that write a plan you approve before anything changes.'
+  const OFFLINE = 'Connect the desktop to change plan mode.'
 
   beforeEach(() => {
     runtime().useChatRuntime.setState({ planModes: {} })
+    useAppStore.setState({ paired: true })
     mockReachable = true
   })
 
-  it('is absent while plan mode is off', async () => {
-    await mount()
-    expect(view.queryByText('Plan')).toBeNull()
-  })
-
-  it('appears once plan mode is on and turns it off when tapped', async () => {
-    runtime().useChatRuntime.getState().setPlanMode(null, true)
+  it('stands in the row while plan mode is off, and turns it on when tapped', async () => {
     await mount()
     expect(view.getByText('Plan')).toBeTruthy()
-    await act(async () =>
-      press('Plan mode is on: this turn only investigates and writes a plan. Tap to allow changes.')
-    )
-    expect(runtime().planModeFor(null)).toBe(false)
-    expect(view.queryByText('Plan')).toBeNull()
+    fireEvent.press(view.getByLabelText(OFF))
+    await waitFor(() => expect(runtime().planModeFor(null)).toBe(true))
+    expect(view.getByLabelText(ON)).toBeTruthy()
   })
 
-  it('stays hidden when no desktop can run the turn', async () => {
+  it('turns plan mode off when tapped again', async () => {
     runtime().useChatRuntime.getState().setPlanMode(null, true)
+    await mount()
+    fireEvent.press(view.getByLabelText(ON))
+    await waitFor(() => expect(runtime().planModeFor(null)).toBe(false))
+    expect(view.getByLabelText(OFF)).toBeTruthy()
+  })
+
+  it('stays put but refuses the flip while a paired desktop cannot hear it', async () => {
     mockReachable = false
     await mount()
-    expect(view.queryByText('Plan')).toBeNull()
+    fireEvent.press(view.getByLabelText(OFF))
+    expect(await view.findByText(OFFLINE)).toBeTruthy()
+    expect(runtime().planModeFor(null)).toBe(false)
+  })
+
+  it('is live unpaired — the stance stays local', async () => {
+    useAppStore.setState({ paired: false })
+    mockReachable = false
+    await mount()
+    fireEvent.press(view.getByLabelText(OFF))
+    await waitFor(() => expect(runtime().planModeFor(null)).toBe(true))
   })
 })

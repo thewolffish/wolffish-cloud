@@ -75,33 +75,50 @@ async function main(): Promise<void> {
   )
   ok('empty end_turn keeps stopReason end_turn', empty.stopReason === 'end_turn')
 
-  // 1. A first empty end_turn produces a provider-safe injection pair.
+  // 1. A first empty end_turn produces the aside, and nothing else. The
+  //    assistant placeholder that used to lead it — a literal `(continuing)`,
+  //    a parenthesized stand-in for an empty turn written in the model's own
+  //    voice one message before it replied — is the shape that leaked back out
+  //    to users as `(no output)` / `(no content)`. It must never come back:
+  //    this fork's only wire is OpenAI-shaped (providers/cloud.ts), where a
+  //    user message after tool results is ordinary and two user messages in a
+  //    row are coalesced by the converter.
   const nudge = emptyTurnNudge(empty, 0)
   ok('first empty end_turn produces a nudge', nudge !== null)
-  ok('nudge is a two-message pair', nudge?.length === 2)
+  ok('nudge is the user aside alone', nudge?.length === 1)
+  ok('no assistant turn is interposed', !nudge?.some((m) => m.role === 'assistant'))
   ok(
-    'nudge[0] is a non-empty assistant (keeps provider alternation valid)',
-    nudge?.[0].role === 'assistant' &&
+    'nudge[0] is a non-empty user prompt',
+    nudge?.[0].role === 'user' &&
       typeof nudge[0].content === 'string' &&
-      nudge[0].content.length > 0
+      (nudge[0].content as string).length > 0
+  )
+  // The nudge asked a silent model to type nothing and thereby taught it what
+  // to type: it printed the offending note as the example not to write, and a
+  // model reaches for the nearest token. Pin that the copy never names one.
+  const nudgeText = (nudge?.[0].content as string) ?? ''
+  ok(
+    'nudge never prints a stand-in for silence',
+    !/\(\s*no output\s*\)|\(\s*nothing to add\s*\)/i.test(nudgeText),
+    nudgeText
   )
   ok(
-    'nudge[1] is a non-empty user prompt',
-    nudge?.[1].role === 'user' &&
-      typeof nudge[1].content === 'string' &&
-      (nudge[1].content as string).length > 0
+    'nudge denies the structural-requirement premise and names the trailing-marker shape',
+    /structurally required/.test(nudgeText) && /trailing marker/.test(nudgeText)
   )
   ok(
-    'injected assistant carries no tool calls (no orphaned tool_use)',
-    nudge?.[0].role === 'assistant' && nudge[0].toolUses === undefined
+    'nothing injected carries a tool call (no orphaned tool_use)',
+    nudge?.every((m) => m.role !== 'assistant' || m.toolUses === undefined) === true
   )
 
-  // 2. Reasoning content is threaded onto the placeholder when present.
+  // 2. Reasoning: there is no assistant turn to hang it on any more. Only the
+  //    OpenAI-shaped reasoning wires echo reasoningContent back at all, and
+  //    what is dropped is the thinking of a call that produced nothing.
   const emptyWithReasoning = await emptyEndTurn(true)
   const reasoningNudge = emptyTurnNudge(emptyWithReasoning, 0)
   ok(
-    'reasoning is preserved on the injected assistant',
-    reasoningNudge?.[0].role === 'assistant' && !!reasoningNudge[0].reasoningContent
+    'a reasoning-only empty turn still injects the aside alone',
+    reasoningNudge?.length === 1 && reasoningNudge[0].role === 'user'
   )
 
   // 3. A turn that produced a tool call is NOT an empty turn — never nudged.

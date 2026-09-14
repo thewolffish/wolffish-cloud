@@ -17,7 +17,6 @@ import {
   openThemeDialog,
   PendingDialog,
   ProjectDialog,
-  QueueDialog,
   StatusDialog,
   ThinkingDialog
 } from './dialogs/core'
@@ -153,15 +152,6 @@ export function registerCommands(app: AppContext): void {
       aliases: ['stop'],
       enabled: () => state.working,
       run: () => actions.cancel()
-    },
-    {
-      name: 'queue',
-      title: 'Queued prompts',
-      category: 'Chat',
-      slash: 'queue',
-      key: 'session_queue',
-      description: 'see or drop what is waiting',
-      run: () => open(() => QueueDialog())
     },
     {
       name: 'pending',
