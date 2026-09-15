@@ -53,7 +53,7 @@ import {
   type Segment
 } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
-import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
+import type { InterjectVerdict, Interjection } from '@main/runtime/agent/interjection'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
@@ -328,7 +328,7 @@ export class CliChannel {
    * conversation, not per channel, so a terminal can steer an app-started
    * run on the same transcript.
    */
-  interject(payload: CliInterjectPayload): InterjectResult {
+  interject(payload: CliInterjectPayload): InterjectVerdict {
     const item: Interjection = {
       messageId: payload.messageId,
       text: payload.text,
@@ -336,7 +336,9 @@ export class CliChannel {
       channel: 'cli',
       sentAt: Date.now()
     }
-    return this.runner.interject(payload.conversationId, item)
+    // Verdict only — see the Electron twin: `durable` never crosses IPC.
+    const { status } = this.runner.interject(payload.conversationId, item)
+    return { status }
   }
 
   /** Take a still-unread mid-turn message back. False once the agent read it. */

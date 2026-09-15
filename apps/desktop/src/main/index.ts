@@ -8,6 +8,11 @@ import { collectChannelStatus } from '@main/channels/status'
 import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
 import { getPlanMode, onPlanModeChange, setPlanMode } from '@main/runtime/plan-mode'
 import { ElectronChannel } from '@main/channels/electron/channel'
+import {
+  openBrowserUrl,
+  type DoctorOptions,
+  type FixOptions
+} from '@main/channels/extension/doctor'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { MobileChannel } from '@main/channels/mobile/channel'
 import { BridgeClient } from '@main/cloud/bridge'
@@ -20,6 +25,17 @@ import {
   type CustomizationDoc
 } from '@main/channels/mobile/snapshot'
 import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
+import {
+  reconcileAll,
+  reconcileConversation,
+  type ReconcilerDeps
+} from '@main/channels/interjection-reconciler'
+import {
+  forgetConversationPark,
+  parkedInterjections,
+  releaseHeldInterjection
+} from '@main/channels/interjection-store'
+import type { Interjection } from '@main/runtime/agent/interjection'
 import {
   countConversationsSince,
   createConversation,
@@ -428,6 +444,57 @@ turnRunner.onInterjection((ev) => {
     // never let a dead tunnel disturb a turn
   }
 })
+/**
+ * The mid-turn message safety net (channels/interjection-reconciler.ts).
+ *
+ * Every push above can be missed — a phone that backgrounded, a window that
+ * closed, a tunnel that dropped — and until now a missed push meant the user's
+ * words were simply gone. The park (channels/interjection-store.ts) keeps them;
+ * this asks, on every occasion the answer could have changed, whether each
+ * parked message has reached the transcript yet, and re-sends the ones that
+ * have not. Idempotent and cheap: it no-ops on an empty park, which is almost
+ * always.
+ */
+const interjectionDeps: ReconcilerDeps = {
+  isConversationActive: (id) => turnRunner.isConversationActive(id),
+  liveInboxIds: (id) => turnRunner.liveInterjectionIds(id),
+  log: (line) => console.log(`[interjections] ${line}`)
+}
+const reconcileInterjectionsFor = (conversationId: string): void => {
+  void reconcileConversation(conversationId, interjectionDeps).catch(() => undefined)
+}
+/**
+ * What a surface opening a conversation should show as parked: the live inbox
+ * (waiting to be read at the turn's next stop point) PLUS anything the park is
+ * HOLDING — a message that is never auto-resent and is waiting for a person:
+ * its run was stopped before the agent reached it, or its channel has no
+ * dispatcher to put it back on the wire. Either way it would otherwise be
+ * visible only to a surface that happened to be connected at the moment it
+ * stopped moving. `held` is what tells the two renderers which is which.
+ */
+const listPendingInterjections = async (
+  conversationId: string
+): Promise<Array<Interjection & { held?: boolean }>> => {
+  const live = turnRunner.pendingInterjections(conversationId)
+  const liveIds = new Set(live.map((i) => i.messageId))
+  const parked = await parkedInterjections(conversationId).catch(() => [])
+  const held = parked
+    .filter((item) => item.disposition === 'held' && !liveIds.has(item.messageId))
+    .map((item) => ({
+      messageId: item.messageId,
+      text: item.text,
+      attachments: item.attachments,
+      ...(item.voicePrompt ? { voicePrompt: true } : {}),
+      ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+      channel: item.channel,
+      sentAt: item.sentAt,
+      held: true as const
+    }))
+  return [...live, ...held]
+}
+// A lane that closed with messages the turn never read is the sharpest signal
+// there is — act on it immediately rather than waiting for the next save.
+turnRunner.setInterjectionSweepListener(reconcileInterjectionsFor)
 // Autonomous heartbeat/procedure runs never pass through the TurnRunner —
 // they end inside Agent.processAutonomous. Broadcast their terminal lifecycle
 // through the SAME chat:turnState event, so their sealed conversations get
@@ -438,7 +505,12 @@ agent.setAutonomousLifecycleListener((ev) => {
 })
 // Relay conversation deletions to the renderer so the sidebar prunes its live
 // run-status — a channel-side /delete never touches the renderer otherwise.
-agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:deleted', { id }))
+agent.corpus.on('conversation.deleted', ({ id }) => {
+  broadcast('conversation:deleted', { id })
+  // A deleted transcript has nowhere to re-home a parked message into, and
+  // resurrecting the conversation to deliver one would be worse than the loss.
+  void forgetConversationPark(id).catch(() => undefined)
+})
 // Relay conversation (re)index/remove so the rail + History refresh for every
 // create/rename/delete path — including the ones that emit no turn lifecycle
 // at all (renames, imports, rebuilds). Fires after the cortex row is
@@ -456,12 +528,17 @@ agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:dele
 // refetch.
 agent.corpus.on('conversation.indexed', ({ rel }) => {
   broadcast('conversation:changed', {})
+  const savedId = idFromFilename(rel.split('/').pop() ?? '')
+  // This is the ONE signal that always fires after a transcript hits disk, so
+  // it is where "did that mid-turn message actually get written?" can finally
+  // be answered — including for an in-app turn, whose segments are saved by
+  // the renderer moments after the run ends.
+  if (savedId) reconcileInterjectionsFor(savedId)
   // hasPeer-gated: this fires on every conversation save forever, and the
   // push starts with a file read — I/O nobody should pay with no phone
   // listening.
   if (!mobileChannel.hasPeer) return
-  const id = idFromFilename(rel.split('/').pop() ?? '')
-  if (id) void pushConversationToMobile(id)
+  if (savedId) void pushConversationToMobile(savedId)
 })
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild
@@ -824,6 +901,7 @@ const mobileBridge = new BridgeClient({
 const mobileChannel = new MobileChannel({
   agent,
   runner: turnRunner,
+  listPendingInterjections: (conversationId) => listPendingInterjections(conversationId),
   bridge: mobileBridge,
   // Pairing and the paired-phone list are the org's: an offer is minted
   // there, the phone claims it there, and revoking a phone's sessions there
@@ -884,6 +962,7 @@ const mobileChannel = new MobileChannel({
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
   extensionStatus: async () => extensionServer.getStatus(),
+  extensionReadiness: async () => extensionServer.readiness(),
   // The model's notify_phone gate, persisted with the rest of the workspace
   // config so "off" survives restarts.
   loadNotificationsEnabled: async () => (await getMobileChannelConfig()).notifications !== false,
@@ -2575,8 +2654,30 @@ app.whenReady().then(async () => {
         await extensionServer.stop()
         await extensionServer.start({ port: next.port })
       }
+      // The overlay switch lives in the extension's own storage too; the
+      // server pushes it so the side panel and the page agree with Settings.
+      if (patch.overlayEnabled !== undefined) {
+        await extensionServer.setOverlayEnabled(next.overlayEnabled !== false)
+      }
       broadcast('services:changed', { service: 'browserExtension' })
       return { ok: true as const, config: next }
+    }
+  )
+
+  handle('browserExtension:doctor', (_e, opts?: DoctorOptions) =>
+    extensionServer.doctor(opts ?? {})
+  )
+
+  handle('browserExtension:fix', (_e, action: string, opts?: FixOptions) =>
+    extensionServer.fix(action, opts ?? {})
+  )
+
+  handle(
+    'browserExtension:setOverlayEnabled',
+    async (_e, enabled: boolean, target?: string | null): Promise<{ ok: true }> => {
+      await extensionServer.setOverlayEnabled(enabled, target ?? null)
+      broadcast('services:changed', { service: 'browserExtension' })
+      return { ok: true as const }
     }
   )
 
@@ -2599,33 +2700,8 @@ app.whenReady().then(async () => {
     extensionServer.runTestScenario(target ?? null)
   )
 
-  handle('browserExtension:openExtensionsPage', () => {
-    const url = 'chrome://extensions'
-    if (process.platform === 'darwin') {
-      const browsers = ['Google Chrome', 'Brave Browser', 'Chromium']
-      for (const browser of browsers) {
-        try {
-          execFileSync('open', ['-a', browser, url], { stdio: 'ignore' })
-          return
-        } catch {
-          continue
-        }
-      }
-    } else if (process.platform === 'win32') {
-      try {
-        execFileSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore' })
-        return
-      } catch {
-        /* fallthrough */
-      }
-    } else {
-      try {
-        execFileSync('xdg-open', [url], { stdio: 'ignore' })
-        return
-      } catch {
-        /* fallthrough */
-      }
-    }
+  handle('browserExtension:openExtensionsPage', async () => {
+    await openBrowserUrl('chrome://extensions')
   })
 
   // STT/TTS — persisted defaults the cerebellum plugins read on every
@@ -3114,6 +3190,13 @@ app.whenReady().then(async () => {
   // Restore a stored pairing so a phone that was connected yesterday
   // reconnects without anyone touching either device.
   void mobileChannel.start().catch(() => undefined)
+
+  // Anything parked when this process last stopped — a mid-turn message the
+  // user sent seconds before a crash, a quit or a machine restart — is re-sent
+  // now. AFTER the channels are up, so their dispatchers are registered; the
+  // reconciler keeps anything it cannot place yet and gets another pass on the
+  // next save, so a slow start never costs a message.
+  void reconcileAll(interjectionDeps).catch(() => undefined)
 
   // Keep the phone's list live: the same corpus signals that refresh this
   // app's own list are forwarded over the tunnel.
@@ -4442,11 +4525,24 @@ app.whenReady().then(async () => {
   )
   handle(
     'chat:withdrawInterjection',
+    async (_e, payload: { conversationId: string; messageId: string }) =>
+      turnRunner.withdrawInterjection(payload.conversationId, payload.messageId, 'user') ||
+      // Same fallback as the phone's: a HELD message (its run was stopped) is
+      // not in any inbox, and taking it back is how a surface says it has the
+      // words now.
+      (await releaseHeldInterjection(payload.conversationId, payload.messageId))
+  )
+  // A HELD message (its run was stopped) that a window has just put back in a
+  // composer. Separate from the withdraw above because the park must not be
+  // emptied on a guess: only the disposition that means "nobody is waiting on
+  // this any more" can be released by a renderer.
+  handle(
+    'chat:releaseHeldInterjection',
     (_e, payload: { conversationId: string; messageId: string }) =>
-      turnRunner.withdrawInterjection(payload.conversationId, payload.messageId, 'user')
+      releaseHeldInterjection(payload.conversationId, payload.messageId)
   )
   handle('chat:pendingInterjections', (_e, conversationId: string) =>
-    turnRunner.pendingInterjections(conversationId)
+    listPendingInterjections(conversationId)
   )
 
   handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {

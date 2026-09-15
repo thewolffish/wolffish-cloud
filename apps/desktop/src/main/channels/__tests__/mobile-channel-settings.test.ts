@@ -75,7 +75,11 @@ async function run(): Promise<void> {
         unregisterInProcessCapability: () => undefined
       }
     },
-    runner: { send: () => ({ turnId: 't', controller: new AbortController() }) },
+    runner: {
+      send: () => ({ turnId: 't', controller: new AbortController() }),
+      // start() subscribes to mid-turn messages; the fake just hands back an unsubscribe.
+      onInterjection: () => () => {}
+    },
     serializeCapabilities: async () => [],
     loadNotificationsEnabled: async () => (await getMobileChannelConfig()).notifications !== false,
     saveNotificationsEnabled: async (enabled: boolean) => {

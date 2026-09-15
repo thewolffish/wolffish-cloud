@@ -170,7 +170,7 @@ tools:
         description: 'Image format for THIS capture only (default jpeg)'
   - name: computer_find
     readOnly: true
-    description: 'Find controls by NAME in a window through the app''s accessibility tree — the second grounding route, and the most reliable one for small or crowded targets: pass text (a label, value, or part of one) and/or role (button, text field, checkbox, menu item, link, tab, …) and get back numbered matches with their role, label, value, enabled state, a token, and their position and CENTER in the current frame''s coordinates. Then click a match with computer_click_element (token — most reliable) or aim at its center with computer_mouse_move. Tokens are bound to the moment of the snapshot: after the window changes, call computer_find again before using one. Native apps expose rich trees; web content (browsers, Electron apps) often exposes only the window chrome — the result says so, and then you fall back to pixels or the browser tools. Omit pid and window_id to search the window of the current frame or of your last action.'
+    description: 'Find controls by NAME in a window through the app''s accessibility tree — the second grounding route, and the most reliable one for small or crowded targets: pass text (a label, value, or part of one) and/or role (button, text field, checkbox, menu item, link, tab, …) and get back numbered matches with their role, label, value, enabled state, a token, and their position and CENTER in the current frame''s coordinates. Then click a match with computer_click_element (token — most reliable) or aim at its center with computer_mouse_move. Tokens are bound to the moment of the snapshot: after the window changes, call computer_find again before using one. Native apps expose rich trees; web content (browsers, Electron apps) often exposes only the window chrome — the result says so, and then you fall back to pixels or the browser tools. When the target is a web page in a browser the Wolffish extension is connected to, prefer the ext_* tools for reading, typing and clicking inside the page, and stay in computer use for the browser''s chrome, dialogs and file pickers around it. Omit pid and window_id to search the window of the current frame or of your last action.'
     parameters:
       pid:
         type: number
@@ -501,7 +501,7 @@ tools:
           - foreground
         description: 'auto (default): background when both endpoints share a window, else the real pointer. background: refuse otherwise.'
   - name: computer_mouse_scroll
-    description: 'Scroll to reveal content on the direction side (''down'' reveals what is below). Scrolling affects whatever is UNDER the point, so pass x,y (current-frame pixels) to scroll a specific pane or list; delivered in the background when the app accepts it (web content in browsers and Electron apps usually does not — then the real pointer is moved there, and the evidence line says so). The result includes a magnified view of the area around the point after the scroll, which becomes the current frame — when scrolling to find an item, look for it there and click it directly in the magnifier''s coordinates the moment it appears. Pre-scroll coordinates are stale; take a fresh capture for the wider picture.'
+    description: 'Scroll to reveal content on the direction side (''down'' reveals what is below). Scrolling affects whatever is UNDER the point, so pass x,y (current-frame pixels) to scroll a specific pane or list; delivered in the background when the app accepts it (web content in browsers and Electron apps usually does not — then the real pointer is moved there, and the evidence line says so). The result includes a magnified view of the area around the point after the scroll, which becomes the current frame — when scrolling to find an item, look for it there and click it directly in the magnifier''s coordinates the moment it appears. Pre-scroll coordinates are stale; take a fresh capture for the wider picture. In a web page the Wolffish extension is connected to, prefer ext_scroll — it scrolls the page or a named element without touching the pointer; keep computer_mouse_scroll for windows the extension cannot reach.'
     parameters:
       direction:
         type: string
@@ -547,7 +547,7 @@ tools:
           - foreground
         description: 'auto (default), background (refuse rather than move the pointer), foreground'
   - name: computer_keyboard_type
-    description: 'Type text into the focused field of the window you last acted on (click the field first — that focuses it AND picks the window). Delivered in the background where the app accepts it (the user''s pointer and other windows are untouched); the evidence line says which rung ran. Options: enter: true presses Enter afterwards (submit in one step); replace: true selects the existing text first; via: clipboard pastes instead of keystrokes (used automatically for long or non-ASCII text such as Arabic and emoji, so it arrives exactly as written). Password fields are refused unless the user gave that secret in this conversation (allow_secret: true). Send the WHOLE text in one call, however long — splitting a body into chunks is how its tail gets forgotten before submit; the result reports the character count, compare it with what you meant to send. Verify with computer_read_element or a capture that the text landed in the intended field — web content cannot be read back by the driver.'
+    description: 'Type text into the focused field of the window you last acted on (click the field first — that focuses it AND picks the window). Delivered in the background where the app accepts it (the user''s pointer and other windows are untouched); the evidence line says which rung ran. Options: enter: true presses Enter afterwards (submit in one step); replace: true selects the existing text first; via: clipboard pastes instead of keystrokes (used automatically for long or non-ASCII text such as Arabic and emoji, so it arrives exactly as written). Password fields are refused unless the user gave that secret in this conversation (allow_secret: true). Send the WHOLE text in one call, however long — splitting a body into chunks is how its tail gets forgotten before submit; the result reports the character count, compare it with what you meant to send. Verify with computer_read_element or a capture that the text landed in the intended field: web content cannot be read back by the driver — use ext_get_value / ext_take_snapshot for that; in a browser the Wolffish extension is connected to, prefer ext_type or ext_fill for the typing itself.'
     parameters:
       text:
         type: string
@@ -802,7 +802,10 @@ tiny icons):
 
 1. `computer_find` it by name in the window. If it has a frame, `computer_click_element`
    by token — no pixel aim at all. Native apps expose rich trees; web content in browsers
-   and Electron apps usually exposes only the window chrome, and the result says so.
+   and Electron apps usually exposes only the window chrome, and the result says so. When
+   that web page is in a browser the Wolffish extension is connected to, prefer the `ext_*`
+   tools for reading, typing and clicking inside the page, and stay in computer use for the
+   browser's chrome, dialogs and file pickers around it.
 2. Otherwise `computer_screenshot` (or `computer_window_screenshot`) → `computer_zoom`
    into a **narrow** region around it (2x or more; the tool suggests the size) →
    `computer_mouse_move` onto it (pass `target`) and check that the hairlines pass
@@ -869,6 +872,24 @@ every monitor and window listings carry a display index. Coordinate translation 
 right monitor — including negative origins and mixed DPI — is automatic; there is no
 manual offset arithmetic anywhere in the contract. Window-scope actions are per-window
 and therefore monitor-agnostic.
+
+## Working with the browser extension
+
+When the window you are driving is a browser the Wolffish extension is connected to
+(`browser-extension`, tools `ext_*`), the page itself is not this plugin's job: inside the
+page the extension reads the DOM, types and clicks by element with no pointer and no
+approval per action, and reads the result back — none of which the pixel route can do
+through a browser. **Prefer `ext_*` for everything inside the page and stay here for
+everything around it**: the browser's own chrome, native dialogs (file pickers, print,
+save, basic-auth and passkey prompts), OS permission sheets, the PDF viewer and other
+non-DOM viewers, `chrome://` pages, a browser the extension is not connected to, and how
+the page actually looks to the user at their zoom and window size. A task that crosses
+the boundary uses both and says so; the glow goes on before the first computer call and
+comes off after the last one of the turn, held across the excursion. **Coordinates never
+cross**: the extension's CSS-viewport pixels and this plugin's frame pixels are separate
+frames — re-ground on the side you are acting on. **Credentials never cross either**:
+never type a password, one-time code or payment number the user did not give in this
+conversation, on either side — hand the field to the user with `ask_user` and wait.
 
 ## Capture quality is model-owned
 

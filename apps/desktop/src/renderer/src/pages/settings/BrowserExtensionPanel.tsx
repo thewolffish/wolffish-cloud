@@ -4,9 +4,11 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type {
   BrowserExtensionConfig,
+  DoctorReport,
   ExtensionBrowserInfo,
   ExtensionConnectionStatus,
-  ExtensionServerStatus
+  ExtensionServerStatus,
+  Finding
 } from '@preload/index'
 import braveIcon from '@renderer/assets/browsers/brave.svg'
 import chromeIcon from '@renderer/assets/browsers/chrome.svg'
@@ -40,6 +42,21 @@ const STATUS_DOT_COLORS: Record<ExtensionConnectionStatus, string> = {
   error: 'bg-red-400'
 }
 
+const SEVERITY_DOT: Record<Finding['severity'], string> = {
+  blocker: 'bg-red-400',
+  degraded: 'bg-amber-400',
+  note: 'bg-muted'
+}
+
+const SEVERITY_LABEL: Record<Finding['severity'], string> = {
+  blocker: 'severityBlocker',
+  degraded: 'severityDegraded',
+  note: 'severityNote'
+}
+
+/** Fix kinds the app can run itself; `guided` and `none` are steps to follow. */
+const RUNNABLE_FIXES = new Set(['auto', 'one-click'])
+
 const BROWSER_ICONS: Record<string, string> = {
   chrome: chromeIcon,
   chromium: chromiumIcon,
@@ -65,12 +82,16 @@ const ACTIONS = [
       'ext_focus',
       'ext_keypress',
       'ext_drag_drop',
-      'ext_file_upload'
+      'ext_file_upload',
+      'ext_fill',
+      'ext_fill_form'
     ]
   },
   {
     categoryKey: 'reading',
     tools: [
+      'ext_take_snapshot',
+      'ext_find',
       'ext_read_page',
       'ext_query_selector',
       'ext_get_attribute',
@@ -116,7 +137,14 @@ const ACTIONS = [
       'ext_debugger_detach',
       'ext_debugger_status',
       'ext_mouse_move',
-      'ext_humanize'
+      'ext_humanize',
+      'ext_list_network_requests',
+      'ext_get_network_request',
+      'ext_list_console_messages',
+      'ext_handle_dialog',
+      'ext_emulate',
+      'ext_doctor',
+      'ext_fix'
     ]
   }
 ]
@@ -144,6 +172,46 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const portDirtyRef = useRef(false)
   const [everConnected, setEverConnected] = useState(false)
   const [debuggerGuideOpen, setDebuggerGuideOpen] = useState(false)
+  const [readiness, setReadiness] = useState<DoctorReport | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [fixing, setFixing] = useState<string | null>(null)
+
+  const runDoctor = useCallback(async () => {
+    setChecking(true)
+    try {
+      setReadiness(await window.api.browserExtension.doctor())
+    } catch {
+      setReadiness(null)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
+  const handleFix = useCallback(
+    async (finding: Finding) => {
+      if (!finding.fix.action) return
+      setFixing(finding.id)
+      try {
+        const result = await window.api.browserExtension.fix(finding.fix.action, {
+          target: finding.browser ?? null,
+          url: finding.fix.url
+        })
+        toast.show({ message: result.message, tone: result.ok ? 'success' : 'error' })
+      } catch {
+        toast.show({ message: t('settings.services.browserExtension.updateError'), tone: 'error' })
+      } finally {
+        setFixing(null)
+        // Re-probe: the finding is either gone or the next one surfaces.
+        await runDoctor()
+      }
+    },
+    [runDoctor, t, toast]
+  )
+
+  const handleOverlayToggle = useCallback(async (enabled: boolean) => {
+    setConfig((prev) => (prev ? { ...prev, overlayEnabled: enabled } : prev))
+    await window.api.browserExtension.setOverlayEnabled(enabled).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -184,6 +252,14 @@ export function BrowserExtensionPanel(): React.JSX.Element {
       if (st.status === 'connected') setEverConnected(true)
     })
   }, [])
+
+  // The readiness answer changes with the connection, so re-probe on both.
+  // Deferred a tick: the probe flips `checking` immediately, and doing that
+  // inside the effect body cascades a render on every status push.
+  useEffect(() => {
+    const timer = setTimeout(() => void runDoctor(), 0)
+    return () => clearTimeout(timer)
+  }, [runDoctor, status?.status, status?.browsers.length])
 
   const isConnected = status?.status === 'connected'
   const isListening = status?.status === 'listening'
@@ -519,6 +595,131 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                 <span>{t('settings.services.browserExtension.updateBtn')}</span>
               </button>
             </div>
+          </section>
+        )}
+
+        {/* Readiness — what is missing, and what to do about it */}
+        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-fg text-sm font-semibold">
+                {t('settings.services.browserExtension.readinessTitle')}
+              </h2>
+              <p className="text-muted text-xs">
+                {t('settings.services.browserExtension.readinessSubtitle')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void runDoctor()}
+              disabled={checking}
+              className={cn(
+                'border-border bg-bg/40 inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-medium',
+                checking
+                  ? 'text-muted/50 cursor-not-allowed'
+                  : 'text-fg hover:bg-border/40 cursor-pointer'
+              )}
+            >
+              <RefreshIcon size={12} className={cn(checking && 'animate-spin')} />
+              <span>
+                {checking
+                  ? t('settings.services.browserExtension.readinessChecking')
+                  : t('settings.services.browserExtension.readinessRecheck')}
+              </span>
+            </button>
+          </div>
+
+          {readiness && (
+            <div className="flex flex-col gap-3">
+              {readiness.findings.length === 0 ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-green-500" />
+                  <p className="text-green-500 text-xs">
+                    {t('settings.services.browserExtension.readinessReady')}
+                  </p>
+                </div>
+              ) : (
+                readiness.findings.map((f) => (
+                  <div key={f.id} className="bg-bg flex flex-col gap-2 rounded-xl px-3 py-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <span
+                        className={cn(
+                          'mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full',
+                          SEVERITY_DOT[f.severity]
+                        )}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <span className="text-fg text-sm font-medium">{f.title}</span>
+                          <span className="text-muted text-[10px] font-semibold uppercase tracking-wider">
+                            {t(`settings.services.browserExtension.${SEVERITY_LABEL[f.severity]}`)}
+                          </span>
+                        </div>
+                        <span className="text-muted text-xs leading-relaxed">{f.detail}</span>
+                        {f.fix.steps.length > 0 && (
+                          <ol className="text-muted flex list-inside list-decimal flex-col gap-0.5 text-xs">
+                            {f.fix.steps.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ol>
+                        )}
+                      </div>
+                      {f.fix.action && RUNNABLE_FIXES.has(f.fix.kind) && (
+                        <button
+                          type="button"
+                          disabled={fixing !== null}
+                          onClick={() => void handleFix(f)}
+                          className={cn(
+                            'shrink-0 text-xs font-medium',
+                            fixing !== null
+                              ? 'text-muted cursor-not-allowed'
+                              : 'text-primary hover:text-primary/80 cursor-pointer'
+                          )}
+                        >
+                          {fixing === f.id
+                            ? t('settings.services.browserExtension.readinessFixing')
+                            : t('settings.services.browserExtension.readinessFix')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+              <span className="text-muted text-[11px]">
+                {t('settings.services.browserExtension.readinessTier')}: {readiness.tier}
+              </span>
+            </div>
+          )}
+        </section>
+
+        {/* On-page cursor */}
+        {config && (
+          <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="wf-overlay" className="text-fg text-sm font-medium">
+                {t('settings.services.browserExtension.overlayTitle')}
+              </label>
+              <button
+                id="wf-overlay"
+                type="button"
+                role="switch"
+                aria-checked={config.overlayEnabled !== false}
+                onClick={() => void handleOverlayToggle(config.overlayEnabled === false)}
+                className={cn(
+                  'rounded-lg border px-3 py-1.5 text-sm cursor-pointer',
+                  config.overlayEnabled !== false
+                    ? 'bg-primary text-primary-fg border-primary'
+                    : 'border-border text-muted hover:bg-border/40 hover:text-fg'
+                )}
+              >
+                {config.overlayEnabled !== false
+                  ? t('settings.services.browserExtension.overlayOn')
+                  : t('settings.services.browserExtension.overlayOff')}
+              </button>
+            </div>
+            <p className="text-muted text-xs leading-relaxed">
+              {t('settings.services.browserExtension.overlayHint')}
+            </p>
           </section>
         )}
 

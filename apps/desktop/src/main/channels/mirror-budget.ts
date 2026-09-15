@@ -139,6 +139,23 @@ function capSegment(segment: Segment): Segment {
 }
 
 /**
+ * Segments this module may never shorten, reduce or drop, at any budget.
+ *
+ * Everything else here is the AGENT's output, and losing some of it costs a
+ * detail the desktop still holds. A `user_message` segment is the USER's own
+ * words, sent mid-turn, and it has no other copy on the receiving surface: the
+ * pending bubble that stood in for it comes down the moment it is delivered.
+ * Trimming it is not degradation, it is deletion — and on a stored body served
+ * over the wire ceiling (fitWireMessages) the trim is what the phone keeps.
+ *
+ * They are also tiny — a sentence or two — so exempting them costs the budget
+ * nothing it will miss.
+ */
+function isProtectedSegment(segment: Segment): boolean {
+  return segment.kind === 'user_message'
+}
+
+/**
  * Second pass: the minimal form of a segment — payloads gone, structure kept,
  * so the phone still draws the card (name, status, ordering) and only the
  * bulk is deferred to the saved transcript.
@@ -226,14 +243,23 @@ export function fitMirrorMessage(
 
   // Pass 3 — even all-reduced is too big: drop the oldest segments outright.
   // The newest stay; the saved transcript restores the rest at the fold.
+  // Protected segments are stepped over rather than dropped — they are the
+  // user's own mid-turn messages, which have no other copy on the phone.
   segments = [...reduced]
-  while (segments.length > 0) {
-    segments.shift()
+  let cut = 0
+  while (cut < segments.length) {
+    if (isProtectedSegment(segments[cut])) {
+      cut++
+      continue
+    }
+    segments.splice(cut, 1)
     const fitted: ConversationMessage = { ...candidate, segments: [...segments] }
     const size = byteSize(fitted)
     if (size !== null && size <= maxBytes) return fitted
   }
-  const bare: ConversationMessage = { ...candidate, segments: [] }
+  // Only protected segments left. They stay even here: a snapshot that fits by
+  // deleting what the user said is not a snapshot worth sending.
+  const bare: ConversationMessage = { ...candidate, segments: [...segments] }
   const bareSize = byteSize(bare)
   if (bareSize !== null && bareSize <= maxBytes) return bare
   // The envelope alone is over — the prose itself is the bulk. Chars, not
@@ -269,7 +295,14 @@ export function fitWireMessages(
   while (perMessageCap >= 8 * 1024) {
     const cap = perMessageCap
     fitted = messages.map(
-      (message) => fitMirrorMessage(message, cap) ?? { ...message, segments: [] }
+      (message) =>
+        fitMirrorMessage(message, cap) ?? {
+          ...message,
+          // The legacy degrade path keeps the user's own mid-turn messages:
+          // this body is what an older phone STORES, so a segment dropped
+          // here is dropped for good on that device.
+          segments: (message.segments ?? []).filter(isProtectedSegment)
+        }
     )
     const size = byteSize(fitted)
     if (size !== null && size <= maxTotalBytes) return fitted

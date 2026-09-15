@@ -148,7 +148,18 @@
         "quality": "JPEG quality (1-100)",
         "pairingNote": "Installing and pairing the extension happens on the desktop.",
         "portManagedOnDesktop": "The port is managed in the desktop app.",
-        "connectedAtTime": "Connected {{time}}"
+        "connectedAtTime": "Connected {{time}}",
+        "readinessReady": "Everything Wolffish needs is in place.",
+        "readinessLimited": "Wolffish can reach only part of your browser.",
+        "readinessBlockers": "{{count}} things are stopping Wolffish from driving your browser.",
+        "readinessBlockers_one": "One thing is stopping Wolffish from driving your browser.",
+        "readinessFixOnDesktop": "Open the browser extension panel on the desktop to fix it.",
+        "tier": {
+          "full": "Full",
+          "degraded": "Limited",
+          "managed": "Managed",
+          "none": "Not reachable"
+        }
       },
       "sttModel": "Whisper model",
       "sttLanguage": "Language",

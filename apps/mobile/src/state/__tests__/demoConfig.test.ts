@@ -286,7 +286,7 @@ describe('demoConfig browser extension', () => {
       services: {
         ...base.services,
         browserExtension: {
-          port: 23151,
+          port: 23152,
           connected: true,
           browsers: [
             {
@@ -314,13 +314,45 @@ describe('demoConfig browser extension', () => {
     ])
   })
 
+  // The readiness verdict rides the same snapshot. An older desktop sends
+  // none at all, and the phone must read that as "nothing to say" rather than
+  // as a broken browser — the row hides itself on exactly that shape.
+  it('carries the desktop readiness verdict, and stays quiet without one', () => {
+    const base = snapshot()
+    useDemoConfig.getState().applySnapshot({
+      ...base,
+      services: {
+        ...base.services,
+        browserExtension: {
+          port: 23152,
+          connected: true,
+          readiness: { ready: false, tier: 'degraded', blockers: 2, top: 'Site access is limited' }
+        }
+      }
+    })
+    expect(useDemoConfig.getState().extensionReadiness).toEqual({
+      ready: false,
+      tier: 'degraded',
+      blockers: 2,
+      top: 'Site access is limited'
+    })
+
+    useDemoConfig.getState().applySnapshot(snapshot())
+    expect(useDemoConfig.getState().extensionReadiness).toEqual({
+      ready: false,
+      tier: 'none',
+      blockers: 0,
+      top: null
+    })
+  })
+
   // Bundles published before multi-browser shipped carry no browsers list —
   // the panel must fall back to the old single synthesized row, not vanish.
   it('falls back to the port row when the bundle predates multi-browser', () => {
     useDemoConfig.getState().applySnapshot(snapshot())
     const service = extService()
     expect(service?.connected).toBe(false)
-    expect(service?.connections).toEqual([{ label: 'Chrome extension', detail: 'port 23151' }])
+    expect(service?.connections).toEqual([{ label: 'Chrome extension', detail: 'port 23152' }])
   })
 
   // `connected` omitted but browsers present: presence of connections is the

@@ -647,9 +647,11 @@ confirm_patterns:
 
 # Browser Automation
 
+This is the **clean-room browser**: a Playwright-launched Chromium (or Firefox/WebKit) with its own profile — none of the user's logins, cookies, tabs or history. When the user's real browser is connected through the `browser-extension` capability (`ext_*` tools), that is the default for anything logged-in, anything on their own tabs, and anything that should look like them. Reach for this one for isolated sessions, headless runs, PDF/print of your own HTML (`browser_pdf`), and when no extension browser is connected.
+
 ## Interface
 
-- Tools: 22 tools for launching, navigating, interacting, extracting, and managing browser sessions
+- Tools: 25 tools for launching, navigating, interacting, extracting, and managing browser sessions
 - Engine: Playwright (Chromium by default, Firefox and WebKit also available)
 - Sessions: each `browser_launch` creates an isolated session; multiple sessions can run simultaneously
 - Tabs: each session can have multiple tabs via `browser_multi_tab`

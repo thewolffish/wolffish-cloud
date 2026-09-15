@@ -571,7 +571,7 @@
         "supported": "Supported",
         "notSupported": "Not supported",
         "actionsTitle": "Available Actions",
-        "actionsSubtitle": "46 tools the agent can use when the extension is connected.",
+        "actionsSubtitle": "73 tools the agent can use when the extension is connected.",
         "actions": {
           "navigation": {
             "category": "Navigation"
@@ -639,7 +639,18 @@
           "ext_debugger_detach": "Detach debugger from tab",
           "ext_debugger_status": "Check debugger attachment state",
           "ext_mouse_move": "Move cursor with bezier path",
-          "ext_humanize": "Inject random human micro-action"
+          "ext_humanize": "Inject random human micro-action",
+          "ext_take_snapshot": "Read the page as a tree of elements you can act on",
+          "ext_find": "Find elements by what you are looking for",
+          "ext_fill": "Fill one form field reliably",
+          "ext_fill_form": "Fill several form fields at once",
+          "ext_list_network_requests": "List the page's network requests",
+          "ext_get_network_request": "Read one request and its response body",
+          "ext_list_console_messages": "Read the page's console output",
+          "ext_handle_dialog": "Accept or dismiss a page dialog",
+          "ext_emulate": "Emulate a device, network or location",
+          "ext_doctor": "Check what is missing or misconfigured",
+          "ext_fix": "Apply the fix for a finding"
         },
         "debuggerMode": {
           "title": "Debugger Mode",
@@ -649,7 +660,23 @@
           "tipText": "Create a separate browser shortcut with this flag for Wolffish automation sessions.",
           "notSupportedLabel": "Not supported:",
           "notSupportedText": "Firefox and Safari do not support the debugger extension API. Debugger mode is Chromium-only."
-        }
+        },
+        "readinessTitle": "Readiness",
+        "readinessSubtitle": "What Wolffish needs to drive your browser, and what to do about anything missing.",
+        "readinessReady": "Everything Wolffish needs is in place.",
+        "readinessRecheck": "Check again",
+        "readinessChecking": "Checking",
+        "readinessFix": "Fix",
+        "readinessFixing": "Working",
+        "readinessVerify": "Verify",
+        "readinessTier": "Tier",
+        "severityBlocker": "Blocker",
+        "severityDegraded": "Limited",
+        "severityNote": "Note",
+        "overlayTitle": "On-page cursor",
+        "overlayHint": "Show a shadow cursor, a target outline and a small pill on the pages Wolffish is using, so you can see what it is doing.",
+        "overlayOn": "Shown",
+        "overlayOff": "Hidden"
       }
     },
     "mcp": {

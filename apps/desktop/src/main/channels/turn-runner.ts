@@ -11,6 +11,12 @@ import type {
   InterjectionWithdrawReason,
   InterjectResult
 } from '@main/runtime/agent/interjection'
+import {
+  markInterjectionWithdrawn,
+  markInterjectionsDelivered,
+  parkInterjection,
+  releaseInterjection
+} from '@main/channels/interjection-store'
 import type { ChatHistoryMessage } from '@preload/index'
 
 /**
@@ -204,6 +210,13 @@ export class TurnRunner {
   private locale: 'en' | 'ar' = 'en'
   private lifecycleListener: ((ev: TurnLifecycleEvent) => void) | null = null
   private readonly interjectionListeners = new Set<(ev: InterjectionEvent) => void>()
+  /**
+   * Woken whenever a lane ends with messages the turn never read, so the
+   * reconciler gets a pass at exactly the moment something may have been left
+   * behind. One listener (main wires it); the reconciler is idempotent, so a
+   * missed call only delays a re-home to the next conversation save.
+   */
+  private interjectionSweepListener: ((conversationId: string) => void) | null = null
   /** Mid-turn user messages parked per conversation — see interject(). */
   private readonly inboxes = new Map<string, Inbox>()
   /**
@@ -269,6 +282,11 @@ export class TurnRunner {
     }
   }
 
+  /** Wire the end-of-lane sweep notification (the reconciler's prompt to look). */
+  setInterjectionSweepListener(listener: ((conversationId: string) => void) | null): void {
+    this.interjectionSweepListener = listener
+  }
+
   /** True while any turn for this conversation is queued or running. */
   isConversationActive(conversationId: string): boolean {
     return (this.activeTurns.get(conversationId) ?? 0) > 0
@@ -286,8 +304,15 @@ export class TurnRunner {
     const inbox = this.inboxes.get(conversationId)
     if (inbox) inbox.push(item)
     else this.inboxes.set(conversationId, [item])
+    // The park is what makes this message survive everything the in-memory
+    // inbox cannot: a crash, a quit, a phone that goes away before the turn
+    // hands the message back. Started here and NOT awaited — Telegram and
+    // WhatsApp document that `pending` is emitted synchronously from inside
+    // this call, before any terminal event for the same message can fire —
+    // and handed to the caller so an async one can wait for real durability.
+    const durable = parkInterjection(conversationId, item).catch(() => undefined) as Promise<void>
     this.emitInterjection(conversationId, item, 'pending')
-    return { status: 'pending' }
+    return { status: 'pending', durable }
   }
 
   /**
@@ -305,6 +330,10 @@ export class TurnRunner {
     if (idx < 0) return false
     const [item] = inbox.splice(idx, 1)
     if (inbox.length === 0) this.inboxes.delete(conversationId)
+    // Taken back BY THE USER is the one way a message leaves without a home:
+    // they unsent it. Every other reason keeps the park so the reconciler can
+    // re-home it — see sweepInterjections.
+    void releaseInterjection(conversationId, messageId).catch(() => undefined)
     this.emitInterjection(conversationId, item, 'withdrawn', reason)
     return true
   }
@@ -315,15 +344,34 @@ export class TurnRunner {
   }
 
   /**
+   * Message ids still sitting in the live inbox. The reconciler's "not mine to
+   * touch" set: a parked message that is also here is simply waiting for the
+   * agent's next stop point, not lost.
+   */
+  liveInterjectionIds(conversationId: string): Set<string> {
+    return new Set((this.inboxes.get(conversationId) ?? []).map((i) => i.messageId))
+  }
+
+  /**
    * Drain the inbox for the agent loop. Called only from inside the turn
    * (threaded as AgentTurnOptions.takeInterjections); each item is on its
    * way into the model's messages the moment this returns, so `delivered`
    * is broadcast here.
    */
-  private takeInterjections(conversationId: string): Interjection[] {
+  private takeInterjections(conversationId: string, turnId: string): Interjection[] {
     const inbox = this.inboxes.get(conversationId)
     if (!inbox || inbox.length === 0) return []
     this.inboxes.delete(conversationId)
+    // Delivered is NOT released: the message has left the inbox but has not
+    // yet reached the transcript, and the writer that puts it there (a channel
+    // sink's fold, or the renderer's) runs later and can fail. The park is the
+    // proof obligation; the reconciler discharges it by finding the
+    // `user_message` segment on disk.
+    void markInterjectionsDelivered(
+      conversationId,
+      inbox.map((i) => i.messageId),
+      turnId
+    ).catch(() => undefined)
     for (const item of inbox) this.emitInterjection(conversationId, item, 'delivered')
     return inbox
   }
@@ -339,7 +387,17 @@ export class TurnRunner {
     const inbox = this.inboxes.get(conversationId)
     if (!inbox || inbox.length === 0) return
     this.inboxes.delete(conversationId)
-    for (const item of inbox) this.emitInterjection(conversationId, item, 'withdrawn', reason)
+    // The park KEEPS these. The `withdrawn` push below is the fast path — the
+    // sender usually hears it and re-sends or takes its draft back — but it is
+    // a push over a link that can be down, to a surface that can be gone, so
+    // it is no longer the only path. Recording the reason turns the park into
+    // a work item the reconciler can act on without any surface's help: a
+    // stopped run holds its message, everything else gets re-sent as a turn.
+    for (const item of inbox) {
+      void markInterjectionWithdrawn(conversationId, item.messageId, reason).catch(() => undefined)
+      this.emitInterjection(conversationId, item, 'withdrawn', reason)
+    }
+    this.interjectionSweepListener?.(conversationId)
   }
 
   private emitInterjection(
@@ -643,7 +701,7 @@ export class TurnRunner {
             modeOverride: opts.modeOverride,
             planMode: opts.planMode === true,
             takeInterjections: conversationId
-              ? () => this.takeInterjections(conversationId)
+              ? () => this.takeInterjections(conversationId, turnId)
               : undefined
           })
         )

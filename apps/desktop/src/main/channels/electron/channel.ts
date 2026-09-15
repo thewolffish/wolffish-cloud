@@ -12,7 +12,7 @@ import {
   type MessageAttachment
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
-import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
+import type { InterjectVerdict, Interjection } from '@main/runtime/agent/interjection'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   appendTextSegment,
@@ -300,7 +300,7 @@ export class ElectronChannel {
     attachments?: MessageAttachment[]
     voicePrompt?: boolean
     voiceLang?: string
-  }): InterjectResult {
+  }): InterjectVerdict {
     const item: Interjection = {
       messageId: payload.messageId,
       text: payload.text,
@@ -310,7 +310,12 @@ export class ElectronChannel {
       channel: 'electron',
       sentAt: Date.now()
     }
-    return this.runner.interject(payload.conversationId, item)
+    // Only the verdict crosses the IPC boundary — `durable` is a live promise
+    // and structured clone would throw on it. The in-app composer keeps its
+    // own copy of the text until the delivered segment lands, so it does not
+    // need to wait for the park the way the phone's RPC does.
+    const { status } = this.runner.interject(payload.conversationId, item)
+    return { status }
   }
 
   /**

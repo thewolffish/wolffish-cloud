@@ -1462,6 +1462,57 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     })
   }, [activeConversationId])
 
+  /**
+   * Mid-turn messages the durable park is HOLDING for this conversation: sent
+   * while a run was going, never read because the run was stopped, and never
+   * auto-resent (the user aborted the work they were steering). The words come
+   * back to the composer the moment the conversation is opened — by ANY window,
+   * not only the one that happened to be connected when the Stop landed, which
+   * is what makes this survive a quit, a crash or a phone going away.
+   *
+   * Deliberately NOT gated on a live run, unlike the pending seed below: a held
+   * message exists precisely because nothing is running.
+   */
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    let cancelled = false
+    void window.api.chat
+      .pendingInterjections(targetId)
+      .then(async (items) => {
+        const held = items.filter((i) => i.held)
+        if (cancelled || held.length === 0 || conversationIdRef.current !== targetId) return
+        for (const item of held) {
+          // Claim before restoring, never after. setDraft APPENDS, and the
+          // release is a round trip — so two overlapping passes (a conversation
+          // switched back and forth, a StrictMode double-mount, a reopen while
+          // the first release is still in flight) would each read the same held
+          // row and put the user's words in the composer twice.
+          if (settledInterjectionsRef.current.has(item.messageId)) continue
+          settledInterjectionsRef.current.add(item.messageId)
+          // Released only once the text is demonstrably back in the composer —
+          // the release is the hand-off, so it follows the restore, never
+          // precedes it.
+          if (item.text.length > 0) {
+            setDraft((prev) => (prev.trim().length > 0 ? `${prev}\n${item.text}` : item.text))
+          }
+          if (!item.voicePrompt && item.attachments.length > 0) {
+            setPendingAttachments((prev) => [
+              ...prev,
+              ...item.attachments.filter((a) => !prev.some((b) => b.filePath === a.filePath))
+            ])
+          }
+          await window.api.chat
+            .releaseHeldInterjection({ conversationId: targetId, messageId: item.messageId })
+            .catch(() => undefined)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [activeConversationId])
+
   // The same cold-start gap for mid-turn messages: a window opened (or
   // switched) onto a running conversation missed every chat:interjection
   // event so far. Ask the runner what is still parked. Never `mine` — this
@@ -1476,7 +1527,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (cancelled || items.length === 0 || conversationIdRef.current !== targetId) return
         setPendingInterjections((prev) => {
           const known = new Set(prev.map((p) => p.messageId))
-          const fresh = items.filter((i) => !known.has(i.messageId))
+          const fresh = items.filter((i) => !i.held && !known.has(i.messageId))
           if (fresh.length === 0) return prev
           return [
             ...prev,

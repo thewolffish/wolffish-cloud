@@ -35,6 +35,8 @@ import {
 } from '@main/channels/channel'
 import { extractTranscript, extractVoiceLanguage } from '@main/channels/stt-result'
 import { fitMirrorMessage } from '@main/channels/mirror-budget'
+import { registerInterjectionDispatcher } from '@main/channels/interjection-reconciler'
+import { releaseHeldInterjection } from '@main/channels/interjection-store'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import {
@@ -110,7 +112,11 @@ import {
   type Segment
 } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import type { InterjectResult, InterjectionEvent } from '@main/runtime/agent/interjection'
+import type {
+  Interjection,
+  InterjectResult,
+  InterjectionEvent
+} from '@main/runtime/agent/interjection'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
 import path from 'node:path'
@@ -198,6 +204,13 @@ const MIRROR_RETRY_MS = 250
 function isCleanFeedSegment(segment: Segment): boolean {
   return (
     segment.kind === 'text' ||
+    // The user's OWN words, read mid-turn. Never tool mechanics, never
+    // optional: the phone retires its pending bubble the instant the
+    // `delivered` push lands, so a mirror that filtered this out made the
+    // message the user had just typed disappear from the screen for the rest
+    // of the run — visibly dropped, and only restored when the stored body
+    // replaced the overlay at the fold.
+    segment.kind === 'user_message' ||
     // In-place thinking is the reply's provenance, not tool mechanics — the
     // in-app feed and the phone's stored bodies show it regardless of
     // verbose, so the live mirror must too or the cards pop in only after
@@ -284,6 +297,14 @@ export type ReflectionWirePatch = {
 export type MobileChannelDeps = SnapshotSources & {
   /** Runs turns the phone starts, exactly as the other channels do. */
   runner: TurnRunner
+  /**
+   * Parked mid-turn messages for a conversation — the live inbox plus what the
+   * durable park is holding after a Stop. Supplied by main so one assembler
+   * answers the phone, the in-app window and the terminal identically.
+   */
+  listPendingInterjections: (
+    conversationId: string
+  ) => Promise<Array<Interjection & { held?: boolean }>>
   /**
    * Apply a reflection-config patch exactly as the settings IPC does —
    * persist, reschedule, announce — answering the complete post-write
@@ -565,6 +586,11 @@ export class MobileChannel {
   private phoneCapabilityRegistered = false
   /** Set while the channel is stopped, so status churn can't re-register. */
   private channelStopped = false
+  /** Unsubscribes for the mid-turn message lifecycle — see watchInterjections. */
+  private offInterjection: (() => void) | null = null
+  private offInterjectionDispatcher: (() => void) | null = null
+  /** Message ids with a re-send in flight — see redispatchInterjection. */
+  private readonly redispatching = new Set<string>()
   /**
    * The diagnostic-export runner, injected from main because it owns the
    * single-flight guard the desktop's own button runs behind. Absent until
@@ -607,6 +633,7 @@ export class MobileChannel {
    */
   async start(): Promise<void> {
     this.channelStopped = false
+    this.watchInterjections()
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
     this.verbose = (await this.deps.loadVerbose?.()) ?? false
     if (this.bridge) this.attachBridge(this.bridge)
@@ -633,6 +660,7 @@ export class MobileChannel {
   async stop(): Promise<void> {
     this.log('channel stopping')
     this.channelStopped = true
+    this.unwatchInterjections()
     this.syncPhoneCapability()
     for (const [id, pending] of this.pendingNotifies) {
       clearTimeout(pending.timer)
@@ -1403,21 +1431,42 @@ export class MobileChannel {
         channel: 'mobile',
         sentAt: Date.now()
       })
+      // The phone is told "got it" only once the message is on disk. It has no
+      // other copy — the pending bubble comes down the moment the agent reads
+      // it — so an ack that outran durability would be a promise this process
+      // could break by crashing.
+      if (result.status === 'pending') await result.durable
       this.log(`interjection ${messageId} from the phone in ${conversationId} — ${result.status}`)
-      return result
+      // Only the verdict crosses the wire — `durable` is a local promise.
+      return { status: result.status }
     })
 
     tunnel.onRpc(Rpc.withdrawInterjection, async (params) => {
       const conversationId = wireText(params.conversationId, ID_MAX)
       const messageId = wireText(params.messageId, ID_MAX)
       if (!conversationId || !messageId) return { ok: false }
-      return { ok: this.deps.runner.withdrawInterjection(conversationId, messageId, 'user') }
+      // Inbox first; then the durable park, where a message whose run was
+      // STOPPED is being held. The phone restores those to its composer on
+      // seed and withdraws them to say it has them — without this fallback the
+      // park would hand the same words back on every reconnect forever.
+      if (this.deps.runner.withdrawInterjection(conversationId, messageId, 'user')) {
+        return { ok: true }
+      }
+      return { ok: await releaseHeldInterjection(conversationId, messageId) }
     })
 
+    /**
+     * What is parked on a conversation, for a phone attaching cold (paired
+     * mid-run, relaunched, back from the background). The live inbox plus
+     * anything the park is HOLDING: a message whose run was stopped before the
+     * agent read it is never auto-resent, so without this it would be visible
+     * only to a phone that happened to be connected at the moment of the Stop
+     * — which is exactly the phone that did not need saving.
+     */
     tunnel.onRpc(Rpc.pendingInterjections, async (params) => {
       const conversationId = wireText(params.conversationId, ID_MAX)
       if (!conversationId) return { pending: [] }
-      return { pending: this.deps.runner.pendingInterjections(conversationId) }
+      return { pending: await this.deps.listPendingInterjections(conversationId) }
     })
 
     tunnel.onRpc(Rpc.countdownAbort, async (params) => {
@@ -1911,6 +1960,17 @@ export class MobileChannel {
     const conversation = await loadConversation(conversationId)
     if (!conversation) throw new Error(`unknown conversation ${conversationId}`)
 
+    // Idempotence on the message id. A mid-turn message that was never read
+    // can be re-sent from two places — the sweep the moment the lane closes,
+    // and the reconciler if that sweep could not finish — and the phone's own
+    // older fallback may still be in play against a mixed-version pair. All of
+    // them carry the SAME id, so a transcript that already holds it means the
+    // message has a home and a second turn would only duplicate it.
+    if (messageId && conversation.messages.some((m) => m.id === messageId)) {
+      this.log(`send ${messageId} in ${conversationId} skipped — already in the transcript`)
+      return
+    }
+
     const userMessage = await this.persistUserMessage(
       conversationId,
       content,
@@ -1974,6 +2034,10 @@ export class MobileChannel {
     }
     await updateConversation(conversationId, (disk) => {
       if (!disk) return null
+      // Inside the RMW, where the check is actually sound: the caller's own
+      // pre-check read the file before this queue entry ran, so a racing
+      // writer (a re-send that beat us by a microtask) is only visible here.
+      if (disk.messages.some((m) => m.id === message.id)) return null
       disk.messages.push(message)
       disk.updatedAt = message.timestamp
       return disk
@@ -2635,6 +2699,124 @@ export class MobileChannel {
    */
   pushInterjection(ev: InterjectionEvent): void {
     this.bridge?.emit(Event.interjection, ev)
+  }
+
+  /**
+   * Own the lifecycle of the mid-turn messages the PHONE sent, desktop-side.
+   *
+   * Telegram and WhatsApp have had this since mid-turn messaging shipped; the
+   * phone did not, and that asymmetry was the hole. Their fallback could be
+   * left to the sending surface because the message is still sitting in the
+   * user's own chat app — losing it costs a scroll-up and a re-send. The phone
+   * app is not a second copy of anything: its pending bubble is React state
+   * that the `delivered`/`withdrawn` push takes down, and if that push lands
+   * while the app is backgrounded, relaunching, or off the tunnel, the words
+   * existed nowhere at all.
+   *
+   * So the desktop re-sends, not the phone. It is the side that cannot miss
+   * the event (it emits it), it holds the transcript, and it persists the
+   * message before the turn starts. The phone's own handler now only draws.
+   *
+   * Registered once per start; idempotent.
+   */
+  private watchInterjections(): void {
+    if (this.offInterjection) return
+    this.offInterjection = this.deps.runner.onInterjection((ev) => {
+      if (ev.channel !== 'mobile') return
+      if (ev.state !== 'withdrawn') return
+      if (ev.reason !== 'turn_ended' && ev.reason !== 'error') return
+      // The turn finished (or died) in the sliver between the agent's last
+      // drain and the lane closing, so the message was never read. It is still
+      // a message the user sent: it becomes the next turn.
+      void this.redispatchInterjection(ev).catch((error) => {
+        this.log(
+          `re-sending mid-turn message ${ev.messageId} failed — ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        )
+      })
+    })
+    this.offInterjectionDispatcher = registerInterjectionDispatcher('mobile', (item) =>
+      this.redispatchInterjection(item)
+    )
+  }
+
+  private unwatchInterjections(): void {
+    this.offInterjection?.()
+    this.offInterjection = null
+    this.offInterjectionDispatcher?.()
+    this.offInterjectionDispatcher = null
+  }
+
+  /**
+   * Send a never-read mid-turn message as a fresh turn, under ITS OWN id so
+   * the transcript carries the message the user actually wrote rather than a
+   * copy of it. Reached twice over: immediately by the sweep above, and later
+   * by the reconciler for anything that sweep could not finish (the desktop
+   * was quitting, the conversation was busy, a dispatch threw). Both are safe
+   * because `continueSend` is idempotent on the message id.
+   *
+   * Returns false when nothing could be started — the reconciler keeps the
+   * park and tries again.
+   */
+  private async redispatchInterjection(item: {
+    conversationId: string
+    messageId: string
+    text: string
+    attachments: MessageAttachment[]
+    voicePrompt?: boolean
+    voiceLang?: string
+  }): Promise<boolean> {
+    if (this.channelStopped) return false
+    // Two callers, one message: the sweep fires the instant the lane closes and
+    // the reconciler wakes on the same event. Both read a park that still holds
+    // it, and continueSend's transcript check cannot separate them — neither
+    // has written yet. This can, because it is the one thing both go through.
+    if (this.redispatching.has(item.messageId)) return false
+    this.redispatching.add(item.messageId)
+    try {
+      // A turn may be running AGAIN by now: the user started one in the window
+      // between the sweep and this call, or the reconciler woke on a save while
+      // a later run was live. Hand the message to THAT turn instead of starting
+      // another — continueSend preempts its conversation's turn, so a blind
+      // re-send here would abort work the user had just asked for. Same
+      // interject-first rule the channel queues follow when they flush.
+      //
+      // Reported as NOT sent, which is the truth: the running turn owns the
+      // message now, the park keeps it, and the next reconciler pass steps over
+      // it because it is back in the live inbox.
+      if (this.deps.runner.isConversationActive(item.conversationId)) {
+        const handed = this.deps.runner.interject(item.conversationId, {
+          messageId: item.messageId,
+          text: item.text,
+          attachments: item.attachments ?? [],
+          ...(item.voicePrompt ? { voicePrompt: true } : {}),
+          ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+          channel: 'mobile',
+          sentAt: Date.now()
+        })
+        if (handed.status === 'pending') {
+          this.log(`unread mid-turn message ${item.messageId} handed to the live turn instead`)
+          return false
+        }
+      }
+      this.log(`re-sending unread mid-turn message ${item.messageId} in ${item.conversationId}`)
+      // Awaited only as far as the LAUNCH — a turn runs for minutes, and the
+      // caller only needs to know the message is committed, which it is: the
+      // user message is persisted inside continueSend before the runner is
+      // touched at all.
+      await this.continueSend(
+        item.conversationId,
+        item.text,
+        item.attachments ?? [],
+        item.voicePrompt === true,
+        item.voiceLang,
+        item.messageId,
+        getPlanMode(item.conversationId)
+      )
+      return true
+    } finally {
+      this.redispatching.delete(item.messageId)
+    }
   }
 
   /**

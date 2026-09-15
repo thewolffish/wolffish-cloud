@@ -571,7 +571,7 @@
         "supported": "مدعوم",
         "notSupported": "غير مدعوم",
         "actionsTitle": "الإجراءات المتاحة",
-        "actionsSubtitle": "44 أداة يستخدمها الوكيل عند اتصال الإضافة.",
+        "actionsSubtitle": "73 أداة يمكن للوكيل استخدامها عند اتصال الإضافة.",
         "actions": {
           "navigation": {
             "category": "التنقل"
@@ -639,7 +639,18 @@
           "ext_debugger_detach": "فصل المنقح عن التبويب",
           "ext_debugger_status": "التحقق من حالة إرفاق المنقح",
           "ext_mouse_move": "تحريك المؤشر بمسار بيزييه",
-          "ext_humanize": "حقن حركة بشرية دقيقة عشوائية"
+          "ext_humanize": "حقن حركة بشرية دقيقة عشوائية",
+          "ext_take_snapshot": "قراءة الصفحة كشجرة عناصر يمكن التعامل معها",
+          "ext_find": "البحث عن العناصر بما تريده",
+          "ext_fill": "تعبئة حقل واحد بشكل موثوق",
+          "ext_fill_form": "تعبئة عدة حقول دفعة واحدة",
+          "ext_list_network_requests": "عرض طلبات الشبكة للصفحة",
+          "ext_get_network_request": "قراءة طلب واحد ومحتوى رده",
+          "ext_list_console_messages": "قراءة مخرجات وحدة التحكم",
+          "ext_handle_dialog": "قبول أو رفض نافذة حوار في الصفحة",
+          "ext_emulate": "محاكاة جهاز أو شبكة أو موقع جغرافي",
+          "ext_doctor": "فحص ما هو ناقص أو غير مهيأ",
+          "ext_fix": "تطبيق الإصلاح لنتيجة الفحص"
         },
         "debuggerMode": {
           "title": "وضع المنقح",
@@ -649,7 +660,23 @@
           "tipText": "أنشئ اختصار متصفح منفصلاً بهذه الراية لجلسات أتمتة وولفيش.",
           "notSupportedLabel": "غير مدعوم:",
           "notSupportedText": "لا يدعم Firefox وSafari واجهة إضافة المنقح. وضع المنقح مقصور على Chromium."
-        }
+        },
+        "readinessTitle": "الجاهزية",
+        "readinessSubtitle": "ما يحتاجه وولف فيش للتحكم بمتصفحك، وما يجب فعله حيال أي شيء ناقص.",
+        "readinessReady": "كل ما يحتاجه وولف فيش متوفر.",
+        "readinessRecheck": "افحص مجدداً",
+        "readinessChecking": "جاري الفحص",
+        "readinessFix": "إصلاح",
+        "readinessFixing": "جاري العمل",
+        "readinessVerify": "التحقق",
+        "readinessTier": "المستوى",
+        "severityBlocker": "معطّل",
+        "severityDegraded": "محدود",
+        "severityNote": "ملاحظة",
+        "overlayTitle": "مؤشر داخل الصفحة",
+        "overlayHint": "إظهار مؤشر ظلّي وإطار للهدف وشريط صغير على الصفحات التي يستخدمها وولف فيش، لتعرف ما الذي يفعله.",
+        "overlayOn": "ظاهر",
+        "overlayOff": "مخفي"
       }
     },
     "mcp": {

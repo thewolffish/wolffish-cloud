@@ -1041,9 +1041,10 @@ export class Agent {
           turn.modelOverride ?? null
         )
         messages.push(msg)
-        broca.emitUserMessage(turn.turnId, item)
+        const recorded = broca.emitUserMessage(turn.turnId, item)
         console.log(
-          `[agent] mid-turn message delivered (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)`
+          `[agent] mid-turn message delivered (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)` +
+            (recorded ? '' : ' — NOT RECORDED: no open segment channel for this turn')
         )
       }
       interjectionNoticeArmed = true
@@ -1071,9 +1072,10 @@ export class Agent {
           turn.modelOverride ?? null
         )
         messages.push(msg)
-        broca.emitUserMessage(turn.turnId, item)
+        const recorded = broca.emitUserMessage(turn.turnId, item)
         console.log(
-          `[agent] mid-turn message delivered at end of reply (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)`
+          `[agent] mid-turn message delivered at end of reply (iter ${iterationCount}, ${item.channel}, ${item.text.length} chars)` +
+            (recorded ? '' : ' — NOT RECORDED: no open segment channel for this turn')
         )
       }
       interjectionNoticeArmed = true

@@ -6,7 +6,12 @@ import { SERVICE_LOGOS } from '@/components/core/providerLogos'
 import { ConfigSelectRow, ConfigTextRow } from '@/components/settings/ConfigRows'
 import { PanelScreen, Section, StatusDot } from '@/components/settings/SettingsUI'
 import { cn } from '@/lib/utils/cn'
-import { useConfigValue, useDemoConfig, type ExtensionBrowser } from '@/state/demoConfig'
+import {
+  useConfigValue,
+  useDemoConfig,
+  type ExtensionBrowser,
+  type ExtensionReadiness
+} from '@/state/demoConfig'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Text, View } from 'react-native'
@@ -243,12 +248,53 @@ function BrowserCard({ browser }: { browser: ExtensionBrowser }): React.JSX.Elem
   )
 }
 
+/**
+ * The desktop's readiness verdict, reduced to one row.
+ *
+ * It renders NOTHING when there is nothing to say — no desktop has reported
+ * yet, or it reported a tier of 'none' with no blockers. A permanently grey
+ * "unknown" row would be worse than silence: the point of this row is that the
+ * user can act on it, and the fix itself lives on the desktop.
+ */
+function ReadinessRow({ readiness }: { readiness: ExtensionReadiness }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  if (!readiness.ready && readiness.blockers === 0 && readiness.tier === 'none') return null
+  const label = readiness.ready
+    ? t('settings.services.browserExtension.readinessReady')
+    : readiness.blockers > 0
+      ? t('settings.services.browserExtension.readinessBlockers', { count: readiness.blockers })
+      : t('settings.services.browserExtension.readinessLimited')
+  return (
+    <View className="bg-bg flex-col gap-1 rounded-xl px-3 py-2.5">
+      <View className="flex-row items-center gap-2">
+        <StatusDot tone={readiness.ready ? 'ok' : readiness.blockers > 0 ? 'error' : 'busy'} />
+        <Text className="text-fg font-sans-medium text-left text-sm">{label}</Text>
+        <Text className="bg-surface text-muted ms-auto rounded px-1.5 py-0.5 font-mono text-[11px]">
+          {t(`settings.services.browserExtension.tier.${readiness.tier}`, {
+            defaultValue: readiness.tier
+          })}
+        </Text>
+      </View>
+      {/* The first blocker only. The desktop walks the rest. */}
+      {readiness.top ? (
+        <Text className="text-muted text-left font-sans text-xs leading-5">{readiness.top}</Text>
+      ) : null}
+      {!readiness.ready ? (
+        <Text className="text-muted text-left font-sans text-xs leading-5">
+          {t('settings.services.browserExtension.readinessFixOnDesktop')}
+        </Text>
+      ) : null}
+    </View>
+  )
+}
+
 export default function ServicesScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.
   useFreshConfig()
   const { t } = useTranslation()
   const services = useDemoConfig((state) => state.services)
   const extensionBrowsers = useDemoConfig((state) => state.extensionBrowsers)
+  const extensionReadiness = useDemoConfig((state) => state.extensionReadiness)
   const port = useConfigValue('browserExtensionPort')
   const braveEnabled = useConfigValue('braveEnabled')
   const byKey = new Map(services.map((service) => [service.key, service]))
@@ -360,6 +406,7 @@ export default function ServicesScreen(): React.JSX.Element {
         {extensionBrowsers.map((browser, index) => (
           <BrowserCard key={`${browser.browser}-${index}`} browser={browser} />
         ))}
+        <ReadinessRow readiness={extensionReadiness} />
         {/* The port stays the desktop's: moving it restarts the pairing
             server that extension connections dial into. */}
         <View className="flex-col gap-1.5">

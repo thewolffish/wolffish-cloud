@@ -746,8 +746,13 @@ export class Broca {
       voicePrompt?: boolean
       voiceLang?: string
     }
-  ): void {
-    if (this.turnId !== turnId || !this.sink) return
+  ): boolean {
+    // Reported rather than swallowed: this segment is the ONLY record of a
+    // message the user has already been told was delivered, so a silent no-op
+    // here is the message vanishing from the transcript while the model
+    // answers it. The caller logs it, and the durable park keeps the message
+    // until a transcript actually holds it (channels/interjection-store.ts).
+    if (this.turnId !== turnId || !this.sink) return false
     this.emit({
       kind: 'user_message',
       turnId,
@@ -759,6 +764,7 @@ export class Broca {
       ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
       timestamp: Date.now()
     })
+    return true
   }
 
   /**

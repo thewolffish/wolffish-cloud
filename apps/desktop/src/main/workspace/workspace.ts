@@ -5,6 +5,7 @@ import { importOutsideProjectFiles } from '@main/projects'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
 import { app } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -133,11 +134,32 @@ export type ComputerUseConfig = {
   screenshotFormat: 'jpeg' | 'png'
 }
 
+/** One browser instance the extension server has seen — keyed by the extension's instanceId. */
+export type ExtensionLastSeen = {
+  name: string
+  browser: string
+  version: string | null
+  profileEmail: string | null
+  at: number
+}
+
 export type BrowserExtensionConfig = {
   port: number
   screenshotMaxWidth: number
   screenshotFormat: 'jpeg' | 'png'
   screenshotQuality: number
+  /** On-page shadow cursor + "Wolffish is working here" pill. Default true. */
+  overlayEnabled?: boolean
+  /**
+   * Shared secret between this app and the extension folder it syncs. Minted
+   * once (32 random bytes, hex) and mirrored into
+   * `<extension folder>/bridge-token.json` on every launch; a connecting
+   * extension that presents a different token is a foreign copy and is
+   * refused. Absent only on configs written before the token shipped.
+   */
+  bridgeToken?: string
+  /** Browsers that have connected before, newest-kept, capped at 10 — lets the doctor tell "never installed" from "installed but not running". */
+  lastSeen?: Record<string, ExtensionLastSeen>
 }
 
 export type Variable = {
@@ -541,6 +563,7 @@ export async function ensureWorkspace(): Promise<void> {
   await ensureLogsDirectory()
   await ensureExtensionLogsDirectory()
   await ensureBundledExtension()
+  await ensureBridgeToken()
 }
 
 async function ensureSpeechDirectory(): Promise<void> {
@@ -1071,7 +1094,10 @@ export async function getBrowserExtensionConfig(): Promise<BrowserExtensionConfi
     port: stored.port ?? 23152,
     screenshotMaxWidth: stored.screenshotMaxWidth ?? 1280,
     screenshotFormat: stored.screenshotFormat ?? 'jpeg',
-    screenshotQuality: stored.screenshotQuality ?? 80
+    screenshotQuality: stored.screenshotQuality ?? 80,
+    overlayEnabled: stored.overlayEnabled !== false,
+    ...(stored.bridgeToken ? { bridgeToken: stored.bridgeToken } : {}),
+    ...(stored.lastSeen ? { lastSeen: stored.lastSeen } : {})
   }
 }
 
@@ -1083,13 +1109,69 @@ export async function setBrowserExtensionConfig(
     return {
       ...c,
       browserExtension: {
+        ...current,
         port: patch.port ?? current.port,
         screenshotMaxWidth: patch.screenshotMaxWidth ?? current.screenshotMaxWidth,
         screenshotFormat: patch.screenshotFormat ?? current.screenshotFormat,
-        screenshotQuality: patch.screenshotQuality ?? current.screenshotQuality
+        screenshotQuality: patch.screenshotQuality ?? current.screenshotQuality,
+        overlayEnabled: patch.overlayEnabled ?? current.overlayEnabled ?? true,
+        ...(patch.bridgeToken ? { bridgeToken: patch.bridgeToken } : {}),
+        ...(patch.lastSeen ? { lastSeen: patch.lastSeen } : {})
       }
     }
   })
+}
+
+/** Max browser instances remembered in `browserExtension.lastSeen`. */
+const EXTENSION_LAST_SEEN_CAP = 10
+
+/**
+ * Remember that a browser instance connected. Newest entries win when the
+ * cap is hit — the doctor only needs "has this browser ever run the
+ * extension here", and an instance not seen in ten browsers' worth of
+ * connections is one the user has moved on from.
+ */
+export async function recordExtensionSeen(
+  instanceId: string,
+  info: Omit<ExtensionLastSeen, 'at'> & { at?: number }
+): Promise<void> {
+  await patchConfig((c) => {
+    const current = { ...DEFAULT_BROWSER_EXTENSION_CONFIG, ...c.browserExtension }
+    const entries = Object.entries(current.lastSeen ?? {}).filter(([id]) => id !== instanceId)
+    entries.push([instanceId, { ...info, at: info.at ?? Date.now() }])
+    entries.sort((a, b) => b[1].at - a[1].at)
+    return {
+      ...c,
+      browserExtension: {
+        ...current,
+        lastSeen: Object.fromEntries(entries.slice(0, EXTENSION_LAST_SEEN_CAP))
+      }
+    }
+  })
+}
+
+export async function getExtensionLastSeen(): Promise<Record<string, ExtensionLastSeen>> {
+  return (await getBrowserExtensionConfig()).lastSeen ?? {}
+}
+
+/**
+ * Mint the bridge token once and mirror it into the synced extension folder.
+ * Runs on EVERY launch after ensureBundledExtension — that copy is a force
+ * overwrite of the bundled tree, and the token file is not part of the
+ * bundle, so it is the one file that has to be laid down after the sync.
+ * Returns the token so the server can validate handshakes against it.
+ */
+export async function ensureBridgeToken(): Promise<string> {
+  let { bridgeToken } = await getBrowserExtensionConfig()
+  if (!bridgeToken) {
+    bridgeToken = randomBytes(32).toString('hex')
+    await setBrowserExtensionConfig({ bridgeToken })
+  }
+  await diskWriter.writeFileAtomic(
+    path.join(extensionFolderPath(), 'bridge-token.json'),
+    JSON.stringify({ token: bridgeToken }) + '\n'
+  )
+  return bridgeToken
 }
 
 export type { McpConfig, McpOauthState, McpServerConfig }
@@ -1220,10 +1302,13 @@ export async function getRuntimeExtensionVersion(): Promise<string | null> {
 /**
  * Sync bundled extension files to the runtime workspace. Called on
  * every app launch so plugin bug fixes shipped with an app upgrade
- * reach the user automatically. Returns true if files were updated
- * (bundled version differs from runtime version).
+ * reach the user automatically. Exported so the doctor's
+ * `resync_extension` fix can re-run it on demand (a stale folder is what
+ * the browser loads; re-copying is the repair). Files the copy does not
+ * ship (bridge-token.json) survive because this is force-overwrite, not
+ * wipe-and-replace.
  */
-async function ensureBundledExtension(): Promise<void> {
+export async function ensureBundledExtension(): Promise<void> {
   const source = path.join(defaultsWorkspacePath(), 'extension')
   if (!existsSync(source)) return
   const target = path.join(WORKSPACE_ROOT, 'extension')

@@ -205,24 +205,32 @@ describe('what the desktop says became of it', () => {
     expect(callsTo(Rpc.sendMessage)).toHaveLength(0)
   })
 
-  it('sends it as the next turn, same id, when the turn ended before reading it', async () => {
+  /**
+   * The turn ended before the agent read it, so the message becomes the next
+   * turn — sent by the DESKTOP, not by this phone.
+   *
+   * It used to be sent here, and that was the hole: this handler only runs if
+   * the push arrives, and a phone that is backgrounded, relaunching or off the
+   * tunnel at that moment never sees it. The desktop cannot miss an event it
+   * emits itself, it holds the transcript, and it keeps the message parked on
+   * disk until one exists — so the re-send moved there, and the words survive
+   * a phone that is not listening. All this side does now is let the row go;
+   * the fresh turn arrives as a normal `message.appended` under the same id.
+   */
+  it('leaves the re-send to the desktop when the turn ended before reading it', async () => {
     emit(Event.interjection, withdrawnEvent('turn_ended'))
     await flush()
     expect(pendingIds()).toEqual([])
     expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBeUndefined()
-    const sends = callsTo(Rpc.sendMessage)
-    expect(sends).toHaveLength(1)
-    expect(sends[0].messageId).toBe(ID)
-    expect(sends[0].text).toBe('skip the tests')
-    expect(sends[0].conversationId).toBe(CONVERSATION)
-    // A normal turn, with everything a normal turn has: its overlay is open.
-    expect(useChatRuntime.getState().streams[CONVERSATION]?.status).toBe('streaming')
+    // Never from here — a second sender under the same id is a duplicate turn.
+    expect(callsTo(Rpc.sendMessage)).toHaveLength(0)
   })
 
   it('does the same when the turn died', async () => {
     emit(Event.interjection, withdrawnEvent('error'))
     await flush()
-    expect(callsTo(Rpc.sendMessage)).toHaveLength(1)
+    expect(pendingIds()).toEqual([])
+    expect(callsTo(Rpc.sendMessage)).toHaveLength(0)
   })
 
   it('only adds and removes rows for a message another surface sent', async () => {

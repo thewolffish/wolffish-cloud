@@ -269,6 +269,29 @@ async function run(): Promise<void> {
     JSON.stringify(clean?.segments?.map((s) => s.kind))
   )
 
+  // The user's OWN mid-turn message is not tool mechanics and is never held
+  // back: the phone takes its pending bubble down the instant the `delivered`
+  // push lands, so a clean feed that filtered this out made the words the user
+  // had just typed vanish from the screen for the rest of the run.
+  pushes.length = 0
+  turn.onSegment({
+    kind: 'user_message',
+    turnId: 'turn_1',
+    segmentId: 's2b',
+    messageId: 'm_1_aaaaaa',
+    text: 'actually, use the other file',
+    timestamp: Date.now()
+  })
+  await afterThrottle()
+  const withUserMessage = appended().at(-1)?.payload.message as {
+    segments?: Array<{ kind: string }>
+  }
+  ok(
+    'clean feed: a mid-turn user message IS pushed live',
+    (withUserMessage?.segments ?? []).some((s) => s.kind === 'user_message'),
+    JSON.stringify(withUserMessage?.segments?.map((s) => s.kind))
+  )
+
   // ... and included once the Mobile panel's switch is on.
   await channel.setVerbose(true)
   pushes.length = 0

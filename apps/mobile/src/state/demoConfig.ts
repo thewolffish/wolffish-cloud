@@ -192,7 +192,7 @@ const READ_ONLY_SERVICES: ServiceStatus[] = [
   {
     key: 'browserExtension',
     connected: false,
-    connections: [{ label: 'Chrome extension', detail: 'port 23151' }]
+    connections: [{ label: 'Chrome extension', detail: 'port 23152' }]
   }
 ]
 
@@ -391,7 +391,7 @@ const DEFAULTS: DemoConfigValues = {
   ttsVoiceReplies: true,
   screenshotMaxWidth: '1280',
   screenshotFormat: 'jpeg',
-  browserExtensionPort: '23151',
+  browserExtensionPort: '23152',
   browserScreenshotMaxWidth: '1280',
   browserScreenshotFormat: 'jpeg',
   browserScreenshotQuality: '80',
@@ -541,6 +541,13 @@ export type ConfigSnapshot = {
       screenshotQuality?: number
       /** Absent in bundles published before multi-browser shipped. */
       connected?: boolean
+      /** Absent in bundles published before the readiness doctor shipped. */
+      readiness?: {
+        ready?: boolean
+        tier?: string
+        blockers?: number
+        top?: string | null
+      }
       browsers?: Array<{
         browser?: string
         name?: string
@@ -752,6 +759,22 @@ export type ExtensionBrowser = {
   connectedAt: number | null
 }
 
+/**
+ * The desktop's cheap readiness verdict for the extension, reduced to what a
+ * phone can act on: is it ready, how much of the browser it can reach, and the
+ * first thing standing in the way. The walkthrough itself is a desktop affair —
+ * this row exists so the phone says "3 blockers" instead of a bare "not
+ * connected" the user cannot explain.
+ */
+export type ExtensionReadiness = {
+  ready: boolean
+  /** full | limited | none — how much of the browser is actually reachable. */
+  tier: string
+  blockers: number
+  /** The first blocker's title, already user-facing prose. */
+  top: string | null
+}
+
 export type DemoConfigState = DemoConfigValues & {
   /** Read-only service surface state (desktop-managed). */
   services: ServiceStatus[]
@@ -771,6 +794,8 @@ export type DemoConfigState = DemoConfigValues & {
    * rows behind the Services screen's browser cards.
    */
   extensionBrowsers: ExtensionBrowser[]
+  /** The desktop's readiness verdict for the extension (display only). */
+  extensionReadiness: ExtensionReadiness
   /** Capability descriptions from the real workspace's SKILL.md files. */
   capabilityInfo: Record<
     string,
@@ -1030,6 +1055,9 @@ const INITIAL_STATE = {
   services: READ_ONLY_SERVICES,
   modelCatalog: [] as ModelCatalogEntry[],
   extensionBrowsers: [] as ExtensionBrowser[],
+  // Absent rather than false-negative: until a desktop says otherwise, the
+  // card shows nothing instead of claiming the browser is broken.
+  extensionReadiness: { ready: false, tier: 'none', blockers: 0, top: null } as ExtensionReadiness,
   capabilityInfo: {} as DemoConfigState['capabilityInfo'],
   compactionRuns: { daily: null, weekly: null } as CompactionRuns,
   usage: [] as UsageDay[],
@@ -1207,6 +1235,14 @@ export const useDemoConfig = create<DemoConfigState>()(
               extensionVersion: browser.extensionVersion ?? null,
               connectedAt: typeof browser.connectedAt === 'number' ? browser.connectedAt : null
             })),
+            // An older desktop sends no readiness at all; 'none' + zero
+            // blockers is the shape the card reads as "nothing to say".
+            extensionReadiness: {
+              ready: services.browserExtension?.readiness?.ready === true,
+              tier: services.browserExtension?.readiness?.tier ?? 'none',
+              blockers: services.browserExtension?.readiness?.blockers ?? 0,
+              top: services.browserExtension?.readiness?.top ?? null
+            },
             services: [
               {
                 key: 'browserExtension',
@@ -1281,6 +1317,7 @@ export const useDemoConfig = create<DemoConfigState>()(
           // collapsing to a single model until the desktop's next push lands.
           modelCatalog: state.modelCatalog,
           extensionBrowsers: state.extensionBrowsers,
+          extensionReadiness: state.extensionReadiness,
           compactionRuns: state.compactionRuns,
           usage: state.usage,
           desktop: state.desktop,

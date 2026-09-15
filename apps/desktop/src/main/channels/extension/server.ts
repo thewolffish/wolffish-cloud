@@ -5,9 +5,25 @@ import {
   type ConversationSummary,
   type ExtensionEvent
 } from '@main/channels/extension/log'
+import {
+  applyFix,
+  collectFacts,
+  composeFindings,
+  type BrowserDoctorProbe,
+  type DoctorOptions,
+  type DoctorReport,
+  type DoctorServerView,
+  type FixOptions,
+  type FixResult
+} from '@main/channels/extension/doctor'
 import { diskWriter } from '@main/io/diskWriter'
 import { wlog } from '@main/workspace/logger'
-import { getBrowserExtensionConfig, getRuntimeExtensionVersion } from '@main/workspace/workspace'
+import {
+  getBrowserExtensionConfig,
+  getRuntimeExtensionVersion,
+  recordExtensionSeen,
+  setBrowserExtensionConfig
+} from '@main/workspace/workspace'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -25,6 +41,14 @@ const HEARTBEAT_SWEEP_MS = 15_000
  * typically the orphaned socket of a reloaded service worker.
  */
 const IDENTITY_TIMEOUT_MS = 10_000
+/**
+ * A full doctor report (with the extension round-trip) is served to the
+ * cheap readiness path for this long; a probe-less report half as long.
+ */
+const DOCTOR_CACHE_MS = 60_000
+const READINESS_CACHE_MS = 30_000
+/** Origins Chrome/Firefox stamp on extension-initiated sockets. Anything else is a web page. */
+const EXTENSION_ORIGIN = /^(chrome|moz)-extension:\/\//
 
 // ─── Debug Logger ───────────────────────────────────────────────────────────
 
@@ -113,6 +137,12 @@ export interface ExtensionBrowserInfo {
   os: string | null
   /** Signed-in profile email — distinguishes profiles of the same browser. */
   profileEmail: string | null
+  /** chrome.runtime.id — needed for chrome://extensions/?id= links; null on pre-v2 extensions. */
+  extensionId: string | null
+  /** Connected without a bridge token (pre-v2 extension build). Accepted, but flagged. */
+  legacy: boolean
+  /** The extension's own on-page overlay switch, as reported at handshake. */
+  overlayEnabled: boolean
   connectedAt: number
   lastPing: number
 }
@@ -142,7 +172,19 @@ interface ExtensionClient {
   browserVersion: string | null
   os: string | null
   profileEmail: string | null
+  extensionId: string | null
+  legacy: boolean
+  overlayEnabled: boolean
   identityTimer: ReturnType<typeof setTimeout> | null
+}
+
+export interface ExtensionServerOptions {
+  /**
+   * Refuse sockets without a `chrome-extension://` / `moz-extension://`
+   * Origin. Default true; the protocol test opts out because its fake
+   * clients are plain `ws` sockets with no origin.
+   */
+  requireOrigin?: boolean
 }
 
 interface PendingCommand {
@@ -195,6 +237,19 @@ export class ExtensionServer {
   private currentTitle: string | null = null
   private currentPort = 23152
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
+  private readonly requireOrigin: boolean
+  /** Last full doctor report + when it was produced (readiness serves it while fresh). */
+  private doctorCache: { report: DoctorReport; at: number; probed: boolean } | null = null
+  /** Last handshake refused for a wrong bridge token — the doctor turns a recent one into a finding. */
+  private tokenMismatch: { at: number; browser: string } | null = null
+  /** Last `browser_debugger_attach` failure — "Another debugger is attached" is a finding while recent. */
+  private attachError: { at: number; error: string } | null = null
+  /** slug → extensionId of the last browser that identified with one; lets open_extension_details work after a disconnect. */
+  private extensionIdBySlug = new Map<string, string>()
+
+  constructor(options: ExtensionServerOptions = {}) {
+    this.requireOrigin = options.requireOrigin !== false
+  }
 
   setStatusChangeHandler(handler: (status: ExtensionServerStatus) => void): void {
     this.onStatusChange = handler
@@ -209,6 +264,12 @@ export class ExtensionServer {
     }
 
     this.currentPort = config.port
+    // The bridge exists for the lifetime of the server, not of a client:
+    // ext_doctor / ext_fix must be reachable when NOTHING is connected —
+    // that is exactly when they are needed — and even when the port is
+    // busy (the doctor is how the user learns that). isConnected() keeps
+    // answering the real question.
+    this.exposeBridge()
 
     return new Promise((resolve) => {
       try {
@@ -255,6 +316,16 @@ export class ExtensionServer {
           'INFO',
           `new connection: origin=${origin} ua=${ua.slice(0, 80)} readyState=${ws.readyState}`
         )
+        // Only an extension may talk to this socket. Browsers stamp
+        // extension-initiated WebSockets with the extension's own origin
+        // and never let a page forge it, so a missing or foreign Origin is
+        // a web page (or a stray local tool) probing the port — drop it
+        // before it can learn anything.
+        if (this.requireOrigin && !EXTENSION_ORIGIN.test(req.headers.origin ?? '')) {
+          void debug('WARN', `refusing connection with origin=${origin} — not an extension`)
+          ws.terminate()
+          return
+        }
         this.handleConnection(ws)
       })
     })
@@ -271,6 +342,7 @@ export class ExtensionServer {
     this.clients.clear()
     this.stickyByConversation.clear()
     this.syncedByClient.clear()
+    this.doctorCache = null
     this.clearBridge()
 
     if (this.wss) {
@@ -376,7 +448,7 @@ export class ExtensionServer {
     // orphaned — they are settled when their client's socket closes, the
     // server shuts down, or the same browser instance reconnects, which is
     // the only way a sent command can fail to come back.
-    return new Promise((resolve, reject) => {
+    const response = await new Promise<WolffishResponse>((resolve, reject) => {
       this.pendingCommands.set(id, { resolve, reject, clientId: client.id })
 
       try {
@@ -386,6 +458,16 @@ export class ExtensionServer {
         reject(err instanceof Error ? err : new Error(String(err)))
       }
     })
+    // A refused attach is the one debugger failure the user can fix
+    // (close DevTools); remember it so the doctor can name it while recent.
+    if (type === 'browser_debugger_attach' && !response.success && response.error) {
+      if (/another debugger|already attached/i.test(response.error)) {
+        this.attachError = { at: Date.now(), error: response.error }
+      }
+    } else if (type === 'browser_debugger_attach' && response.success) {
+      this.attachError = null
+    }
+    return response
   }
 
   async runTestScenario(
@@ -457,6 +539,122 @@ export class ExtensionServer {
     }
   }
 
+  /**
+   * Flip the on-page overlay (shadow cursor + pill) for one browser or
+   * all. Persisted in config so the choice survives restarts; pushed as an
+   * `overlay_config` event so the extension writes its own storage key and
+   * the side-panel toggle reflects it.
+   */
+  async setOverlayEnabled(enabled: boolean, target?: string | null): Promise<void> {
+    await setBrowserExtensionConfig({ overlayEnabled: enabled })
+    const data = { type: 'event', event: 'overlay_config', data: { enabled } }
+    if (target && target.trim()) {
+      const client = this.resolveClient(target, null)
+      client.overlayEnabled = enabled
+      this.sendRaw(client, data)
+    } else {
+      for (const client of this.identifiedClients()) client.overlayEnabled = enabled
+      this.broadcastRaw(data)
+    }
+    this.broadcastStatus()
+  }
+
+  /**
+   * Run `browser_doctor` on the browser a command would go to. The doctor
+   * calls this through DoctorServerView; it throws the same model-facing
+   * routing errors sendCommand does when nothing matches.
+   */
+  async probeExtension(
+    opts: DoctorOptions
+  ): Promise<{ browser: ExtensionBrowserInfo; probe: BrowserDoctorProbe }> {
+    // resolveClient throws when several browsers are connected and none is
+    // sticky — correct for a task command, wrong for a diagnostic: the doctor
+    // would then report "could not probe" for the very ambiguity it is there
+    // to describe. Fall back to the first identified browser and say which.
+    let client: ExtensionClient
+    try {
+      client = this.resolveClient(
+        opts.target ?? null,
+        opts.conversationId ?? this.currentConversationId
+      )
+    } catch (err) {
+      const first = this.identifiedClients()[0]
+      if (!first) throw err
+      client = first
+    }
+    const params: Record<string, unknown> = {}
+    if (typeof opts.tabId === 'number') params.tabId = opts.tabId
+    const res = await this.dispatchCommand(client, 'browser_doctor', params)
+    if (!res.success) throw new Error(res.error ?? 'browser_doctor failed')
+    return {
+      browser: this.toBrowserInfo(client, this.selectionKeys()),
+      probe: res.data as BrowserDoctorProbe
+    }
+  }
+
+  private doctorView(): DoctorServerView {
+    return {
+      getStatus: () => this.getStatus(),
+      probeExtension: (opts) => this.probeExtension(opts),
+      lastTokenMismatch: () => this.tokenMismatch,
+      lastAttachError: () => this.attachError
+    }
+  }
+
+  /** Full readiness report: every local probe plus the extension round-trip when a browser is connected. */
+  async doctor(opts: DoctorOptions = {}): Promise<DoctorReport> {
+    const facts = await collectFacts(this.doctorView(), opts)
+    const report = composeFindings(facts)
+    this.doctorCache = { report, at: Date.now(), probed: opts.probe !== false }
+    void debug('INFO', `doctor: ready=${report.ready} tier=${report.tier} — ${report.summary}`)
+    return report
+  }
+
+  /** The last report doctor() produced, or null. Consumers that need freshness call doctor(). */
+  lastDoctorReport(): DoctorReport | null {
+    return this.doctorCache?.report ?? null
+  }
+
+  /**
+   * Cheap readiness for surfaces that render often (the mobile snapshot):
+   * the last full report while fresh, else a probe-less compose — local
+   * facts only, one process listing, no extension round-trip.
+   */
+  async readiness(): Promise<DoctorReport> {
+    const cached = this.doctorCache
+    if (cached) {
+      const ttl = cached.probed ? DOCTOR_CACHE_MS : READINESS_CACHE_MS
+      if (Date.now() - cached.at < ttl) return cached.report
+    }
+    return this.doctor({ probe: false })
+  }
+
+  /** Run one doctor fix. Server-side actions (port, reload, resync, openers); launch_browser stays in the plugin. */
+  async fix(action: string, opts: FixOptions = {}): Promise<FixResult> {
+    void debug('INFO', `fix: ${action} ${JSON.stringify(opts)}`)
+    const target = opts.target ?? null
+    let extensionId: string | null = opts.extensionId ?? null
+    if (!extensionId) {
+      const client = this.identifiedClients().find((c) => c.extensionId)
+      extensionId = client?.extensionId ?? [...this.extensionIdBySlug.values()][0] ?? null
+    }
+    const result = await applyFix(
+      action,
+      {
+        restartServer: async (port) => {
+          await this.stop()
+          await this.start({ port })
+        },
+        sendPortUpdate: (port) => this.sendPortUpdate(port),
+        requestReload: (t) => this.requestReload(t ?? target),
+        extensionId
+      },
+      opts
+    )
+    this.doctorCache = null
+    return result
+  }
+
   private async checkVersionAndReload(client: ExtensionClient): Promise<void> {
     if (!client.version) return
     try {
@@ -516,6 +714,9 @@ export class ExtensionServer {
       browserVersion: c.browserVersion,
       os: c.os,
       profileEmail: c.profileEmail,
+      extensionId: c.extensionId,
+      legacy: c.legacy,
+      overlayEnabled: c.overlayEnabled,
       connectedAt: c.connectedAt,
       lastPing: c.lastPing
     }
@@ -631,6 +832,9 @@ export class ExtensionServer {
       browserVersion: null,
       os: null,
       profileEmail: null,
+      extensionId: null,
+      legacy: false,
+      overlayEnabled: true,
       identityTimer: null
     }
     this.clients.set(client.id, client)
@@ -694,10 +898,9 @@ export class ExtensionServer {
       if (cid === client.id) this.stickyByConversation.delete(conv)
     }
     this.refreshConnectionStatus()
-    if (this.clients.size === 0) {
-      this.stopHeartbeat()
-      this.clearBridge()
-    }
+    // The bridge stays up: it belongs to the listening server (see start()),
+    // so a disconnect must not take ext_doctor away right when it is needed.
+    if (this.clients.size === 0) this.stopHeartbeat()
     if (wasIdentified) {
       wlog.info(
         TAG,
@@ -737,35 +940,13 @@ export class ExtensionServer {
     }
 
     if (msg.type === 'extension_info') {
+      // Stop the orphan timer synchronously — identification itself awaits
+      // the config read for the token check and must not race the cull.
       if (client.identityTimer) {
         clearTimeout(client.identityTimer)
         client.identityTimer = null
       }
-      client.version = (msg.version as string) ?? null
-      client.instanceId = typeof msg.instanceId === 'string' ? msg.instanceId : null
-      if (typeof msg.browser === 'string' && msg.browser) client.browser = msg.browser
-      if (typeof msg.browserName === 'string' && msg.browserName) client.name = msg.browserName
-      client.browserVersion = typeof msg.browserVersion === 'string' ? msg.browserVersion : null
-      client.os = typeof msg.os === 'string' && msg.os ? msg.os : null
-      client.profileEmail =
-        typeof msg.profileEmail === 'string' && msg.profileEmail ? msg.profileEmail : null
-      void debug(
-        'INFO',
-        `extension_info: version=${client.version} browser=${client.browser} name=${client.name} profile=${client.profileEmail ?? 'none'} instance=${client.instanceId ?? 'none'}`
-      )
-      this.dedupeInstance(client)
-      // Claim the instance's key slot now (idempotent) so numbering follows
-      // true first-connect order, not whenever duplication first renders.
-      this.slotFor(client)
-      this.statusError = null
-      this.refreshConnectionStatus()
-      this.exposeBridge()
-      this.broadcastStatus()
-      wlog.info(
-        TAG,
-        `Extension connected: ${client.name} (${this.identifiedClients().length} browser${this.identifiedClients().length === 1 ? '' : 's'})`
-      )
-      void this.checkVersionAndReload(client)
+      void this.identify(client, msg)
       return
     }
 
@@ -779,6 +960,81 @@ export class ExtensionServer {
         void debug('WARN', `no pending command for id=${msg.id}`)
       }
     }
+  }
+
+  /**
+   * Complete the handshake. Token validation comes first: a client that
+   * presents a token is a v2 build and must present OURS — a mismatch is a
+   * copy of the extension this app did not sync (second install, another
+   * machine's folder) and is refused before it becomes visible anywhere.
+   * No token at all is a pre-v2 build: accepted, flagged legacy, so the
+   * doctor can say why newer tools are missing.
+   */
+  private async identify(client: ExtensionClient, msg: Record<string, unknown>): Promise<void> {
+    const browser = typeof msg.browser === 'string' && msg.browser ? msg.browser : client.browser
+    const name =
+      typeof msg.browserName === 'string' && msg.browserName ? msg.browserName : client.name
+    const presented =
+      typeof msg.bridgeToken === 'string' && msg.bridgeToken ? msg.bridgeToken : null
+    if (presented) {
+      let expected: string | undefined
+      try {
+        expected = (await getBrowserExtensionConfig()).bridgeToken
+      } catch {
+        expected = undefined
+      }
+      if (!this.clients.has(client.id)) return // closed while we read config
+      if (expected && presented !== expected) {
+        void debug('WARN', `bridge token mismatch from ${name} (${client.id}) — terminating`)
+        wlog.warn(TAG, `Refused ${name}: its extension folder was not synced by this Wolffish`)
+        this.tokenMismatch = { at: Date.now(), browser }
+        client.ws.terminate()
+        this.removeClient(client, 'bridge token mismatch')
+        return
+      }
+    }
+    if (!this.clients.has(client.id)) return
+
+    client.version = (msg.version as string) ?? null
+    client.instanceId = typeof msg.instanceId === 'string' ? msg.instanceId : null
+    client.browser = browser
+    client.name = name
+    client.browserVersion = typeof msg.browserVersion === 'string' ? msg.browserVersion : null
+    client.os = typeof msg.os === 'string' && msg.os ? msg.os : null
+    client.profileEmail =
+      typeof msg.profileEmail === 'string' && msg.profileEmail ? msg.profileEmail : null
+    client.extensionId =
+      typeof msg.extensionId === 'string' && msg.extensionId ? msg.extensionId : null
+    client.legacy = presented === null
+    client.overlayEnabled = msg.overlayEnabled !== false
+    if (client.extensionId) this.extensionIdBySlug.set(client.browser, client.extensionId)
+    void debug(
+      'INFO',
+      `extension_info: version=${client.version} browser=${client.browser} name=${client.name} profile=${client.profileEmail ?? 'none'} instance=${client.instanceId ?? 'none'} ext=${client.extensionId ?? 'none'} legacy=${client.legacy} overlay=${client.overlayEnabled}`
+    )
+    this.dedupeInstance(client)
+    // Claim the instance's key slot now (idempotent) so numbering follows
+    // true first-connect order, not whenever duplication first renders.
+    this.slotFor(client)
+    this.statusError = null
+    this.refreshConnectionStatus()
+    this.doctorCache = null
+    this.broadcastStatus()
+    wlog.info(
+      TAG,
+      `Extension connected: ${client.name} (${this.identifiedClients().length} browser${this.identifiedClients().length === 1 ? '' : 's'})`
+    )
+    if (client.instanceId) {
+      void recordExtensionSeen(client.instanceId, {
+        name: client.name,
+        browser: client.browser,
+        version: client.version,
+        profileEmail: client.profileEmail
+      }).catch((err) =>
+        debug('ERROR', `recordExtensionSeen failed: ${err instanceof Error ? err.message : err}`)
+      )
+    }
+    void this.checkVersionAndReload(client)
   }
 
   /**
@@ -933,7 +1189,14 @@ export class ExtensionServer {
       // running an old service worker whose manifest still matches the synced
       // folder — and the one reliable symptom of that is the extension
       // answering "Unknown command" for a command this build defines.
-      requestReload: (target?: string | null) => this.requestReload(target)
+      requestReload: (target?: string | null) => this.requestReload(target),
+      // Readiness + repairs. Reachable with zero clients by design — see
+      // start(): the bridge is exposed when the server comes up, not when
+      // a browser identifies.
+      doctor: (opts?: DoctorOptions) => this.doctor(opts ?? {}),
+      fix: (action: string, opts?: FixOptions) => this.fix(action, opts ?? {}),
+      setOverlayEnabled: (enabled: boolean, target?: string | null) =>
+        this.setOverlayEnabled(enabled, target)
     }
     void debug('INFO', 'bridge exposed on globalThis')
   }

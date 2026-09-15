@@ -340,7 +340,11 @@ async function run(): Promise<void> {
           unregisterInProcessCapability: (name: string) => unregistered.push(name)
         }
       } as never,
-      runner: { send: () => ({ turnId: 't', controller: new AbortController() }) } as never,
+      runner: {
+        send: () => ({ turnId: 't', controller: new AbortController() }),
+        // start() subscribes to mid-turn messages; the fake just hands back an unsubscribe.
+        onInterjection: () => () => {}
+      } as never,
       serializeCapabilities: async () => [],
       loadNotificationsEnabled: async () => true
     } as never)

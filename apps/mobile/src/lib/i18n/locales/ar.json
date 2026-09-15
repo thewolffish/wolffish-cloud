@@ -148,7 +148,22 @@
         "quality": "جودة JPEG (1-100)",
         "pairingNote": "تثبيت الامتداد واقترانه يتمّان على الحاسوب.",
         "portManagedOnDesktop": "يُدار المنفذ من تطبيق الكمبيوتر.",
-        "connectedAtTime": "اتصل عند {{time}}"
+        "connectedAtTime": "اتصل عند {{time}}",
+        "readinessReady": "كل ما يحتاجه Wolffish متوفر.",
+        "readinessLimited": "يصل Wolffish إلى جزء من المتصفح فقط.",
+        "readinessBlockers": "{{count}} عائق يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_zero": "لا شيء يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_one": "عائق واحد يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_two": "عائقان يمنعان Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_few": "{{count}} عوائق تمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_many": "{{count}} عائقًا يمنع Wolffish من تشغيل متصفحك.",
+        "readinessFixOnDesktop": "افتح لوحة إضافة المتصفح في تطبيق الكمبيوتر لمعالجته.",
+        "tier": {
+          "full": "كامل",
+          "degraded": "محدود",
+          "managed": "مُدار",
+          "none": "غير متاح"
+        }
       },
       "sttModel": "نموذج Whisper",
       "sttLanguage": "اللغة",

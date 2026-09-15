@@ -54,7 +54,28 @@ export type Interjection = {
   sentAt: number
 }
 
-export type InterjectResult = { status: 'pending' } | { status: 'no_live_turn' }
+export type InterjectResult =
+  | {
+      status: 'pending'
+      /**
+       * Resolves once the message is PARKED ON DISK (channels/
+       * interjection-store.ts) and can therefore survive a crash, a quit or a
+       * dropped connection. The accept itself stays synchronous — Telegram and
+       * WhatsApp rely on `pending` being emitted inside interject(), before any
+       * terminal event can fire — so the durability is offered rather than
+       * imposed: a caller that answers the user asynchronously (the phone's
+       * RPC) awaits this before saying "got it", and everyone else ignores it.
+       */
+      durable: Promise<void>
+    }
+  | { status: 'no_live_turn' }
+
+/**
+ * The verdict alone — what crosses a process or wire boundary. `durable` is a
+ * live promise and cannot be structured-cloned over IPC or serialized to a
+ * phone, so every boundary narrows to this.
+ */
+export type InterjectVerdict = { status: InterjectResult['status'] }
 
 /**
  * Why a pending interjection left the inbox without being read.

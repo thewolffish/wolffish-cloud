@@ -93,7 +93,37 @@ const COMMAND_EVENT_MAP: Record<string, ExtensionEventType> = {
   browser_debugger_detach: 'debugger',
   browser_debugger_status: 'debugger',
   browser_mouse_move: 'move',
-  browser_humanize: 'move'
+  browser_humanize: 'move',
+  // Every wire command the extension defines (packages/shared/lib/wolffish/
+  // commands.ts) has a row here — an unmapped command logs as 'unknown' and
+  // the side panel renders it without an icon, which reads as a bug.
+  browser_wait: 'wait',
+  browser_set_value: 'type',
+  browser_submit_form: 'click',
+  browser_mouse_click: 'click',
+  browser_mouse_down: 'click',
+  browser_mouse_up: 'click',
+  browser_mouse_drag: 'click',
+  browser_element_from_point: 'read',
+  browser_get_interactive_elements: 'read',
+  browser_take_snapshot: 'read',
+  browser_resolve_uid: 'read',
+  browser_find: 'read',
+  browser_fill: 'type',
+  browser_fill_form: 'type',
+  browser_list_network_requests: 'read',
+  browser_get_network_request: 'read',
+  browser_list_console_messages: 'read',
+  browser_handle_dialog: 'click',
+  browser_emulate: 'debugger',
+  browser_doctor: 'debugger'
+}
+
+/** "uid=3_4" or the selector — whichever the command targeted. */
+function targetOf(params: Record<string, unknown>, fallback: string): string {
+  if (typeof params.uid === 'string' && params.uid) return `uid=${params.uid}`
+  if (typeof params.selector === 'string' && params.selector) return params.selector
+  return fallback
 }
 
 function buildTitle(commandType: string, params: Record<string, unknown>): string {
@@ -198,6 +228,60 @@ function buildTitle(commandType: string, params: Record<string, unknown>): strin
       return `Moved to (${params.x ?? '?'}, ${params.y ?? '?'})`
     case 'browser_humanize':
       return `Humanize: ${params.intensity ?? 'default'}`
+    case 'browser_wait':
+      return params.selector
+        ? `Waited for ${params.selector}`
+        : `Waited ${params.ms ?? params.timeout_ms ?? params.timeout ?? ''} ms`.replace('  ', ' ')
+    case 'browser_set_value':
+      return `Set value of ${targetOf(params, 'input')}`
+    case 'browser_submit_form':
+      return `Submitted ${params.selector ?? 'form'}`
+    case 'browser_mouse_click':
+      return params.x !== undefined && params.y !== undefined
+        ? `Clicked at (${params.x}, ${params.y})`
+        : `Clicked ${targetOf(params, 'element')}`
+    case 'browser_mouse_down':
+      return params.x !== undefined && params.y !== undefined
+        ? `Pressed at (${params.x}, ${params.y})`
+        : `Pressed ${targetOf(params, 'element')}`
+    case 'browser_mouse_up':
+      return params.x !== undefined && params.y !== undefined
+        ? `Released at (${params.x}, ${params.y})`
+        : `Released ${targetOf(params, 'element')}`
+    case 'browser_mouse_drag':
+      return params.from_uid
+        ? `Dragged uid=${params.from_uid} to uid=${params.to_uid ?? '?'}`
+        : params.sourceSelector
+          ? `Dragged ${params.sourceSelector} to ${params.targetSelector ?? 'target'}`
+          : `Dragged (${params.startX ?? '?'}, ${params.startY ?? '?'}) to (${params.endX ?? '?'}, ${params.endY ?? '?'})`
+    case 'browser_element_from_point':
+      return `Inspected element at (${params.x ?? '?'}, ${params.y ?? '?'})`
+    case 'browser_get_interactive_elements':
+      return 'Listed interactive elements'
+    case 'browser_take_snapshot':
+      return `Took ${params.verbose ? 'verbose ' : ''}page snapshot`
+    case 'browser_resolve_uid':
+      return `Resolved uid=${params.uid ?? '?'}`
+    case 'browser_find':
+      return `Searched for "${params.query ?? ''}"`
+    case 'browser_fill':
+      return `Filled ${targetOf(params, 'field')}`
+    case 'browser_fill_form': {
+      const count = Array.isArray(params.elements) ? params.elements.length : 0
+      return `Filled ${count} field${count === 1 ? '' : 's'}`
+    }
+    case 'browser_list_network_requests':
+      return 'Listed network requests'
+    case 'browser_get_network_request':
+      return `Read network request #${params.reqid ?? ''}`
+    case 'browser_list_console_messages':
+      return 'Listed console messages'
+    case 'browser_handle_dialog':
+      return `${params.action === 'dismiss' ? 'Dismissed' : 'Accepted'} dialog`
+    case 'browser_emulate':
+      return `Emulated ${[params.viewport, params.colorScheme, params.networkConditions].filter(Boolean).join(', ') || 'device'}`
+    case 'browser_doctor':
+      return 'Checked extension readiness'
     default:
       return commandType.replace(/_/g, ' ')
   }

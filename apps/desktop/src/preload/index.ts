@@ -10,7 +10,7 @@ import type {
   ToolResultStatus
 } from '@main/runtime/broca'
 import type {
-  InterjectResult,
+  InterjectVerdict,
   Interjection,
   InterjectionEvent
 } from '@main/runtime/agent/interjection'
@@ -968,11 +968,20 @@ export type ChatApi = {
     attachments?: MessageAttachment[]
     voicePrompt?: boolean
     voiceLang?: string
-  }) => Promise<InterjectResult>
+  }) => Promise<InterjectVerdict>
   /** Take a still-unread message back. False once the agent has read it. */
   withdrawInterjection: (payload: { conversationId: string; messageId: string }) => Promise<boolean>
   /** Messages parked for a conversation and not read yet — the cold-start seed for the pending bubbles. */
   pendingInterjections: (conversationId: string) => Promise<ChatInterjection[]>
+  /**
+   * Let go of a HELD message once this window has put its words back in the
+   * composer. Only a `held` row (its run was stopped) can be released this
+   * way — see the field's note.
+   */
+  releaseHeldInterjection: (payload: {
+    conversationId: string
+    messageId: string
+  }) => Promise<boolean>
   /** Mid-turn message lifecycle (pending / delivered / withdrawn), every surface's messages included. */
   onInterjection: (listener: (event: ChatInterjectionEvent) => void) => () => void
 }
@@ -980,7 +989,16 @@ export type ChatApi = {
 /** Lifecycle event of one mid-turn message — mirrors runtime/agent/interjection.ts InterjectionEvent. */
 export type ChatInterjectionEvent = InterjectionEvent
 /** One parked mid-turn message, as chat:pendingInterjections returns it. */
-export type ChatInterjection = Interjection
+export type ChatInterjection = Interjection & {
+  /**
+   * True for a message the durable park is HOLDING rather than queuing: its
+   * run was stopped before the agent read it, so it is never auto-resent and
+   * never waiting on a stop point. The window that opens the conversation puts
+   * it back in the composer instead of drawing a pending bubble — otherwise it
+   * would be a row promising a delivery that will never come.
+   */
+  held?: boolean
+}
 
 export type ConversationSummaryUpdate = {
   conversationId: string
@@ -2080,14 +2098,66 @@ export type ComputerUseApi = {
   openSettings: (pane: ComputerUseSettingsPane) => Promise<{ ok: boolean }>
 }
 
+export type ExtensionLastSeen = {
+  name: string
+  browser: string
+  version: string | null
+  profileEmail: string | null
+  at: number
+}
+
 export type BrowserExtensionConfig = {
   port: number
   screenshotMaxWidth: number
   screenshotFormat: 'jpeg' | 'png'
   screenshotQuality: number
+  /** On-page shadow cursor + pill. Default true. */
+  overlayEnabled?: boolean
+  bridgeToken?: string
+  lastSeen?: Record<string, ExtensionLastSeen>
 }
 
 export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 'error'
+
+// Mirrors src/main/channels/extension/doctor.ts (preload cannot import main).
+export type ExtensionFindingSeverity = 'blocker' | 'degraded' | 'note'
+export type ExtensionFixKind = 'auto' | 'one-click' | 'guided' | 'none'
+
+export type Finding = {
+  /** Stable snake_case id — translate by id; title/steps are English fallbacks. */
+  id: string
+  severity: ExtensionFindingSeverity
+  title: string
+  detail: string
+  fix: { kind: ExtensionFixKind; action?: string; steps: string[]; url?: string }
+  verify: string
+  /** Selection key when the finding is about one connected browser. */
+  browser?: string
+}
+
+export type DoctorReport = {
+  ready: boolean
+  tier: 'full' | 'degraded' | 'managed' | 'none'
+  findings: Finding[]
+  summary: string
+  facts: Record<string, unknown>
+}
+
+export type DoctorOptions = {
+  target?: string | null
+  conversationId?: string | null
+  tabId?: number
+  probe?: boolean
+}
+
+export type FixOptions = {
+  target?: string | null
+  pane?: 'accessibility' | 'screenRecording' | 'automation' | string
+  url?: string
+  extensionId?: string | null
+}
+
+export type FixResult = { ok: boolean; message: string; steps?: string[] }
 
 export type ExtensionBrowserInfo = {
   id: string
@@ -2099,6 +2169,11 @@ export type ExtensionBrowserInfo = {
   browserVersion: string | null
   os: string | null
   profileEmail: string | null
+  /** chrome.runtime.id — null on pre-v2 extensions. */
+  extensionId: string | null
+  /** Connected without a bridge token (pre-v2 build). */
+  legacy: boolean
+  overlayEnabled: boolean
   connectedAt: number
   lastPing: number
 }
@@ -2124,6 +2199,11 @@ export type BrowserExtensionApi = {
     target?: string | null
   ) => Promise<{ ok: boolean; steps: number; passed: number; error?: string }>
   openExtensionsPage: () => Promise<void>
+  /** Readiness report — works with zero browsers connected. */
+  doctor: (opts?: DoctorOptions) => Promise<DoctorReport>
+  /** Run a finding's `fix.action` (launch_browser is plugin-only and returns ok:false here). */
+  fix: (action: string, opts?: FixOptions) => Promise<FixResult>
+  setOverlayEnabled: (enabled: boolean, target?: string | null) => Promise<{ ok: true }>
   onStatusChange: (callback: (status: ExtensionServerStatus) => void) => () => void
 }
 
@@ -2406,6 +2486,8 @@ const api: WolffishApi = {
     withdrawInterjection: (payload) => ipcRenderer.invoke('chat:withdrawInterjection', payload),
     pendingInterjections: (conversationId) =>
       ipcRenderer.invoke('chat:pendingInterjections', conversationId),
+    releaseHeldInterjection: (payload) =>
+      ipcRenderer.invoke('chat:releaseHeldInterjection', payload),
     onInterjection: (listener) => subscribe('chat:interjection', listener)
   },
   conversation: {
@@ -2668,6 +2750,10 @@ const api: WolffishApi = {
     updateExtension: (target) => ipcRenderer.invoke('browserExtension:updateExtension', target),
     testConnection: (target) => ipcRenderer.invoke('browserExtension:testConnection', target),
     openExtensionsPage: () => ipcRenderer.invoke('browserExtension:openExtensionsPage'),
+    doctor: (opts) => ipcRenderer.invoke('browserExtension:doctor', opts),
+    fix: (action, opts) => ipcRenderer.invoke('browserExtension:fix', action, opts),
+    setOverlayEnabled: (enabled, target) =>
+      ipcRenderer.invoke('browserExtension:setOverlayEnabled', enabled, target),
     onStatusChange: (listener) => subscribe('extension:statusChange', listener)
   },
   spellcheck: {
