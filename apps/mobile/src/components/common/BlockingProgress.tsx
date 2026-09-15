@@ -4,7 +4,15 @@ import { elapsed } from '@/components/overlays/OverlayChrome'
 import { useTheme } from '@/providers/theme/useTheme'
 import { BlurView } from 'expo-blur'
 import { useEffect, useState, type ReactNode } from 'react'
-import { BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import {
+  BackHandler,
+  Modal as RNModal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View
+} from 'react-native'
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -12,6 +20,7 @@ import Animated, {
   withRepeat,
   withTiming
 } from 'react-native-reanimated'
+import { FullWindowOverlay } from 'react-native-screens'
 
 /**
  * The shape both waits wear: reconnecting, and syncing.
@@ -21,19 +30,24 @@ import Animated, {
  * dialogs that happen to overlap in purpose. What differs between them is
  * only the words, the progress and whether there is a way out.
  *
- * Deliberately NOT a Modal, though it looks exactly like one.
+ * Deliberately NOT a presented Modal on iOS, though it looks exactly like one.
  *
- * A React Native Modal is a presented view controller on iOS, and a second one
+ * A React Native Modal is a presented view controller there, and a second one
  * cannot present while the first is up. Both of these mount at the root of the
  * app, so any sheet the user happens to have open — the conversations list, the
  * attachment picker, a settings dialog — silently swallowed them: the tunnel
  * would drop with a sheet open and nothing whatsoever appeared, on the one
  * occasion the app most needed to say something. Rendered as an ordinary
- * absolute layer it always paints, over every screen, and it can never lose a
- * presentation race it has no way of retrying.
+ * absolute layer it always paints, and it can never lose a presentation race it
+ * has no way of retrying.
  *
- * The trade is the one case a Modal did win: it cannot paint over ANOTHER
- * modal, which is a strictly smaller loss than not painting at all.
+ * That left the other half of the same problem: it painted, but UNDER those
+ * sheets, because each of them is a window of its own and an absolute layer is
+ * only ever above its own siblings — the card the app most needs to show was
+ * behind the sidebar, and behind every dialog a settings page opens. So the
+ * whole thing goes into the window's own top layer now (see TopLayer): above
+ * every screen AND every sheet, on both platforms, while still presenting
+ * nothing on iOS that could lose that race.
  */
 export function BlockingProgress({
   icon,
@@ -75,61 +89,100 @@ export function BlockingProgress({
   }, [])
 
   return (
-    <View
-      // Rendered above every screen and every floating card, and taking every
-      // touch on the way: what is underneath cannot be acted on until this is
-      // over, which is the whole claim the card is making.
-      style={[StyleSheet.absoluteFill, { zIndex: 100 }]}
-      className="items-center justify-center p-4"
-      accessibilityViewIsModal
-    >
-      <BlurView
-        pointerEvents="none"
-        intensity={20}
-        tint={isDark ? 'dark' : 'light'}
-        blurMethod="dimezisBlurView"
-        style={StyleSheet.absoluteFill}
-      />
-      <View pointerEvents="none" className="absolute inset-0 bg-black/40" />
-      {/* Swallows taps aimed at the screen behind. Not a dismiss — there is
+    <TopLayer>
+      <View
+        // Rendered above every screen and every floating card, and taking every
+        // touch on the way: what is underneath cannot be acted on until this is
+        // over, which is the whole claim the card is making.
+        style={[StyleSheet.absoluteFill, { zIndex: 100 }]}
+        className="items-center justify-center p-4"
+        accessibilityViewIsModal
+      >
+        <BlurView
+          pointerEvents="none"
+          intensity={20}
+          tint={isDark ? 'dark' : 'light'}
+          blurMethod="dimezisBlurView"
+          style={StyleSheet.absoluteFill}
+        />
+        <View pointerEvents="none" className="absolute inset-0 bg-black/40" />
+        {/* Swallows taps aimed at the screen behind. Not a dismiss — there is
           nothing back there worth reaching mid-wait. */}
-      <Pressable
-        accessibilityRole="none"
-        style={StyleSheet.absoluteFill}
-        onPress={() => undefined}
-      />
-      <View className="bg-surface border-border w-full max-w-md flex-col items-center gap-4 rounded-2xl border p-6 shadow-lg">
-        <PulseDisc>{icon}</PulseDisc>
-        <Text className="text-fg text-center font-sans-semibold text-base">{title}</Text>
-        <Text className="text-muted text-center font-sans text-sm leading-relaxed">{body}</Text>
-        <ProgressBar value={ratio} pulse className="w-full" />
-        {detail || since ? (
-          <View className="flex-row flex-wrap items-center justify-center gap-x-2">
-            {detail ? (
-              <Text className="text-muted text-center font-sans text-xs leading-relaxed">
-                {detail}
-              </Text>
-            ) : null}
-            {/* Pinned LTR: mm:ss counts up left to right in every locale —
+        <Pressable
+          accessibilityRole="none"
+          style={StyleSheet.absoluteFill}
+          onPress={() => undefined}
+        />
+        <View className="bg-surface border-border w-full max-w-md flex-col items-center gap-4 rounded-2xl border p-6 shadow-lg">
+          <PulseDisc>{icon}</PulseDisc>
+          <Text className="text-fg text-center font-sans-semibold text-base">{title}</Text>
+          <Text className="text-muted text-center font-sans text-sm leading-relaxed">{body}</Text>
+          <ProgressBar value={ratio} pulse className="w-full" />
+          {detail || since ? (
+            <View className="flex-row flex-wrap items-center justify-center gap-x-2">
+              {detail ? (
+                <Text className="text-muted text-center font-sans text-xs leading-relaxed">
+                  {detail}
+                </Text>
+              ) : null}
+              {/* Pinned LTR: mm:ss counts up left to right in every locale —
                 the same treatment the reindex overlay gives its clock. */}
-            {since ? <Clock since={since} /> : null}
-          </View>
-        ) : null}
-        {note ? <Text className="text-muted text-center font-sans text-xs">{note}</Text> : null}
-        {escape ? (
-          <View className="w-full gap-2 pt-1">
-            <Button variant="outline" style={{ alignSelf: 'stretch' }} onPress={escape.onPress}>
-              {escape.label}
-            </Button>
-            {escape.hint ? (
-              <Text className="text-muted text-center font-sans text-xs leading-relaxed">
-                {escape.hint}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+              {since ? <Clock since={since} /> : null}
+            </View>
+          ) : null}
+          {note ? <Text className="text-muted text-center font-sans text-xs">{note}</Text> : null}
+          {escape ? (
+            <View className="w-full gap-2 pt-1">
+              <Button variant="outline" style={{ alignSelf: 'stretch' }} onPress={escape.onPress}>
+                {escape.label}
+              </Button>
+              {escape.hint ? (
+                <Text className="text-muted text-center font-sans text-xs leading-relaxed">
+                  {escape.hint}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
       </View>
-    </View>
+    </TopLayer>
+  )
+}
+
+/**
+ * The layer the card is mounted into: the top of the app's own window, above
+ * every screen and above every sheet presented over them.
+ *
+ * Neither platform lets a view in the app's view tree paint over a sheet, and
+ * for the same underlying reason: a React Native Modal is a window of its own —
+ * a presented view controller on iOS, a Dialog on Android — so the sidebar, the
+ * attachment picker and every settings dialog sit in a layer this card cannot
+ * reach from where the screens live. Each platform's way up is different, and
+ * neither of them is "present a Modal of our own", which is the one thing that
+ * is NOT safe here: on iOS a second presentation while a sheet is up does not
+ * happen at all, and that silence is the bug this card was rewritten to end.
+ *
+ * - iOS: the overlay's content is added as the last subview of the key window,
+ *   beside the presented sheet's own transition view rather than beneath it.
+ *   Added on mount, which is after any sheet already open was presented, so it
+ *   lands on top — and it is removed again the moment the card unmounts, so
+ *   there is never an invisible window layer left eating touches.
+ * - Android: a Modal, which is exactly right here — dialogs stack in the order
+ *   they are shown, so the one raised last is the one on top. The rule that
+ *   forbids this on iOS is an iOS rule; there is no presentation to lose.
+ *
+ * The card inside is unchanged: same absolute fill, same backdrop, same touch
+ * swallowing. Only which layer it fills is different.
+ */
+function TopLayer({ children }: { children: ReactNode }): React.JSX.Element {
+  if (Platform.OS === 'ios') return <FullWindowOverlay>{children}</FullWindowOverlay>
+  // Back is already blocked by the handler above; this is the Dialog's own
+  // copy of that answer, and it has to be given or Android has no callback to
+  // call. Neither one dismisses: the block is the point.
+  return (
+    <RNModal visible transparent animationType="none" onRequestClose={() => undefined}>
+      {children}
+    </RNModal>
   )
 }
 

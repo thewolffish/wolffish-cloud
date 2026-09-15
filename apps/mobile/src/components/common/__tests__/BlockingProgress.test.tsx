@@ -1,19 +1,21 @@
 /**
  * The card both waits wear.
  *
- * Two of the three things asserted here are about a bug that produced NO
- * output at all, which is why they are pinned rather than eyeballed:
+ * Three of the four things asserted here are about bugs that produced NO
+ * visible card at all, which is why they are pinned rather than eyeballed:
  *
- * - It is not a Modal. On iOS a Modal is a presented view controller and a
- *   second one cannot present while the first is up, so with any sheet open —
- *   the conversations list, an attachment picker, a settings dialog — the
- *   reconnect card silently failed to appear, on precisely the occasion the
- *   app most needed to speak. Rendered as an ordinary layer it always paints.
+ * - It is not a presented Modal, and it is in the window's top layer. On iOS a
+ *   Modal is a presented view controller and a second one cannot present while
+ *   the first is up, so with any sheet open — the conversations list, an
+ *   attachment picker, a settings dialog — the reconnect card silently failed
+ *   to appear, on precisely the occasion the app most needed to speak. As an
+ *   ordinary layer it always painted but painted UNDER those sheets, which are
+ *   windows of their own; mounted into the window overlay it paints over them.
  * - It swallows what is underneath. That is the entire claim a blocking card
  *   makes, and as a plain View it is a claim that has to be built rather than
  *   inherited from the Modal it used to be.
  *
- * The third is the clock, which is the only honest number on the card: both
+ * The last is the clock, which is the only honest number on the card: both
  * bars are phase-derived, so this is what separates a three-second blip from a
  * ninety-second outage.
  */
@@ -83,6 +85,16 @@ describe('presentation', () => {
       if (node.type === 'Modal') modals.push(node.type)
     })
     expect(modals).toEqual([])
+  })
+
+  it('mounts into the window overlay, so no open sheet can cover it either', async () => {
+    await mount()
+
+    // The whole card, at the root — not a wrapper somewhere inside it. This is
+    // what puts it above the sidebar and above every dialog a settings page
+    // opens; as a plain layer under the Stack it sat behind both.
+    const root = screen.toJSON() as Exclude<Node, string | null>
+    expect(root.type).toBe('RNSFullWindowOverlay')
   })
 
   it('takes the touches aimed at the screen behind it', async () => {
