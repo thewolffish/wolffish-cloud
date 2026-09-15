@@ -100,6 +100,19 @@ which applies each through the exact function its own settings panel calls and t
 to the organization. There are **no retries** by design: resending a stale value could overwrite a
 newer edit made elsewhere, so a failed send abandons the local claim and asks for a refresh instead.
 
+## What the phone can change
+
+Everything the desktop's own settings panels change, through the same functions they call:
+model, capabilities, channels, projects, procedures, automations, knowledge, variables, MCP servers
+and services. The Library screen carries projects, procedures and automations as tabs, mirroring the
+desktop's own page.
+
+Per-conversation stances travel too. [Plan mode](/using/agent#plan-mode) is one shared choice, so the
+phone's switch and the desktop's chip are the same fact — and the phone only offers it while the
+desktop is reachable, because that is where the turn runs. Questions and approvals park the turn and
+arrive as cards; both fail closed, so an unanswered request is denied when its turn ends or the
+phone goes away.
+
 ## Notifications
 
 A notification the desktop's agent sends is delivered in-band over the bridge when the phone is on

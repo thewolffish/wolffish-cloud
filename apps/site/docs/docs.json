@@ -55,9 +55,15 @@
                 ]
               },
               {
-                "group": "The API",
+                "group": "Using the agent",
                 "expanded": true,
-                "pages": ["api/overview", "api/auth", "api/lanes"]
+                "pages": [
+                  "using/agent",
+                  "using/capabilities",
+                  "using/workspace",
+                  "using/surfaces",
+                  "using/privacy"
+                ]
               },
               {
                 "group": "Sync",
@@ -73,12 +79,29 @@
               {
                 "group": "Governance",
                 "expanded": true,
-                "pages": ["governance/roles", "governance/quotas", "governance/audit"]
+                "pages": [
+                  "governance/roles",
+                  "governance/quotas",
+                  "governance/org-controls",
+                  "governance/audit"
+                ]
+              },
+              {
+                "group": "The API",
+                "expanded": true,
+                "pages": [
+                  "api/overview",
+                  "api/auth",
+                  "api/lanes"
+                ]
               },
               {
                 "group": "Operations",
                 "expanded": true,
-                "pages": ["operations/operate"]
+                "pages": [
+                  "operations/rollout",
+                  "operations/operate"
+                ]
               }
             ]
           }
@@ -100,9 +123,15 @@
                 ]
               },
               {
-                "group": "الواجهة البرمجية",
+                "group": "استخدام الوكيل",
                 "expanded": true,
-                "pages": ["ar/api/overview", "ar/api/auth", "ar/api/lanes"]
+                "pages": [
+                  "ar/using/agent",
+                  "ar/using/capabilities",
+                  "ar/using/workspace",
+                  "ar/using/surfaces",
+                  "ar/using/privacy"
+                ]
               },
               {
                 "group": "المزامنة",
@@ -118,12 +147,29 @@
               {
                 "group": "الحوكمة",
                 "expanded": true,
-                "pages": ["ar/governance/roles", "ar/governance/quotas", "ar/governance/audit"]
+                "pages": [
+                  "ar/governance/roles",
+                  "ar/governance/quotas",
+                  "ar/governance/org-controls",
+                  "ar/governance/audit"
+                ]
+              },
+              {
+                "group": "الواجهة البرمجية",
+                "expanded": true,
+                "pages": [
+                  "ar/api/overview",
+                  "ar/api/auth",
+                  "ar/api/lanes"
+                ]
               },
               {
                 "group": "التشغيل",
                 "expanded": true,
-                "pages": ["ar/operations/operate"]
+                "pages": [
+                  "ar/operations/rollout",
+                  "ar/operations/operate"
+                ]
               }
             ]
           }

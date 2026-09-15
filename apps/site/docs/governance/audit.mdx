@@ -47,6 +47,10 @@ it, mobile spend would be indistinguishable from in-app spend and extension spen
 Worker observability is metadata-only for the same reason: errors, latency and the platform's own
 structured events.
 
+What *is* at the organization, because the desktop syncs it rather than because the router logged
+it, is the conversation itself. [What your organization can see](/using/privacy) draws that line for
+employees, in the words you would want them to read before they ask.
+
 ### Reading it
 
 | Endpoint | Who | What |
@@ -66,21 +70,39 @@ timestamp. Read it with `GET /admin/audit`.
 
 | Action | Written when |
 | --- | --- |
-| `user.invite` | An account is created |
-| `user.update` | Role, status or profile changed |
+| `user.invite` | An account is created and its activation code mailed |
+| `user.resend_activation` | A fresh invite code is mailed, killing the old one |
+| `user.read_activation_code` | An admin read a pending activation code |
+| `user.update` | Role, status, team or profile changed |
 | `user.reset_password` | A temp password is minted |
+| `user.read_reset_code` | An admin read a pending reset code |
 | `user.revoke_sessions` | Every session is killed |
 | `device.clear_pin` | A device is asked to clear its local lock |
 | `policy.set` | A user's allowlist or caps changed |
+| `plan.set` | A user's monthly token plan changed |
 | `config.view` | An admin **read** a user's synced settings |
 | `config.set` | An admin wrote or reset them |
+| `conversation.view` | An admin **read** one of a user's transcripts |
 | `org.update` | The organization defaults changed |
+| `org.config_overlay` | The organization claimed or released settings paths |
 | `capability.put` · `capability.delete` | The registry changed |
+| `capability.grants` | Who a capability reaches changed |
 | `maintenance.run` | The nightly jobs were run on demand |
 
-`config.view` is the only audited **read** in the API, because that row carries the user's stored
-integration secrets — a disclosure worth recording. `config.set` is audited by **size only**: the
-content is the user's secrets and stays out of the log.
+The actor is normally a person. Capability writes that arrive through the CI publish lane record
+`ci:publish` instead, because the pipeline holds a publish key rather than a session.
+
+### The two audited reads
+
+`config.view` and `conversation.view` are the only audited **reads** in the API. Everything else in
+the table is a change. That asymmetry is the point: those two rows are a person's stored integration
+secrets and a person's actual words, and a disclosure that leaves no trace is not a control anyone
+can point at.
+
+Both are written **by size or by reference, never by content**: `config.set` records how large the
+blob was, `org.config_overlay` records which paths were claimed and not their values, and a
+transcript read records which conversation was opened. The log is read by more people than the
+things it describes.
 
 ## Retention
 

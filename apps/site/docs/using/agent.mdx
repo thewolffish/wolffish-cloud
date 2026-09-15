@@ -1,0 +1,127 @@
+---
+title: "Working with the agent"
+description: "What happens when you send a message, and the five controls that change it"
+---
+
+Your agent is a program running on your own computer, under your own login. When you ask it for
+something it reads your files, runs commands, drives your browser and writes what it produced —
+with exactly the permissions you have, and nothing more.
+
+Only two things leave the machine while it works: the model call and, if it searches, the search
+query. Both go to your organization's API, on the organization's keys. See
+[What your organization can see](/using/privacy).
+
+## The shape of a turn
+
+A **turn** is one message from you and everything the agent does before it stops.
+
+<Steps>
+  <Step title="It reads the room">
+    Your message, the conversation so far, your standing instructions, the project you are in, and
+    the facts it has learned about your work. If a working folder is set, it also picks up that
+    folder's own `AGENTS.md` or `CLAUDE.md` and its live state — project kind, branch, how many
+    files are dirty, which check command the repository uses.
+  </Step>
+
+  <Step title="It plans and calls tools">
+    Reading a file, running a command, searching the web, taking a screenshot. Each call and its
+    result appear in the feed as a card, not as raw JSON. Multi-step work draws a checklist that
+    ticks itself off as the agent goes.
+  </Step>
+
+  <Step title="It stops at anything sensitive">
+    A call the safety gate flags waits for you — see [Approvals](#approvals) below. A question it
+    genuinely cannot answer for you arrives as a multiple-choice card. Both park the turn rather
+    than guessing.
+  </Step>
+
+  <Step title="It answers, and the record catches up">
+    Seconds after the turn ends, the conversation, any files it made and any settings it changed
+    are pushed to your organization. Nothing syncs mid-turn.
+  </Step>
+</Steps>
+
+You can type while it is working. A message sent mid-turn goes **into** the running turn as a new
+instruction rather than queueing behind it — which is what makes "wait, not that folder" work.
+
+## The five controls
+
+They sit in the composer, on the model card, and each one is per conversation.
+
+| Control | Options | What it changes |
+| --- | --- | --- |
+| **Model** | Your organization's catalog | Which model answers. The list is the allowlist your admin set — see [Quotas](/governance/quotas). |
+| **Thinking** | Off · Think · High · Deep · Max (plus Fast and Budget) | How much reasoning effort the model spends before answering. More depth costs more output tokens and more time. |
+| **Mode** | Single · Workflow | Single is one model answering. Workflow declares phases and runs parallel agents that plan and verify — for work big enough to be worth the coordination. |
+| **Plan** | On · Off | A read-only turn that investigates and writes a plan instead of changing anything. |
+| **Actions** | Ask · Bypass | Whether flagged tool calls stop for your approval or run straight through. |
+
+Nothing here is remembered across a restart: every conversation starts with plan mode off and the
+defaults your settings name.
+
+### Plan mode
+
+Plan mode is the answer to "look before you touch". While it is on, the turn may use only the tools
+that **read** — every tool in the catalog is flagged, and the gate refuses the rest — plus writing
+the plan itself. The agent investigates, tells you what it intends to do and why, and waits.
+
+Turn it off and the same conversation carries straight on with everything it just learned.
+
+It is one stance shared by every surface: flip it on the desktop and your phone's switch moves too,
+because the turn runs in one place either way. The phone only offers it while your desktop is
+actually reachable.
+
+### Approvals
+
+Every tool call is classified before it runs — safe, warn, confirm, destructive or block. Safe calls
+pass. Flagged calls raise an approval card in the conversation, with the command or path it is about
+to touch spelled out. Blocked calls never run at all, whatever you answer.
+
+You have three answers:
+
+- **Approve** — this one call.
+- **Allow for this conversation** — this call and later calls of the same kind, until the
+  conversation ends. The rule lives in memory only, and never covers block-level patterns.
+- **Deny** — the agent is told no and carries on without it.
+
+An approval that is never answered is **denied** when the turn ends. Approvals reach whichever
+surface you are on: the desktop, the terminal, or your phone.
+
+<Note>
+**Bypass** turns the prompts off, not the classification. The gate still runs, block-level calls
+are still refused, and everything still lands in the event log. Use it for a long stretch of work
+you are watching; leave it on **Ask** by default.
+</Note>
+
+### Undo
+
+Before the first edit of a turn touches a file, the agent stores the file's original bytes under
+`snapshots/<conversation>/<turn>/` in your workspace. The last **20** turns of a conversation are
+kept, and files above 8 MB are noted rather than copied.
+
+So "that made it worse, put it back" is a sentence, not a recovery operation — the agent lists the
+turns it has recorded and restores one, or one file out of one. Files the turn created are deleted;
+files it edited get their original bytes back. No git repository required, in any folder.
+
+## Long conversations
+
+Two things keep a long conversation usable:
+
+- **The context meter** in the composer shows how much of the model's window the conversation is
+  using, the elapsed time and the cost of the turn. It appears once there is a reading to show.
+- **Compaction** folds an over-long conversation down to a summary plus the recent turns, so the
+  thread keeps going instead of hitting a wall. Configure it in `Settings → Knowledge → Compaction`.
+
+## When something goes wrong
+
+- **It stopped and asked instead of acting.** That is the safety gate. Read the card — it names the
+  exact call.
+- **It says a model is not available.** Your organization sets the catalog. `Settings → Models`
+  shows what you may call and which one is the default.
+- **It refused a tool in plan mode.** Plan mode allows only reads. Turn it off to let the work land.
+- **A file it wrote is not where you expected.** The working folder chip under the feed opens the
+  folder it actually touched.
+
+<Card title="What it can do" icon="puzzle-piece" href="/using/capabilities">
+  The full catalog of capabilities, and the services your organization runs for you.
+</Card>

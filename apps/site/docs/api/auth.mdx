@@ -1,19 +1,49 @@
 ---
 title: "Auth & sessions"
-description: "How a device proves who it is, and how access is taken away"
+description: "How an account is opened, how a device proves who it is, and how access is taken away"
 ---
 
-Sign-in is invite-only. There is no self-registration endpoint: an admin creates the account, the
-API mints a temporary password, and the first sign-in forces a personal one.
+Sign-in is invite-only. There is no self-registration endpoint and no bootstrap route: an admin
+creates the account, the platform emails a code to the person themselves, and they set the only
+password that will ever exist on it.
+
+## Activation — how an account is opened
+
+`POST /admin/users` creates the row with **no usable password**: a random one nobody holds. The only
+way in is a 6-digit code emailed to the address on the account.
+
+| | |
+| --- | --- |
+| Lifetime | **7 days** |
+| Wrong guesses | 10, then the code is burnt |
+| Re-send | `POST /admin/users/:id/activation` (admins) or `POST /auth/activate/request` (the person) — either mints a fresh code and kills the old one |
+| Redeem | `POST /auth/activate/confirm` with email, code and the new password |
+
+The row is deleted **before** the password is written, so a code can never mint a second one. Only an
+account still at status `invited` has anything to activate; anything else answers `already_active`
+and the way back in is a reset.
+
+<Note>
+Nothing about the account ever travels to the admin. The code goes to the address itself, which is
+also what makes the address proven. The one exception is a deployment with no mail configured at all
+(`RESEND_API_KEY` unset — a local `wrangler dev`), where the invite response carries the code so the
+API can still onboard someone. A configured deployment whose send *fails* gets the failure, never
+the code.
+</Note>
 
 ## Passwords
 
-PBKDF2-SHA256, 100,000 iterations, a 16-byte per-user salt. A temporary password carries an expiry;
-after it, sign-in fails with `temp_password_expired` and the admin reissues.
+PBKDF2-SHA256, 100,000 iterations, a 16-byte per-user salt.
 
-Self-service reset is a code emailed through Resend (`POST /auth/reset/request`, then
-`/auth/reset/confirm`). An admin can also mint a temp password outright with
-`POST /admin/users/:id/reset-password`, which forces a personal password at the next sign-in.
+Self-service reset is a code emailed the same way: `POST /auth/reset/request`, then
+`/auth/reset/confirm`. It lives **10 minutes** and allows 5 wrong guesses.
+
+The admin escape hatch, for when mail is broken, is `POST /admin/users/:id/reset-password` — it mints
+a one-time temporary password with an expiry, and the next sign-in forces a personal one. A temp
+password that has expired fails with `temp_password_expired`.
+
+Activating an account by any route drops any pending invite code, so a stale invite can never set a
+second password later.
 
 ## Tokens
 
@@ -58,8 +88,8 @@ signed-out phone stops receiving immediately rather than at the next poll.
 
 ## The device PIN
 
-A 4-digit PIN quick-locks the desktop app. It is **local-only**: it is never transmitted, never
-stored server-side, and cannot be read by an admin.
+A 4-digit PIN quick-locks the desktop app. It is **local-only**: never transmitted, never stored
+server-side, and unreadable by an admin.
 
 What an admin *can* do is ask for it to be cleared — `POST /admin/users/:id/clear-pin` sets a pending
 clear-request, the client wipes its local lock, and `POST /v1/device/pin` acknowledges. The PIN
@@ -86,10 +116,18 @@ is 40 bits behind a three-minute window.
 ## Roles on the token
 
 The access token carries the role, and `/v1/me` returns it so the client knows whether to show admin
-controls. That is a *rendering* decision only — every admin endpoint re-checks the role server-side.
-See [Roles & admin](/governance/roles).
+controls. That is a *rendering* decision only — every admin endpoint re-checks against the same rule
+table. See [Roles & admin](/governance/roles).
+
+## Rate limits
+
+Every unauthenticated door is limited per email and per IP over a 15-minute window: login, activation
+request, activation confirm, reset request, reset confirm and the pairing claim. A limited caller
+gets `rate_limited`, never a hint about whether the account exists.
 
 ## Sessions and hygiene
 
-The nightly run deletes `device_sessions` rows more than 30 days past expiry, expired password reset
-codes, and pairing offers older than a day. See [Operate](/operations/operate).
+The nightly run deletes `device_sessions` rows more than 30 days past expiry, expired password-reset
+codes, and pairing offers older than a day. An activation row is not swept on a timer — it is
+replaced on every re-send and deleted the moment a code is consumed or the account is activated by
+any other route. See [Operate](/operations/operate).

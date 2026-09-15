@@ -206,7 +206,7 @@ The phone registers its push token with the bridge on every connection and every
 
 ## Demo mode
 
-The app has something to show before you own a desktop to pair it with. Demo mode downloads a real, anonymized dataset — 164 conversations across three months, plus automations, projects, capabilities, channels, usage and every settings surface — and runs the whole app against it.
+The app has something to show before you own a desktop to pair it with. Demo mode downloads a real, anonymized dataset — 62 conversations across seven weeks, plus automations, projects, procedures, capabilities, channels, MCP servers, services, variables, usage and every settings surface — and runs the whole app against it.
 
 The trick is that it uses **the same tables and the same config store** paired mode fills. Every screen downstream reads the same local store either way and cannot tell the difference, which is what keeps demo mode a real exercise of the app rather than a set of mock screens.
 

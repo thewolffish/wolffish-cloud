@@ -1,21 +1,65 @@
 ---
 title: "Operate"
-description: "Verifying a release, the nightly run, and what to check when something is wrong"
+description: "How a change ships, how a release is verified, the nightly run, and what to check when something is wrong"
 ---
+
+## Main is the deployment
+
+There is no staging environment and no release train, on purpose. A green push to `main` **is** the
+deploy, and the gate jobs are the only thing between a commit and the organization. Nothing ships
+from a laptop.
+
+<Steps>
+  <Step title="Gate — every push and pull request">
+    Typecheck the API and the desktop, lint the desktop, run the terminal client's tests, and run
+    the desktop seam tests that need no network: config last-write-wins, second-device restore,
+    capability sync, the purge cycle, the usage ledger, vision, countdowns, the screen indicator,
+    the todo guard, mobile channel settings and catalog, channel status, the CLI's settings table,
+    auth gate and composer, autostart, notifications, computer-use capture, voice settings and the
+    conversation titler.
+  </Step>
+
+  <Step title="Migrate — schema before code">
+    `wrangler d1 migrations apply --remote`. Every migration is additive, so the old code keeps
+    working against the new schema for the seconds between this step and the next.
+  </Step>
+
+  <Step title="Deploy the Worker">
+    `npm run deploy` — a typecheck, then `wrangler deploy`.
+  </Step>
+
+  <Step title="Publish capabilities, including removals">
+    `seed-capabilities.mjs --prune` mirrors `capabilities/` into the registry: unchanged packages are
+    skipped by hash, so an ordinary push is a no-op here, and a folder deleted in the commit is
+    retired organization-wide. R2 keeps every version, so a revert re-publishes it.
+  </Step>
+
+  <Step title="Prove it, rather than hope">
+    `seed-capabilities.mjs --check` re-reads the live registry and fails the run if it disagrees with
+    the commit by a byte. Then `GET /health` is curled with `-f`, so an API that cannot answer after
+    its own deploy is a red run rather than a footnote.
+  </Step>
+</Steps>
+
+The deploy job is serialized and **never cancelled mid-flight**: a run cancelled between the
+migration and the deploy would leave the database ahead of the code.
+
+Three repository secrets make it work: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and
+`WFC_PUBLISH_TOKEN` — a capability-publish key that is deliberately **not** an owner login, so the
+pipeline can write org capabilities and nothing else. The Worker must already hold the same value as
+its `PUBLISH_TOKEN` secret, or the publish lane answers 404. See
+[Stand up a deployment](/operations/rollout).
 
 ## Three layers of verification
 
 | Layer | Command | Needs |
 | --- | --- | --- |
-| Typecheck + desktop seam tests | CI, on every push | Nothing |
+| Typecheck, lint + seam tests | CI, on every push | Nothing |
 | Local smoke suites | `npm test` in `apps/api` | `wrangler dev` + the mock hosts |
 | The live gate | `node scripts/verify-live.mjs` | The deployed edge |
 
-### CI
-
-`.github/workflows/ci.yml` typechecks `apps/api` and `apps/desktop`, lints the desktop, and runs the
-seam tests that need no network: config last-write-wins, second-device restore, capability sync, the
-purge cycle, the usage ledger, mobile channel settings, channel status.
+The API's smoke suites and the live gate stay **local** steps because they need a running Worker and
+mock upstreams; the desktop's sync simulations do too.
 
 ### Local smoke suites
 
@@ -29,10 +73,11 @@ node scripts/mock-brave.mjs
 npm test
 ```
 
-Runs `smoke-auth`, `smoke-admin`, `smoke-sync`, `smoke-search`, `smoke-ai`, `smoke-archive` in order.
-The suites that `PATCH` the org are followed by a pause before the router suite, because org policy
-is cached at the edge for up to 60 seconds and a back-to-back run would trip the allowlist checks on
-stale policy.
+Runs `smoke-auth`, `smoke-admin`, `smoke-sync`, `smoke-leaderboard`, `smoke-search`,
+`smoke-publish`, `smoke-ai` and `smoke-archive` in order (`smoke-publish` needs `PUBLISH_TOKEN` set
+locally). The suites that `PATCH` the org are followed by a 65-second pause before the router suite,
+because org policy is cached at the edge for up to 60 seconds and a back-to-back run would trip the
+allowlist checks on stale policy. `smoke-bridge` and `smoke-surface` are run on their own.
 
 ### The live gate
 
@@ -42,10 +87,17 @@ WFC_DEMO_PASSWORD=… node apps/api/scripts/verify-live.mjs
 
 Every scenario against the deployed edge, pure API — no direct database writes and no test-mode
 bypass anywhere. It signs in as the seeded service owner, invites a throwaway employee through the
-real flow, exercises it, and leaves it suspended with all sessions revoked.
+real activation flow, exercises it, and leaves it suspended with all sessions revoked.
 
 Real model calls are capped at 30 output tokens (500 for the reasoning matrix), so the whole suite
 costs fractions of a cent.
+
+### The desktop's own simulations
+
+The purge-cycle tests take a lived-in workspace, purge it and restore it — against an in-process
+fake, against a real Worker, and at 700 conversations with per-conversation media — through the real
+engine and the real fresh-install boot. `catch-up.test.ts` covers what those cannot: two devices
+live at the same time, alternating writes against a real Worker. Both need `wrangler dev` running.
 
 ### Load
 
@@ -74,6 +126,14 @@ operator draining a backlog.
 ## Troubleshooting
 
 <AccordionGroup>
+  <Accordion title="Someone never got their invite">
+    The code goes to the address itself and lives 7 days. `POST /admin/users/:id/activation` mints a
+    fresh one and kills the old, so a forwarded copy of the first email stops working. It refuses
+    with `already_active` on an account that is past `invited` — that person needs a password reset,
+    not an invite. If mail is broken entirely, `POST /admin/users/:id/reset-password` is the escape
+    hatch.
+  </Accordion>
+
   <Accordion title="A user says the model picker is empty or wrong">
     Read their effective policy: an empty allowlist means "the org default model only", not
     "everything". Check `PUT /admin/users/:id/policy` and `PATCH /admin/org`. Remember an edit takes
@@ -88,8 +148,9 @@ operator draining a backlog.
 
   <Accordion title="Calls are being refused">
     Look at the `decision` column in `usage`. `denied_model` is the allowlist; `denied_quota` is a
-    cap. `GET /admin/usage` shows the totals, and the caps are on the user's policy row falling back
-    to the org row.
+    cap. `GET /admin/usage` shows the totals, `GET /admin/users/:id/overview` shows one person's
+    policy, plan and ceilings resolved, and the caps are on the user's policy row falling back to
+    the org row.
   </Accordion>
 
   <Accordion title="Search reports itself unconfigured">
@@ -99,9 +160,11 @@ operator draining a backlog.
   </Accordion>
 
   <Accordion title="A user's settings keep reverting">
-    The desktop adopts any config row stamped by someone else before re-pushing its own. If an
-    admin's repair is not sticking, confirm it went through `PUT /admin/users/:id/config` — that is
-    what mints the fresh server stamp. See [Desktop sync](/sync/desktop).
+    Two different causes. If an **admin repair** is not sticking, confirm it went through
+    `PUT /admin/users/:id/config` — that is what mints the fresh server stamp the desktop adopts. If
+    a **user's own edit** keeps reverting, check whether that path is claimed by the organization:
+    `GET /admin/org/config` lists every claimed path, and a claimed path is re-applied on every read
+    **and** every write. See [Organization controls](/governance/org-controls).
   </Accordion>
 
   <Accordion title="A phone shows content but cannot send">
@@ -116,16 +179,32 @@ operator draining a backlog.
     `~/.wfc/workspace/logs/extension/.debug/<date>.log`.
   </Accordion>
 
+  <Accordion title="The wfc command is missing, or runs the wrong thing">
+    The desktop writes the shim on every launch and `Settings → Channels → CLI` shows where. Two
+    usual causes: its folder is not on `PATH` yet (the panel prints the line to add), or another
+    program named `wfc` comes first — usually a package-manager link to the app itself. On a
+    machine with no screen, register the app as a **background service** rather than a login item;
+    a login item needs a desktop session and never fires on a server.
+  </Accordion>
+
   <Accordion title="A desktop is missing capabilities, or has stale ones">
-    A sync pass only swaps folders when no agent run is active; it parks and retries otherwise. Check
+    Three things to separate. A sync pass only swaps folders when no agent run is active; it parks
+    and retries otherwise. A capability with **grants** reaches only the people it names, so check
+    `GET /admin/capabilities/:slug/grants` before assuming a sync fault. Otherwise compare
     `GET /v1/capabilities/manifest` against the machine's `<cerebellum>/.wfc-caps.json`, and run
     `seed-capabilities.mjs --check` to confirm the registry still matches `capabilities/`.
+  </Accordion>
+
+  <Accordion title="The agent refuses to change anything">
+    Check plan mode. A plan-mode turn may use only the tools that declare themselves read-only, and
+    refuses the rest by design. It is per conversation, shared with the phone, and off after a
+    restart. See [Working with the agent](/using/agent#plan-mode).
   </Accordion>
 
   <Accordion title="Someone left the company">
     Suspend the account and revoke its sessions — they are separate acts. Suspension stops future
     sign-ins; revocation kills the sessions that already exist, closes bridge sockets and drops push
-    registrations. Both are audited.
+    registrations. Both are audited. The record stays with the organization.
   </Accordion>
 </AccordionGroup>
 

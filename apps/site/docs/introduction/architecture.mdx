@@ -43,6 +43,10 @@ On the device. Always. The desktop app carries the whole runtime: fifteen brain 
 `amygdala`, `motor`, `basalganglia`, `hypothalamus`, `brainstem`, `corpus`, `insula`), the capability
 folders, the markdown workspace, the tool executor and the safety gate.
 
+The browser extension and the `wfc` terminal client attach to that same process over the machine's
+own loopback — they are not separate agents and hold no state. A machine with no screen can register
+the app as a background service and be driven entirely from the terminal.
+
 Three consequences follow from that, and they are the reason the architecture is shaped this way:
 
 1. **Tool calls never leave the machine.** Reading a file, running a command, clicking a page in the
@@ -63,7 +67,8 @@ Everything that must be true for the whole organization rather than for one mach
 | Which models a person may call, and how many tokens | The model lane + `ModelGate` — see [The lanes](/api/lanes) |
 | Whether a web search is allowed, and at what rate | The search lane + `SearchGate` |
 | The conversation, file and settings record | [Sync](/sync/overview) — D1 + R2 |
-| Which capabilities exist on every desktop | The [capability registry](/sync/capabilities) |
+| Which capabilities exist on every desktop, and who they reach | The [capability registry](/sync/capabilities) + grants |
+| Which settings the organization claims from the employee | The [config overlay](/governance/org-controls) |
 | What happened, and who did it | [Usage & audit](/governance/audit) |
 
 ## The three Durable Objects
@@ -90,10 +95,11 @@ durable place to coordinate. All three are used for exactly that.
 
 ## Storage, and what is in each
 
-- **D1 (`wfc-master`)** — the relational master: `users`, `devices`, `device_sessions`, `org`,
-  `model_policies`, `conversations`, `conversation_records`, `files`, `capabilities`, `pairings`,
-  `settings`, `password_resets`, `usage`, `usage_daily`, `audit_log`. Kept to a bounded hot window
-  by the nightly archive.
+- **D1 (`wfc-master`)** — the relational master: `users` (with their team), `devices`,
+  `device_sessions`, `org`, `org_config_policy` (the settings overlay), `model_policies`,
+  `conversations`, `conversation_records`, `files`, `capabilities`, `capability_grants`, `pairings`,
+  `settings`, `account_activations`, `password_resets`, `usage`, `usage_daily`, `audit_log`. Kept to
+  a bounded hot window by the nightly archive.
 - **R2 (`wfc-blobs`)** — content-addressed file blobs, capability packages
   (`capabilities/org/<slug>/v<n>.zip`), gzipped conversation archives and retired usage exports.
 - **KV** — `AUTH_KV` holds session kill-markers; `CONFIG_KV` caches org config and per-user policy so
@@ -104,4 +110,9 @@ durable place to coordinate. All three are used for exactly that.
 Prompt and response **content** is never logged or stored by the router. The usage ledger records
 metadata — who, when, which model, how many tokens, how long, what it cost, what was decided —
 and nothing else. The search lane records that a query happened, never the query text. The
-employee's 4-digit device PIN never leaves the device.
+employee's 4-digit device PIN never leaves the device, nor does anything the browser extension does,
+nor the audio that on-device speech-to-text and text-to-speech handle.
+
+The transcripts *are* at the edge, because the desktop syncs the conversation — a separate, visible
+act from routing a call. [What your organization can see](/using/privacy) states the distinction
+plainly, and is written to be handed to employees.

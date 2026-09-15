@@ -184,7 +184,7 @@ brain/
 │   ├── .shell/                capability (hidden — `ls -a`). Each has a SKILL.md and an
 │   ├── .filesystem/           optional plugin/ folder of code. Full catalog in §6.
 │   ├── .web-search/           A capability's plugin/node_modules/ (when present) is its
-│   └── …  (24 total)          installed npm deps — machine state, safe to ignore.
+│   └── …  (35 from the org)   installed npm deps — machine state, safe to ignore.
 │
 ├── hippocampus/           MEMORY (three tiers, all markdown).
 │   ├── episodes/              YYYY-MM-DD.md — daily turn-by-turn log (instant, no LLM)
@@ -381,7 +381,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (27 capabilities)
+### The full catalog (35 capabilities, plus two built into the app)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -393,16 +393,22 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.python` | Hermetic uv-managed CPython for native Python plugins — `python_check`, `python_install` |
 | | `.package-manager` | Cross-platform packages (brew/winget/apt/dnf) — `pkg_install`, `pkg_check` |
 | | `.system` | Apps & power — `app_open`, `app_quit`, `app_list`, `open_path`, `system_power` |
+| | `.archive` | Zip work without shelling out — `archive_list`, `archive_read` (one entry, no extraction), `archive_extract`, `archive_create`; non-zip formats are caught by magic bytes and routed to `.shell` |
 | **Web** | `.web-search` | `web_search` (Brave, through the org's `/v1/search` lane — no key on the device), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** browsers (Chrome, Edge, Brave, Firefox — several can be connected at once) via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_screenshot`, `ext_wait`, …; `ext_browsers` lists connections, `ext_use_browser` picks one per conversation) |
 | **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
 | | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |
+| | `.dataviz` | The chart manual — `dataviz`, read **before** building any chart (`.chart.json` cards, SVG inside PDFs, channel fallbacks) |
+| | `.pdf-design` | The document-design manual — `pdf_design`, read **before** authoring a report, brief or proposal |
+| | `.web-design` | The web-design manual — `web_design`, read **before** authoring an HTML page or web deliverable |
 | **Media** | `.ffmpeg` | Audio/video — `ffmpeg_run` |
 | | `.speech-to-text` | Whisper, offline — `stt_transcribe`, `stt_transcribe_voice_memo`; owns its own settings — `stt_settings_get/set` (model, language), `stt_engine_install` |
 | | `.text-to-speech` | Neural TTS — `voice_generate`, `voice_respond`; owns its own settings — `voice_settings_get/set` (voice, speed), `voice_engine_install` |
 | **Code / services** | `.git` | Git conventions on top of `.shell` (pure skill) |
+| | `.xcode` | Build, test and run iOS apps with `xcodebuild` — `xcode_discover`, `xcode_schemes`, `xcode_bundle_id`, `xcode_defaults`, `xcode_build`, `xcode_test`, `xcode_run` (build-install-launch in one call; build errors parsed to `file:line`) |
+| | `.mobile-simulators` | One vocabulary for iOS simulators and Android emulators/devices — 37 `mobile_*` tools (`mobile_use`, `mobile_boot`, `mobile_install`, `mobile_launch`, `mobile_snapshot`, `mobile_tap`, `mobile_type`, `mobile_log`, `mobile_record`, …), driven by ref with proof on every touch, under a driving indicator the user sees on the device window |
 | **Desktop** | `.computer-use` | Screen control with a verified-aim loop, pointer-free background input and an element route — `computer_screenshot`, `computer_window_screenshot`, `computer_find`, `computer_click_element`, `computer_mouse_click`, `computer_keyboard_type`, `computer_wait_for`, `computer_check_access`, … |
 | **Meta** | `.skills` | The agent manages/authors its own capabilities — `skill_list`, `skill_search`, `skill_read_source`, `skill_enable`, `skill_disable`, `skill_delete`, `skill_create`, `skill_reload` |
 | | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
@@ -410,6 +416,12 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` (masked), `get_secret` (reveal on request) |
 | | `.ask` | Ask the user one or more multiple-choice questions via an in-app card — `ask_user` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
+| | `.knowledge` | The agent amends its own long-term beliefs — `knowledge_list`, `knowledge_read`, `knowledge_add`, `knowledge_edit`, `knowledge_forget`, `knowledge_rewrite`, `knowledge_restore`; every write keeps the previous version as `<file>.bak`, so "unlearn that" is reversible |
+| | `.projects` | Shared instructions + file lists a fresh conversation starts from — `project_list`, `project_view`, `project_create`, `project_update`, `project_add_files`, `project_remove_file`, `project_delete`, `project_conversations` |
+| | `.procedures` | Saved prompts the user runs on demand — `procedure_list`, `procedure_view`, `procedure_create`, `procedure_edit`, `procedure_delete`, `procedure_run` |
+| | `.mcp` | External MCP tool servers, whose tools then become the agent's — `mcp_list`, `mcp_add`, `mcp_test`, `mcp_enable`, `mcp_disable`, `mcp_remove`, `mcp_authorize` |
+| | `.workflow` | Model-led parallel work — `workflow_plan`, `agent_spawn`, `agent_send`, `agents_await`, `agent_cancel`. **Workflow master only**; spawned agents never get these |
+| | `.operating-manual` | The working discipline for anything complex, high-stakes or ambiguous — `operating_manual`, called **first**, before any other tool |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's
 > existing, authenticated browser session (great for sites the user is logged into);

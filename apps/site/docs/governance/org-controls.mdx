@@ -1,0 +1,113 @@
+---
+title: "Organization controls"
+description: "Claiming a setting, narrowing a capability, and grouping people into teams"
+---
+
+Quotas decide what the organization **spends**. These three decide what the agent **does**, who can
+reach which tools, and how the bill is grouped.
+
+## The config overlay — claiming a setting
+
+Every employee's settings are one synced row. The overlay lets the organization claim any path in
+it: a claimed path is the organization's value on every device, and everything else stays the
+employee's.
+
+```json
+PUT /admin/org/config
+{
+  "overlay": {
+    "model.default": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "browserExtension.port": 23152
+  }
+}
+```
+
+Dot paths only, up to **200 paths** and **64 KB**. `{"overlay": {}}` hands every path back.
+
+It is enforced at **both** boundaries, which is what makes it a control rather than a suggestion:
+
+- On every **read**, the organization's value is laid over the row — so a client sees the
+  organization's setting.
+- On every **write**, the same overlay is applied again — so a client that ignores the lock (an
+  older build, a hand-rolled request, a config file edited on disk) cannot store anything else.
+
+There is deliberately **no separate "locked keys" list**. A lock and the value it enforces would be
+two facts to keep in step, and the day they disagree is the day an admin believes a setting is
+enforced and it is not. The paths present in the overlay *are* the locked keys.
+
+The employee's client shows a claimed setting as organization-managed rather than pretending it is
+editable. Edits land within the edge cache window — about a minute — because the write drops the
+cached copy. Audited as `org.config_overlay`, **by path, never by value**: an overlay may carry an
+endpoint or an identifier, and the audit log is read by more people than the config is.
+
+## Capability grants — narrowing a tool
+
+A capability in the registry starts open to the whole organization. A grant narrows it.
+
+```json
+PUT /admin/capabilities/finance-reports/grants
+{
+  "grants": [
+    { "kind": "team", "subject": "finance" },
+    { "kind": "role", "subject": "admin" },
+    { "kind": "user", "subject": "usr_..." }
+  ]
+}
+```
+
+| Grants | Who gets it |
+| --- | --- |
+| *(none)* | Everyone — the default, and where every capability starts |
+| One or more | Only the people matched by role, team or user id |
+
+Grants are matched in **both** places that matter: the manifest a device syncs, and the package
+download itself. A capability someone cannot see is also one they cannot fetch by guessing its slug.
+
+`GET /admin/capabilities/:slug/grants` reads them back and says `open_to_org` plainly. Audited as
+`capability.grants`.
+
+<Note>
+Narrowing a capability removes it from the machines that no longer match, on their next sync pass —
+the manifest simply stops naming it. Widening one installs it the same way. Neither needs a client
+update.
+</Note>
+
+## Teams
+
+A team is one field on a person (`PATCH /admin/users/:id`), and it buys three things:
+
+- **`GET /admin/teams`** — the roster grouped one level up: people, active people, tokens, cost,
+  requests and searches per team, over a window you choose. The question a 500-person deployment
+  asks first.
+- **A grant subject** — `{"kind": "team", "subject": "finance"}` above.
+- **A column on the roster**, so "who is in marketing and what are they spending" is one read.
+
+People with no team are grouped under the empty team rather than dropped, because a total that
+quietly omits the unassigned is worse than one that names them.
+
+## What an admin sees per person
+
+`GET /admin/users/:id/overview` is the support view of one employee in a single call: profile, role,
+status, team, devices, effective policy and plan with its ceilings, usage, and their recent activity.
+Around it:
+
+| Endpoint | What it answers |
+| --- | --- |
+| `GET /admin/roster` | Everyone, with spend and standing |
+| `GET /admin/users/:id/audit` | What was done **to** this person and **by** them |
+| `GET /admin/users/:id/conversations` | Their conversation index |
+| `GET /admin/conversations/:id/records` | One transcript, archive and live rows merged |
+| `GET /admin/conversations/:id/files/:sha` | An attachment, or the body of an oversized message |
+
+The last three are the sensitive ones. They are admin-tier — **support cannot reach them** — an
+admin cannot open an owner's, and each read writes a `conversation.view` audit row. See
+[Usage & audit](/governance/audit).
+
+## Where each control lands
+
+| Control | Lands on a device | Enforced at |
+| --- | --- | --- |
+| Model allowlist and caps | Within the edge cache window (~1 min) | The model lane, before admission |
+| Config overlay | Within the edge cache window, or the next config pull (~2 min) | Every config read **and** every write |
+| Capability grants | The device's next sync pass (session ready, after an import, or every 30 min) | The manifest **and** the package download |
+| Team | Immediately, for reporting | Reporting and grant matching |

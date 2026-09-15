@@ -29,6 +29,18 @@ The envelope rides a **stable** record id (`snap.<conversation id>`), which the 
 whose superseded rows it retires. The envelope history can therefore never accumulate and bloat a
 restore.
 
+### A message too big for a record
+
+The server accepts 400 KB of record content, so a record is kept under **300 KB** and always fits
+whole. A message above that sheds its segment detail into a content-addressed blob under
+`.records/<conversation>/` and keeps the **first 4,000 characters** readable in the record itself —
+so a client that knows nothing about the spill (an older build, the phone) still shows a real
+message rather than a hole, and one that does fetches the body back and reassembles it.
+
+That prefix is deliberately not under a sync root and not a media path: restore never materialises
+it on disk, on-open hydration never downloads it, and the workspace sweep never walks it. It is a
+blob the *record* owns. Deleting the conversation tombstones it alongside the media.
+
 ### Deletes are durable
 
 The delete outbox rides `.sync-state.json`. A conversation deleted and then followed by a quit — or
@@ -58,6 +70,13 @@ the whole API.
 </Note>
 
 ## Files
+
+The sweep covers the agent's own workspace roots — `files`, `uploads`, `brain`, `voice`, `speech`,
+`screenshots`, `downloads`, `usage` and the extension's per-conversation browser trail. Rebuilt
+state is excluded because it is rebuilt: the local conversation files (records carry them), the
+event log, the search index, the app-managed prompt files that are rewritten from the bundle on
+every launch, the rotating diagnostic logs, and the per-turn undo snapshots. **A file the agent
+touches anywhere else on the machine is not synced at all** — it is edited in place and stays there.
 
 Workspace files sweep as path-named blobs, and the sweep carries **deletions** too:
 `.sync-state.json` remembers every path known to be on the server, and a remembered path no longer
@@ -110,6 +129,20 @@ the user simply has not opened yet.
 The workspace is bound to the account that produced it. The owner's user id is recorded on first
 sync, and a session belonging to someone else resets the cache rather than ever cross-pushing one
 person's data into another's account.
+
+## Catch-up: the steady state
+
+Restore is the one-time event. After it, three pulls run on a **two-minute** timer for as long as the
+app is signed in:
+
+| Pull | What it converges |
+| --- | --- |
+| `GET /v1/conversations?since=<cursor>` | Conversations written on the employee's other machines, and tombstones — so a deletion during a long absence lands instead of resurrecting |
+| `GET /v1/config` | A settings row stamped by someone else — another device, or an admin repair |
+| `GET /v1/usage` | The ledger, folding in calls made from other devices |
+
+A merge is a union by message id, so two desktops signed in at the same time converge in both
+directions and a turn run here while the other machine was writing survives it.
 
 ## When sync runs
 

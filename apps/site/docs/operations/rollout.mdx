@@ -1,0 +1,136 @@
+---
+title: "Stand up a deployment"
+description: "From an empty Cloudflare account to an organization with people in it"
+---
+
+Everything below is done once, by whoever owns the deployment. Day-to-day administration is
+[Roles & admin](/governance/roles); this page is the part before there is anyone to administer.
+
+## 1. The edge
+
+The whole Tier 2 is one Worker plus four bindings, all in the organization's own Cloudflare account.
+
+| Resource | Binding | Holds |
+| --- | --- | --- |
+| D1 `wfc-master` | `DB` | The relational master |
+| R2 `wfc-blobs` | `BLOBS` | File blobs, capability packages, archives |
+| KV | `AUTH_KV` | Session kill-markers |
+| KV | `CONFIG_KV` | Org config and per-user policy cache, the leaderboard snapshot |
+| Durable Objects | `MODEL_GATE` · `SEARCH_GATE` · `USER_BRIDGE` | Admission gates, exact counters, the desktop↔phone link |
+
+A custom domain route points the Worker at the host your clients will use.
+
+## 2. The secrets
+
+Set with `wrangler secret put`, never committed. Keys live here and **only** here — no device and
+neither gate ever holds one.
+
+| Secret | Required | What it is |
+| --- | --- | --- |
+| `JWT_SECRET` | yes | HS256 signing secret for access tokens |
+| `DEEPINFRA_API_KEY` | yes | The model host's key. `MODEL_UPSTREAMS` replaces it with a JSON pool of hosts |
+| `RESEND_API_KEY` | yes | Transactional mail — activation codes and reset codes |
+| `CONFIG_ENC_KEY` | strongly | 32 random bytes, base64: seals every settings row at rest. `openssl rand -base64 32` |
+| `BRAVE_API_KEY` | for search | The search plan's key. `SEARCH_PROVIDERS` replaces it with a JSON pool of plans |
+| `PUBLISH_TOKEN` | for CI | The capability-publish key — see step 5. Absent, the publish lane answers 404 |
+| `EXPO_ACCESS_TOKEN` | only if | The Expo project enforces enhanced push security |
+
+<Warning>
+`ADMIN_RESET_CODE_READ` is deliberately **not** in the committed config. Setting it to `1` lets an
+admin read a pending activation or reset code through the API, which the release gate needs to prove
+the mail flow end to end without a mailbox. A production deployment leaves it unset and both routes
+answer 404.
+</Warning>
+
+## 3. The schema and the first owner
+
+```bash
+npx wrangler d1 migrations apply wfc-master --remote
+```
+
+Then create the first `owner` directly in D1 — there is no self-signup and no bootstrap endpoint, on
+purpose. `scripts/hash-password.mjs` mints a PBKDF2 hash and salt with the same parameters the API
+uses; insert a `users` row with that hash, role `owner`, status `active`.
+
+Everyone after that is invited through the API.
+
+## 4. The organization row
+
+`PATCH /admin/org` sets the defaults every account inherits before it has a policy of its own:
+
+| Field | Set it to |
+| --- | --- |
+| `name` | The company name — it appears in the emails people receive |
+| `default_model` · `default_allowed_models` | The catalog a new employee gets |
+| `user_daily_token_cap` · `org_monthly_token_cap` | `0` for unlimited; see [Quotas](/governance/quotas) |
+| `search_enabled` | The search lane's master switch |
+| `user_daily_search_cap` · `org_monthly_search_cap` | Per employee per day, and organization per month |
+
+Then decide the two organization-wide behaviours: which settings the organization claims
+(`PUT /admin/org/config`) and whether any capability is narrower than the whole company
+(`PUT /admin/capabilities/:slug/grants`). Both are [Organization controls](/governance/org-controls).
+
+## 5. Capabilities, and the pipeline that publishes them
+
+The repository's `capabilities/` folder is the single editing path, and **the registry mirrors git,
+never the other way around**. A hand-published capability only disagrees with the next push.
+
+Mint the publish key and give the same value to both sides:
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put PUBLISH_TOKEN
+# then add the same value to the repository as WFC_PUBLISH_TOKEN
+```
+
+It is deliberately not an owner login: the pipeline can write organization capabilities and nothing
+else. With that, and `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` in the repository's secrets, a
+green push to `main` **is** the deploy — migrations, Worker, capabilities, then a re-read that fails
+the run if the live registry disagrees with the commit by a byte. See [Operate](/operations/operate).
+
+## 6. People
+
+<Steps>
+  <Step title="Invite">
+    `POST /admin/users` with an email, a name and a role. The account is created with **no usable
+    password** and a 6-digit activation code is emailed to that address, good for 7 days. Nothing
+    reaches you to pass along by hand.
+  </Step>
+
+  <Step title="They activate">
+    They install the desktop app, choose "Have an activation code?", enter the code and set their
+    own password. `POST /admin/users/:id/activation` re-sends a fresh code and kills the old one —
+    the fix for a bounced address or a holiday.
+  </Step>
+
+  <Step title="Set their standing">
+    `PUT /admin/users/:id/policy` for an allowlist and daily caps, `PUT /admin/users/:id/plan` for
+    the monthly ceiling, `PATCH /admin/users/:id` for role and team. Everything omitted falls back
+    to the organization row.
+  </Step>
+</Steps>
+
+Point them at [Set up a device](/getting-started/setup); it is written to be sent as-is.
+
+## 7. Prove it works
+
+| Check | Command | What it proves |
+| --- | --- | --- |
+| The Worker is live | `GET /health` | Service name and deployed version |
+| Every scenario, against the real edge | `node apps/api/scripts/verify-live.mjs` | Pure API, no test-mode bypass anywhere |
+| The registry matches the commit | `node apps/api/scripts/seed-capabilities.mjs --check` | Exit 1 if the live registry and `capabilities/` disagree |
+| It holds under load | `node apps/api/scripts/load-500.mjs` | 500 employees at once — watch `GET /admin/gates` |
+
+The live gate signs in as a seeded owner, invites a throwaway employee through the real flow,
+exercises it and leaves it suspended with every session revoked. Real model calls in it are capped
+at a few tokens, so the whole suite costs fractions of a cent.
+
+## Trying it before there is a company
+
+`node apps/api/scripts/seed-demo.mjs [--remote]` seeds a 51-person demo organization —
+deterministic ids, a named cast, a week of usage history, one account left permanently `invited` to
+demonstrate the activation flow and one suspended. `--wipe` removes exactly the rows it made.
+
+<Warning>
+The demo cast shares one fixed password. It exists to make the surfaces readable, not to be a
+tenant. A real deployment seeds nothing, or seeds and then wipes.
+</Warning>

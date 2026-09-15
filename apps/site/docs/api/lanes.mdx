@@ -9,8 +9,11 @@ receive ids and capacities, never credentials.
 
 ## The model lane
 
-`POST /ai/v1/chat/completions` — OpenAI-compatible, so the desktop's provider layer points at it
-with the session token as its bearer.
+`POST /ai/v1/chat/completions` — OpenAI-compatible, so a client's provider layer points at it with
+the session token as its bearer. The client also names where the call came from in an
+`x-wfc-surface` header (`inapp`, `mobile`, `extension`, `heartbeat`, `procedure`, `api`); anything
+unrecognised records as unattributed rather than being rejected, because the router must never fail
+a call over a label.
 
 ```text
 session → allowlist → ModelGate (quota, then a slot on a host)
@@ -35,7 +38,9 @@ coordinator a busy hour becomes random 429s that every client's retry ladder mak
 
 The `ModelGate` is a single global Durable Object that every model call passes through:
 
-- **Slot pools** per host and model, sized from the configured concurrency. Nothing above it is ever
+- **Slot pools** per host and model, sized from the configured concurrency. More real capacity comes
+  from more hosts in the pool (`MODEL_UPSTREAMS`, a JSON list of hosts with their own keys, model
+  maps, concurrency and weight), never from more keys on one account. Nothing above it is ever
   in flight; everything else queues, fair by employee — one person may hold 8 streams at once, and
   their extra calls wait behind everyone else's.
 - **Sticky routing.** Calls sharing a prompt cache key (one conversation) prefer the same host, so
@@ -112,3 +117,7 @@ search happened — who, when, how long, what it cost — **never the query text
 
 `GET /admin/gates` returns the live state of both gates: queue depth, in-flight per host, cooldowns,
 and what each host has served. It is the number an admin watches as the organization grows.
+
+The lanes are also the only two ways a device reaches a paid upstream at all, which is what makes
+the cost ceiling real rather than advisory: there is no second path to buy tokens with. See
+[Quotas & enforcement](/governance/quotas).

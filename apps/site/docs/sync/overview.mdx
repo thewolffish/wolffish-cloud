@@ -37,6 +37,10 @@ desktop to change things. The browser extension is not in this picture at all.**
 The phone has no offline write queue and no CRDT, on purpose. When the desktop is not on the bridge,
 editable surfaces go **read-only** rather than accepting a change with nowhere to land.
 
+The `wfc` terminal client is not in this table either, for the same reason as the extension: it
+attaches to the running desktop over the machine's own loopback and holds no state. What it starts,
+the desktop writes.
+
 ## What syncs
 
 | Thing | Where it lands | How |
@@ -68,6 +72,12 @@ forever.
 **Completeness over speed.** Restore is a durable, retryable step keyed on a flag — not on
 inference about onboarding. A failed attempt retries on a backoff; only a fully clean pass marks
 restore done. Pages are walked to exhaustion with no caps.
+
+**Restore is the event; catch-up is the steady state.** Every two minutes each signed-in desktop
+pulls `GET /v1/conversations?since=<cursor>` — the same feed the phone runs on — so a conversation
+written on the employee's *other* machine arrives, tombstones cross, and two desktops signed in at
+once converge in both directions. A merge is a union by message id, so a turn run here while the
+other machine was writing survives it.
 
 ## Where to read next
 

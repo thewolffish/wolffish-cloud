@@ -93,7 +93,7 @@ being a budget nobody reaches.
 
 <Warning>
 Inference is billed to the **organization's own provider account**, at the provider's rate. It does
-not pass through Wolffish and carries no margin. A cap is therefore a control over the
+not pass through this platform and carries no margin. A cap is therefore a control over the
 organization's own spend, not a metering product.
 </Warning>
 
@@ -118,9 +118,21 @@ See [The lanes](/api/lanes) for how the queues and cooldowns work.
 
 ## What an admin sets
 
-`PUT /admin/users/:id/policy` for one person — allowlist, daily caps and `token_plan`; omitting
-`token_plan` leaves the plan alone, so editing a cap does not silently reset it. `PATCH /admin/org`
-sets the defaults. `GET /admin/users/:id` returns the resolved plan and its ceilings, so a client can
-draw a plan meter without knowing the numbers. All of it is audited.
+| Endpoint | Sets |
+| --- | --- |
+| `PUT /admin/users/:id/policy` | One person's allowlist and daily caps, and `token_plan` — omitting `token_plan` leaves the plan alone, so editing a cap does not silently reset it |
+| `PUT /admin/users/:id/plan` | The plan on its own |
+| `GET /admin/plans` | The catalogue and its ceilings, so no client hard-codes a number |
+| `PATCH /admin/org` | The defaults everyone inherits |
+
+`GET /admin/users/:id` returns the resolved plan and its ceilings, so a client can draw a plan meter
+without knowing the numbers, and `GET /admin/users/:id/overview` returns the whole standing —
+policy, plan, usage and devices — in one call. All of it is audited.
+
 The one thing an admin cannot do is raise a ceiling for a call already in flight — the decision was
 made at admission.
+
+<Note>
+Caps govern spend. What the agent may *do*, and which tools it may reach, are separate controls —
+see [Organization controls](/governance/org-controls).
+</Note>

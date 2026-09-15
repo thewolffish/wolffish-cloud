@@ -25,8 +25,8 @@ One architectural inversion from the personal edition, and everything else follo
 
 | Tier | Where | What lives there |
 | --- | --- | --- |
-| **Tier 1 — the agent** | Employee device | The 15-region brain (prefrontal, thalamus, hippocampus, cerebellum, cortex, …), capabilities as markdown + plugins, channels (Telegram, WhatsApp, CLI, browser extension), the markdown workspace. `~/.wfc` is workbench + cache. |
-| **Tier 2 — the master** | Cloudflare edge | One Worker (auth, model router, search lane, sync ingest, capability registry, admin). D1 holds the relational master, R2 the blobs and archives, KV the hot config cache and session kill-markers, two Durable Objects the admission gates and the exact quota counters. |
+| **Tier 1 — the agent** | Employee device | The 15-region brain (prefrontal, thalamus, hippocampus, cerebellum, cortex, …), capabilities as markdown + plugins, channels (in-app, phone, the `wfc` terminal, browser extension), the markdown workspace. `~/.wfc` is workbench + cache. |
+| **Tier 2 — the master** | Cloudflare edge | One Worker (auth, model router, search lane, sync ingest, capability registry, admin). D1 holds the relational master, R2 the blobs and archives, KV the hot config cache and session kill-markers, three Durable Objects the admission gates, the exact quota counters and the desktop↔phone bridge. |
 
 ---
 
@@ -39,7 +39,7 @@ wolffish-cloud/
 │   ├── desktop/     · the Electron desktop agent, cloud-first (Tier 1)
 │   ├── mobile/      · the Expo companion phone app — carried over, PARKED (see below)
 │   └── site/
-│       └── docs/    · documentation (Mintlify, EN + AR) — rewritten for the cloud
+│       └── docs/    · the tenant's internal docs (Mintlify, EN + AR) — 22 pages/language
 ├── packages/
 │   └── extension/   · browser capability, bundled into desktop; local-only, no cloud endpoint
 ├── capabilities/    · official capability sources — published to the org registry, never bundled
@@ -60,7 +60,7 @@ Verified by: per-layer smoke suites against `wrangler dev` with mock hosts (`npm
 
 ### `apps/desktop` — the agent
 
-The employee's desktop app. Sign-in (email + password, forced first-login change, emailed reset), a 4-digit PIN quick-lock that never leaves the device, the one cloud lane, the sync engine, the capability mirror, and the full agent core carried from the personal edition: brain regions, channels, workspace. Dev-only by design (`npm run dev`); client forks ship their own signed builds. See [`apps/desktop/README.md`](apps/desktop/README.md) for the cloud-first contract and [`apps/desktop/src/defaults/AGENTS.md`](apps/desktop/src/defaults/AGENTS.md) for the per-path map of what syncs.
+The employee's desktop app. Sign-in (an emailed 6-digit activation code sets the first password; after that email + password, with emailed reset codes), a 4-digit PIN quick-lock that never leaves the device, the one cloud lane, the sync engine, the capability mirror, and the full agent core carried from the personal edition: brain regions, channels, workspace. Dev-only by design (`npm run dev`); client forks ship their own signed builds. See [`apps/desktop/README.md`](apps/desktop/README.md) for the cloud-first contract and [`apps/desktop/src/defaults/AGENTS.md`](apps/desktop/src/defaults/AGENTS.md) for the per-path map of what syncs.
 
 ### `apps/mobile` — the phone
 
@@ -68,7 +68,7 @@ The companion phone app, re-aimed at the API. Pairing (QR or a typed code the de
 
 ### `apps/site` — the tenant-facing web
 
-The bilingual Mintlify documentation (EN + AR), rewritten for this edition: sixteen pages per language covering where the agents run, the API endpoint by endpoint, how the desktop, phone and browser extension sync, how quotas are enforced and what is logged, and how to stand a tenant up. The personal edition's 78-page tree — provider pages, channels, integrations, memory internals — is gone with the features it described. The marketing landing page is not part of this package — it is a public-web concern, not a tenant deliverable, and stays in its own repo ([wolffish-landing](https://github.com/thewolffish/wolffish-landing)).
+The bilingual Mintlify documentation (EN + AR) — the internal docs a customer hands to its own people. Twenty-two pages per language in three audiences: **everyone who uses the agent** (how a turn works, plan mode and approvals, the capability catalog, projects and automations, and what the organization can see), **admins** (roles, quotas, the config overlay, capability grants, usage and audit), and **whoever runs the deployment** (the API endpoint by endpoint, standing a tenant up, verification and the nightly run). Written to be branded afterwards: the product name lives in `docs.json` and the assets, not in the prose — see [`BRANDING.md`](apps/site/docs/BRANDING.md). The personal edition's 78-page tree — provider pages, channels, integrations, memory internals — is gone with the features it described. The marketing landing page is not part of this package — it is a public-web concern, not a tenant deliverable, and stays in its own repo ([wolffish-landing](https://github.com/thewolffish/wolffish-landing)).
 
 ### `packages/extension` — the browser capability
 

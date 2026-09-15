@@ -1,39 +1,55 @@
 ---
 title: "Set up a device"
-description: "Sign in on the desktop, pair a phone, install the browser extension"
+description: "Activate your account, sign in on the desktop, pair a phone, install the extension"
 ---
 
-There is no self-signup. An admin invites you; you receive an email address and a temporary
-password, and your first sign-in forces you to choose your own.
+There is no self-signup. An admin adds you, and the platform emails **a 6-digit activation code** to
+your work address — not a password. Nobody, including the admin who added you, ever holds a
+credential for your account.
 
-## 1. The desktop app
+## 1. Activate
+
+<Steps>
+  <Step title="Find the code">
+    It arrives by email, good for **7 days**. If it expired or never came, ask your admin to
+    re-send — a fresh code kills the old one, so a forwarded copy of the first email stops working.
+  </Step>
+
+  <Step title="Open the desktop app and choose “Have an activation code?”">
+    Enter your work email and the code, then choose your own password. The code is single-use: it is
+    consumed before your password exists, so it can never set a second one.
+  </Step>
+</Steps>
+
+After that, the code is gone and you sign in normally with email and password. Forgotten it later?
+`Reset password` emails you a code the same way.
+
+## 2. The desktop app
 
 The desktop is where the agent runs, so it comes first — a phone cannot be paired before a desktop
 is signed in.
 
 <Steps>
   <Step title="Sign in">
-    Enter your work email and the temporary password. If it is your first sign-in, the app requires
-    a new password before it will continue. A temporary password expires; ask your admin to reissue
-    one if it has.
+    Work email and the password you chose. A suspended or removed account is told so plainly rather
+    than being given a wrong-password error.
   </Step>
 
   <Step title="Set a device PIN">
-    A 4-digit PIN locks the app on this machine. It is stored on the device and **never** sent to
-    the API — the organization can ask you to clear it, but cannot read it.
+    A 4-digit PIN quick-locks the app on this machine. It is stored on the device and **never** sent
+    to the API — your organization can ask you to clear it, but cannot read it.
   </Step>
 
   <Step title="Wait for the restore">
-    On the first ready state the app calls `/v1/sync/bootstrap` and walks every page of the
-    conversation index and file manifest. A fresh install adopts the organization's copy of your
+    On the first ready state the app pulls your record from the organization and walks every page of
+    the conversation index and file manifest. A fresh install adopts the organization's copy of your
     settings, rebuilds every transcript and materialises your workspace files before the chat screen
     opens. Conversation media downloads later, when you open that conversation.
   </Step>
 </Steps>
 
-The restore is durable and retryable — it is keyed on a flag in `.sync-state.json`, so a failed
-attempt retries on a backoff and only a fully clean pass marks it done. Interrupting it loses
-nothing.
+The restore is durable and retryable — a failed attempt retries on a backoff and only a fully clean
+pass marks it done. Interrupting it loses nothing.
 
 <Note>
 Your workspace lives in `~/.wfc`. It is a cache: deleting it and signing back in rebuilds it from
@@ -45,7 +61,7 @@ the organization. See [Desktop sync](/sync/desktop) for exactly what is rebuilt 
 Signing out drains the outbox first, then revokes the session and purges the local cache. Nothing
 unsent is lost, and nothing of yours is left on a machine you are leaving.
 
-## 2. The phone
+## 3. The phone
 
 The phone is a **device of the same organization account**. It never sees your password.
 
@@ -58,7 +74,7 @@ The phone is a **device of the same organization account**. It never sees your p
 
   <Step title="Claim it on the phone">
     Scan the QR or type the code. The QR also carries the address of the API it was minted at, so a
-    fork's desktop points its phones at the fork's API for the life of the pairing.
+    deployment's desktop points its phones at its own API for the life of the pairing.
   </Step>
 
   <Step title="You are paired">
@@ -74,16 +90,16 @@ The phone is a **device of the same organization account**. It never sees your p
 
 Unpairing is the organization revoking that session: the phone's next request fails, its bridge
 socket closes on the spot, and its push registration is dropped. Do it from the desktop's Mobile
-panel (`DELETE /v1/devices/:id`) or from the admin layer.
+panel or from the admin layer.
 
 <Warning>
 The phone app is a **distinct application** from the personal edition's phone app
-(`sh.wolffi.cloud.mobile` / `wolffishcloud://`, versus `sh.wolffi.mobile` / `wolffish://`). The
-store listings under *Wolffish* install the personal app, which cannot pair with an organization.
-Both can be installed side by side.
+(`sh.wolffi.cloud.mobile` / `wolffishcloud://`, versus `sh.wolffi.mobile` / `wolffish://`). A store
+listing under the personal product name installs the personal app, which cannot pair with an
+organization. Both can be installed side by side.
 </Warning>
 
-## 3. The browser extension
+## 4. The browser extension
 
 The extension gives the agent hands in your real Chrome or Brave — your session, your cookies, your
 logins. It is a **local** channel and has no cloud endpoint.
@@ -104,6 +120,19 @@ Nothing the extension does crosses the network: commands travel `desktop → loc
 worker → content script`, and results come straight back. See
 [Browser extension](/sync/browser-extension).
 
+## 5. The terminal (optional)
+
+While the desktop is running it keeps a `wfc` command installed and pointed at the current version.
+`Settings → Channels → CLI` shows whether it is on your `PATH`, and installs or removes it.
+
+```bash
+wfc            # the session screen
+wfc status     # is the desktop up, and who am I signed in as
+```
+
+It attaches to the running desktop rather than holding state of its own, so closing the terminal
+never stops a turn. See [Where you can work from](/using/surfaces#terminal).
+
 ## What good looks like
 
 - The desktop shows your name and role, and a model in the picker.
@@ -111,3 +140,7 @@ worker → content script`, and results come straight back. See
 - The phone shows your desktop as present when the desktop is running, and says the desktop is
   unreachable when it is not, rather than spinning.
 - The browser extension's side panel shows **connected**.
+
+<Card title="Now use it" icon="rocket" href="/using/agent">
+  What happens when you send a message, and the five controls that change it.
+</Card>

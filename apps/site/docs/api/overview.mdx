@@ -3,8 +3,9 @@ title: "The API"
 description: "One Worker, one front door, every endpoint"
 ---
 
-`wfc-api` is a single Cloudflare Worker at **`api.wolffi.sh`**. Everything the desktop and the phone
-do passes through it, and every request runs the same middleware chain:
+The master API is a single Cloudflare Worker on the organization's own account. Everything the
+desktop, the terminal and the phone do passes through it, and every request runs the same middleware
+chain:
 
 ```text
 verify token → resolve user → resolve role → policy / quota gate → handler
@@ -17,11 +18,13 @@ Check what is live with `GET /health`, which answers the service name and the de
 
 ## Conventions
 
-- **Auth** — a bearer access token on `Authorization: Bearer <jwt>`. The one exception is the bridge
-  WebSocket, which also accepts `?access_token=` because a browser-style socket cannot set a header.
+- **Auth** — a bearer access token on `Authorization: Bearer <jwt>`. Two exceptions: the bridge
+  WebSocket also accepts `?access_token=` because a browser-style socket cannot set a header, and
+  the publish lane takes its own key.
 - **Errors** — JSON `{"error": "<code>"}` with an HTTP status. Clients map the *code*, never the
   message: `email_not_found`, `wrong_password`, `rate_limited`, `account_disabled`,
-  `temp_password_expired`, `session_revoked`, `forbidden`, `not_found`, `quota_exceeded`.
+  `temp_password_expired`, `already_active`, `invalid_code`, `code_expired`, `session_revoked`,
+  `forbidden`, `not_found`, `quota_exceeded`, `payload_too_large`.
 - **Idempotency** — every sync item carries a client-generated id, so replays are no-ops and the
   response names every item it refused.
 
@@ -32,11 +35,13 @@ Check what is live with `GET /health`, which answers the service name and the de
 | `GET` | `/` | Landing page |
 | `GET` | `/health` | `{ok, service, version, time}` |
 
-## Auth and pairing
+## Auth, activation and pairing
 
 | Method | Path | What it does |
 | --- | --- | --- |
 | `POST` | `/auth/login` | Password sign-in; issues an access + refresh token pair |
+| `POST` | `/auth/activate/request` | Re-send this account's invite code to its own address |
+| `POST` | `/auth/activate/confirm` | Redeem the code and set the first password |
 | `POST` | `/auth/password` | Forced first-login change, and voluntary change |
 | `POST` | `/auth/refresh` | Rotate the refresh token, mint a new access token |
 | `POST` | `/auth/reset/request` | Email a reset code |
@@ -53,7 +58,7 @@ Check what is live with `GET /health`, which answers the service name and the de
 | `PUT`&nbsp;·&nbsp;`GET`&nbsp;·&nbsp;`DELETE` | `/v1/profile/avatar` | Avatar blob |
 | `POST` | `/v1/device/pin` | Report local PIN state, acknowledge an admin clear-request |
 | `POST` | `/v1/logout` | Revoke this session |
-| `GET` | `/v1/devices` | The caller's own devices |
+| `GET` | `/v1/devices` | The caller's own devices, with model, OS and how each was paired |
 | `DELETE` | `/v1/devices/:id` | Unpair a device (refuses the caller's own) |
 | `POST` | `/v1/pair/offer` | Open a pairing offer (code + QR payload) |
 | `GET`&nbsp;·&nbsp;`DELETE` | `/v1/pair/offer/:id` | Poll or withdraw an offer |
@@ -64,7 +69,7 @@ Check what is live with `GET /health`, which answers the service name and the de
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET`&nbsp;·&nbsp;`PUT` | `/v1/config` | The one settings row, last-write-wins |
+| `GET`&nbsp;·&nbsp;`PUT` | `/v1/config` | The one settings row, last-write-wins, with the org overlay applied |
 | `POST` | `/v1/sync/batch` | The outbox drain: conversations + records, idempotent |
 | `GET` | `/v1/sync/bootstrap` | One-call restore: config + conversation index + file manifest |
 | `POST` | `/v1/sync/wipe` | Wipe this user's synced record |
@@ -90,9 +95,10 @@ filtered to one name.
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/v1/capabilities/manifest` | Org capabilities + this user's own imports — the whole sync contract |
-| `GET` | `/v1/capabilities/org/:slug/package` | Download an org package |
-| `GET`&nbsp;·&nbsp;`PUT`&nbsp;·&nbsp;`DELETE` | `/v1/capabilities/user/:slug` | The user's own scope |
+| `GET` | `/v1/capabilities/manifest` | Org capabilities this user may have + their own imports — the whole sync contract |
+| `GET` | `/v1/capabilities/org/:slug/package` | Download an org package (grant-checked) |
+| `GET` | `/v1/capabilities/user/:slug/package` | Download one of the user's own |
+| `PUT`&nbsp;·&nbsp;`DELETE` | `/v1/capabilities/user/:slug` | The user's own scope |
 
 ## The lanes
 
@@ -106,26 +112,75 @@ See [The lanes](/api/lanes).
 
 ## Admin (`/admin`)
 
-Reads are open to `owner`, `admin` and `support`; mutations to `owner` and `admin` only, and only an
-owner may act on an owner. Every mutation writes an audit row.
+Every endpoint re-verifies authorization server-side against one rule table
+(`src/lib/permissions.ts`). Reads are `support` and above; mutations are `admin` and above; the two
+sensitive reads are `admin`-only; and only an owner may act on an owner. Every mutation writes an
+audit row.
 
-| Method | Path | What it does |
+**People**
+
+| Method | Path | Tier |
 | --- | --- | --- |
-| `GET`&nbsp;·&nbsp;`POST` | `/admin/users` | List, invite |
-| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/users/:id` | Read, update (role, status, profile) |
-| `POST` | `/admin/users/:id/reset-password` | Mint a one-time temp password |
-| `POST` | `/admin/users/:id/clear-pin` | Ask a device to clear its local lock |
-| `POST` | `/admin/users/:id/revoke-sessions` | Kill every session this user holds |
-| `PUT` | `/admin/users/:id/policy` | Per-user allowlist and caps |
+| `GET`&nbsp;·&nbsp;`POST` | `/admin/users` | list `support` · invite `admin` |
+| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/users/:id` | read `support` · update `admin` |
+| `GET` | `/admin/roster` | Everyone, with spend and standing — `support` |
+| `GET` | `/admin/users/:id/overview` | One person in one call — `support` |
+| `POST` | `/admin/users/:id/activation` | Re-send the invite code — `admin` |
+| `GET` | `/admin/users/:id/activation-code` | Read a pending code — `admin`, and only where the deployment opted in |
+| `POST` | `/admin/users/:id/reset-password` | Mint a one-time temp password — `admin` |
+| `GET` | `/admin/users/:id/reset-code` | Read a pending reset code — `admin`, same opt-in |
+| `POST` | `/admin/users/:id/clear-pin` | Ask a device to clear its local lock — `admin` |
+| `POST` | `/admin/users/:id/revoke-sessions` | Kill every session this user holds — `admin` |
+| `GET` | `/admin/users/:id/audit` | What was done to them, and by them — `support` |
+
+**Governance**
+
+| Method | Path | Tier |
+| --- | --- | --- |
+| `PUT` | `/admin/users/:id/policy` | Per-user allowlist and caps — `admin` |
+| `PUT` | `/admin/users/:id/plan` | The monthly token plan — `admin` |
+| `GET` | `/admin/plans` | The plan catalogue and its ceilings — `support` |
+| `GET` | `/admin/teams` | The org grouped by team — `support` |
+| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/org` | Org defaults: default model, allowlist, caps, search switch — `admin` to write |
+| `GET`&nbsp;·&nbsp;`PUT` | `/admin/org/config` | The [config overlay](/governance/org-controls) — `admin` to write |
+
+**The sensitive reads** — `admin` only, never `support`, never an owner's unless you are one, and each writes an audit row.
+
+| Method | Path | What it returns |
+| --- | --- | --- |
 | `GET`&nbsp;·&nbsp;`PUT` | `/admin/users/:id/config` | Read or repair a user's synced settings |
-| `GET`&nbsp;·&nbsp;`PATCH` | `/admin/org` | Org defaults: default model, allowlist, caps, search switch |
-| `GET`&nbsp;·&nbsp;`PUT`&nbsp;·&nbsp;`DELETE` | `/admin/capabilities[/:slug]` | The org capability registry |
-| `GET` | `/admin/usage` | Totals per user, from the daily rollup |
-| `GET` | `/admin/gates` | Live gate state: queue depth, in-flight per host, cooldowns |
-| `POST` | `/admin/maintenance/run` | Run the nightly jobs now |
-| `GET` | `/admin/audit` | The audit log |
+| `GET` | `/admin/users/:id/conversations` | Their conversation index |
+| `GET` | `/admin/conversations/:id/records` | One transcript, archive and live rows merged |
+| `GET` | `/admin/conversations/:id/files/:sha256` | An attachment, or the body of an oversized message |
+
+**The registry, and watching the system**
+
+| Method | Path | Tier |
+| --- | --- | --- |
+| `GET`&nbsp;·&nbsp;`PUT`&nbsp;·&nbsp;`DELETE` | `/admin/capabilities[/:slug]` | The org capability registry — `admin` to write |
+| `GET`&nbsp;·&nbsp;`PUT` | `/admin/capabilities/:slug/grants` | Who a capability reaches — `admin` to write |
+| `GET` | `/admin/usage` | Totals per user, from the daily rollup — `support` |
+| `GET` | `/admin/gates` | Live gate state: queue depth, in-flight per host, cooldowns — `support` |
+| `POST` | `/admin/maintenance/run` | Run the nightly jobs now — `admin` |
+| `GET` | `/admin/audit` | The audit log — `support` |
 
 <Note>
 The admin **UI** lives inside the admin's own desktop client. Every endpoint re-verifies the role
 server-side, so the UI is presentation only — hiding a button is not a control.
 </Note>
+
+## The publish lane (`/publish`)
+
+A second, deliberately tiny door, authenticated by a `PUBLISH_TOKEN` bearer key rather than by a
+person: four routes, org capability scope only, so the CI pipeline that mirrors `capabilities/` into
+the registry never holds an owner session. Absent the secret, the whole lane answers 404.
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/publish/capabilities` |
+| `PUT`&nbsp;·&nbsp;`DELETE` | `/publish/capabilities/:slug` |
+| `GET` | `/publish/capabilities/:slug/package` |
+
+Its manifest is the registry **as it is** — unfiltered by grants, unlike the client manifest —
+because a publisher must see everything it is responsible for. Writes are audited with `ci:publish`
+as the actor. See [Stand up a deployment](/operations/rollout).

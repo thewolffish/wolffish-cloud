@@ -7,7 +7,7 @@ A capability is what the agent can *do*: a folder with a `SKILL.md` and optional
 assets and a `package.json`. The agent reads the markdown at runtime, so adding an ability is
 publishing a folder, not shipping a build.
 
-In Wolffish Cloud capabilities are **cloud-distributed**. Nothing is bundled into a client. The
+Here, capabilities are **cloud-distributed**. Nothing is bundled into a client. The
 organization's registry — versioned zip packages in R2, indexed in D1 — is the distribution source,
 and every desktop mirrors it.
 
@@ -15,12 +15,20 @@ and every desktop mirrors it.
 
 | Scope | Who controls it | On disk | Direction |
 | --- | --- | --- | --- |
-| **org** | Admins, via `/admin/capabilities` | Dot-prefixed folders (`.git`, `.browser`, …) | Mirrored exactly — download what's new, remove what's absent |
+| **org** | Admins, via `/admin/capabilities`; the pipeline, via `/publish` | Dot-prefixed folders (`.git`, `.browser`, …) | Mirrored exactly — download what's new, remove what's absent |
 | **user** | The employee | Plain folders | Two-way — local imports push, other devices' changes pull |
 
 `GET /v1/capabilities/manifest` returns both in one response, and that manifest **is** the whole
 sync contract. Clients diff it against local state, so an admin's add, update or remove propagates
 on the next pull with no per-client bookkeeping server-side.
+
+### Not every org capability reaches everyone
+
+An org capability with no grants is the whole organization's — where all of them start. Grant one to
+a role, a team or named people and it reaches only them. The match is applied in **both** places:
+the manifest a device syncs, and the package download itself, so a capability someone cannot see is
+also one they cannot fetch by guessing its slug. See
+[Organization controls](/governance/org-controls).
 
 ## A sync pass
 
@@ -51,8 +59,9 @@ changed dependencies.
 
 ## Publishing
 
-The repository's `capabilities/` folder is the single editing path. **The registry mirrors git,
-never the other way around** — a direct `PUT /admin/capabilities/:slug` makes the two disagree.
+The repository's `capabilities/` folder is the single editing path, and **a push to `main` is what
+publishes it**. The registry mirrors git, never the other way around — a hand-published capability
+only disagrees with the next push, and `--check` flags it.
 
 ```bash
 # publish: version-bumps changed capabilities, skips unchanged ones
@@ -65,8 +74,13 @@ node apps/api/scripts/seed-capabilities.mjs --prune
 node apps/api/scripts/seed-capabilities.mjs --check
 ```
 
+The pipeline runs `--prune` and then `--check`, so a capability folder deleted in a commit is retired
+organization-wide and the run fails if the live registry disagrees with the commit by a byte. It
+authenticates with a **publish key**, not an owner session: that key can write org capabilities and
+nothing else. See [Stand up a deployment](/operations/rollout).
+
 Every uploaded version is kept at `capabilities/org/<slug>/v<n>.zip`, so a rollback is checking out
-an old tree and re-publishing.
+an old tree and re-publishing — including a capability that was pruned.
 
 ## The package format
 
@@ -80,13 +94,20 @@ identical bytes for the same tree:
 
 ## What ships today
 
-33 capabilities, published from `capabilities/`. Among them: `shell`, `filesystem`, `git`, `python`,
-`node`, `browser`, `browser-extension`, `computer-use`, `web-search`, `pdf`, `document`,
-`spreadsheet`, `dataviz`, `ffmpeg`, `speech-to-text`, `text-to-speech`, `knowledge`, `procedures`,
-`projects`, `automations`, `workflow`, `mcp`, `secrets`, `skills`.
+**35 capabilities**, published from `capabilities/` — files and documents, code and machines, the
+web, the screen, design manuals, voice, and the agent's own projects, procedures, automations and
+memory. [What the agent can do](/using/capabilities) is the catalog with a line on each.
 
-Four of these are organization-provided **services** rather than pure local tooling: web search
-(through the [search lane](/api/lanes)), computer use, speech-to-text and text-to-speech.
+Four of them are organization-provided **services** rather than pure local tooling: web search
+(through the [search lane](/api/lanes)), computer use, speech-to-text and text-to-speech. Two more —
+`changes` (per-turn undo) and `todo` — are built into the desktop rather than published, because
+they are about the conversation itself.
+
+Every tool in every capability declares whether it **reads**, which is what lets a plan-mode turn be
+refused the rest. A plugin may also judge one call at a time — the same tool reading with one
+argument and writing with another. Anything undeclared and unjudged counts as **mutating**, so a
+capability published without the flags is simply unavailable in plan mode rather than silently
+allowed through it.
 
 <Warning>
 Capabilities removed in this edition — Telegram, WhatsApp, Notion, GitHub, Google Workspace, Memes

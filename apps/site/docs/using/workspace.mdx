@@ -1,0 +1,94 @@
+---
+title: "Projects, procedures and automations"
+description: "The four things you set up once so you stop repeating yourself"
+---
+
+Most of what you tell an agent twice belongs somewhere permanent. There are four places, and they
+differ by **who starts the work**.
+
+| | You start it | Where it lives |
+| --- | --- | --- |
+| **Project** | You open a conversation in it | Instructions + files a fresh conversation inherits |
+| **Procedure** | You run it, on demand | A saved prompt, run from the Library |
+| **Automation** | Nobody — it fires on a schedule | The heartbeat |
+| **Knowledge** | Nobody — it is always loaded | What the agent believes long-term |
+
+The first three live together on the **Library** page, one tab each. Knowledge lives in
+`Settings → Knowledge`.
+
+## Projects
+
+A project is a working context: standing instructions, a list of files, and the conversations held
+inside it. Start a conversation in a project and it begins already knowing the rules of that work —
+the client, the repository, the tone, the folder.
+
+Use one when the *same background* keeps applying: a codebase, an account, a recurring report.
+
+## Procedures
+
+A procedure is a prompt you saved because you will want it again — the weekly summary, the
+onboarding checklist, the export-and-mail routine. Run it from the Library and it opens as a fresh
+turn.
+
+Use one when the *same request* keeps applying, even though the context changes.
+
+## Automations
+
+An automation is a job that fires on its own: daily at 08:00, every fifteen minutes, weekly on
+Monday. The agent runs the turn without you present, and can notify you when something needs you —
+that notification reaches your phone whether the app is open or not.
+
+Several times a day is **one** automation with a schedule, not three copies of it.
+
+Automation runs are attributed separately in the usage ledger (`heartbeat`), so work the agent did
+on its own is visible as its own line rather than blended into yours. They also count as **agentic
+tasks** on the [leaderboard](/using/surfaces#the-leaderboard).
+
+<Note>
+Automations run turns, and turns cost tokens against your own caps. An automation that fires every
+fifteen minutes is a standing spend — check `Settings → Usage` after adding one.
+</Note>
+
+## Knowledge
+
+Memory runs in three stages on the device: a **daily episode log** of what happened, **weekly
+consolidations** of it, and the nine **knowledge files** below — what the agent durably believes. The
+nightly pass promotes upward, so day-to-day chatter never drowns out long-term context.
+
+Only the last stage is yours to edit, and you can edit any of it directly in `Settings → Knowledge`.
+
+| File | What it governs |
+| --- | --- |
+| **Playbook** | Behavioural lessons: what to do, what to avoid, what you like, recipes that worked |
+| **Instructions** | Your standing custom procedures and overrides — they outrank the core contract |
+| **Soul** | Who the agent is: character, voice, standing manner |
+| **User** | Who *you* are |
+| **Projects · People · Preferences · Technical · Decisions** | The five curated fact files |
+
+The playbook and the instructions ride in **every** prompt, which is why both have a size ceiling.
+Every edit keeps the previous version alongside it, so "unlearn that" is reversible.
+
+This is also how you correct the agent permanently. "You keep formatting dates the American way —
+stop" is a knowledge edit, not a preference buried in one conversation.
+
+## Files
+
+Everything the agent makes lands in your workspace at `~/.wfc/workspace`, and everything there
+exists at your organization too. Conversation media — uploads, voice notes, generated files — sits
+under that conversation's own folder and downloads when you open the conversation, not before.
+
+The working-folder chip under the feed opens the folder a turn actually touched. Deleting the
+workspace costs nothing you cannot get back: sign in again and it is rebuilt from the organization.
+See [Desktop sync](/sync/desktop).
+
+## Variables
+
+`Settings → Variables` holds the reusable values the agent needs — API keys for your own tools, base
+URLs, account identifiers. The agent reads and writes them through the `secrets` capability rather
+than being told them in a message, so they stay out of transcripts.
+
+<Warning>
+Variables ride in your synced settings row, which is sealed at rest at the organization and which an
+admin can read for support — that read is itself audited. Put your own working credentials here;
+never put a shared production secret here.
+</Warning>

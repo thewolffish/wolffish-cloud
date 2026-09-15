@@ -1,0 +1,128 @@
+---
+title: "What the agent can do"
+description: "The capability catalog, the services your organization runs, and how to add your own"
+---
+
+A **capability** is one thing the agent knows how to do: a folder holding a `SKILL.md` — the
+instructions it reads at runtime — and usually a plugin that carries the actual tools. The agent
+picks a capability up when the work calls for it; you never load one by hand.
+
+**35 capabilities** ship from your organization's registry today, plus two built into the app
+itself. `Settings → Capabilities` lists exactly what this machine has, and admins can narrow the
+list per person, team or role — see [Organization controls](/governance/org-controls).
+
+## Files and documents
+
+| Capability | What it does |
+| --- | --- |
+| `filesystem` | Read, write, edit and search files; diagnostics, replacements, unified diffs, formatting |
+| `document` | Read, create, modify, convert and merge documents (docx, html, markdown, text) |
+| `pdf` | Read, create, modify, merge, split, secure and compress PDFs |
+| `spreadsheet` | Read, create, modify, analyse and convert xlsx, csv and tsv |
+| `archive` | List, read out of, extract and create zip archives |
+| `utilities` | Deliver a file to you as an attachment; push an openable folder or file card |
+
+## Code and machines
+
+| Capability | What it does |
+| --- | --- |
+| `shell` | Run shell commands on this machine |
+| `git` | Git operations and conventions, on top of `shell` |
+| `python` | A hermetic, uv-managed CPython runtime for native plugins |
+| `node` | The Node.js runtime and npm |
+| `package-manager` | Cross-platform packages — Homebrew, winget, apt, dnf |
+| `system` | Open and close apps, open files, folders and URLs; restart, sleep, lock, log out |
+| `xcode` | Build, test and run iOS apps with `xcodebuild`, with parsed build errors |
+| `mobile-simulators` | Drive iOS simulators and Android emulators — boot, install, launch, tap and type by reference, screenshots, video |
+
+## The web
+
+| Capability | What it does |
+| --- | --- |
+| `web-search` | Search the web and read pages — through [your organization's search lane](/api/lanes) |
+| `browser` | Automate a managed browser — navigate, fill, click, extract, screenshot |
+| `browser-extension` | Drive **your own** browser, with your logins and your session — see [Browser extension](/sync/browser-extension) |
+
+## Your screen
+
+| Capability | What it does |
+| --- | --- |
+| `computer-use` | See the screen and control mouse and keyboard, with a verified-aim loop, element lookup through the accessibility tree, and evidence returned on every action |
+
+Computer use works through a **shadow cursor** and background input, so the agent does not take your
+real mouse while it works. While it can see your screen, the display carries a blue edge glow and a
+centred "capturing your screen" pill — raised before the first capture, and cleared before the turn
+can end. See [What your organization can see](/using/privacy).
+
+## Making things
+
+| Capability | What it does |
+| --- | --- |
+| `dataviz` | The data-visualisation manual — read before any chart, so charts come out designed |
+| `pdf-design` | The document-design manual — read before any report, brief or proposal |
+| `web-design` | The web-design manual — read before any HTML page or web deliverable |
+| `ffmpeg` | Video and audio processing |
+
+## Voice
+
+| Capability | What it does |
+| --- | --- |
+| `speech-to-text` | Transcribe audio with faster-whisper, 99 languages, entirely on this machine |
+| `text-to-speech` | Generate voice memos with a local neural engine, entirely on this machine |
+
+Both run **on-device**. No audio leaves the machine, and neither needs a key.
+
+## The agent's own world
+
+| Capability | What it does |
+| --- | --- |
+| `knowledge` | Its long-term memory — record a fact, correct a wrong one, retire a lesson, amend a standing instruction |
+| `projects` | Shared instructions and file lists a fresh conversation starts from |
+| `procedures` | Reusable prompts you run on demand |
+| `automations` | Scheduled jobs that fire and run on their own |
+| `skills` | Author, enable, disable and delete capabilities at runtime |
+| `introspect` | Check its own status, performance and memory |
+| `secrets` | Save and look up your variables — keys, tokens, base URLs |
+| `mcp` | Manage MCP server connections, whose tools then become the agent's tools |
+| `workflow` | Declare phases and run parallel agents that plan and verify |
+| `ask` | Ask you a multiple-choice question as an in-app card and wait for the answer |
+| `operating-manual` | Its working discipline for anything complex, high-stakes or ambiguous |
+
+## Built in
+
+Two capabilities are part of the app rather than the registry, because they are about the
+conversation itself:
+
+- **`changes`** — the undo. Lists the turns that edited files and restores one. See
+  [Undo](/using/agent#undo).
+- **`todo`** — the task list a multi-step turn draws as a checklist card.
+
+## Services your organization runs
+
+Four capabilities are backed by something the organization provides rather than by this machine
+alone. You configure none of them, and no key is ever on your device.
+
+| Service | Where it runs | How to check it |
+| --- | --- | --- |
+| **Web search** | The organization's search lane | `Settings → Services → Brave Search` shows ready, your searches today and the organization's month |
+| **Computer use** | This machine, under OS permissions | `Settings → Services → Computer Use` shows which permissions are granted |
+| **Speech-to-text** | This machine (local engine) | `Settings → Services` shows the model and its download state |
+| **Text-to-speech** | This machine (local engine) | Same |
+
+## Adding your own
+
+Two paths, and they are different in kind:
+
+- **Your own capability.** In `Settings → Capabilities`, drop a `SKILL.md`, a capability folder or
+  a `.zip`. It becomes yours alone — it syncs to your other devices and nobody else sees it. Every
+  drop is validated before anything is written, so a failed import cannot half-install.
+- **An MCP server.** `Settings → MCP` connects an external tool server; its tools join the agent's
+  catalog live.
+
+For a capability the whole company should have, ask an admin to publish it to the registry —
+[Capabilities](/sync/capabilities) covers how that works.
+
+<Note>
+Capability folders are mirrored from the registry, so a folder you edit by hand inside the org scope
+is replaced on the next sync pass. Edit the source and publish it, or import it as your own.
+</Note>

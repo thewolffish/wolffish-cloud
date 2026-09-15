@@ -1,0 +1,110 @@
+---
+title: "Where you can work from"
+description: "One agent, four ways to reach it — and what each one is actually for"
+---
+
+There is one agent, on your computer, and one account. The desktop app, your phone, your browser and
+your terminal are four **views** of it, not four agents. Anything you start in one shows up in the
+others.
+
+<CardGroup cols={2}>
+  <Card title="Desktop" icon="desktop">
+    Where the agent actually runs. Everything else is a window onto this.
+  </Card>
+
+  <Card title="Phone" icon="mobile">
+    A paired device of the same account. Reads everything; runs turns on your desktop.
+  </Card>
+
+  <Card title="Browser extension" icon="chrome">
+    The agent's hands in your own browser, over `localhost` only.
+  </Card>
+
+  <Card title="Terminal" icon="terminal">
+    The same agent as a terminal client — useful on a machine with no screen.
+  </Card>
+</CardGroup>
+
+## Desktop
+
+The app holds the agent: the model calls, the tools, the files, the conversations, the memory. It
+has to be running for a turn to happen anywhere.
+
+It also holds the settings for everything else — channels, services, capabilities, variables, MCP
+servers, your usage — and, if you are an admin, the whole [admin layer](/governance/roles). There is
+no separate web console.
+
+## Phone
+
+Your phone is a device of the same organization account, paired once from the desktop. It never sees
+your password.
+
+**What it does well:** read any conversation, send work from anywhere, answer the agent's questions
+and approvals while you are away, open what the agent made, change settings, watch usage.
+
+**What it cannot do:** run a turn while your desktop is asleep. The turn runs on the desktop, so the
+phone says the desktop is unreachable rather than queueing something that would never happen.
+Editable surfaces go read-only in that state rather than accepting a change with nowhere to land.
+
+Two facts are tracked separately and shown separately on the Connection screen: whether the
+**organization** is reachable, and whether your **desktop** is on the bridge. A phone that can read
+but not send has the first and not the second — start your desktop.
+
+See [Phone sync](/sync/mobile) for the mechanism, and [Set up a device](/getting-started/setup) for
+pairing.
+
+## Browser extension
+
+The extension lets the agent work in your real browser — your session, your cookies, your logins —
+so it reaches what a fetch cannot: an internal portal, a paywalled document, a JS-heavy dashboard.
+
+It talks to the desktop over `localhost` and has **no cloud endpoint at all**. Nothing it does
+crosses the network; what results from a browser action syncs through the desktop like any other
+work. See [Browser extension](/sync/browser-extension).
+
+## Terminal
+
+`wfc` is a full terminal client for the same agent. It holds no state of its own — it attaches to
+the running desktop over the local socket, so closing the terminal does not stop a turn. It is what
+you use on a box you reach over SSH, and it is just as usable next to the window.
+
+```bash
+wfc                          # the session screen: feed, cards, live context meter
+wfc -p "why did this fail?"  # one shot — print and exit
+cat build.log | wfc -p "why?"
+wfc resume [id]              # continue a conversation
+wfc conversations            # the app's screens as verbs (--json for scripts)
+wfc settings                 # every setting, and every action the app has
+wfc status | usage | service | path | pair
+wfc login | logout | unlock | account
+```
+
+Inside the session: `ctrl+p` opens the command palette, `/` completes slash commands, `@path`
+attaches a file, `shift+enter` inserts a newline, and `esc esc` interrupts. The footer carries the
+model, the mode, thinking effort, plan mode, the project, elapsed time, context used and cost.
+Approvals, questions, todos and diffs render as cards, the same as in the window.
+
+The app installs the `wfc` command itself and keeps it pointed at the current version;
+`Settings → Channels → CLI` shows whether it is on your `PATH` and can install or remove it.
+
+<Note>
+A machine with no screen can still run the agent: `Settings → Channels → CLI` can register the app
+as a **background service** that starts with the machine and runs with no window, which is what the
+terminal then attaches to. A login item — the default — needs a desktop session and never fires on
+a server.
+</Note>
+
+## The leaderboard
+
+`Leaderboard` ranks everyone in the organization by tokens spent, conversations held and **agentic
+tasks** — the runs the agent started on its own, from an automation or a procedure. It is open to
+everyone, not just admins: it is the organization looking at itself.
+
+It deliberately carries no money. Cost is an organization-financial number and stays in the admin
+layer. Your rank is your rank in the whole organization even when the list is filtered.
+
+## What each surface costs
+
+Every model call is attributed to the surface it came from — `inapp`, `mobile`, `extension`,
+`heartbeat`, `procedure` — so your usage screen can tell phone work from desktop work even though
+both run on the same machine. See [Usage & audit](/governance/audit).

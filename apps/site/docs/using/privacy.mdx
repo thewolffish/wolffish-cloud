@@ -1,0 +1,96 @@
+---
+title: "What your organization can see"
+description: "The honest list — what reaches the organization, who can read it, and what never leaves your machine"
+---
+
+The agent runs on your machine, but the **record** belongs to your organization. That is the whole
+design, and it cuts both ways: your work survives a lost laptop, and your work is your employer's.
+
+This page is the specific version of that sentence.
+
+## What reaches the organization
+
+| | Reaches the organization | Notes |
+| --- | --- | --- |
+| **Your conversations** | Yes — in full | Every message, both sides, plus attachments and generated files |
+| **Files in your agent workspace** | Yes | Everything under `~/.wfc/workspace` that syncs — see below |
+| **Files elsewhere on your computer** | **No** | The agent reads and edits them in place; nothing outside the workspace is uploaded |
+| **Your settings** | Yes | One row, sealed at rest, including your saved variables |
+| **What you spent** | Yes | Who, when, which model, how many tokens, how long, what it cost, what was decided |
+| **That you searched the web** | Yes | **Never the query text** |
+| **Your device PIN** | **No** | It never leaves the machine and cannot be read by anyone |
+| **What the browser extension does** | **No** | It runs over `localhost` and has no cloud endpoint |
+| **Your voice audio** | **No** | Speech-to-text and text-to-speech run on your machine |
+
+The workspace folders that sync are the agent's own: `files`, `uploads`, `brain` (its memory and
+your standing instructions), `voice`, `speech`, `screenshots`, `downloads`, `usage` and the
+extension's per-conversation browser trail. Your undo snapshots, the rotating app logs and the
+search index stay on the device.
+
+## Who can read it
+
+Roles are a fixed hierarchy — `owner`, `admin`, `support`, `employee` — and the rules are one table
+the server checks on every request, not a matter of which buttons a client draws.
+
+| | An admin or owner | Support |
+| --- | --- | --- |
+| Your name, role, team, devices | Yes | Yes |
+| Your usage totals and the leaderboard | Yes | Yes |
+| **Your conversation transcripts** | **Yes — and the read is audited** | **No** |
+| **Your settings row (with your variables)** | **Yes — and the read is audited** | **No** |
+| Change your role, caps or capabilities | Yes | No |
+
+Support is the view-only tier for **operations**, not a licence to read your words. The two reads
+that expose your actual work — your transcripts and your settings — are admin-tier, blocked for
+support, blocked against an owner unless the reader is an owner too, and each one writes an audit
+row naming who read what and when.
+
+<Note>
+`config.view` and `conversation.view` are the only audited **reads** in the whole platform. Every
+other audit row is a change. That asymmetry is deliberate: reading your work is the thing worth a
+permanent record.
+</Note>
+
+## What is never recorded anywhere
+
+- **The router never logs a prompt or a reply.** It reads the stream only far enough to find the
+  token counts. Your transcripts are at the organization because your desktop *synced the
+  conversation* — a different, visible act — not because the model lane kept a copy.
+- **No search query text.** The search row records that a search happened, how long it took and what
+  it cost. What you asked is not stored.
+- **Nothing identifying goes upstream.** The model host receives your request body, the model id and
+  the organization's key. Not your name, not your email, not your user id.
+- **No provider key is ever on your device**, so nothing you run can spend outside the lane.
+
+## When the agent can see your screen
+
+Computer use is the one capability that watches you rather than your files. While it is able to
+capture the screen, your display carries a **blue edge glow and a centred pill** saying so. The
+indicator is raised before the first capture and cannot survive the end of a turn — it is enforced
+three ways, including a failsafe that clears it if the model fails to.
+
+If the glow is not there, nothing is being captured. Screenshots the agent does take land in your
+workspace, which means they sync like any other file.
+
+## What everyone in the organization can see about you
+
+The [leaderboard](/using/surfaces#the-leaderboard) is open to every signed-in person: your name,
+tokens spent, conversations held and agentic tasks. It carries **no cost figure** — money stays in
+the admin layer.
+
+## Leaving, and being removed
+
+- **Signing out** drains anything unsent, revokes the session, then wipes the local cache. Nothing
+  of yours is left on a machine you are leaving.
+- **Being removed** is two separate acts your admin performs: suspending the account stops future
+  sign-ins, revoking sessions kills the ones that already exist — closing your phone's link and
+  dropping its push registration immediately. The record stays with the organization.
+- **Deleting a conversation** tombstones it immediately; its records and its archived copy are
+  purged 30 days later.
+
+## The short version
+
+Treat the agent the way you would treat your work email: it is a company system, the company can
+read it, and the reads are logged. What it adds over email is that it runs as **you**, on your
+machine, with your permissions — so the files it touches outside the workspace are yours alone, and
+the only things that travel are the ones this page names.
