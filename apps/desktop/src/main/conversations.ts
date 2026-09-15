@@ -65,6 +65,11 @@ export type ConversationMessage = {
    */
   voiceLang?: string
   /**
+   * A user-role message the app wrote (the "Continue" after a stalled
+   * provider call): history-wise a user turn, rendered as a muted note.
+   */
+  systemAside?: boolean
+  /**
    * Full segment stream for assistant messages — text deltas, tool
    * calls, tool results, active_model chips, turn_end. Saved by the
    * Electron channel (via the renderer's persistConversation) and

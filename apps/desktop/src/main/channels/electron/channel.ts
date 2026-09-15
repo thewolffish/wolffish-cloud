@@ -67,7 +67,8 @@ function promptFromHistory(
     content,
     timestamp: Date.now(),
     ...(last.attachments && last.attachments.length > 0 ? { attachments: last.attachments } : {}),
-    ...(voice ? { voicePrompt: true } : {})
+    ...(voice ? { voicePrompt: true } : {}),
+    ...(last.systemAside ? { systemAside: true } : {})
   }
 }
 

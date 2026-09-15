@@ -75,6 +75,15 @@ const INTERRUPT_PX = 24
 const log = (...a) => console.log(...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * A refusal the model must fix by changing its call, never by repeating it:
+ * coordinates off the frame, an unknown key, a missing argument, a closed
+ * gate. `retryable: false` stops the tool loop's own retry ladder, which
+ * otherwise spends three attempts (observed: 18 s per miss) on an answer
+ * that cannot change.
+ */
+const refuse = (error) => ({ success: false, error, retryable: false })
+
 // ─── Per-conversation session state ─────────────────────────────────────
 //
 // frame      — the coordinate frame the model is working in (latest image)
@@ -93,7 +102,7 @@ function session() {
   const k = sessionKey()
   let s = sessions.get(k)
   if (!s) {
-    s = { frame: null, aim: null, lastTarget: null, lastAction: null }
+    s = { frame: null, aim: null, lastTarget: null, lastAction: null, lastCapture: null }
     sessions.set(k, s)
   }
   return s
@@ -104,7 +113,11 @@ function currentFrame() {
 }
 
 function setFrame(frame) {
-  session().frame = frame
+  const s = session()
+  s.frame = frame
+  if (frame.kind === 'screenshot' || frame.kind === 'window screenshot') {
+    s.lastCapture = { kind: frame.kind, width: frame.width, height: frame.height }
+  }
 }
 
 // ─── nut-js key vocabulary (legacy rung) ────────────────────────────────
@@ -181,10 +194,32 @@ const KEY_MAP = {
   9: 'Num9'
 }
 
+// Word names the model reaches for ("period", "comma") → the character
+// KEY_MAP already knows.
+const KEY_WORDS = {
+  period: '.',
+  dot: '.',
+  comma: ',',
+  slash: '/',
+  backslash: '\\',
+  semicolon: ';',
+  quote: "'",
+  apostrophe: "'",
+  minus: '-',
+  dash: '-',
+  hyphen: '-',
+  equal: '=',
+  equals: '=',
+  grave: '`',
+  backtick: '`',
+  bracketleft: '[',
+  bracketright: ']'
+}
+
 function resolveKey(Key, name) {
   const trimmed = String(name).trim()
   const lower = trimmed.toLowerCase()
-  const mapped = KEY_MAP[lower]
+  const mapped = KEY_MAP[lower] ?? KEY_MAP[KEY_WORDS[lower] ?? '']
   if (mapped && Key[mapped] !== undefined) return Key[mapped]
   if (trimmed.length === 1) {
     const upper = trimmed.toUpperCase()
@@ -353,13 +388,30 @@ function validateFrameCoords(x, y, label = 'Coordinates') {
     )
   }
   if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= frame.width || y >= frame.height) {
-    return (
-      `${label} (${x}, ${y}) are outside the current frame. The current frame is the LATEST image you received ` +
-      `(a ${frame.width}x${frame.height} ${frame.kind}); valid range is x 0-${frame.width - 1}, y 0-${frame.height - 1}. ` +
-      'Coordinates from an older image are invalid — take a fresh capture and read new coordinates from it.'
-    )
+    return frameCoordsError(frame, session().lastCapture, x, y, label)
   }
   return null
+}
+
+/**
+ * The out-of-frame refusal. When the model is working from a magnifier or
+ * zoom and its coordinates would fit the LAST full capture, say so by name:
+ * that is the mistake (observed live) — reading the earlier screenshot after
+ * a click made the magnifier the frame. Pure; exported for tests.
+ */
+export function frameCoordsError(frame, lastCapture, x, y, label = 'Coordinates') {
+  const base =
+    `${label} (${x}, ${y}) are outside the current frame. The current frame is the LATEST image you received ` +
+    `(a ${frame.width}x${frame.height} ${frame.kind}); valid range is x 0-${frame.width - 1}, y 0-${frame.height - 1}.`
+  const derived = frame.kind === 'magnifier' || frame.kind === 'zoom'
+  if (derived && lastCapture && x >= 0 && y >= 0 && x < lastCapture.width && y < lastCapture.height) {
+    return (
+      `${base} These coordinates fit the earlier ${lastCapture.width}x${lastCapture.height} ${lastCapture.kind}, which is no longer the frame ` +
+      `— the ${frame.kind} replaced it. Either act inside the ${frame.kind} using its own coordinates, or take a fresh capture ` +
+      `(computer_screenshot or computer_window_screenshot) and read new coordinates from that.`
+    )
+  }
+  return `${base} Coordinates from an older image are invalid — take a fresh capture and read new coordinates from it.`
 }
 
 // ─── Capture ────────────────────────────────────────────────────────────
@@ -756,14 +808,12 @@ async function zoomRegion(args) {
   const boundsError =
     validateFrameCoords(x, y, 'Region origin') ??
     validateFrameCoords(Math.min(x + w, (frame?.width ?? 1) - 1), Math.min(y + h, (frame?.height ?? 1) - 1), 'Region corner')
-  if (boundsError) return { success: false, error: boundsError }
+  if (boundsError) return refuse(boundsError)
   if (x + w > frame.width || y + h > frame.height) {
-    return {
-      success: false,
-      error:
-        `Region (${x},${y}) ${w}x${h} extends past the current ${frame.width}x${frame.height} frame. ` +
+    return refuse(
+      `Region (${x},${y}) ${w}x${h} extends past the current ${frame.width}x${frame.height} frame. ` +
         'Shrink it to fit, or take a fresh capture first.'
-    }
+    )
   }
 
   try {
@@ -1163,7 +1213,7 @@ async function mouseMove(args) {
   const y = Number(args?.y)
   if (!Number.isFinite(x) || !Number.isFinite(y)) return { success: false, error: 'x and y coordinates are required (finite numbers)' }
   const boundsError = validateFrameCoords(x, y)
-  if (boundsError) return { success: false, error: boundsError }
+  if (boundsError) return refuse(boundsError)
   const target = argText(args, 'target')
   try {
     const dip = frameToDip(currentFrame(), x, y)
@@ -1239,7 +1289,7 @@ async function mouseClick(args) {
   if (hasCoords) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return { success: false, error: 'x and y must be finite numbers (or omit both to click at the aim point).' }
     const boundsError = validateFrameCoords(x, y)
-    if (boundsError) return { success: false, error: boundsError }
+    if (boundsError) return refuse(boundsError)
   }
   try {
     const dip = hasCoords ? frameToDip(currentFrame(), x, y) : aimPoint()
@@ -1326,9 +1376,9 @@ async function mouseDrag(args) {
   const ey = Number(args?.end_y)
   if (![sx, sy, ex, ey].every(Number.isFinite)) return { success: false, error: 'start_x, start_y, end_x, end_y are required (finite numbers).' }
   const startError = validateFrameCoords(sx, sy, 'Start coordinates')
-  if (startError) return { success: false, error: startError }
+  if (startError) return refuse(startError)
   const endError = validateFrameCoords(ex, ey, 'End coordinates')
-  if (endError) return { success: false, error: endError }
+  if (endError) return refuse(endError)
   const button = String(args?.button ?? 'left').toLowerCase()
   const modifiers = argModifiers(args)
   const delivery = argDelivery(args)
@@ -1424,7 +1474,7 @@ async function mouseScroll(args) {
     const y = Number(args.y)
     if (!Number.isFinite(x) || !Number.isFinite(y)) return { success: false, error: 'x and y must be finite numbers when provided.' }
     const boundsError = validateFrameCoords(x, y)
-    if (boundsError) return { success: false, error: boundsError }
+    if (boundsError) return refuse(boundsError)
     dip = frameToDip(currentFrame(), x, y)
     session().aim = dip
   } else {
@@ -1679,14 +1729,15 @@ async function keyboardPress(args) {
     const aim = aimPoint()
     if (aim) await overlay.cursorTo(aim, { kind: 'keyboard', label: argText(args, 'target') ?? '', animate: false })
     const res = await deliverKeys({ key, modifiers, delivery })
-    if (!res.ok) return { success: false, error: `Key not delivered: ${res.error}` }
+    if (!res.ok) return /Unknown key|Unknown modifier/.test(res.error ?? '') ? refuse(`Key not delivered: ${res.error}`) : { success: false, error: `Key not delivered: ${res.error}` }
     overlay.cursorPulse()
     if (res.win) session().lastTarget = res.win
     const desc = modifiers.length > 0 ? `${modifiers.join('+')}+${key}` : key
     const ev = evidence({ tool: 'press', target: desc, expect: argText(args, 'expect'), res })
     return { success: true, output: `Pressed ${desc}.${ev.line}`, meta: ev.meta }
   } catch (err) {
-    return { success: false, error: `Key press failed: ${err?.message ?? String(err)}` }
+    const msg = err?.message ?? String(err)
+    return /Unknown key|Unknown modifier/.test(msg) ? refuse(`Key press failed: ${msg}`) : { success: false, error: `Key press failed: ${msg}` }
   }
 }
 
@@ -1710,6 +1761,21 @@ async function keyDownUp(args, down) {
 
 // ─── Indicator ──────────────────────────────────────────────────────────
 
+// Session keepalive: while the indicator is on the driver's implicit session
+// must not expire under a long model silence (see driver.SESSION_KEEPALIVE_MS).
+let keepaliveTimer = null
+function startKeepalive() {
+  stopKeepalive()
+  keepaliveTimer = setInterval(() => {
+    driver.ping().catch(() => undefined)
+  }, driver.SESSION_KEEPALIVE_MS)
+  if (typeof keepaliveTimer.unref === 'function') keepaliveTimer.unref()
+}
+function stopKeepalive() {
+  if (keepaliveTimer) clearInterval(keepaliveTimer)
+  keepaliveTimer = null
+}
+
 async function glowOn(args) {
   try {
     if (!electronScreen || !electronBrowserWindow) {
@@ -1723,6 +1789,7 @@ async function glowOn(args) {
       return { success: false, error: 'Screen indicator could not be shown — continue the task and tell the user the indicator is unavailable.' }
     }
     overlay.setOverlayUnavailable(false)
+    startKeepalive()
     // Proactive: say now what would otherwise fail later.
     const access = await accessSnapshot()
     const accessNote = access.ok ? '' : `\nACCESS CHECK: ${access.text}`
@@ -1740,6 +1807,7 @@ async function glowOn(args) {
 
 async function glowOff() {
   const wasOn = overlay.overlayAlive() || overlay.overlayWanted()
+  stopKeepalive()
   overlay.cursorHide()
   overlay.hideOverlay()
   overlay.setOverlayUnavailable(false)
@@ -2380,7 +2448,7 @@ function indicatorGate(toolName) {
   // down while the model believes the indicator is up is recreated here.
   const indicatorOn = overlay.overlayWanted() ? overlay.ensureOverlayAlive() : false
   const reason = indicatorGateReason(toolName, { indicatorOn, unavailable: overlay.overlayUnavailable() })
-  return reason ? { success: false, error: reason } : null
+  return reason ? refuse(reason) : null
 }
 
 // ─── Tool map and definitions ───────────────────────────────────────────
@@ -2657,6 +2725,7 @@ const plugin = {
   },
 
   async destroy() {
+    stopKeepalive()
     overlay.destroyOverlay()
     elements.clearSnapshots()
     await driver.unload()

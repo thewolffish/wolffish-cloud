@@ -13,7 +13,11 @@ export type NoProviderAvailablePayload = {
   totalDurationMs: number
 }
 
+/** The stall watchdog's reason (thalamus STREAM_STALL_REASON): the card offers Continue, not Try again. */
+export const STALLED_REASON = 'stalled'
+
 function descriptionKeyFor(errorReason: string, statusCode: number | null): string {
+  if (errorReason === STALLED_REASON) return 'errors.provider.stalled'
   if (
     statusCode === 401 ||
     statusCode === 403 ||
@@ -44,6 +48,7 @@ function descriptionKeyFor(errorReason: string, statusCode: number | null): stri
 }
 
 function titleKeyFor(errorReason: string, statusCode: number | null): string {
+  if (errorReason === STALLED_REASON) return 'errors.provider.stalledTitle'
   if (
     statusCode === 401 ||
     statusCode === 403 ||
@@ -143,11 +148,15 @@ function reasonLineFor(payload: NoProviderAvailablePayload): string {
 
 function SingleErrorCard({
   payload,
-  onTryAgain
+  onTryAgain,
+  onContinue
 }: {
   payload: NoProviderAvailablePayload
   onTryAgain?: (reason: string) => void
+  /** Stalled calls only: resume the conversation with a system aside instead of re-asking. */
+  onContinue?: () => void
 }): React.JSX.Element {
+  const stalled = payload.errorReason === STALLED_REASON
   const { t } = useTranslation()
   const [showDetail, setShowDetail] = useState(false)
   // One lane: every model error wears the org's cloud mark.
@@ -181,7 +190,22 @@ function SingleErrorCard({
             {t('errors.provider.viewDetails')}
           </button>
         </div>
-        {onTryAgain && (
+        {stalled && onContinue && (
+          <button
+            type="button"
+            onClick={onContinue}
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 self-center rounded-lg px-2.5 py-1.5',
+              'text-[11px] font-medium cursor-pointer',
+              'bg-red-600 text-white hover:bg-red-700',
+              'dark:bg-red-700 dark:hover:bg-red-600'
+            )}
+          >
+            <RefreshIcon size={12} aria-hidden />
+            {t('errors.provider.continue')}
+          </button>
+        )}
+        {!stalled && onTryAgain && (
           <button
             type="button"
             onClick={() => onTryAgain(reasonLineFor(payload))}
@@ -204,10 +228,12 @@ function SingleErrorCard({
 
 export function ProviderErrorCards({
   failures,
-  onTryAgain
+  onTryAgain,
+  onContinue
 }: {
   failures: NoProviderAvailablePayload[]
   onTryAgain?: (reason: string) => void
+  onContinue?: () => void
 }): React.JSX.Element {
   return (
     <div className="flex w-full max-w-[85%] flex-col gap-2 self-start">
@@ -217,6 +243,7 @@ export function ProviderErrorCards({
           key={`${f.provider}-${i}`}
           payload={f}
           onTryAgain={i === 0 ? onTryAgain : undefined}
+          onContinue={i === 0 ? onContinue : undefined}
         />
       ))}
     </div>

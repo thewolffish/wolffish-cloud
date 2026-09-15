@@ -240,18 +240,53 @@ async function detectManifest(folder: string): Promise<Manifest> {
         checks.push(
           `xcodebuild -${ws ? 'workspace' : 'project'} ${ws ?? proj} -scheme <scheme> -destination 'platform=iOS Simulator,name=iPhone 17' build`
         )
+        runs.push(
+          'xcode_run (xcode_defaults scheme=<scheme> first) → mobile_snapshot / mobile_tap on the simulator'
+        )
       }
     } catch {
       // unreadable folder — no facts
     }
   }
+  // React Native / Expo: a package manifest beside ios/ and android/ folders
+  // (Expo adds app.json or app.config.*). The run path is the framework's own
+  // command, then the mobile tools drive the running app.
+  if (await has('package.json')) {
+    const hasIos = await has('ios')
+    const hasAndroid = await has('android')
+    const expo =
+      (await has('app.json')) || (await has('app.config.js')) || (await has('app.config.ts'))
+    if (hasIos || hasAndroid) {
+      toolchain.push(expo ? 'Expo (app.json + ios/ android/)' : 'React Native (ios/ android/)')
+      if (hasIos)
+        runs.push(
+          expo
+            ? 'npx expo run:ios (shell_exec background=true) → mobile_snapshot / mobile_tap'
+            : 'npx react-native run-ios (shell_exec background=true) → mobile_snapshot / mobile_tap'
+        )
+      if (hasAndroid)
+        runs.push(
+          expo
+            ? 'npx expo run:android (shell_exec background=true, emulator via mobile_boot) → mobile_snapshot'
+            : 'npx react-native run-android (shell_exec background=true, emulator via mobile_boot) → mobile_snapshot'
+        )
+    }
+  }
   if (await has('pubspec.yaml')) {
     toolchain.push('Flutter/Dart (pubspec.yaml)')
     checks.push('dart analyze', 'flutter test')
+    runs.push(
+      'flutter run -d <udid or serial> (shell_exec background=true; mobile_devices lists ids) → mobile_snapshot / mobile_tap'
+    )
   }
   if ((await has('build.gradle')) || (await has('build.gradle.kts'))) {
     toolchain.push('Gradle')
     checks.push('./gradlew build', './gradlew test')
+    if (await has('app')) {
+      runs.push(
+        './gradlew assembleDebug (shell_exec) → mobile_install app=app/build/outputs/apk/debug/app-debug.apk → mobile_launch bundle_id=<package> → mobile_snapshot'
+      )
+    }
   } else if (await has('pom.xml')) {
     toolchain.push('Maven (pom.xml)')
     checks.push('mvn -q test')

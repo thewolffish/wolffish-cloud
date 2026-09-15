@@ -32,11 +32,7 @@ const HERE = __dirname
 const REPO = path.resolve(HERE, '..', '..', '..', '..', '..', '..')
 // Capabilities are hoisted to the repo root here, shared rather than bundled
 // under the desktop app's own defaults.
-const CAPABILITY_SRC = path.join(
-  REPO,
-  'capabilities',
-  'computer-use'
-)
+const CAPABILITY_SRC = path.join(REPO, 'capabilities', 'computer-use')
 const WS = path.join(require('node:os').tmpdir(), 'wolffish-computer-use-live')
 const CAPABILITY = path.join(WS, 'computer-use')
 const PLUGIN = path.join(CAPABILITY, 'plugin', 'index.mjs')

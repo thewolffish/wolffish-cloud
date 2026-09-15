@@ -713,6 +713,7 @@ export class TurnRunner {
 }
 
 type ErrorKey =
+  | 'stalled'
   | 'invalidKey'
   | 'modelNotFound'
   | 'rateLimited'
@@ -744,6 +745,10 @@ const ERROR_MESSAGES: Record<ErrorKey, Record<'en' | 'ar', string>> = {
   badRequest: {
     en: 'The provider rejected the request. Try a different model or check your configuration.',
     ar: 'رفض المزوّد الطلب. جرّب نموذجاً آخر أو تحقق من الإعدادات.'
+  },
+  stalled: {
+    en: 'Five minutes passed with no response from the API, so the request was aborted. Press Continue to carry on from here.',
+    ar: 'مرّت خمس دقائق دون أي استجابة من الـ API، فأُلغي الطلب. اضغط «متابعة» للاستمرار من هنا.'
   }
 }
 
@@ -764,6 +769,7 @@ function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
     return ERROR_MESSAGES.serverError[locale]
   }
   if (raw === 'offline') return ERROR_MESSAGES.offline[locale]
+  if (raw === 'stalled') return ERROR_MESSAGES.stalled[locale]
 
   // Raw HTTP errors from committed-error path (provider threw mid-stream)
   if (/HTTP\s+400/i.test(raw)) {

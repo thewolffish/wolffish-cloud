@@ -142,6 +142,168 @@ const SCREEN_INDICATOR_NUDGE_TEXT =
   'characters, and no written stand-in for the silence — not even a parenthesised note saying there is nothing ' +
   'further, since anything you write is delivered to them verbatim.]'
 
+// ─── Every indicator, one registry ─────────────────────────────────────────
+//
+// The mobile driving indicator ("Wolffish is driving iPhone 16 Pro", a frame
+// around the simulator or emulator window) makes the same claim on the
+// user's screen with the same lifecycle, so it rides the same three layers.
+// The Agent tracks a SET of indicator ids this run raised; every layer below
+// iterates the registry instead of naming computer-use.
+
+export const MOBILE_INDICATOR_ON_TOOL = 'mobile_indicator_on'
+export const MOBILE_INDICATOR_OFF_TOOL = 'mobile_indicator_off'
+
+export const MOBILE_INDICATOR_NOTICE =
+  'DRIVING INDICATOR: ON — the user currently sees a blue frame around their simulator/emulator window and a notice reading "Wolffish is driving <device>". ' +
+  'Only mobile_indicator_off takes it down; nothing clears it for you, and there is no timer. ' +
+  'Call it the moment you stop looking at or touching the device — as the LAST action of this turn, whether you finished the task, gave up on it, or are handing back so the user can do something. ' +
+  'A turn that ends with it still up tells them their device is being driven when it is not.'
+
+const MOBILE_INDICATOR_NUDGE_TEXT =
+  '[System: You are ending your turn, but the driving indicator is still ON — the user is still being shown ' +
+  '"Wolffish is driving <device>" around their simulator even though you have stopped. Only mobile_indicator_off clears it; nothing ' +
+  'else will, ever. Call mobile_indicator_off now. (If you are in fact not finished with their device, carry on with ' +
+  'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
+  'user, so once the indicator is off there is nothing further to say: end with an entirely empty response — zero ' +
+  'characters, and no written stand-in for the silence — not even a parenthesised note saying there is nothing ' +
+  'further, since anything you write is delivered to them verbatim.]'
+
+export type IndicatorSpec = {
+  id: 'screen' | 'mobile'
+  onTool: string
+  offTool: string
+  notice: string
+  nudge: string
+  /** Which tool-result meta key carries `lastAction` for this indicator. */
+  metaKey: 'computerUse' | 'mobile'
+  /** The verify wording appended after LAST ACTION. */
+  verify: string
+}
+
+export const INDICATORS: IndicatorSpec[] = [
+  {
+    id: 'screen',
+    onTool: SCREEN_INDICATOR_ON_TOOL,
+    offTool: SCREEN_INDICATOR_OFF_TOOL,
+    notice: SCREEN_INDICATOR_NOTICE,
+    nudge: SCREEN_INDICATOR_NUDGE_TEXT,
+    metaKey: 'computerUse',
+    verify:
+      'Before your next action, check on a fresh capture (or computer_read_element) that this actually happened; ' +
+      'if it did not, re-aim or take another route rather than repeating it.'
+  },
+  {
+    id: 'mobile',
+    onTool: MOBILE_INDICATOR_ON_TOOL,
+    offTool: MOBILE_INDICATOR_OFF_TOOL,
+    notice: MOBILE_INDICATOR_NOTICE,
+    nudge: MOBILE_INDICATOR_NUDGE_TEXT,
+    metaKey: 'mobile',
+    verify:
+      'Before your next action, check on the proof patch or a fresh mobile_snapshot that this actually happened; ' +
+      'if "Changed: NO", re-aim from a fresh snapshot rather than repeating it.'
+  }
+]
+
+export const INDICATOR_OFF_TOOLS = new Set(INDICATORS.map((i) => i.offTool))
+
+export type LastIndicatorAction = LastComputerAction & { indicator: IndicatorSpec['id'] }
+
+/**
+ * Fold one completed tool call into the set of indicators this run has up.
+ * Successful calls only, same reasoning as trackScreenIndicator. Pure —
+ * returns a new Set.
+ */
+export function trackIndicators(
+  state: ReadonlySet<string>,
+  toolName: string,
+  ok: boolean
+): Set<string> {
+  const next = new Set(state)
+  if (!ok) return next
+  for (const spec of INDICATORS) {
+    if (toolName === spec.onTool) next.add(spec.id)
+    if (toolName === spec.offTool) next.delete(spec.id)
+  }
+  return next
+}
+
+/**
+ * The runtime-tail text for every indicator that is up, each with its own
+ * last action when the last action belongs to it. Undefined when none is up.
+ */
+export function indicatorNoticeText(
+  state: ReadonlySet<string>,
+  last: LastIndicatorAction | null | undefined
+): string | undefined {
+  const parts: string[] = []
+  for (const spec of INDICATORS) {
+    if (!state.has(spec.id)) continue
+    if (last && last.indicator === spec.id) {
+      const expect = last.expect ? ` Expected: ${last.expect}.` : ''
+      parts.push(
+        `${spec.notice} LAST ${spec.id === 'screen' ? 'SCREEN' : 'DEVICE'} ACTION: ${last.summary}.${expect} ${spec.verify}`
+      )
+    } else {
+      parts.push(spec.notice)
+    }
+  }
+  return parts.length ? parts.join(' ') : undefined
+}
+
+/**
+ * The last action carried by a tool result's meta, for whichever indicator
+ * produced it. Pure.
+ */
+export function lastIndicatorActionFrom(
+  meta: Record<string, unknown> | undefined
+): LastIndicatorAction | null {
+  for (const spec of INDICATORS) {
+    const bucket = meta?.[spec.metaKey]
+    if (!bucket || typeof bucket !== 'object') continue
+    const la = (bucket as { lastAction?: unknown }).lastAction
+    if (!la || typeof la !== 'object') continue
+    const rec = la as Record<string, unknown>
+    if (typeof rec.summary !== 'string') continue
+    return {
+      indicator: spec.id,
+      tool: typeof rec.tool === 'string' ? rec.tool : 'action',
+      target: typeof rec.target === 'string' ? rec.target : null,
+      expect: typeof rec.expect === 'string' ? rec.expect : null,
+      summary: rec.summary
+    }
+  }
+  return null
+}
+
+/**
+ * The nudge for the first indicator still up when the model ends its turn,
+ * or null. Same shape and bounds as screenIndicatorNudge; the caller logs
+ * `offTool` so the transcript names what was asked for.
+ */
+export function indicatorNudge(
+  state: ReadonlySet<string>,
+  parsed: Pick<ParsedResponse, 'stopReason' | 'text' | 'toolCalls' | 'thinking'>,
+  nudgeCount: number,
+  maxNudges: number = MAX_SCREEN_INDICATOR_NUDGES
+): { messages: ChatMessage[]; offTool: string } | null {
+  if (nudgeCount >= maxNudges) return null
+  if (parsed.stopReason !== 'end_turn' || parsed.toolCalls.length > 0) return null
+  const spec = INDICATORS.find((i) => state.has(i.id))
+  if (!spec) return null
+  const user: ChatMessage = { role: 'user', content: spec.nudge }
+  const delivered = parsed.text.trim()
+  if (!delivered) return { messages: [user], offTool: spec.offTool }
+  const assistant: ChatMessage = { role: 'assistant', content: delivered }
+  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
+  return { messages: [assistant, user], offTool: spec.offTool }
+}
+
+/** The off tools to call for every indicator still up (the failsafe). Pure. */
+export function indicatorOffTools(state: ReadonlySet<string>): string[] {
+  return INDICATORS.filter((i) => state.has(i.id)).map((i) => i.offTool)
+}
+
 /**
  * Fold one completed tool call into the "is the indicator up?" flag.
  *

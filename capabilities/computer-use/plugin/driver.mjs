@@ -112,6 +112,25 @@ export function isBackgroundRefusal(refusal) {
 // platform crates agree on the common set; the two that differ are the
 // forward-delete key and the OS key.
 const KEY_ALIASES = {
+  period: '.',
+  dot: '.',
+  comma: ',',
+  slash: '/',
+  backslash: '\\',
+  semicolon: ';',
+  colon: ':',
+  quote: "'",
+  apostrophe: "'",
+  minus: '-',
+  dash: '-',
+  hyphen: '-',
+  equal: '=',
+  equals: '=',
+  plus: '+',
+  grave: '`',
+  backtick: '`',
+  bracketleft: '[',
+  bracketright: ']',
   enter: 'return',
   return: 'return',
   esc: 'escape',
@@ -211,6 +230,67 @@ export async function load({ log = () => {} } = {}) {
   return status()
 }
 
+/**
+ * The driver's implicit session expires after five minutes idle (cua
+ * DEFAULT_SESSION_IDLE_TTL). A model that sits silent for longer — one
+ * stalled API call is enough (observed 2026-09-15) — comes back to every
+ * call refusing with `session_ended`. Two answers: a keepalive ping while
+ * the indicator is on (index.mjs drives it), and a transparent recycle +
+ * single retry the moment a call reports the session gone.
+ */
+export const SESSION_KEEPALIVE_MS = 4 * 60_000
+
+export function isSessionEnded(refusal) {
+  return !!refusal && (refusal.code === 'session_ended' || /session has ended/i.test(refusal.message ?? ''))
+}
+
+/** Tear the runtime down and create a fresh one; the next call starts a new implicit session. */
+export async function recycle({ log = () => {} } = {}) {
+  const d = driver
+  driver = null
+  loadError = null
+  if (d) {
+    try {
+      await d.shutdown()
+    } catch {
+      // Already down.
+    }
+    try {
+      d.uniffiDestroy()
+    } catch {
+      // Already destroyed.
+    }
+  }
+  log('[computer-use] native driver session ended — recycling the runtime')
+  return load({ log })
+}
+
+/** A cheap call that touches the session so it does not expire between actions. */
+export async function ping() {
+  if (!driver) return false
+  try {
+    await driver.getScreenSize({})
+    return true
+  } catch (err) {
+    return !isSessionEnded(refusalOf(err))
+  }
+}
+
+/**
+ * Run a driver call; when the session has ended, recycle once and run it
+ * again. `fn` must read `driver` fresh on every invocation (it does — every
+ * caller passes an arrow over the module binding).
+ */
+async function withSession(fn) {
+  try {
+    return await fn()
+  } catch (err) {
+    if (!isSessionEnded(refusalOf(err))) throw err
+    await recycle()
+    return fn()
+  }
+}
+
 export function status() {
   return {
     available: !!driver,
@@ -306,13 +386,13 @@ export function markCloaked(windows, capturableIds) {
  */
 export async function listWindows({ pid = undefined, onScreenOnly = true } = {}) {
   if (!driver) return []
-  const out = await driver.listWindows({ pid, onScreenOnly })
+  const out = await withSession(() => driver.listWindows({ pid, onScreenOnly }))
   return out.windows.map(normalizeWindow)
 }
 
 export async function listApps() {
   if (!driver) return []
-  const out = await driver.listApps({})
+  const out = await withSession(() => driver.listApps({}))
   return out.apps.map((a) => ({
     pid: a.pid,
     name: a.name,
@@ -356,13 +436,13 @@ const BUTTON = { left: 0, right: 1, middle: 2 }
 export async function clickWindow({ pid, windowId, px, button = 'left', count = 1, foreground = false }) {
   if (!driver) return { ok: false, refusal: { code: 'driver_unavailable', message: 'native driver not loaded' } }
   try {
-    const result = await driver.click({
+    const result = await withSession(() => driver.click({
       target: windowTarget(pid, windowId),
       position: new sdk.ClickPosition.Coordinates({ x: Math.round(px.x), y: Math.round(px.y) }),
       deliveryMode: foreground ? sdk.InputDeliveryMode.Foreground : sdk.InputDeliveryMode.Background,
       button: BUTTON[button] ?? 0,
       count: Math.max(1, Math.min(3, Number(count) || 1))
-    })
+    }))
     return { ok: true, action: describeAction(result), refusal: null }
   } catch (err) {
     return { ok: false, action: null, refusal: refusalOf(err) ?? { code: 'error', message: String(err) } }
@@ -372,13 +452,13 @@ export async function clickWindow({ pid, windowId, px, button = 'left', count = 
 export async function clickElement({ pid, windowId, token, button = 'left', count = 1, foreground = false }) {
   if (!driver) return { ok: false, refusal: { code: 'driver_unavailable', message: 'native driver not loaded' } }
   try {
-    const result = await driver.click({
+    const result = await withSession(() => driver.click({
       target: windowTarget(pid, windowId),
       position: new sdk.ClickPosition.Element({ elementToken: String(token) }),
       deliveryMode: foreground ? sdk.InputDeliveryMode.Foreground : sdk.InputDeliveryMode.Background,
       button: BUTTON[button] ?? 0,
       count: Math.max(1, Math.min(3, Number(count) || 1))
-    })
+    }))
     return { ok: true, action: describeAction(result), refusal: null }
   } catch (err) {
     return { ok: false, action: null, refusal: refusalOf(err) ?? { code: 'error', message: String(err) } }
@@ -411,7 +491,13 @@ function safeParse(s) {
 async function guarded(fn) {
   if (!driver) return { ok: false, text: '', action: null, refusal: { code: 'driver_unavailable', message: 'native driver not loaded' }, images: [], structured: null }
   try {
-    return toolOutcome(await fn())
+    let result = await withSession(fn)
+    // A ToolResult can carry the refusal in-band instead of throwing.
+    if (result?.isError && isSessionEnded(refusalOf(result))) {
+      await recycle()
+      result = await fn()
+    }
+    return toolOutcome(result)
   } catch (err) {
     return { ok: false, text: '', action: null, refusal: refusalOf(err) ?? { code: 'error', message: String(err) }, images: [], structured: null }
   }
@@ -476,7 +562,7 @@ export function dragWindow({ pid, windowId, from, to, button = 'left', durationM
 export async function windowState({ pid, windowId, tree = true, screenshot = false, query = undefined, maxElements = 400, maxDepth = 14 }) {
   if (!driver) return { ok: false, refusal: { code: 'driver_unavailable', message: 'native driver not loaded' } }
   try {
-    const ws = await driver.getWindowState({
+    const ws = await withSession(() => driver.getWindowState({
       pid: Number(pid),
       windowId: BigInt(windowId),
       includeAccessibilityTree: !!tree,
@@ -484,7 +570,7 @@ export async function windowState({ pid, windowId, tree = true, screenshot = fal
       query,
       maxElements: Math.max(1, Math.min(2000, Number(maxElements) || 400)),
       maxDepth: Math.max(1, Math.min(30, Number(maxDepth) || 14))
-    })
+    }))
     return {
       ok: true,
       snapshotId: ws.snapshotId ?? null,
@@ -539,13 +625,13 @@ export async function windowState({ pid, windowId, tree = true, screenshot = fal
 export async function verifyState({ pid, windowId, expect, timeoutMs = 5000, stableSamples = 2 }) {
   if (!driver) return { ok: false, refusal: { code: 'driver_unavailable', message: 'native driver not loaded' } }
   try {
-    const r = await driver.verifyState({
+    const r = await withSession(() => driver.verifyState({
       pid: BigInt(pid),
       windowId: BigInt(windowId),
       expect,
       timeoutMs: BigInt(Math.max(0, Math.round(timeoutMs))),
       stableSamples: BigInt(Math.max(1, Math.round(stableSamples)))
-    })
+    }))
     const v = r.verification
     return {
       ok: !r.isError,

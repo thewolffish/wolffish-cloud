@@ -332,9 +332,17 @@ async function run(): Promise<void> {
   await check('the Agent clears an indicator its own turn left up, on every exit path', () => {
     const finallyBlock = agentSrc.slice(agentSrc.indexOf('    } finally {'))
     assert.ok(
-      finallyBlock.includes('if (screenIndicatorOn)') &&
-        finallyBlock.includes(`executeTool(SCREEN_INDICATOR_OFF_TOOL`),
+      finallyBlock.includes('if (indicatorsOn.size > 0)') &&
+        finallyBlock.includes('indicatorOffTools(indicatorsOn)') &&
+        finallyBlock.includes('executeTool(offTool'),
       'the failsafe must live in finally — cancel and error reach no other exit'
+    )
+    // The failsafe iterates the registry, so the mobile driving indicator is
+    // cleared by the same clause without being named in Agent.ts.
+    assert.ok(
+      !finallyBlock.includes('SCREEN_INDICATOR_OFF_TOOL') &&
+        !finallyBlock.includes('mobile_indicator_off'),
+      'the failsafe must not name one indicator — every registered one is cleared'
     )
   })
 

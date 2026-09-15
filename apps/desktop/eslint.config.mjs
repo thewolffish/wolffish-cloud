@@ -66,6 +66,15 @@ export default defineConfig(
     }
   },
   {
+    // The live mobile-simulator harness is an ES module Electron's main process
+    // loads directly (`electron e2e-mobile-live.mjs`) — no build step strips
+    // annotations, so the TypeScript-shaped rule is off, nothing else.
+    files: ['src/main/runtime/__tests__/e2e-mobile-live.mjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
     // The terminal client is Solid + OpenTUI, not React: its JSX elements are
     // terminal renderables (`<box>`, `<text>`), `<For>` needs no keys, and
     // there are no React hooks to police. The React rule sets are off here;

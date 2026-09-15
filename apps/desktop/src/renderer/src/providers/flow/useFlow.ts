@@ -76,6 +76,11 @@ export type UserMessage = {
   voicePrompt?: boolean
   /** Whisper's detected language for a voicePrompt message (ISO 639-1). */
   voiceLang?: string
+  /**
+   * A user-role message the app wrote, not the person (the Continue after a
+   * stalled provider call). Rides history as a user turn; renders as a note.
+   */
+  systemAside?: boolean
   /** Set while a voice recording is being transcribed, so the bubble
    * can render an animated placeholder until the transcript arrives. */
   transcribing?: boolean

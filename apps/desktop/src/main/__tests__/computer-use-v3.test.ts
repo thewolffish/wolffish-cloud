@@ -85,13 +85,22 @@ type Index = {
     dip: { x: number; y: number },
     s: number
   ) => { x: number; y: number }
+  frameCoordsError: (
+    frame: Record<string, unknown>,
+    lastCapture: Record<string, unknown> | null,
+    x: number,
+    y: number
+  ) => string
   inheritWindowScope: (
     prev: Record<string, unknown> | null,
     region: { x: number; y: number; width: number; height: number }
   ) => Record<string, unknown>
   INDICATOR_REQUIRED: Set<string>
   backgroundUnsupported: (button: string) => { code: string; message: string } | null
-  default: { tools: Array<{ name: string }> }
+  default: {
+    tools: Array<{ name: string }>
+    execute: (tool: string, args: Record<string, unknown>) => Promise<unknown>
+  }
 }
 
 async function run(): Promise<void> {
@@ -334,6 +343,38 @@ async function run(): Promise<void> {
     )
     assert.deepEqual(index.inheritWindowScope(null, { x: 0, y: 0, width: 1, height: 1 }), {})
   })
+
+  await check('word names for punctuation reach the driver as the characters themselves', () => {
+    assert.equal(driver.driverKeyName('period', 'darwin'), '.')
+    assert.equal(driver.driverKeyName('comma', 'win32'), ',')
+    assert.equal(driver.driverKeyName('slash', 'linux'), '/')
+    assert.equal(driver.driverKeyName('minus', 'darwin'), '-')
+  })
+
+  await check('an out-of-frame refusal names the earlier capture the coordinates came from', () => {
+    const mag = { kind: 'magnifier', width: 600, height: 375 }
+    const shot = { kind: 'screenshot', width: 1600, height: 900 }
+    const msg = index.frameCoordsError(mag, shot, 1085, 300)
+    assert.ok(msg.includes('600x375 magnifier'), msg)
+    assert.ok(msg.includes('earlier 1600x900 screenshot'), 'must name the older capture')
+    const plain = index.frameCoordsError(mag, shot, 5000, 5000)
+    assert.ok(!plain.includes('earlier'), 'coordinates that fit nothing get the plain refusal')
+    const fresh = index.frameCoordsError(shot, null, 2000, 10)
+    assert.ok(fresh.includes('1600x900 screenshot') && !fresh.includes('earlier'))
+  })
+
+  await check(
+    'a gate refusal is non-retryable so the loop does not burn three attempts on it',
+    async () => {
+      const r = (await index.default.execute('computer_screenshot', {})) as {
+        success: boolean
+        retryable?: boolean
+        error?: string
+      }
+      assert.equal(r.success, false)
+      assert.equal(r.retryable, false, 'refusals the model must fix are never retried')
+    }
+  )
 
   // ── 4. elements ─────────────────────────────────────────────────────────
 

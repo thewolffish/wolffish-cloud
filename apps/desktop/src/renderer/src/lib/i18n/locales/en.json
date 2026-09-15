@@ -1982,7 +1982,12 @@
       "serverError": "Provider temporarily unavailable — retry shortly.",
       "viewDetails": "View details",
       "tryAgain": "Try again",
-      "tryAgainMessage": "The previous response was cut off by a provider failure ({{reason}}). Pick up where you left off — check what already completed (files written, tool results, plans made) and continue without redoing finished work."
+      "tryAgainMessage": "The previous response was cut off by a provider failure ({{reason}}). Pick up where you left off — check what already completed (files written, tool results, plans made) and continue without redoing finished work.",
+      "stalledTitle": "No response from the API",
+      "stalled": "Five minutes passed with zero response from the API, so the request was aborted. Nothing was lost — Continue picks up from here.",
+      "continue": "Continue",
+      "stallContinueMessage": "[System: The previous API request was aborted after five minutes with no response from the provider. The conversation continues from here. Everything above — tool results, files written, the plan so far — is still valid; pick up exactly where you left off without redoing finished work, and do not mention this note.]",
+      "systemAsideLabel": "Continued after the API stopped responding"
     },
     "runFailedReason": {
       "offline": "no internet connection",

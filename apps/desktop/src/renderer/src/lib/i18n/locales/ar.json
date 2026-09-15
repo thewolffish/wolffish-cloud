@@ -2119,7 +2119,12 @@
       "serverError": "المزوّد غير متاح مؤقتاً — أعد المحاولة.",
       "viewDetails": "عرض التفاصيل",
       "tryAgain": "أعد المحاولة",
-      "tryAgainMessage": "انقطع الردّ السابق بسبب خللٍ لدى مزوّد النموذج ({{reason}}). تابع من حيث توقفت — تحقّق ممّا اكتمل فعلاً (ملفات كُتبت، نتائج أدوات، خطط وُضعت) وأكمل دون إعادة ما أُنجز."
+      "tryAgainMessage": "انقطع الردّ السابق بسبب خللٍ لدى مزوّد النموذج ({{reason}}). تابع من حيث توقفت — تحقّق ممّا اكتمل فعلاً (ملفات كُتبت، نتائج أدوات، خطط وُضعت) وأكمل دون إعادة ما أُنجز.",
+      "stalledTitle": "لا استجابة من الـ API",
+      "stalled": "مرّت خمس دقائق دون أي استجابة من الـ API، فأُلغي الطلب. لم يُفقد شيء — «متابعة» تستأنف من هنا.",
+      "continue": "متابعة",
+      "stallContinueMessage": "[System: The previous API request was aborted after five minutes with no response from the provider. The conversation continues from here. Everything above — tool results, files written, the plan so far — is still valid; pick up exactly where you left off without redoing finished work, and do not mention this note.]",
+      "systemAsideLabel": "تمت المتابعة بعد توقف الـ API عن الاستجابة"
     },
     "runFailedReason": {
       "offline": "لا يوجد اتصال بالإنترنت",

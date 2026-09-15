@@ -189,7 +189,33 @@ export type ThalamusOptions = {
   testProvider?: {
     stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk>
   }
+  /**
+   * How long a cloud stream may go without ANY chunk before the call is
+   * declared dead (see STREAM_STALL_MS). Tests shorten it; production keeps
+   * the default.
+   */
+  stallTimeoutMs?: number
 }
+
+/**
+ * A cloud call that produces no chunk at all for this long is dead, not
+ * slow: a healthy stream shows its first token within seconds, and long
+ * reasoning still streams thinking deltas. Observed 2026-09-15 on
+ * deepseek-flash: one call sat silent for 10m23s and returned a single
+ * token, another for 4m10s and returned nothing — and the driver session
+ * underneath computer use expired while the loop waited. The watchdog aborts
+ * the request, ends the turn with the `stalled` reason (the error card offers
+ * Continue), and never retries on its own: five minutes of silence is the
+ * person's call to make, not a backoff ladder's.
+ *
+ * Five minutes, not less, because reasoning-only silences are real: a
+ * provider that does not stream its thinking (OpenAI's o-series through chat
+ * completions) can legitimately sit quiet for a couple of minutes on a hard
+ * problem. (The app exempts its local model for this reason; the cloud
+ * desktop has none, so every entry is covered.)
+ */
+export const STREAM_STALL_MS = 5 * 60_000
+export const STREAM_STALL_REASON = 'stalled'
 
 // How many requests a proven modality strip stays memoized before the next
 // one probes with images again. See toolResultModalityRejects for why it
@@ -230,7 +256,7 @@ const STATUS_REASON_LABEL: Record<number, string> = {
   529: 'overloaded'
 }
 
-type ErrorClass = 'transient' | 'hard' | 'offline' | 'unknown'
+type ErrorClass = 'transient' | 'hard' | 'offline' | 'stall' | 'unknown'
 
 type ProviderFailure = {
   provider: ProviderId
@@ -275,6 +301,7 @@ export class Thalamus {
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
   private testProvider: StreamableProvider | null
+  private readonly stallTimeoutMs: number
   /**
    * provider:model → the strip scope that actually cured a modality 400,
    * plus how many more requests it applies to. Written only after a
@@ -300,6 +327,7 @@ export class Thalamus {
   constructor(options: ThalamusOptions = {}) {
     this.corpus = options.corpus ?? null
     this.testProvider = options.testProvider ?? null
+    this.stallTimeoutMs = options.stallTimeoutMs ?? STREAM_STALL_MS
   }
 
   setCorpus(corpus: Corpus): void {
@@ -783,8 +811,36 @@ export class Thalamus {
       let cacheCreationTokens = 0
       let cacheReadTokens = 0
 
+      // Stall watchdog: a dead cloud stream aborts itself instead of hanging
+      // the turn until the provider gives up. Re-armed on EVERY chunk, so a
+      // slow-but-alive stream never trips it. Every cloud entry is covered
+      // (the cloud desktop has no local model to exempt — see STREAM_STALL_MS).
+      const stall = new AbortController()
+      const stallMs = this.stallTimeoutMs
+      let stallTimer: ReturnType<typeof setTimeout> | null = null
+      const armStall = (): void => {
+        if (stallMs <= 0) return
+        if (stallTimer) clearTimeout(stallTimer)
+        stallTimer = setTimeout(() => stall.abort(new Error(STREAM_STALL_REASON)), stallMs)
+      }
+      const disarmStall = (): void => {
+        if (stallTimer) clearTimeout(stallTimer)
+        stallTimer = null
+      }
+      const request: ProviderStreamOptions =
+        stallMs > 0
+          ? {
+              ...guarded,
+              signal: options.signal
+                ? AbortSignal.any([options.signal, stall.signal])
+                : stall.signal
+            }
+          : guarded
+
       try {
-        for await (const chunk of entry.provider.stream(guarded)) {
+        armStall()
+        for await (const chunk of entry.provider.stream(request)) {
+          armStall()
           if (chunk.type === 'text') {
             textEmitted = true
           } else if (chunk.type === 'turn_meta') {
@@ -803,6 +859,7 @@ export class Thalamus {
           yield chunk
         }
 
+        disarmStall()
         this.markHealthy(entry.id)
         if (modalityStage === 1 || modalityStage === 2) {
           this.toolResultModalityRejects.set(`${entry.id}:${entry.model}`, {
@@ -826,6 +883,30 @@ export class Thalamus {
         })
         return { kind: 'success' }
       } catch (err) {
+        disarmStall()
+        if (stall.signal.aborted && !options.signal?.aborted) {
+          // The watchdog fired: the provider went silent for the whole
+          // window. No retry — the turn ends on the `stalled` reason and the
+          // person decides (the error card's Continue). Checked before the
+          // generic abort branch, which would otherwise read our own abort
+          // as the user's Stop.
+          const minutes = Math.round(stallMs / 60_000)
+          const detail = `no response from ${entry.id} for ${minutes} minute${minutes === 1 ? '' : 's'}`
+          this.markFailed(entry.id)
+          this.emit('llm.error', { provider: entry.id, error: `${STREAM_STALL_REASON}: ${detail}` })
+          return {
+            kind: 'failed',
+            failure: {
+              provider: entry.id,
+              statusCode: null,
+              errorClass: 'stall',
+              reasonKey: STREAM_STALL_REASON,
+              rawMessage: detail,
+              retries: attempt,
+              durationMs: Date.now() - overallStartedAt
+            }
+          }
+        }
         const message = err instanceof Error ? err.message : String(err)
         this.markFailed(entry.id)
         this.emit('llm.error', { provider: entry.id, error: message })

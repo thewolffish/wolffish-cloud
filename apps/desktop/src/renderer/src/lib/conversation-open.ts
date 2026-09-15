@@ -27,7 +27,10 @@ export function mapConversationMessage(m: ConversationMessage): ChatMessage {
       // would let a continued voice conversation replay every voice note's
       // audio back to the LLM, which is exactly what the flag exists to prevent.
       ...(m.voicePrompt ? { voicePrompt: true } : {}),
-      ...(m.voiceLang ? { voiceLang: m.voiceLang } : {})
+      ...(m.voiceLang ? { voiceLang: m.voiceLang } : {}),
+      // The app's own aside (the Continue after a stalled call) must still
+      // render as a note after a reload, not as the person's bubble.
+      ...(m.systemAside ? { systemAside: true } : {})
     }
   }
   const segments = m.segments ?? [

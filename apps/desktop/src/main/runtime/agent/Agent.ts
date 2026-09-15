@@ -31,13 +31,14 @@ import {
   type Interjection
 } from '@main/runtime/agent/interjection'
 import {
-  lastComputerActionFrom,
+  INDICATOR_OFF_TOOLS,
+  indicatorNoticeText,
+  indicatorNudge,
+  indicatorOffTools,
+  lastIndicatorActionFrom,
   MAX_SCREEN_INDICATOR_NUDGES,
-  screenIndicatorNotice,
-  screenIndicatorNudge,
-  SCREEN_INDICATOR_OFF_TOOL,
-  trackScreenIndicator,
-  type LastComputerAction
+  trackIndicators,
+  type LastIndicatorAction
 } from '@main/runtime/agent/screen-indicator-guard'
 import {
   MAX_TODO_NUDGES,
@@ -1088,11 +1089,14 @@ export class Agent {
     // globally — so a concurrent conversation's live session is never mistaken
     // for this turn's, and so neither guard below can act on a glow this run
     // did not raise. See screen-indicator-guard.
-    let screenIndicatorOn = false
+    // The same set now also carries the mobile driving indicator; both ride
+    // the registry in screen-indicator-guard, so every layer below iterates
+    // INDICATORS instead of naming one capability.
+    let indicatorsOn = new Set<string>()
     let screenIndicatorNudges = 0
-    // The last screen action's evidence + expectation, carried in the tail
-    // so the next step verifies it (see screen-indicator-guard).
-    let lastComputerAction: LastComputerAction | null = null
+    // The last screen/device action's evidence + expectation, carried in the
+    // tail so the next step verifies it (see screen-indicator-guard).
+    let lastComputerAction: LastIndicatorAction | null = null
     // No-progress guard: observes tool-call repetition and surfaces it to the
     // model via the runtime tail (never caps or aborts). Loop-scoped, reset per
     // respond() call. `noProgressReported` dedups the master escalation to once
@@ -1378,9 +1382,7 @@ export class Agent {
         // position — the same observe-and-notify vehicle, and the same
         // shipped failure (a rule read once in a long prompt, then lost to a
         // task that went well), as the phone and voice notices.
-        const screenIndicatorText = screenIndicatorOn
-          ? screenIndicatorNotice(lastComputerAction)
-          : undefined
+        const screenIndicatorText = indicatorNoticeText(indicatorsOn, lastComputerAction)
 
         // Phone-notification notice for THIS iteration: the cadence reminder
         // until something goes out, then the don't-repeat guard. Undefined
@@ -1830,12 +1832,12 @@ export class Agent {
           // most) so the model closes it itself — the lifecycle stays the
           // model's, this only refuses to let the turn end while the claim is
           // live. See screen-indicator-guard.
-          const glowNudge = screenIndicatorNudge(screenIndicatorOn, parsed, screenIndicatorNudges)
+          const glowNudge = indicatorNudge(indicatorsOn, parsed, screenIndicatorNudges)
           if (glowNudge) {
             screenIndicatorNudges += 1
             console.log(
-              `[agent] end_turn with the screen indicator still on — nudging for ` +
-                `${SCREEN_INDICATOR_OFF_TOOL} (${screenIndicatorNudges}/${MAX_SCREEN_INDICATOR_NUDGES}, iter ${iterationCount})`
+              `[agent] end_turn with an indicator still on — nudging for ` +
+                `${glowNudge.offTool} (${screenIndicatorNudges}/${MAX_SCREEN_INDICATOR_NUDGES}, iter ${iterationCount})`
             )
             // The nudge tells the model its reply is already delivered and to
             // end empty once the indicator is down. Honour that: an empty
@@ -1845,7 +1847,7 @@ export class Agent {
             // need. The turn is one tool call from over, so the budget this
             // spends has nothing left to protect.
             emptyTurnNudges = MAX_EMPTY_TURN_NUDGES
-            messages.push(...glowNudge)
+            messages.push(...glowNudge.messages)
             continue
           }
 
@@ -2136,12 +2138,12 @@ export class Agent {
           // notice, the turn-end nudge and the terminal failsafe all read this
           // one flag. Successful calls only — a glow that failed to appear is
           // not on the user's screen.
-          screenIndicatorOn = trackScreenIndicator(screenIndicatorOn, call.name, result.ok)
+          indicatorsOn = trackIndicators(indicatorsOn, call.name, result.ok)
           if (result.ok) {
-            const la = lastComputerActionFrom(result.meta)
+            const la = lastIndicatorActionFrom(result.meta)
             if (la) lastComputerAction = la
           }
-          if (call.name === SCREEN_INDICATOR_OFF_TOOL && result.ok) lastComputerAction = null
+          if (INDICATOR_OFF_TOOLS.has(call.name) && result.ok) lastComputerAction = null
 
           const status: ToolResultStatus = result.ok ? 'success' : 'failed'
 
@@ -2316,12 +2318,15 @@ export class Agent {
       // error, or a spent nudge budget. Not a timer and never mid-session —
       // only this run's own glow is ever cleared, so a concurrent
       // conversation's live session is untouched.
-      if (screenIndicatorOn) {
-        screenIndicatorOn = false
+      if (indicatorsOn.size > 0) {
+        const offTools = indicatorOffTools(indicatorsOn)
+        indicatorsOn = new Set()
         console.log(
-          `[agent] turn ended (${stopReason}) with the screen indicator still on — clearing it`
+          `[agent] turn ended (${stopReason}) with an indicator still on — clearing it (${offTools.join(', ')})`
         )
-        await this.cerebellum.executeTool(SCREEN_INDICATOR_OFF_TOOL, {}).catch(() => undefined)
+        for (const offTool of offTools) {
+          await this.cerebellum.executeTool(offTool, {}).catch(() => undefined)
+        }
       }
       // Ledger truth must survive every exit path. This used to run only on
       // the success path, so a turn that errored on iteration 51 silently

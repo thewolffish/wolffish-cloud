@@ -327,6 +327,13 @@ export type ConversationMessage = {
   voicePrompt?: boolean
   /** Whisper's detected language for a voicePrompt message (ISO 639-1). */
   voiceLang?: string
+  /**
+   * A user-role message the APP wrote, not the person — the "Continue"
+   * after a stalled provider call, say. It rides history as a user turn (so
+   * provider alternation holds and the model reads it as a system aside)
+   * but renders as a muted note, never as the person's own bubble.
+   */
+  systemAside?: boolean
 }
 
 export type ConversationChannel = 'electron' | 'mobile' | 'cli' | 'heartbeat' | 'procedure'
@@ -444,6 +451,8 @@ export type ChatHistoryMessage =
       content: string
       attachments?: ChatHistoryAttachment[]
       reasoningContent?: string
+      /** App-written aside (see ConversationMessage.systemAside). */
+      systemAside?: boolean
     }
   | {
       role: 'assistant'
