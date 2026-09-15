@@ -55,6 +55,17 @@ export default defineConfig(
     }
   },
   {
+    // The live computer-use harness is CommonJS that Electron's main process
+    // loads directly (`electron harness.cjs`), so `require` is its module
+    // system and there is no build step to strip annotations. Same treatment
+    // as the build hooks: only the TypeScript-shaped rules are off.
+    files: ['src/main/__tests__/computer-use-live/**/*.cjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-require-imports': 'off'
+    }
+  },
+  {
     // The terminal client is Solid + OpenTUI, not React: its JSX elements are
     // terminal renderables (`<box>`, `<text>`), `<For>` needs no keys, and
     // there are no React hooks to police. The React rule sets are off here;

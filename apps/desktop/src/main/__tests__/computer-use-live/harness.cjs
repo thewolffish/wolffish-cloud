@@ -181,7 +181,9 @@ async function startTarget() {
     try {
       const b = await get('/bounds')
       if (b) return b
-    } catch {}
+    } catch {
+      // Not up yet — keep polling.
+    }
     await sleep(250)
   }
   throw new Error('target did not start')
@@ -874,13 +876,19 @@ async function main() {
 async function cleanup(code) {
   try {
     await plugin?.destroy()
-  } catch {}
+  } catch {
+    // Best-effort teardown.
+  }
   try {
     await get('/quit')
-  } catch {}
+  } catch {
+    // The target may already be gone.
+  }
   try {
     target?.kill()
-  } catch {}
+  } catch {
+    // Already exited.
+  }
   // Discard the Notepad windows this run opened (unsaved text, no prompt).
   await new Promise((r) =>
     execFile(
