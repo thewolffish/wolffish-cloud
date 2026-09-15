@@ -505,7 +505,7 @@
       },
       "computerUse": {
         "title": "Computer Use",
-        "subtitle": "Let the agent see your screen and control your mouse and keyboard to perform desktop tasks.",
+        "subtitle": "Let the agent see your screen and drive apps without taking your mouse — actions are delivered to the target window in the background, with a shadow cursor showing where it works.",
         "enableLabel": "Enable Computer Use",
         "enableHint": "When enabled, the agent can take screenshots, move the mouse, click, scroll, and type.",
         "permissionsTitle": "Permissions",
@@ -516,12 +516,16 @@
         "visionWarning": "The selected Brain model ({{model}}) does not accept images, so screenshots never reach it and it cannot click accurately. Switch to a vision-capable model before using Computer Use.",
         "howItWorksTitle": "How it works",
         "howItWorks": {
-          "step1": "The agent takes a screenshot to see what's on your screen — with a crosshair marking the cursor.",
-          "step2": "It zooms into small targets at native resolution before clicking, so it never guesses.",
-          "step3": "Every click returns a magnified close-up proving exactly where it landed, and the agent corrects itself if it missed.",
-          "step4": "This verified loop continues until the task is complete.",
-          "step5": "It chooses each screenshot's resolution and format itself — sharper, lossless captures when it needs to read fine detail, lighter ones when it's only navigating. Ask for a higher-resolution screenshot any time."
-        }
+          "step1": "A blue glow, a notice and a shadow cursor appear on the display while the agent works — the shadow cursor glides to every target before the action, and your own pointer stays yours.",
+          "step2": "Clicks, typing and shortcuts are posted straight to the target window in the background; when an app refuses, the agent switches to a brief foreground delivery and says so.",
+          "step3": "It finds controls by name through the app's accessibility tree and clicks them by reference, or zooms into small targets at native resolution — never guessing.",
+          "step4": "Every action returns evidence: how it was delivered, the control found under the point, an objective before-and-after screen comparison, and whether your mouse moved during it.",
+          "step5": "It checks the permissions this machine grants before starting and tells you the exact setting to enable when one is missing.",
+          "step6": "It chooses each capture's resolution and format itself — sharper when it must read detail, lighter when it only navigates. Ask for a higher-resolution screenshot any time."
+        },
+        "openSettings": "Open System Settings",
+        "permHint": "Both are one-time grants. Screen Recording takes effect after restarting Wolffish.",
+        "linuxTitle": "Desktop session"
       },
       "browserExtension": {
         "title": "Browser Extension",

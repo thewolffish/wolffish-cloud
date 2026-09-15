@@ -2046,7 +2046,14 @@ export type ComputerUsePermissions = {
   hint: string | null
   accessibility: boolean
   screenRecording: boolean
+  /**
+   * Linux only: the session type and compositor the desktop runs under, so
+   * the panel can say what background input will and will not do there.
+   */
+  linux?: { sessionType: string; desktop: string | null }
 }
+
+export type ComputerUseSettingsPane = 'accessibility' | 'screenRecording' | 'automation'
 
 /**
  * No setter: screenshot resolution and format are the agent's to choose per
@@ -2056,6 +2063,12 @@ export type ComputerUsePermissions = {
 export type ComputerUseApi = {
   getConfig: () => Promise<ComputerUseConfig>
   checkPermissions: () => Promise<ComputerUsePermissions>
+  /**
+   * macOS: open the Privacy & Security pane that holds a grant. Triggers the
+   * system prompt for it first where the OS allows (Accessibility), so the
+   * app shows up in the list ready to be switched on.
+   */
+  openSettings: (pane: ComputerUseSettingsPane) => Promise<{ ok: boolean }>
 }
 
 export type BrowserExtensionConfig = {
@@ -2634,7 +2647,8 @@ const api: WolffishApi = {
   },
   computerUse: {
     getConfig: () => ipcRenderer.invoke('computerUse:getConfig'),
-    checkPermissions: () => ipcRenderer.invoke('computerUse:checkPermissions')
+    checkPermissions: () => ipcRenderer.invoke('computerUse:checkPermissions'),
+    openSettings: (pane) => ipcRenderer.invoke('computerUse:openSettings', pane)
   },
   browserExtension: {
     getConfig: () => ipcRenderer.invoke('browserExtension:getConfig'),

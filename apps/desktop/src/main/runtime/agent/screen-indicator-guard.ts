@@ -72,6 +72,55 @@ export const SCREEN_INDICATOR_NOTICE =
   'A turn that ends with it still up tells them they are being watched when they are not.'
 
 /**
+ * What the model's last screen action was and what it said should happen —
+ * the plugin reports it on every input tool's result (`meta.computerUse.lastAction`).
+ * Carried in the runtime tail so the model's next step VERIFIES before it
+ * plans: the verify step and the plan step are one forward pass, and the
+ * intent they check against is right here instead of a dozen messages up.
+ */
+export type LastComputerAction = {
+  tool: string
+  target: string | null
+  expect: string | null
+  summary: string
+}
+
+/**
+ * The full indicator line for one iteration: the standing notice, plus the
+ * last action's evidence and expectation when there is one. Pure.
+ */
+export function screenIndicatorNotice(last: LastComputerAction | null | undefined): string {
+  if (!last) return SCREEN_INDICATOR_NOTICE
+  const expect = last.expect ? ` Expected: ${last.expect}.` : ''
+  return (
+    `${SCREEN_INDICATOR_NOTICE} LAST SCREEN ACTION: ${last.summary}.${expect} ` +
+    'Before your next action, check on a fresh capture (or computer_read_element) that this actually happened; ' +
+    'if it did not, re-aim or take another route rather than repeating it.'
+  )
+}
+
+/**
+ * Pull the last computer action out of a tool result's UI-only meta, when
+ * the result carries one. Pure.
+ */
+export function lastComputerActionFrom(
+  meta: Record<string, unknown> | undefined
+): LastComputerAction | null {
+  const cu = meta?.computerUse
+  if (!cu || typeof cu !== 'object') return null
+  const la = (cu as { lastAction?: unknown }).lastAction
+  if (!la || typeof la !== 'object') return null
+  const rec = la as Record<string, unknown>
+  if (typeof rec.summary !== 'string') return null
+  return {
+    tool: typeof rec.tool === 'string' ? rec.tool : 'action',
+    target: typeof rec.target === 'string' ? rec.target : null,
+    expect: typeof rec.expect === 'string' ? rec.expect : null,
+    summary: rec.summary
+  }
+}
+
+/**
  * The nudge, injected when the model ends its turn with the indicator up.
  *
  * Written for a model that believes it is already done: the reply is gone,

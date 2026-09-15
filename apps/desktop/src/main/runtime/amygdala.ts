@@ -264,7 +264,9 @@ export class Amygdala {
    */
   async requestApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
     const id = generateApprovalId()
-    const rule = sessionAllowRule(req.toolCall)
+    // A description may declare the unit of consent itself (computer use:
+    // the app the action resolved to); otherwise the call decides.
+    const rule = req.description?.scope ?? sessionAllowRule(req.toolCall)
     if (req.sessionKey && this.sessionAllow.get(req.sessionKey)?.has(rule)) {
       this.options.corpus?.emit('safety.autoApproved', {
         id,

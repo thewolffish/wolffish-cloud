@@ -31,11 +31,13 @@ import {
   type Interjection
 } from '@main/runtime/agent/interjection'
 import {
+  lastComputerActionFrom,
   MAX_SCREEN_INDICATOR_NUDGES,
+  screenIndicatorNotice,
   screenIndicatorNudge,
-  SCREEN_INDICATOR_NOTICE,
   SCREEN_INDICATOR_OFF_TOOL,
-  trackScreenIndicator
+  trackScreenIndicator,
+  type LastComputerAction
 } from '@main/runtime/agent/screen-indicator-guard'
 import {
   MAX_TODO_NUDGES,
@@ -1088,6 +1090,9 @@ export class Agent {
     // did not raise. See screen-indicator-guard.
     let screenIndicatorOn = false
     let screenIndicatorNudges = 0
+    // The last screen action's evidence + expectation, carried in the tail
+    // so the next step verifies it (see screen-indicator-guard).
+    let lastComputerAction: LastComputerAction | null = null
     // No-progress guard: observes tool-call repetition and surfaces it to the
     // model via the runtime tail (never caps or aborts). Loop-scoped, reset per
     // respond() call. `noProgressReported` dedups the master escalation to once
@@ -1373,7 +1378,9 @@ export class Agent {
         // position — the same observe-and-notify vehicle, and the same
         // shipped failure (a rule read once in a long prompt, then lost to a
         // task that went well), as the phone and voice notices.
-        const screenIndicatorText = screenIndicatorOn ? SCREEN_INDICATOR_NOTICE : undefined
+        const screenIndicatorText = screenIndicatorOn
+          ? screenIndicatorNotice(lastComputerAction)
+          : undefined
 
         // Phone-notification notice for THIS iteration: the cadence reminder
         // until something goes out, then the don't-repeat guard. Undefined
@@ -2130,6 +2137,11 @@ export class Agent {
           // one flag. Successful calls only — a glow that failed to appear is
           // not on the user's screen.
           screenIndicatorOn = trackScreenIndicator(screenIndicatorOn, call.name, result.ok)
+          if (result.ok) {
+            const la = lastComputerActionFrom(result.meta)
+            if (la) lastComputerAction = la
+          }
+          if (call.name === SCREEN_INDICATOR_OFF_TOOL && result.ok) lastComputerAction = null
 
           const status: ToolResultStatus = result.ok ? 'success' : 'failed'
 

@@ -15,7 +15,9 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
+  lastComputerActionFrom,
   MAX_SCREEN_INDICATOR_NUDGES,
+  screenIndicatorNotice,
   screenIndicatorNudge,
   SCREEN_INDICATOR_NOTICE,
   SCREEN_INDICATOR_OFF_TOOL,
@@ -96,13 +98,28 @@ async function run(): Promise<void> {
     assert.deepEqual(
       [...required].sort(),
       [
+        'computer_click_element',
+        'computer_find',
+        'computer_focus_window',
+        'computer_hover',
+        'computer_key_down',
+        'computer_key_up',
         'computer_keyboard_press',
         'computer_keyboard_type',
+        'computer_list_windows',
+        'computer_menu',
         'computer_mouse_click',
+        'computer_mouse_down',
         'computer_mouse_drag',
         'computer_mouse_move',
         'computer_mouse_scroll',
+        'computer_mouse_up',
+        'computer_read_element',
         'computer_screenshot',
+        'computer_set_value',
+        'computer_wait_for',
+        'computer_window_screenshot',
+        'computer_window_state',
         'computer_zoom'
       ],
       'gating more would break the escape hatch; gating less would leak a capture'
@@ -114,6 +131,9 @@ async function run(): Promise<void> {
     for (const tool of [
       'computer_list_displays',
       'computer_wait',
+      'computer_check_access',
+      'computer_clipboard_read',
+      'computer_clipboard_write',
       SCREEN_INDICATOR_ON_TOOL,
       SCREEN_INDICATOR_OFF_TOOL
     ]) {
@@ -257,6 +277,29 @@ async function run(): Promise<void> {
       new Date('2026-09-13T10:00:00Z')
     )
     assert.ok(tail.includes(SCREEN_INDICATOR_OFF_TOOL), 'the tail must name the one exit')
+  })
+
+  await check('the last screen action rides the notice so the next step verifies it', () => {
+    const la = lastComputerActionFrom({
+      computerUse: {
+        lastAction: {
+          tool: 'click',
+          target: 'Save',
+          expect: 'the dialog closes',
+          summary: 'click "Save": background, unverifiable, no visible change'
+        }
+      }
+    })
+    assert.ok(la, 'meta shape must parse')
+    const text = screenIndicatorNotice(la)
+    assert.ok(text.startsWith(SCREEN_INDICATOR_NOTICE), 'the standing notice comes first')
+    assert.ok(
+      text.includes('no visible change') && text.includes('the dialog closes'),
+      'evidence and expectation both ride'
+    )
+    assert.equal(screenIndicatorNotice(null), SCREEN_INDICATOR_NOTICE, 'no action, no extra line')
+    assert.equal(lastComputerActionFrom({ diff: 'x' }), null, 'unrelated meta is ignored')
+    assert.equal(lastComputerActionFrom(undefined), null)
   })
 
   await check('a turn that never touched the screen pays nothing', () => {

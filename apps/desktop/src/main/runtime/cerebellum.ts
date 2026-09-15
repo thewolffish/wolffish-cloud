@@ -222,6 +222,15 @@ export type ApprovalDescription = {
   command?: string
   impact?: string
   risk: RiskLevel
+  /**
+   * The rule "Allow for this conversation" grants when the user approves
+   * THIS card, when the tool name is the wrong unit of consent. Computer use
+   * sets it to the application it resolved the action to
+   * (`computer-use@Safari`): one approval then covers every screen action
+   * into that app for the rest of the conversation, and a new app asks
+   * again. Absent, the rule is derived from the call (see sessionAllowRule).
+   */
+  scope?: string
 }
 
 /** The single tool the `ask` capability exposes. */

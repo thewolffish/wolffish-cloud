@@ -2480,6 +2480,7 @@ app.whenReady().then(async () => {
       hint: string | null
       accessibility: boolean
       screenRecording: boolean
+      linux?: { sessionType: string; desktop: string | null }
     } => {
       const platform = process.platform
 
@@ -2504,17 +2505,56 @@ app.whenReady().then(async () => {
       }
 
       if (platform === 'linux') {
+        const env = process.env
+        const sessionType = env.WAYLAND_DISPLAY
+          ? 'wayland'
+          : env.DISPLAY
+            ? 'x11'
+            : (env.XDG_SESSION_TYPE ?? 'unknown')
+        const desktop = env.XDG_CURRENT_DESKTOP ?? env.DESKTOP_SESSION ?? null
         return {
           platform,
           accessibility: true,
           screenRecording: true,
-          hint: 'Linux requires X11. Wayland is not supported by the automation library.'
+          linux: { sessionType, desktop },
+          hint:
+            sessionType === 'wayland'
+              ? `Wayland session${desktop ? ` (${desktop})` : ''}: background input depends on the compositor — GNOME 47+ and KDE 6+ can grant it through the remote-desktop portal prompt; elsewhere Wolffish moves the pointer briefly for each action. Captures work through the portal or XWayland.`
+              : sessionType === 'x11'
+                ? 'X11 session: background input and captures work. Write access to /dev/uinput (input group) adds an independent pointer; AT-SPI adds finding controls by name.'
+                : 'No display session detected. Computer use needs a graphical session (X11 or Wayland).'
         }
       }
 
       return { platform, accessibility: true, screenRecording: true, hint: null }
     }
   )
+
+  // Opens the macOS Privacy & Security pane that holds a computer-use grant.
+  // Accessibility can be prompted for directly; Screen Recording only appears
+  // in the list once the app has tried to capture, so the pane is opened
+  // straight away and the first capture registers the app.
+  handle('computerUse:openSettings', async (_e, pane: string): Promise<{ ok: boolean }> => {
+    if (process.platform !== 'darwin') return { ok: false }
+    const panes: Record<string, string> = {
+      accessibility:
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+      screenRecording:
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+      automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'
+    }
+    const url = panes[pane]
+    if (!url) return { ok: false }
+    if (pane === 'accessibility') {
+      try {
+        systemPreferences.isTrustedAccessibilityClient(true)
+      } catch {
+        // The pane still opens.
+      }
+    }
+    await shell.openExternal(url)
+    return { ok: true }
+  })
 
   // Browser Extension — WebSocket server for the Wolffish browser extension.
   handle(

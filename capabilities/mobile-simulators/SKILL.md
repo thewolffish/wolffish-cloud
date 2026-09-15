@@ -101,7 +101,7 @@ tools:
         description: udid or name; default the booted device
   - name: sim_screenshot
     readOnly: true
-    description: 'Screenshot the iOS Simulator screen — the pixels come back in the result (needs a vision-capable model) and the PNG is saved under the workspace files/screenshots/. This is how you SEE the app to verify a change. To tap or type on iOS, use computer-use on the Simulator window (computer_glow_on first — the capture and input tools refuse to run until the screen indicator is up — then computer_screenshot + computer_mouse_click / computer_keyboard_type, and computer_glow_off when you are done with the screen) — simctl has no input injection.'
+    description: 'Screenshot the iOS Simulator screen — the pixels come back in the result (needs a vision-capable model) and the PNG is saved under the workspace files/screenshots/. This is how you SEE the app to verify a change. To tap or type on iOS, use computer-use on the Simulator window (computer_glow_on first — the capture and input tools refuse to run until the screen indicator is up — then computer_list_windows to pick the Simulator window, computer_window_screenshot + computer_mouse_click / computer_keyboard_type (delivered in the background, the user keeps their pointer), and computer_glow_off when you are done with the screen) — simctl has no input injection.'
     parameters:
       device:
         type: string
@@ -226,8 +226,10 @@ developer verifies it: build, install, launch, screenshot, read the log, poke th
 4. `sim_screenshot` to see the result; `sim_log` (the app's process name) for
    crashes and print output.
 5. To tap, scroll or type on iOS, drive the Simulator window with computer-use:
-   `computer_glow_on`, then `computer_screenshot`, `computer_mouse_click`,
-   `computer_keyboard_type`, and `computer_glow_off` when the screen work is done.
+   `computer_glow_on`, then `computer_list_windows` (find the Simulator window),
+   `computer_window_screenshot`, `computer_mouse_click`, `computer_keyboard_type`
+   (background delivery — the user's pointer is untouched), and `computer_glow_off`
+   when the screen work is done.
    The indicator is not optional there — every capture and input tool refuses to
    run until it is up. simctl has no input injection. `sim_open_url` handles deep
    links.

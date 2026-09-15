@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.0",
+    "@trycua/cua-driver": "0.28.1",
     "sharp": "^0.34.5"
   }
 }
