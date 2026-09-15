@@ -83,7 +83,8 @@ import {
   hydrateOverflow,
   rebuildConversation,
   type WireConversationMeta,
-  type WireRecord
+  type WireRecord,
+  spilledSegments
 } from '@main/cloud/restore'
 import { cloudSession } from '@main/cloud/session'
 import {
@@ -946,33 +947,16 @@ async function wireMessage(
     (full.length > OVERFLOW_PREVIEW_CHARS
       ? `\n\n[… ${full.length.toLocaleString('en-US')} characters; the full message is synced alongside this record]`
       : '')
-  slim.segments = [placeholderSegment('[full segment detail in the message body blob]')]
+  slim.segments = spilledSegments(copy, '[full segment detail in the message body blob]')
   slim.syncOverflow = { sha256: sha, bytes: bytes.byteLength, name }
   return slim
 }
-
-/**
- * The one segment a spilled record carries, in broca's text-segment shape
- * (`delta`, not `text`): every renderer concatenates `delta`, so a
- * placeholder written any other way showed the literal word "undefined" to
- * a reader that never fetched the body — which is every reader the owner's
- * own client is not. (Records already on the server keep the old shape;
- * restore.ts coerces those on the way in.)
- */
-const placeholderSegment = (
-  delta: string
-): { kind: 'text'; turnId: string; segmentId: string; delta: string } => ({
-  kind: 'text',
-  turnId: '',
-  segmentId: 'sync-overflow',
-  delta
-})
 
 /** The pre-spill shape, kept for the one path that still needs it: an
  *  overflow blob that could not be uploaded at all. */
 function truncatedMessage(copy: ConversationMessage): Record<string, unknown> {
   const slim = { ...copy } as Record<string, unknown>
-  slim.segments = [placeholderSegment('[segment detail elided for sync — too large]')]
+  slim.segments = spilledSegments(copy, '[segment detail elided for sync — too large]')
   if (JSON.stringify(slim).length > MAX_RECORD_BYTES) {
     const full = String(slim.content ?? '')
     slim.content =

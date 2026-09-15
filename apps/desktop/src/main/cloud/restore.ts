@@ -192,3 +192,51 @@ export function rebuildConversation(
     updatedAt: Date.parse(meta.updated_at) || Date.now()
   }
 }
+
+/**
+ * The one segment a spilled record carries, in broca's text-segment shape
+ * (`delta`, not `text`): every renderer concatenates `delta`, so a
+ * placeholder written any other way showed the literal word "undefined" to
+ * a reader that never fetched the body — which is every reader the owner's
+ * own client is not. (Records already on the server keep the old shape;
+ * restore.ts coerces those on the way in.)
+ */
+export const placeholderSegment = (
+  delta: string
+): { kind: 'text'; turnId: string; segmentId: string; delta: string } => ({
+  kind: 'text',
+  turnId: '',
+  segmentId: 'sync-overflow',
+  delta
+})
+
+/**
+ * The segments a spilled record keeps: the placeholder, plus every
+ * `user_message` segment the message carried.
+ *
+ * Those are mid-turn messages the USER sent — typed into the phone while a run
+ * was working, read by the agent at its next stop point, and recorded inside
+ * the assistant's message at the point they were read (see
+ * runtime/agent/interjection.ts). Everything else in a spilled record is the
+ * agent's own output, and losing some of it costs a detail that is one blob
+ * fetch away. These are different in kind:
+ *
+ *  - on the phone they have NO other copy. The pending bubble that stood in for
+ *    the message comes down the moment it is delivered, and the phone's
+ *    transcript is rebuilt from these records — so a record without them is a
+ *    conversation where the user's own words are simply missing;
+ *  - the truncated path (`truncatedMessage`) has no blob at all, so anything
+ *    dropped there is gone from the org's copy for good;
+ *  - even on the normal spill path, hydration can miss or lag, and until it
+ *    lands the placeholder is the whole transcript for that turn.
+ *
+ * They are also tiny — a sentence or two each — so carrying them on a record
+ * that is already over the ceiling costs nothing that matters. The full body in
+ * the blob still holds everything; this is only about what survives WITHOUT it.
+ */
+export function spilledSegments(msg: ConversationMessage, note: string): unknown[] {
+  const kept = (msg.segments ?? []).filter(
+    (seg) => seg && typeof seg === 'object' && (seg as { kind?: unknown }).kind === 'user_message'
+  )
+  return [placeholderSegment(note), ...kept]
+}
