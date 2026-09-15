@@ -194,7 +194,10 @@ export function BrowserExtensionPanel(): React.JSX.Element {
       try {
         const result = await window.api.browserExtension.fix(finding.fix.action, {
           target: finding.browser ?? null,
-          url: finding.fix.url
+          url: finding.fix.url,
+          // The finding names its own macOS pane; without it every
+          // open_system_settings fix landed on Screen Recording.
+          pane: finding.fix.pane
         })
         toast.show({ message: result.message, tone: result.ok ? 'success' : 'error' })
       } catch {

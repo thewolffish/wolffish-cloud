@@ -1431,11 +1431,21 @@ export class MobileChannel {
         channel: 'mobile',
         sentAt: Date.now()
       })
-      // The phone is told "got it" only once the message is on disk. It has no
+      // The phone is told "got it" only once the park has ANSWERED. It has no
       // other copy — the pending bubble comes down the moment the agent reads
       // it — so an ack that outran durability would be a promise this process
       // could break by crashing.
-      if (result.status === 'pending') await result.durable
+      //
+      // A park that FAILED is still acked: the message is in the live inbox
+      // and the running turn will almost certainly read it, whereas refusing
+      // here would make the phone re-send and land the same words twice. What
+      // it does not do is pass silently — the one guarantee this await exists
+      // for did not hold, and the log is where that has to show up.
+      if (result.status === 'pending' && !(await result.durable)) {
+        this.log(
+          `interjection ${messageId} from the phone in ${conversationId} could NOT be parked — acked, but it survives only in memory`
+        )
+      }
       this.log(`interjection ${messageId} from the phone in ${conversationId} — ${result.status}`)
       // Only the verdict crosses the wire — `durable` is a local promise.
       return { status: result.status }

@@ -13,7 +13,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
  *   pending     the desktop's copy replaces the optimistic row (same id)
  *   delivered   the agent read it — the row comes down, the segment draws it
  *   withdrawn   user / canceled → the words go back to the composer;
- *               turn_ended / error → it goes as the next turn, same id
+ *               turn_ended / error → nothing here; the desktop re-sends it
+ *                                    as the next turn under the same id
  *
  * …and only for a message THIS phone sent. Another surface's message merely
  * adds and removes a row. Plus the two ways the hand-over is not one after

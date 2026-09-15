@@ -32,6 +32,8 @@ const execFileP = promisify(execFile)
 
 export type FindingSeverity = 'blocker' | 'degraded' | 'note'
 export type FixKind = 'auto' | 'one-click' | 'guided' | 'none'
+/** The macOS Privacy panes a fix can open. Named, not derived from the url. */
+export type MacSettingsPane = 'accessibility' | 'screenRecording' | 'automation'
 
 export interface Finding {
   /** Stable snake_case id — the renderer translates by id, the model relays title + steps. */
@@ -40,7 +42,12 @@ export interface Finding {
   title: string
   /** One sentence: why it matters for what the user asked. */
   detail: string
-  fix: { kind: FixKind; action?: string; steps: string[]; url?: string }
+  /**
+   * `pane` is carried by the FINDING rather than inferred at the fix site:
+   * every `open_system_settings` finding names a different switch, and a
+   * default chosen in the executor sends two of the three to the wrong one.
+   */
+  fix: { kind: FixKind; action?: string; steps: string[]; url?: string; pane?: MacSettingsPane }
   /** What a re-probe checks to confirm the fix landed. */
   verify: string
   /** Selection key when the finding is about one connected browser. */
@@ -159,8 +166,8 @@ export interface FixResult {
 
 export interface FixOptions {
   target?: string | null
-  /** open_system_settings: which macOS pane. */
-  pane?: 'accessibility' | 'screenRecording' | 'automation' | string
+  /** open_system_settings: which macOS pane. Forwarded from the finding's own `fix.pane`. */
+  pane?: MacSettingsPane | string
   /** open_extension_details: the exact url from the finding, when the caller has it. */
   url?: string
   extensionId?: string | null
@@ -170,6 +177,8 @@ export interface FixDeps {
   restartServer(port: number): Promise<void>
   sendPortUpdate(port: number): void
   requestReload(target?: string | null): Promise<void>
+  /** True once an identified extension is connected — what the launch fix waits on. */
+  isExtensionConnected?(): boolean
   /** Extension id of the connected (or last known) browser, for chrome://extensions/?id= links. */
   extensionId?: string | null
 }
@@ -182,7 +191,13 @@ export interface FixDeps {
 export interface BrowserEntry {
   slug: string
   name: string
-  darwin: { app: string; bundleId: string } | null
+  /**
+   * `proc` is the MAIN executable's own spelling when it differs from the
+   * .app's — Firefox ships `Firefox.app/Contents/MacOS/firefox`. Naming the
+   * odd one out beats matching case-insensitively: a case-blind compare would
+   * also let an unrelated `arc` process (Arcanist) pass for Arc.
+   */
+  darwin: { app: string; bundleId: string; proc?: string } | null
   win32: { exes: string[]; progIds: string[] } | null
   linux: { bins: string[]; desktops: string[]; procs: string[] } | null
   /** Default profile dir relative to the platform's app-data root; null for non-Chromium. */
@@ -291,7 +306,7 @@ export const BROWSERS: BrowserEntry[] = [
   {
     slug: 'firefox',
     name: 'Firefox',
-    darwin: { app: 'Firefox', bundleId: 'org.mozilla.firefox' },
+    darwin: { app: 'Firefox', bundleId: 'org.mozilla.firefox', proc: 'firefox' },
     win32: { exes: ['Mozilla Firefox\\firefox.exe'], progIds: ['firefoxurl'] },
     linux: {
       bins: ['firefox', 'firefox-esr'],
@@ -306,10 +321,26 @@ export const BROWSERS: BrowserEntry[] = [
 const CHROMIUM_SLUGS = new Set(BROWSERS.filter((b) => b.profile !== null).map((b) => b.slug))
 
 /** Same URLs computer-use's access.mjs opens — one place per pane. */
-export const MAC_SETTINGS: Record<string, string> = {
+export const MAC_SETTINGS: Record<MacSettingsPane, string> = {
   accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
   screenRecording: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
   automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'
+}
+
+/**
+ * Which pane an `open_system_settings` fix should open. The finding's own
+ * `pane` first, then the url it carries, and only then a default — so the
+ * wrong-switch bug cannot come back through a caller that forwards less.
+ */
+export function resolvePane(opts: FixOptions): MacSettingsPane {
+  const named = opts.pane
+  if (named === 'accessibility' || named === 'screenRecording' || named === 'automation') {
+    return named
+  }
+  const byUrl = (Object.keys(MAC_SETTINGS) as MacSettingsPane[]).find(
+    (key) => MAC_SETTINGS[key] === opts.url
+  )
+  return byUrl ?? 'screenRecording'
 }
 
 /**
@@ -412,11 +443,26 @@ export async function runningBrowsers(): Promise<string[]> {
   } catch {
     return []
   }
+  return browsersFromProcessNames(names, platform)
+}
+
+/**
+ * The matching half of `runningBrowsers`, pure so it can be exercised without
+ * the machine happening to have a given browser open. `names` are process
+ * names already reduced to their base form by the collector above
+ * (lower-cased on Windows, basenames elsewhere).
+ *
+ * Matching stays EXACT on every platform — `Google Chrome Helper` must not
+ * keep a quitting Chrome in the listing — so a browser whose executable is
+ * spelled differently from its .app names that spelling in `darwin.proc`.
+ */
+export function browsersFromProcessNames(names: string[], platform: NodeJS.Platform): string[] {
   const set = new Set(names)
   const running: string[] = []
   for (const entry of BROWSERS) {
     let hit = false
-    if (platform === 'darwin') hit = Boolean(entry.darwin && set.has(entry.darwin.app))
+    if (platform === 'darwin')
+      hit = Boolean(entry.darwin && set.has(entry.darwin.proc ?? entry.darwin.app))
     else if (platform === 'win32')
       hit = Boolean(
         entry.win32?.exes.some((exe) => set.has(path.win32.basename(exe).toLowerCase()))
@@ -1003,7 +1049,8 @@ export function composeFindings(input: Partial<DoctorFacts>): DoctorReport {
             'System Settings → Privacy & Security → Screen Recording → turn on Wolffish.',
             'Restart Wolffish afterwards — macOS only applies this grant to a fresh process.'
           ],
-          url: MAC_SETTINGS.screenRecording
+          url: MAC_SETTINGS.screenRecording,
+          pane: 'screenRecording'
         },
         verify: 'getMediaAccessStatus("screen") reports granted.'
       })
@@ -1019,7 +1066,8 @@ export function composeFindings(input: Partial<DoctorFacts>): DoctorReport {
           kind: 'one-click',
           action: 'open_system_settings',
           steps: ['System Settings → Privacy & Security → Accessibility → turn on Wolffish.'],
-          url: MAC_SETTINGS.accessibility
+          url: MAC_SETTINGS.accessibility,
+          pane: 'accessibility'
         },
         verify: 'isTrustedAccessibilityClient reports true.'
       })
@@ -1037,7 +1085,8 @@ export function composeFindings(input: Partial<DoctorFacts>): DoctorReport {
           steps: [
             'System Settings → Privacy & Security → Automation → allow Wolffish for the browser.'
           ],
-          url: MAC_SETTINGS.automation
+          url: MAC_SETTINGS.automation,
+          pane: 'automation'
         },
         verify: 'An AppleScript to the browser succeeds.'
       })
@@ -1160,6 +1209,37 @@ export async function openBrowserUrl(url: string, prefer?: string | null): Promi
   }
 }
 
+/** Start a browser from its install path — `openBrowserUrl`'s mechanics, without a url. */
+async function launchInstall(installPath: string): Promise<void> {
+  if (os.platform() === 'darwin') {
+    await execFileP('open', ['-a', installPath])
+    return
+  }
+  const child = spawn(installPath, [], { detached: true, stdio: 'ignore' })
+  // spawn reports a failed exec on an `error` EVENT, not as a throw, so the
+  // caller's try/catch cannot see it — and an `error` nobody listens for is an
+  // uncaught exception in the main process. The launch is fire-and-forget
+  // either way: `waitForConnection` is what decides whether it worked.
+  child.on('error', (error) => {
+    console.error(`[extension] launching ${installPath} failed:`, error)
+  })
+  child.unref()
+}
+
+/** How long the launch fix waits for the extension to come up in the new browser. */
+const LAUNCH_CONNECT_WAIT_MS = 30_000
+
+/** Poll until an extension connects, or the wait runs out. */
+async function waitForConnection(deps: FixDeps, waitMs: number): Promise<boolean> {
+  if (!deps.isExtensionConnected) return false
+  const until = Date.now() + waitMs
+  while (Date.now() < until) {
+    if (deps.isExtensionConnected()) return true
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  return deps.isExtensionConnected()
+}
+
 /**
  * Run one repair. Every branch returns a user-readable message; `steps`
  * carry the manual part when the fix is only guided on this platform.
@@ -1169,17 +1249,50 @@ export async function applyFix(
   deps: FixDeps,
   opts: FixOptions = {}
 ): Promise<FixResult> {
-  const workspace = await import('@main/workspace/workspace')
   switch (action) {
-    case 'launch_browser':
-      // The plugin owns launching (it has the default-browser detection and
-      // the wait-for-connect loop); the bridge only reports so the caller
-      // knows to run it there.
-      return {
-        ok: false,
-        message:
-          'launch_browser runs in the browser-extension plugin (ext_launch_browser), not through the bridge.'
+    case 'launch_browser': {
+      // Launching is the APP's job as much as the plugin's. `ext_fix` still
+      // routes to the plugin before it ever reaches the bridge — the plugin
+      // has the richer path, with default-browser detection — but the Settings
+      // panel has no plugin to fall through to, and `no_browser_connected` is
+      // the most common blocker a person opens that panel on. Returning
+      // "runs in the plugin, not through the bridge" put an internal routing
+      // note behind a Fix button, under a finding whose own steps promise
+      // *Wolffish will start <browser>*. Either route now keeps that promise.
+      if (deps.isExtensionConnected?.()) {
+        return { ok: true, message: 'A browser is already connected — nothing to start.' }
       }
+      const installed = await installedBrowsers()
+      // Same choice the finding made: the named browser, else the first
+      // installed one in table order.
+      const chosen = installed.find((b) => b.slug === opts.target) ?? installed[0]
+      if (!chosen) {
+        return {
+          ok: false,
+          message: 'No supported browser is installed on this computer.',
+          steps: ['Install Chrome, Edge, Brave or Firefox, then run the check again.']
+        }
+      }
+      try {
+        await launchInstall(chosen.path)
+      } catch (error) {
+        return {
+          ok: false,
+          message: `Could not start ${chosen.name} — ${error instanceof Error ? error.message : String(error)}`,
+          steps: [`Open ${chosen.name} yourself, then run the check again.`]
+        }
+      }
+      const connected = await waitForConnection(deps, LAUNCH_CONNECT_WAIT_MS)
+      return connected
+        ? { ok: true, message: `Started ${chosen.name} and the Wolffish extension connected.` }
+        : {
+            ok: true,
+            message: `Started ${chosen.name}, but the extension has not connected yet.`,
+            steps: [
+              `If the Wolffish icon is missing from ${chosen.name}'s toolbar, the extension is not loaded there yet — run the check again for the steps.`
+            ]
+          }
+    }
 
     case 'reload_extension':
       await deps.requestReload(opts.target ?? null)
@@ -1189,6 +1302,11 @@ export async function applyFix(
       }
 
     case 'resync_extension': {
+      // Imported here, not at the top: the workspace module pulls Electron in,
+      // and every other branch of this switch is plain Node — which is what
+      // lets the fix executor be exercised without an Electron binary, the
+      // same reason the collectors above import it lazily.
+      const workspace = await import('@main/workspace/workspace')
       await workspace.ensureBundledExtension()
       await workspace.ensureBridgeToken()
       await deps.requestReload(opts.target ?? null)
@@ -1210,6 +1328,7 @@ export async function applyFix(
           ]
         }
       }
+      const workspace = await import('@main/workspace/workspace')
       await workspace.setBrowserExtensionConfig({ port })
       // Tell the extensions the new port BEFORE the old socket dies — the
       // port_update event is the only way they learn where to reconnect.
@@ -1258,7 +1377,12 @@ export async function applyFix(
     }
 
     case 'open_system_settings': {
-      const pane = opts.pane ?? 'screenRecording'
+      // The finding names its pane. The url reverse-lookup is the belt for a
+      // caller that only forwards `url` (the shape before panes were carried),
+      // and the default is the last resort rather than the usual path — a
+      // silent default here is how Accessibility and Automation both ended up
+      // opening the Screen Recording switch.
+      const pane = resolvePane(opts)
       const steps: Record<string, string[]> = {
         accessibility: ['System Settings → Privacy & Security → Accessibility → turn on Wolffish.'],
         screenRecording: [

@@ -737,6 +737,10 @@ const plugin = {
         const result = await bridge.fix(finding.fix.action, {
           target: args?.browser ?? null,
           findingId,
+          // Which macOS pane to open, when that is what this fix does. The
+          // finding carries it; the bridge must not guess.
+          ...(finding.fix?.pane ? { pane: finding.fix.pane } : {}),
+          ...(finding.fix?.url ? { url: finding.fix.url } : {}),
           conversationId: getConversationId()
         })
         const steps = (result.steps ?? finding.fix.steps ?? []).join(' → ')

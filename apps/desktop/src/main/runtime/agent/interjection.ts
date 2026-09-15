@@ -58,15 +58,21 @@ export type InterjectResult =
   | {
       status: 'pending'
       /**
-       * Resolves once the message is PARKED ON DISK (channels/
+       * Resolves TRUE once the message is parked on disk (channels/
        * interjection-store.ts) and can therefore survive a crash, a quit or a
-       * dropped connection. The accept itself stays synchronous — Telegram and
-       * WhatsApp rely on `pending` being emitted inside interject(), before any
-       * terminal event can fire — so the durability is offered rather than
-       * imposed: a caller that answers the user asynchronously (the phone's
-       * RPC) awaits this before saying "got it", and everyone else ignores it.
+       * dropped connection — and FALSE if that write failed. It never rejects,
+       * because most callers never await it and an unhandled rejection would
+       * be worse than a dropped guarantee; but it does not pretend either, so
+       * a caller that acks on the strength of durability can say so honestly
+       * and log when the guarantee did not hold.
+       *
+       * The accept itself stays synchronous — Telegram and WhatsApp rely on
+       * `pending` being emitted inside interject(), before any terminal event
+       * can fire — so the durability is offered rather than imposed: a caller
+       * that answers the user asynchronously (the phone's RPC) awaits this
+       * before saying "got it", and everyone else ignores it.
        */
-      durable: Promise<void>
+      durable: Promise<boolean>
     }
   | { status: 'no_live_turn' }
 

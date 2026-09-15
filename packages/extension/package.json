@@ -95,5 +95,10 @@
   "packageManager": "pnpm@10.11.0",
   "engines": {
     "node": ">=22.15.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "caniuse-lite": "^1.0.30001810"
+    }
   }
 }

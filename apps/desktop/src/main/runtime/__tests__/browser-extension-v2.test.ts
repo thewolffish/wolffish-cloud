@@ -362,6 +362,138 @@ const main = async (): Promise<void> => {
     assert.equal(restricted.ready, false)
   })
 
+  await check('a fix lands on the switch its finding named, and can actually run', async () => {
+    const doctor = (await import(
+      pathToFileURL(path.join(REPO, 'apps/desktop/src/main/channels/extension/doctor.ts')).href
+    )) as typeof import('../../channels/extension/doctor')
+
+    // Every macOS permission finding opens a DIFFERENT pane. They all used to
+    // carry only a url, which the executor ignored in favour of a
+    // `?? 'screenRecording'` default — so Fix on Accessibility or Automation
+    // sent the user to the wrong switch, on the panel and the model route
+    // alike. The pane is the finding's to name.
+    const macFacts = {
+      platform: 'darwin' as NodeJS.Platform,
+      at: Date.now(),
+      server: { status: 'connected' as const, error: null, port: 23152 },
+      browsers: [],
+      target: null,
+      lastSeen: {},
+      installed: [
+        { slug: 'chrome', name: 'Google Chrome', path: '/Applications/Google Chrome.app' }
+      ],
+      running: ['chrome'],
+      bundledVersion: '2.0.0',
+      runtimeVersion: '2.0.0',
+      bridgeTokenConfigured: true,
+      tokenMismatch: null,
+      attachError: null,
+      devtools: {},
+      mac: { accessibility: false, screenRecording: 'denied', automation: false },
+      sessionType: null,
+      probe: null,
+      probeError: null
+    }
+    const byId = new Map(
+      doctor.composeFindings(macFacts as never).findings.map((f) => [f.id, f] as const)
+    )
+    for (const [id, pane] of [
+      ['screen_recording_missing', 'screenRecording'],
+      ['accessibility_missing', 'accessibility'],
+      ['automation_missing', 'automation']
+    ] as const) {
+      const finding = byId.get(id)
+      assert.ok(finding, `${id} is raised when that grant is missing`)
+      assert.equal(finding!.fix.pane, pane, `${id} names its own pane`)
+      assert.equal(finding!.fix.url, doctor.MAC_SETTINGS[pane], `${id}'s url matches its pane`)
+      // The executor half, run for real: what the finding carries is what the
+      // fix opens. This is the assertion the old `?? 'screenRecording'` failed.
+      assert.equal(
+        doctor.resolvePane({ pane: finding!.fix.pane, url: finding!.fix.url }),
+        pane,
+        `${id}'s fix resolves to its own pane`
+      )
+    }
+    // A caller that forwards only the url (the shape before panes were carried)
+    // still lands on the right switch, and an empty one falls back rather than
+    // throwing.
+    assert.equal(
+      doctor.resolvePane({ url: doctor.MAC_SETTINGS.automation }),
+      'automation',
+      'a url-only caller is resolved by reverse lookup'
+    )
+    assert.equal(doctor.resolvePane({}), 'screenRecording', 'an empty fix still resolves')
+
+    // `launch_browser` used to answer the bridge with an internal routing note
+    // ("runs in the plugin, not through the bridge") — which the Settings panel
+    // rendered behind a Fix button as an error toast, on the single most common
+    // blocker there is. Both routes can start a browser now.
+    const result = await doctor.applyFix('launch_browser', {
+      restartServer: async () => undefined,
+      sendPortUpdate: () => undefined,
+      requestReload: async () => undefined,
+      // Already connected: proves the branch runs without launching anything.
+      isExtensionConnected: () => true
+    })
+    assert.equal(result.ok, true, `launch_browser answers the caller: ${result.message}`)
+    assert.ok(
+      !result.message.includes('not through the bridge'),
+      'no internal routing note reaches the user'
+    )
+  })
+
+  await check('a running browser is matched by its executable, not its .app name', async () => {
+    const doctor = (await import(
+      pathToFileURL(path.join(REPO, 'apps/desktop/src/main/channels/extension/doctor.ts')).href
+    )) as typeof import('../../channels/extension/doctor')
+
+    // Real `ps -axo comm=` basenames. Firefox ships lowercase `firefox` inside
+    // `Firefox.app`, so matching the .app name never fired and a running
+    // Firefox was reported as "installed but not running" — offered a launch it
+    // did not need. The table names that executable now; matching stays EXACT
+    // so helpers cannot keep a quitting Chrome in the listing, and so an
+    // unrelated `arc` process cannot pass for Arc.
+    const ps = (...lines: string[]): string[] => lines.map((l) => l.split('/').pop()!)
+    assert.deepEqual(
+      doctor.browsersFromProcessNames(
+        ps('/Applications/Firefox.app/Contents/MacOS/firefox'),
+        'darwin'
+      ),
+      ['firefox'],
+      'a running Firefox is detected by its executable name'
+    )
+    assert.deepEqual(
+      doctor.browsersFromProcessNames(
+        ps(
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper'
+        ),
+        'darwin'
+      ),
+      ['chrome'],
+      'a helper process does not count as a second running browser'
+    )
+    assert.deepEqual(
+      doctor.browsersFromProcessNames(ps('/usr/local/bin/arc', '/opt/homebrew/bin/ARC'), 'darwin'),
+      [],
+      'an unrelated arc process is not the Arc browser'
+    )
+    // Untouched, quirk and all: Chrome and Chromium BOTH ship `chrome.exe` on
+    // Windows and the match is on the basename, so a running one reads as both.
+    // Pre-existing, and pinned here so a later change to this function has to
+    // be deliberate about it.
+    assert.deepEqual(
+      doctor.browsersFromProcessNames(['chrome.exe', 'firefox.exe'], 'win32'),
+      ['chrome', 'chromium', 'firefox'],
+      'the Windows match is untouched'
+    )
+    assert.deepEqual(
+      doctor.browsersFromProcessNames(['firefox-esr'], 'linux'),
+      ['firefox'],
+      'the Linux match is untouched'
+    )
+  })
+
   console.log(results.join('\n'))
   const failed = results.filter((r) => r.startsWith('FAIL')).length
   console.log(failed === 0 ? `\nall ${results.length} checks passed` : `\n${failed} failed`)

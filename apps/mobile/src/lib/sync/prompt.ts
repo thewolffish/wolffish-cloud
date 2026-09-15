@@ -361,10 +361,16 @@ async function seedPendingInterjections(conversationId: string): Promise<void> {
     // Claim before restoring. restoreDraft APPENDS and the withdraw that
     // releases the park is a round trip, so two overlapping seeds — a
     // reconnect racing a screen re-entry — would each restore the same words.
-    if (restoredHeld.has(row.id)) continue
-    restoredHeld.add(row.id)
-    sentInterjections.delete(row.id)
-    if (row.content && !row.voicePrompt) runtimeForHeld.restoreDraft(conversationId, row.content)
+    if (!restoredHeld.has(row.id)) {
+      restoredHeld.add(row.id)
+      sentInterjections.delete(row.id)
+      if (row.content && !row.voicePrompt) runtimeForHeld.restoreDraft(conversationId, row.content)
+    }
+    // Retried on every seed until it lands, which is why it sits OUTSIDE the
+    // claim above. A tunnel that dropped between the answer and here sends
+    // nothing at all — there is no call to fail, only an absent one — and a
+    // park that is never released comes back on the next connect, where the
+    // claim would skip the restore and the words would go nowhere at all.
     void bridgeClient.active
       ?.rpc(Rpc.withdrawInterjection, { conversationId, messageId: row.id })
       .catch(() => undefined)

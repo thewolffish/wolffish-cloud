@@ -310,7 +310,19 @@ export class TurnRunner {
     // WhatsApp document that `pending` is emitted synchronously from inside
     // this call, before any terminal event for the same message can fire —
     // and handed to the caller so an async one can wait for real durability.
-    const durable = parkInterjection(conversationId, item).catch(() => undefined) as Promise<void>
+    // Never rejects (nobody awaits it on most paths), but never lies either:
+    // a failed park resolves FALSE so the caller that acks on durability can
+    // say so in the log instead of promising a disk copy that is not there.
+    const durable = parkInterjection(conversationId, item).then(
+      () => true,
+      (error: unknown) => {
+        console.error(
+          `[turn-runner] parking mid-turn message ${item.messageId} failed — it survives only in memory:`,
+          error
+        )
+        return false
+      }
+    )
     this.emitInterjection(conversationId, item, 'pending')
     return { status: 'pending', durable }
   }

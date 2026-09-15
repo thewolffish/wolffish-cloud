@@ -2122,6 +2122,8 @@ export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 
 // Mirrors src/main/channels/extension/doctor.ts (preload cannot import main).
 export type ExtensionFindingSeverity = 'blocker' | 'degraded' | 'note'
 export type ExtensionFixKind = 'auto' | 'one-click' | 'guided' | 'none'
+/** Mirrors MacSettingsPane in channels/extension/doctor.ts. */
+export type ExtensionMacPane = 'accessibility' | 'screenRecording' | 'automation'
 
 export type Finding = {
   /** Stable snake_case id — translate by id; title/steps are English fallbacks. */
@@ -2129,7 +2131,14 @@ export type Finding = {
   severity: ExtensionFindingSeverity
   title: string
   detail: string
-  fix: { kind: ExtensionFixKind; action?: string; steps: string[]; url?: string }
+  /** `pane` is the finding's own — the fix executor must not default it. */
+  fix: {
+    kind: ExtensionFixKind
+    action?: string
+    steps: string[]
+    url?: string
+    pane?: ExtensionMacPane
+  }
   verify: string
   /** Selection key when the finding is about one connected browser. */
   browser?: string
@@ -2152,7 +2161,7 @@ export type DoctorOptions = {
 
 export type FixOptions = {
   target?: string | null
-  pane?: 'accessibility' | 'screenRecording' | 'automation' | string
+  pane?: ExtensionMacPane | string
   url?: string
   extensionId?: string | null
 }
@@ -2201,7 +2210,7 @@ export type BrowserExtensionApi = {
   openExtensionsPage: () => Promise<void>
   /** Readiness report — works with zero browsers connected. */
   doctor: (opts?: DoctorOptions) => Promise<DoctorReport>
-  /** Run a finding's `fix.action` (launch_browser is plugin-only and returns ok:false here). */
+  /** Run a finding's `fix.action` — including starting a browser. */
   fix: (action: string, opts?: FixOptions) => Promise<FixResult>
   setOverlayEnabled: (enabled: boolean, target?: string | null) => Promise<{ ok: true }>
   onStatusChange: (callback: (status: ExtensionServerStatus) => void) => () => void

@@ -629,7 +629,7 @@ export class ExtensionServer {
     return this.doctor({ probe: false })
   }
 
-  /** Run one doctor fix. Server-side actions (port, reload, resync, openers); launch_browser stays in the plugin. */
+  /** Run one doctor fix. Server-side actions: port, reload, resync, openers, and starting a browser. */
   async fix(action: string, opts: FixOptions = {}): Promise<FixResult> {
     void debug('INFO', `fix: ${action} ${JSON.stringify(opts)}`)
     const target = opts.target ?? null
@@ -647,6 +647,7 @@ export class ExtensionServer {
         },
         sendPortUpdate: (port) => this.sendPortUpdate(port),
         requestReload: (t) => this.requestReload(t ?? target),
+        isExtensionConnected: () => this.identifiedClients().length > 0,
         extensionId
       },
       opts
