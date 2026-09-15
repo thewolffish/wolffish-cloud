@@ -24,6 +24,15 @@
  *                       Mint one with: openssl rand -base64 32
  * - EXPO_ACCESS_TOKEN   optional; only when the Expo project enforces
  *                       enhanced push security (the bridge's push fallback).
+ * - PUBLISH_TOKEN       the CI publish key: `/publish/*` (src/routes/publish.ts)
+ *                       accepts it as a bearer token for org capability
+ *                       writes and nothing else, which is how a push to main
+ *                       mirrors <repo>/capabilities into the registry without
+ *                       giving the pipeline an owner session. The same value
+ *                       lives in the repo's WFC_PUBLISH_TOKEN secret. Absent:
+ *                       the whole lane answers 404 and capabilities can only
+ *                       be published by an admin account.
+ *                         openssl rand -hex 32 | npx wrangler secret put PUBLISH_TOKEN
  *
  * Keys never reach a device: the gates receive ids and capacities only.
  * Optional vars (`.dev.vars` locally) point the lanes at mocks.

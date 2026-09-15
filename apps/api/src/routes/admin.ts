@@ -9,6 +9,7 @@
  */
 import { Hono, type Context } from 'hono'
 import { dropActivation, issueActivation, sendActivationEmail } from '@/lib/activation'
+import { audit } from '@/lib/audit'
 import { deleteCapability, putCapability } from '@/lib/capabilities'
 import { openConfig, sealConfig } from '@/lib/config-crypto'
 import { hashPassword, newId, randomHex, tempPassword } from '@/lib/crypto'
@@ -58,20 +59,6 @@ admin.use('*', requireRole('owner', 'admin', 'support'))
 
 // Mutations are admin-tier; support stays read-only.
 admin.on(['POST', 'PATCH', 'PUT', 'DELETE'], '*', requireAdmin)
-
-async function audit(
-  env: Env,
-  actor: string,
-  action: string,
-  target: string,
-  detail: unknown = {}
-): Promise<void> {
-  await env.DB.prepare(
-    'INSERT INTO audit_log (actor_user_id, action, target, detail) VALUES (?1, ?2, ?3, ?4)'
-  )
-    .bind(actor, action, target, JSON.stringify(detail))
-    .run()
-}
 
 /**
  * The one gate every handler goes through. Loads the target's role (the

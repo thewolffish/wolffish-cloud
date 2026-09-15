@@ -1,9 +1,26 @@
-# The foundation's gate: every push and pull request typechecks both apps and
-# runs the desktop's seam tests (sync engine, capability mirror, CLI settings
-# table, usage ledger) — the suites that need no network and no Cloudflare
-# account. The API's smoke suites need `wrangler dev` plus the mock hosts and
-# stay a local step (`npm test` in apps/api); the live gate
-# (scripts/verify-live.mjs) runs after every deploy by hand.
+# The gate, and the road out.
+#
+# GATE — every push and pull request typechecks both apps and runs the
+# desktop's seam tests (sync engine, capability mirror, CLI settings table,
+# usage ledger): the suites that need no network and no Cloudflare account.
+# The API's smoke suites need `wrangler dev` plus the mock hosts and stay a
+# local step (`npm test` in apps/api).
+#
+# ROAD OUT — a green push to main then IS the deploy: `deploy` below
+# applies pending D1 migrations, ships the Worker to api.wolffi.sh, and
+# mirrors `capabilities/` into the org registry. There is no staging
+# environment and no release train by design — main is the deployment — so
+# the gate jobs are the only thing standing between a commit and the org.
+# Nothing is deployed from a laptop any more; a hand-published capability
+# would only be overwritten by the next push (and `--check` would flag it).
+#
+# Secrets it needs (repo → Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit + D1:Edit + KV:Edit + R2:Edit
+#   CLOUDFLARE_ACCOUNT_ID  07fd54cbeff7d440a36447f3f1c490de
+#   WFC_PUBLISH_TOKEN      the publish key, the same value the Worker holds
+#                          as its PUBLISH_TOKEN secret (src/routes/publish.ts).
+#                          Deliberately NOT an owner login: the pipeline can
+#                          write org capabilities and nothing else.
 name: ci
 
 on:
@@ -78,3 +95,68 @@ jobs:
             echo "━━━ $t"
             npx tsx --tsconfig tsconfig.node.json "$t"
           done
+
+  # main is the deployment. Serialized (never cancelled mid-flight): a
+  # cancelled run between the migration and the deploy would leave the
+  # database ahead of the code.
+  deploy:
+    name: cloud · migrate + deploy + publish capabilities
+    needs: [api, desktop]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cloud-deploy
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - run: npm ci
+
+      # Schema first, then the code that expects it: every migration here is
+      # additive, so the old code keeps working against the new schema for
+      # the seconds between these two steps. Wrangler skips its confirmation
+      # prompt when stdin is not a terminal.
+      - name: d1 migrations
+        run: npx wrangler d1 migrations apply wfc-master --remote
+
+      - name: deploy the worker
+        run: npm run deploy
+
+      # The registry mirrors git, including removals: a capability folder
+      # deleted in this commit is retired org-wide (R2 keeps every version,
+      # so a revert re-publishes it). Unchanged capabilities are skipped by
+      # package hash, so an ordinary push is a no-op here.
+      - name: publish capabilities
+        env:
+          WFC_PUBLISH_TOKEN: ${{ secrets.WFC_PUBLISH_TOKEN }}
+        run: |
+          if [ -z "$WFC_PUBLISH_TOKEN" ]; then
+            echo "::error::WFC_PUBLISH_TOKEN is not set. Mint one (openssl rand -hex 32), add it to the repo secrets, and give the Worker the same value: npx wrangler secret put PUBLISH_TOKEN"
+            exit 1
+          fi
+          node scripts/seed-capabilities.mjs --prune
+
+      # Proof rather than hope: re-reads the live registry and fails if it
+      # disagrees with this commit's `capabilities/` by a single byte.
+      - name: registry matches this commit
+        env:
+          WFC_PUBLISH_TOKEN: ${{ secrets.WFC_PUBLISH_TOKEN }}
+        run: node scripts/seed-capabilities.mjs --check
+
+      # Informational, but -f keeps it honest: an api.wolffi.sh that cannot
+      # answer /health after its own deploy is a red run, not a footnote.
+      - name: what shipped
+        run: |
+          printf '### api.wolffi.sh ← `%s`\n\n' "${GITHUB_SHA:0:7}" >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors https://api.wolffi.sh/health |
+            tee -a "$GITHUB_STEP_SUMMARY"

@@ -1,9 +1,9 @@
 /**
  * wfc-api — the Wolffish Cloud master API.
  *
- * One Worker, ten route groups (auth + pairing, v1 client API, devices,
- * bridge, ai router, search lane, sync, capabilities, leaderboard, admin),
- * one middleware
+ * One Worker, eleven route groups (auth + pairing, v1 client API, devices,
+ * bridge, ai router, search lane, sync, capabilities, leaderboard, admin,
+ * the CI publish lane), one middleware
  * chain: verify token → resolve user → resolve role → policy/quota gates →
  * handler. Plus three Durable Objects, exported here so the runtime can bind
  * them: the SearchGate (the org's single queue in front of its search
@@ -20,6 +20,7 @@ import adminRoutes from '@/routes/admin'
 import aiRoutes from '@/routes/ai'
 import syncRoutes from '@/routes/sync'
 import capabilityRoutes from '@/routes/capabilities'
+import publishRoutes from '@/routes/publish'
 import searchRoutes from '@/routes/search'
 import leaderboardRoutes from '@/routes/leaderboard'
 import pairRoutes, { pairClaim } from '@/routes/pair'
@@ -61,6 +62,15 @@ export type Env = {
    * the e-mail flow. A fork leaves it unset and the route answers 404.
    */
   ADMIN_RESET_CODE_READ?: string
+  /**
+   * The CI publish key (see routes/publish.ts). Set it and `/publish/*`
+   * accepts `authorization: Bearer <this>` for org capability writes and
+   * nothing else — which is how a push to main mirrors `capabilities/`
+   * into the registry without handing the pipeline an owner session.
+   * Absent — the default — and the whole lane answers 404.
+   *   openssl rand -hex 32 | npx wrangler secret put PUBLISH_TOKEN
+   */
+  PUBLISH_TOKEN?: string
   /**
    * The org's model hosts as a JSON list (see lib/upstreams.ts). Absent:
    * the single DeepInfra host below is the pool.
@@ -117,6 +127,9 @@ app.route('/v1', syncRoutes)
 app.route('/v1', capabilityRoutes)
 app.route('/v1', searchRoutes)
 app.route('/v1', leaderboardRoutes)
+// Its own door, not a sub-path of /admin: the whole point is a key that
+// publishes capabilities and cannot do anything else (routes/publish.ts).
+app.route('/publish', publishRoutes)
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404))
 

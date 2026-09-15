@@ -100,7 +100,7 @@ The Chrome extension that gives the agent eyes and hands in the user's own brows
 | 6 | Mobile re-aim: pairing as an org session, the record read from the API, the desktop reached over the `UserBridge` Durable Object (api 1.7.1) | done, live |
 | 7 | Packages extraction; release tagging | later |
 
-CI (`.github/workflows/ci.yml`) typechecks both apps and runs the desktop seam tests on every push; the API's smoke suites and the live gate stay a local step because they need a running Worker and a Cloudflare account.
+CI (`.github/workflows/ci.yml`) typechecks both apps and runs the desktop seam tests on every push — and a green push to `main` **is** the deploy: it applies pending D1 migrations, ships the Worker to `api.wolffi.sh`, mirrors [`capabilities/`](capabilities/) into the org registry, then re-reads the registry and fails the run if it disagrees with the commit. No staging environment and no release train: main is the deployment. Nothing ships from a laptop, so the pipeline needs three repo secrets — `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `WFC_PUBLISH_TOKEN`, a capability-publish key that is deliberately not an owner login (`apps/api/src/routes/publish.ts`). The API's smoke suites and the live gate (`scripts/verify-live.mjs`) stay a local step because they need a running Worker and mock hosts.
 
 ## Versioning
 

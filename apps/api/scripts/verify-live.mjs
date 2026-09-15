@@ -933,6 +933,84 @@ check('new password works', (await api('/auth/login', { body: { email: vEmail, p
   await api(`/admin/capabilities/${orgSlug}`, { token: O, method: 'DELETE' }) // leave the registry clean
 }
 
+// ── 6.7b · the publish lane: the door a git push comes through ───────────
+// Everything above proves an ADMIN can manage the registry. This proves
+// the path that actually publishes it in production: CI holds a
+// PUBLISH_TOKEN and nothing else (src/routes/publish.ts), so what has to
+// be true of the deployed edge is that the key works for capability
+// writes, that it is refused everywhere else, and that a real owner
+// session is refused HERE — the wall has two sides, and a leaked CI secret
+// that could reach /admin would be the whole point lost.
+//
+// Needs the same token the pipeline uses, in WFC_PUBLISH_TOKEN.
+{
+  const PT = process.env.WFC_PUBLISH_TOKEN ?? ''
+  const pubZip = (body) =>
+    buildZip([
+      {
+        name: 'SKILL.md',
+        data: Buffer.from(`---\nname: pcap-${stamp}\ndescription: publish lane\n---\n${body}\n`)
+      }
+    ])
+  const shaOf = (buf) => createHash('sha256').update(buf).digest('hex')
+  const pubSlug = `pcap-${stamp}`
+  const pz = pubZip('published by the lane')
+
+  const unauth = await api('/publish/capabilities')
+  if (!PT) {
+    skip(
+      'the CI publish lane',
+      unauth.status === 404
+        ? 'PUBLISH_TOKEN unset on the Worker — `openssl rand -hex 32 | npx wrangler secret put PUBLISH_TOKEN`, same value in the repo secret WFC_PUBLISH_TOKEN'
+        : 'WFC_PUBLISH_TOKEN unset here — export the repo secret to cover it'
+    )
+  } else {
+    check('publish lane refuses no credential', unauth.status === 401)
+    check('publish lane refuses a wrong token', (await api('/publish/capabilities', { token: `${PT}x` })).status === 401)
+    check(
+      'publish lane refuses an OWNER SESSION (token-only by design)',
+      (await api(`/publish/capabilities/${pubSlug}?sha256=${shaOf(pz)}`, { token: O, method: 'PUT', raw: pz })).status === 401
+    )
+    check('the publish token cannot reach /admin', (await api('/admin/users', { token: PT })).status === 401)
+    check('the publish token cannot read a member API', (await api('/v1/me', { token: PT })).status === 401)
+
+    const pput = await api(
+      `/publish/capabilities/${pubSlug}?sha256=${shaOf(pz)}&name=pcap&description=publish%20lane`,
+      { token: PT, method: 'PUT', raw: pz }
+    )
+    check('the lane publishes', pput.status === 200 && pput.json?.version === 1, JSON.stringify(pput.json))
+    check(
+      'a hash that does not match the bytes is refused',
+      (await api(`/publish/capabilities/${pubSlug}?sha256=${'0'.repeat(64)}`, { token: PT, method: 'PUT', raw: pz })).status === 400
+    )
+    const plist = await api('/publish/capabilities', { token: PT })
+    check(
+      'the lane manifest is the registry',
+      (plist.json?.org ?? []).some((e) => e.slug === pubSlug && e.sha256 === shaOf(pz)) &&
+        (plist.json?.org ?? []).some((e) => e.slug === 'shell')
+    )
+    const pdl = await api(`/publish/capabilities/${pubSlug}/package`, { token: PT })
+    check('what was published reads back byte-identical', pdl.status === 200 && pdl.buf.equals(pz))
+    const pseen = await api('/v1/capabilities/manifest', { token: VT })
+    check(
+      'an employee mirrors what the lane published',
+      ((pseen.json?.org ?? []).find((e) => e.slug === pubSlug) ?? {}).sha256 === shaOf(pz)
+    )
+    check('the lane retires a capability', (await api(`/publish/capabilities/${pubSlug}`, { token: PT, method: 'DELETE' })).status === 200)
+    check(
+      'retired org-wide at once',
+      !((await api('/v1/capabilities/manifest', { token: VT })).json?.org ?? []).some((e) => e.slug === pubSlug)
+    )
+    const audit = await api('/admin/audit?limit=200', { token: O })
+    check(
+      'the push is audited as ci:publish, not as a person',
+      (audit.json?.entries ?? []).some(
+        (e) => e.action === 'capability.put' && e.target === pubSlug && e.actor_user_id === 'ci:publish'
+      )
+    )
+  }
+}
+
 // ── 6.8 · the web-search lane: org key behind the door, fair gate in front ─
 // The org's Brave key exists only at the edge; the desktop's web-search
 // plugin calls POST /v1/search with its session token, and the Brave

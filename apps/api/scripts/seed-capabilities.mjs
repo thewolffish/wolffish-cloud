@@ -2,12 +2,17 @@
 /**
  * Publish the org-wide capability registry from the source tree — and
  * police the policy that <repo>/capabilities/ is where every org
- * capability change happens FIRST. Edit the folder, run this; the
- * registry mirrors git, never the other way around.
+ * capability change happens FIRST. The registry mirrors git, never the
+ * other way around.
  *
- *   WFC_DEMO_PASSWORD=... node scripts/seed-capabilities.mjs
+ * CI is the normal caller: a green push to main runs this with --prune and
+ * then again with --check (.github/workflows/ci.yml), so an ordinary
+ * capability change needs nothing run by hand. What follows is for a local
+ * `wrangler dev`, or for when the pipeline itself is what's broken.
+ *
+ *   WFC_PUBLISH_TOKEN=... node scripts/seed-capabilities.mjs
  *     --base   https://api.wolffi.sh     (default; API_BASE also works)
- *     --email  nasser.alowais@wolffi.sh  (an owner/admin account)
+ *     --email  nasser.alowais@wolffi.sh  (only for the password fallback)
  *     --dir    <capability sources>      (default: <repo>/capabilities,
  *                                         falling back to the old bundled path)
  *     --only   slug1,slug2               (subset; default: every folder)
@@ -18,11 +23,23 @@
  *              folder here, so a git removal propagates org-wide
  *              (ignored with --only; without it, extras only warn)
  *
- * Pure API — packages go through PUT /admin/capabilities/:slug exactly as
- * an admin client would send them, so every seed run also exercises the
- * real upload gate (sha256, structure, audit). Unchanged capabilities are
- * skipped by comparing the deterministic package hash against the live
- * manifest, so re-runs are cheap no-ops.
+ * Two ways to authenticate, one code path behind them:
+ *
+ *   WFC_PUBLISH_TOKEN  the publish lane (/publish/*, routes/publish.ts) —
+ *                      a key that can write org capabilities and nothing
+ *                      else. This is what CI uses, and what a human should
+ *                      prefer: nothing here needs an owner session.
+ *   WFC_DEMO_PASSWORD  the fallback — log in as --email and drive
+ *                      /admin/capabilities as a person. Kept because a
+ *                      deployment with no PUBLISH_TOKEN set still needs a
+ *                      way to publish (and it is how the lane was
+ *                      bootstrapped).
+ *
+ * Pure API either way — packages go through the same PUT the desktop's own
+ * admin client would send, so every seed run also exercises the real upload
+ * gate (sha256, structure, audit). Unchanged capabilities are skipped by
+ * comparing the deterministic package hash against the live manifest, so
+ * re-runs are cheap no-ops.
  *
  * The zip writer is deliberately deterministic (sorted entries, STORE
  * method, fixed timestamps): the same tree always produces the same bytes,
@@ -42,6 +59,7 @@ const argOf = (flag, fallback) => {
 const BASE = argOf('--base', process.env.API_BASE ?? 'https://api.wolffi.sh')
 const EMAIL = argOf('--email', 'nasser.alowais@wolffi.sh')
 const PASSWORD = process.env.WFC_DEMO_PASSWORD ?? 'wolffish123'
+const PUBLISH_TOKEN = process.env.WFC_PUBLISH_TOKEN ?? ''
 const ONLY = argOf('--only', '')
   .split(',')
   .map((s) => s.trim())
@@ -128,20 +146,64 @@ const api = async (route, { token, body, method, raw, headers } = {}) => {
   return { status: res.status, json, buf }
 }
 
+/**
+ * The two doors, behind one route table so everything below is identical.
+ *
+ * The publish lane's manifest is the registry unfiltered; the client
+ * manifest the password path has to use applies capability_grants, so a
+ * capability granted away from the publishing account would read as
+ * missing and be re-uploaded on every run. One more reason the token is
+ * the better door.
+ */
+const LANES = {
+  token: {
+    who: 'the publish lane',
+    manifest: '/publish/capabilities',
+    put: (slug, q) => `/publish/capabilities/${slug}?${q}`,
+    del: (slug) => `/publish/capabilities/${slug}`,
+    pkg: (slug) => `/publish/capabilities/${slug}/package`
+  },
+  password: {
+    who: EMAIL,
+    manifest: '/v1/capabilities/manifest',
+    put: (slug, q) => `/admin/capabilities/${slug}?${q}`,
+    del: (slug) => `/admin/capabilities/${slug}`,
+    pkg: (slug) => `/v1/capabilities/org/${slug}/package`
+  }
+}
+const lane = PUBLISH_TOKEN ? LANES.token : LANES.password
+
 console.log(
-  `${CHECK ? 'Checking' : 'Seeding'} capabilities from ${DIR}\n            → ${BASE} as ${EMAIL}\n`
+  `${CHECK ? 'Checking' : 'Seeding'} capabilities from ${DIR}\n            → ${BASE} via ${lane.who}\n`
 )
 
-const login = await api('/auth/login', {
-  body: { email: EMAIL, password: PASSWORD, device: { platform: 'sim', name: 'seed-capabilities' } }
-})
-if (login.status !== 200 || !login.json?.access_token) {
-  console.error(`login failed (${login.status}): ${JSON.stringify(login.json)}`)
+let token = PUBLISH_TOKEN
+if (!PUBLISH_TOKEN) {
+  const login = await api('/auth/login', {
+    body: {
+      email: EMAIL,
+      password: PASSWORD,
+      device: { platform: 'sim', name: 'seed-capabilities' }
+    }
+  })
+  if (login.status !== 200 || !login.json?.access_token) {
+    console.error(`login failed (${login.status}): ${JSON.stringify(login.json)}`)
+    process.exit(1)
+  }
+  token = login.json.access_token
+}
+
+const live = await api(lane.manifest, { token })
+if (live.status !== 200) {
+  console.error(
+    `cannot read the registry (${live.status} from ${lane.manifest}): ${JSON.stringify(live.json)}` +
+      (PUBLISH_TOKEN
+        ? '\n            — a 404 here means this deployment has no PUBLISH_TOKEN set;' +
+          '\n              a 401 means the one in WFC_PUBLISH_TOKEN is not the one it has.'
+        : '')
+  )
   process.exit(1)
 }
-const token = login.json.access_token
-
-const live = await api('/v1/capabilities/manifest', { token })
 const liveBySha = new Map((live.json?.org ?? []).map((e) => [e.slug, e.sha256]))
 
 const entries = (await fs.readdir(DIR, { withFileTypes: true }))
@@ -185,7 +247,7 @@ for (const slug of entries) {
   const name = frontmatterField(skillMd, 'name') ?? slug
   const description = frontmatterField(skillMd, 'description') ?? ''
   const q = new URLSearchParams({ sha256: sha, name, description })
-  const res = await api(`/admin/capabilities/${slug}?${q}`, { token, method: 'PUT', raw: zip })
+  const res = await api(lane.put(slug, q), { token, method: 'PUT', raw: zip })
   if (res.status === 200 && res.json?.ok) {
     uploaded++
     console.log(`✅ ${slug} → v${res.json.version} (${zip.length} B)`)
@@ -210,7 +272,7 @@ for (const slug of extras) {
     console.log(`⚠️  ${slug} is in the registry but has no source folder here (use --prune to remove it)`)
     continue
   }
-  const res = await api(`/admin/capabilities/${slug}`, { token, method: 'DELETE' })
+  const res = await api(lane.del(slug), { token, method: 'DELETE' })
   if (res.status === 200) {
     pruned++
     console.log(`🗑  ${slug} pruned from the registry`)
@@ -222,12 +284,12 @@ for (const slug of extras) {
 
 // Round-trip proof: manifest lists everything we sent, and one package
 // downloads back byte-identical.
-const after = await api('/v1/capabilities/manifest', { token })
+const after = await api(lane.manifest, { token })
 const afterSlugs = new Set((after.json?.org ?? []).map((e) => e.slug))
 const missing = entries.filter((s) => !afterSlugs.has(s))
 if (entries.length > 0 && missing.length === 0) {
   const probe = entries[0]
-  const pkg = await api(`/v1/capabilities/org/${probe}/package`, { token })
+  const pkg = await api(lane.pkg(probe), { token })
   const back = createHash('sha256').update(pkg.buf).digest('hex')
   const want = (after.json.org.find((e) => e.slug === probe) ?? {}).sha256
   console.log(

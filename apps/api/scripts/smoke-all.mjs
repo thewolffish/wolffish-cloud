@@ -3,8 +3,8 @@
  * `npm test` — every local smoke suite, in order, against `wrangler dev`.
  *
  *   npx wrangler dev --port 8787        (with .dev.vars pointing at the mocks:
- *   node scripts/mock-deepinfra.mjs      MODEL_UPSTREAMS / SEARCH_PROVIDERS)
- *   node scripts/mock-brave.mjs
+ *   node scripts/mock-deepinfra.mjs      MODEL_UPSTREAMS / SEARCH_PROVIDERS,
+ *   node scripts/mock-brave.mjs          plus PUBLISH_TOKEN for smoke-publish)
  *   npm test
  *
  * Suites that PATCH the org (admin, search) are followed by a pause before
@@ -20,6 +20,7 @@ const SUITES = [
   'smoke-sync.mjs',
   'smoke-leaderboard.mjs',
   'smoke-search.mjs',
+  'smoke-publish.mjs',
   { file: 'smoke-ai.mjs', pauseMs: 65_000 },
   'smoke-archive.mjs'
 ]
