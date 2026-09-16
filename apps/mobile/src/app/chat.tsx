@@ -3,6 +3,7 @@ import { SelectTextHost } from '@/components/chat/SelectTextSheet'
 import { ChatFeed, FEED_FADE_MS, type ChatFeedHandle } from '@/components/chat/ChatFeed'
 import { ChatSkeleton } from '@/components/chat/ChatSkeleton'
 import { Composer, type ComposerSubmit } from '@/components/chat/Composer'
+import { ConversationNotificationsSheet } from '@/components/chat/ConversationNotificationsSheet'
 import { ConversationsSheet } from '@/components/chat/ConversationsSheet'
 import { FLOATING_AREA, FLOATING_GAP, FloatingChrome } from '@/components/chat/FloatingChrome'
 import { PendingInterjectionBubble } from '@/components/chat/PendingInterjections'
@@ -23,7 +24,7 @@ import { NEW_CHAT_PENDING_KEY, selectPending, useChatRuntime } from '@/state/cha
 import { useConfigValue } from '@/state/demoConfig'
 import { Image } from 'expo-image'
 import { useFocusEffect, useLocalSearchParams } from 'expo-router'
-import { clearConversationBadges, setActiveConversation } from '@/lib/notifications/push'
+import { dismissConversationBanners, setActiveConversation } from '@/lib/notifications/push'
 import { useActiveProject } from '@/lib/sync/projects'
 import { seedPlanMode } from '@/lib/sync/planMode'
 import {
@@ -175,7 +176,7 @@ export default function ChatScreen(): React.JSX.Element {
     useCallback(() => {
       const seeing = (): void => {
         setActiveConversation(conversationId)
-        if (conversationId) clearConversationBadges(conversationId)
+        if (conversationId) dismissConversationBanners(conversationId)
       }
       seeing()
       const subscription = AppState.addEventListener('change', (next) => {
@@ -245,6 +246,8 @@ export default function ChatScreen(): React.JSX.Element {
   // The navigator — every core page, and every conversation. Closed by default
   // and mounted lazily by the sheet itself, so it costs nothing until opened.
   const [sheetOpen, setSheetOpen] = useState(false)
+  /** The conversation's own notifications sheet, from the trailing edge. */
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   // One flag for both ends: the desktop's `inapp.verbose`. The feed is a
   // display preference of the workspace, not of the device rendering it.
   const verbose = useConfigValue('inappVerbose')
@@ -1078,7 +1081,9 @@ export default function ChatScreen(): React.JSX.Element {
           only two things the header held that were worth a fixed strip. */}
       <FloatingChrome
         top={insets.top + FLOATING_GAP}
+        conversationId={conversationId}
         onOpenSheet={() => setSheetOpen(true)}
+        onOpenNotifications={() => setNotificationsOpen(true)}
         onNewChat={startNewChat}
       />
       <ConversationsSheet
@@ -1087,6 +1092,19 @@ export default function ChatScreen(): React.JSX.Element {
         activeId={conversationId}
         onSelect={openConversation}
       />
+      {/* What this conversation has notified about, from the opposite edge.
+          Only reachable when the bell is there, which is only when it has
+          something to list — and keyed to the conversation, so switching
+          conversations under an open sheet cannot leave the other one's
+          notifications on screen. */}
+      {conversationId && (
+        <ConversationNotificationsSheet
+          key={conversationId}
+          open={notificationsOpen}
+          onClose={() => setNotificationsOpen(false)}
+          conversationId={conversationId}
+        />
+      )}
     </View>
   )
 }

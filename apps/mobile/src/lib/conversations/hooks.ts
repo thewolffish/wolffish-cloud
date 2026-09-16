@@ -4,7 +4,7 @@ import { isConversationDirty } from '@/lib/sync/dirty'
 import { fetchConversationBody, isBodyStale, refreshSync } from '@/lib/sync/sync'
 import { bridgeClient } from '@/lib/cloud/bridge'
 import { useAppStore } from '@/state/appStore'
-import { clearConversationBadges } from '@/lib/notifications/push'
+import { forgetConversationNotifications } from '@/lib/notifications/push'
 import { useRunStatus } from '@/state/runStatus'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useEffect } from 'react'
@@ -154,5 +154,5 @@ export async function removeConversation(id: string): Promise<void> {
   // Same rule for its badge: an unread count with no row to mark would sit in
   // the totals forever. The full clear — bucket AND tray — or the next
   // reconciliation would find its notifications with no row to charge.
-  clearConversationBadges(id)
+  forgetConversationNotifications(id)
 }

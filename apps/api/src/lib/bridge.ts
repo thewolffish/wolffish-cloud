@@ -494,7 +494,16 @@ export class UserBridge extends DurableObject<Env> {
         notificationId,
         runId: frame.runId ?? '',
         phase: frame.phase ?? 'info',
-        url: frame.deeplink ?? null
+        url: frame.deeplink ?? null,
+        // Which conversation RAISED it — what the phone badges. Separate from
+        // `url`, which is where a tap goes and which notify_phone lets the
+        // model omit entirely; a notification with no destination still came
+        // from somewhere, and the phone has no other way to learn where.
+        conversationId: frame.conversationId ?? null,
+        // When the DESKTOP sent it. Without this the phone's notification log
+        // can only date a pushed one by when the handset received it: minutes
+        // late out of a tray, hours late for a phone that was off.
+        ts: typeof frame.ts === 'number' ? frame.ts : Date.now()
       }
     }))
     try {

@@ -10,6 +10,7 @@
  *
  *   demo/bundle/manifest.json            index: version, totals, shards
  *   demo/bundle/config-snapshot.json     the config surface, verbatim
+ *   demo/bundle/notifications.json       the notification log, verbatim
  *   demo/bundle/conversations-000.json   { conversations: [...] }
  *   …
  *
@@ -118,6 +119,28 @@ async function main() {
   hash.update(configBody)
   await fs.writeFile(path.join(OUT_DIR, 'config-snapshot.json'), configBody)
 
+  // The notification log. Its own file rather than a key on the config
+  // snapshot: that snapshot is a shape the DESKTOP also writes (see
+  // state/demoConfig.ts), and a demo-only list has no business in a contract
+  // two repos have to agree on. Optional — a bundle built before this file
+  // existed simply imports no notifications.
+  let notificationsEntry = null
+  try {
+    const body = await fs.readFile(path.join(SRC_DIR, 'notifications.json'))
+    // Hashed like everything else, so editing the log is a new dataset
+    // version and reaches devices that already imported the old one.
+    hash.update(body)
+    await fs.writeFile(path.join(OUT_DIR, 'notifications.json'), body)
+    const parsed = JSON.parse(body.toString())
+    notificationsEntry = {
+      file: 'notifications.json',
+      bytes: body.length,
+      count: Array.isArray(parsed.notifications) ? parsed.notifications.length : 0
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+
   const totalBytes = shards.reduce((sum, shard) => sum + shard.bytes, 0)
   // Content hash, not a timestamp: re-running the build on unchanged data
   // must not look like a new dataset to a device that already imported it.
@@ -128,12 +151,14 @@ async function main() {
     conversations: conversations.length,
     totalBytes,
     config: { file: 'config-snapshot.json', bytes: configBody.length },
+    ...(notificationsEntry ? { notifications: notificationsEntry } : {}),
     shards
   }
   await fs.writeFile(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))
 
   console.log(`version:       ${manifest.version}`)
   console.log(`conversations: ${manifest.conversations} in ${shards.length} shards`)
+  console.log(`notifications: ${notificationsEntry ? notificationsEntry.count : 0}`)
   console.log(
     `size:          ${(totalBytes / 1e6).toFixed(1)} MB uncompressed ` +
       `(largest shard ${(Math.max(...shards.map((s) => s.bytes)) / 1e6).toFixed(2)} MB)`

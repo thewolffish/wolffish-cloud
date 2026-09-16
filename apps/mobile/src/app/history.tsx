@@ -2,7 +2,7 @@ import { ArrowLeft01Icon, ArrowRight01Icon, Bug01Icon, Delete01Icon } from '@/co
 import { ChannelBadge } from '@/components/conversations/ChannelBadge'
 import { chipText, chipTone, Pulse } from '@/components/conversations/ConversationChip'
 import { UnreadBadge } from '@/components/core/UnreadBadge'
-import { useBadges } from '@/state/badges'
+import { unreadFor, useNotifications } from '@/state/notifications'
 import { DiagnosticExportOverlay } from '@/components/conversations/DiagnosticExportOverlay'
 import { ConfirmDialog } from '@/components/core/ConfirmDialog'
 import { HistorySkeleton } from '@/components/history/HistorySkeleton'
@@ -61,7 +61,7 @@ const Row = memo(function Row({
   onDelete: (row: ConversationRow) => void
 }): React.JSX.Element {
   // Per-row subscription: a badge changing re-renders only the row it marks.
-  const unread = useBadges((state) => state.counts[row.id]?.n ?? 0)
+  const unread = useNotifications((state) => unreadFor(state, row.id))
   // The desktop disables delete while the conversation's turn is in flight —
   // main refuses the delete anyway, so an enabled button could only fail. An
   // unindexed row is the same case by construction: it exists here only

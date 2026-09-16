@@ -30,9 +30,9 @@ import { invalidateProcedures } from '@/lib/sync/procedures'
 import { invalidateProjects } from '@/lib/sync/projects'
 import { usageDaysFromWire } from '@/lib/usage/ledger'
 import { useAppStore } from '@/state/appStore'
-import { useBadges } from '@/state/badges'
+import { useNotifications } from '@/state/notifications'
 import { useChatRuntime } from '@/state/chatRuntime'
-import { clearConversationBadges, getActiveConversation } from '@/lib/notifications/push'
+import { forgetConversationNotifications, getActiveConversation } from '@/lib/notifications/push'
 import { clearConversationDirty } from '@/lib/sync/dirty'
 import { invalidateConversation, invalidateConversationList } from '@/lib/conversations/cache'
 import { getConversation, replaceMessage } from '@/lib/conversations/repo'
@@ -162,7 +162,7 @@ async function pullIndex(
     if (live.length) await upsertConversations(live.map(toMeta))
     for (const row of dead) {
       if (await deleteConversation(row.id)) removed++
-      clearConversationBadges(row.id)
+      forgetConversationNotifications(row.id)
     }
     upserted += live.length
     for (const row of live)
@@ -436,7 +436,7 @@ export function attachLiveUpdates(): () => void {
   bridge.onEvent(Event.conversationDeleted, (payload) => {
     const id = (payload as { id?: string })?.id
     if (id) {
-      clearConversationBadges(id)
+      forgetConversationNotifications(id)
       void deleteConversation(id).then(invalidateConversationList)
     }
   })

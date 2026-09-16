@@ -9,6 +9,7 @@
  *
  *   demo/conversations/<id>.json   one file per conversation, pretty-printed
  *   demo/config-snapshot.json      copied byte-for-byte
+ *   demo/notifications.json        copied byte-for-byte, when the bundle has one
  *
  * Conversations are pretty-printed so they can be edited by hand — demo
  * content evolves by editing these files directly, never by deriving from a
@@ -63,6 +64,14 @@ async function main() {
     path.join(BUNDLE_DIR, 'config-snapshot.json'),
     path.join(OUT_DIR, 'config-snapshot.json')
   )
+  // Optional: bundles published before the notification log existed have none,
+  // and unpacking one must not fail over a file that was never in it.
+  if (manifest.notifications?.file) {
+    await fs.copyFile(
+      path.join(BUNDLE_DIR, manifest.notifications.file),
+      path.join(OUT_DIR, 'notifications.json')
+    )
+  }
 
   console.log(`bundle:        ${BUNDLE_DIR} (version ${manifest.version})`)
   console.log(`conversations: ${conversations.size}`)

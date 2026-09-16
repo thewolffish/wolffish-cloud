@@ -5,6 +5,7 @@ import {
   ChampionIcon,
   Clock01Icon,
   LibraryIcon,
+  Notification03Icon,
   Settings02Icon,
   UserGroupIcon,
   type IconProps
@@ -14,7 +15,7 @@ import { groupByRecency } from '@/lib/conversations/grouping'
 import { useAdminAccess } from '@/lib/cloud/useAdminAccess'
 import { useConversationList } from '@/lib/conversations/hooks'
 import { buildConversationRows, type ConversationRow } from '@/lib/conversations/rows'
-import { useBadges } from '@/state/badges'
+import { unreadFor, unreadNotifications, useNotifications } from '@/state/notifications'
 import { useActiveProject, useProjects } from '@/lib/sync/projects'
 import { DEFAULT_PROJECT_ICON } from '@/components/workspace/ProjectDialog'
 import { cn } from '@/lib/utils/cn'
@@ -91,8 +92,21 @@ type NavRowSpec = {
   adminOnly?: boolean
 }
 
-/** The pages the sheet links to, in the desktop nav rail's order. */
+/**
+ * The pages the sheet links to, in the desktop nav rail's order.
+ *
+ * Notifications sits ABOVE Settings, at the very top. It is the only row here
+ * that can be waiting on you: everything below is somewhere you decide to go,
+ * and a page that carries an unread count belongs where the count is seen
+ * first. It is also the only row that gets a badge — see NAV_BADGE.
+ */
 const NAV: NavRowSpec[] = [
+  {
+    key: 'notifications',
+    href: '/notifications',
+    Icon: Notification03Icon,
+    labelKey: 'notifications.title'
+  },
   { key: 'settings', href: '/settings', Icon: Settings02Icon, labelKey: 'settings.title' },
   // Directly under Settings, beside the other org-wide page. Admin is a
   // destination an admin reaches for, not a knob inside Settings — same
@@ -142,6 +156,10 @@ const NAV: NavRowSpec[] = [
  * the row — a phone rail has no width for a second line and the date header
  * above already says when.
  */
+/** The one nav row that carries a count: unread notifications, the same mark
+ *  the conversation rows below wear and the same number on the app icon. */
+const NAV_BADGE = 'notifications'
+
 const Row = memo(function Row({
   row,
   position,
@@ -156,7 +174,7 @@ const Row = memo(function Row({
   // Subscribed per row, so a badge changing re-renders exactly the row it
   // marks. The active row can briefly hold a count mid-clear; hiding it there
   // keeps the clear from flashing a badge on the conversation being read.
-  const unread = useBadges((state) => (active ? 0 : (state.counts[row.id]?.n ?? 0)))
+  const unread = useNotifications((state) => (active ? 0 : unreadFor(state, row.id)))
   return (
     <Pressable
       accessibilityRole="button"
@@ -397,6 +415,8 @@ function SheetBody({
   // the role server-side — but offering a page whose every call would come
   // back 403 is worse than not offering it at all.
   const admin = useAdminAccess()
+  // The whole inbox's unread count, on the one row that leads to it.
+  const unread = useNotifications(unreadNotifications)
   const pageRows = useMemo(
     () => (admin.canRead ? NAV : NAV.filter((row) => !row.adminOnly)),
     [admin.canRead]
@@ -441,12 +461,16 @@ function SheetBody({
             <View className="h-6 w-6 items-center justify-center">
               <Icon size={17} className="text-muted" />
             </View>
+            {/* min-w-0 with flex-1: the label is the growing half of the row,
+                and without it a long one pushes the badge off the panel
+                instead of truncating itself. */}
             <Text
               numberOfLines={1}
-              className="text-fg font-sans-medium flex-1 text-left text-[13px]"
+              className="text-fg font-sans-medium min-w-0 flex-1 text-left text-[13px]"
             >
               {t(labelKey)}
             </Text>
+            {key === NAV_BADGE && <UnreadBadge count={unread} />}
           </Pressable>
         ))}
         {/* The rule between what you MAKE and what you have SAID. It stays with

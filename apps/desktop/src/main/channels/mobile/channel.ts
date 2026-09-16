@@ -805,6 +805,7 @@ export class MobileChannel {
       body: request.body,
       urgency: request.urgency,
       deeplink: request.deeplink,
+      conversationId: request.conversationId,
       ttl: TTL_BY_PHASE[request.phase],
       ts: Date.now()
     }

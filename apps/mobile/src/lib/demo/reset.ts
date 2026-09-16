@@ -4,6 +4,7 @@ import { QUERY_CACHE_KEY, queryClient } from '@/lib/query/queryClient'
 import { useAppStore } from '@/state/appStore'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useDemoConfig } from '@/state/demoConfig'
+import { useNotifications } from '@/state/notifications'
 import { useRunStatus } from '@/state/runStatus'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Directory, Paths } from 'expo-file-system'
@@ -74,6 +75,9 @@ export async function purgeDemoState(): Promise<void> {
     useChatRuntime.getState().reset()
     // The chip tints point at conversations that are about to stop existing.
     useRunStatus.getState().reset()
+    // So does every line of the notification log, and each one deep-links
+    // into one.
+    useNotifications.getState().clear()
     // The made-up org link goes with the dataset it described; the next
     // demo entry starts a fresh one.
     resetDemoConnection()

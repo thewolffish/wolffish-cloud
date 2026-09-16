@@ -1,0 +1,136 @@
+{
+  "notifications": [
+    {
+      "id": "01KZ93DPKKZHH938MVP3K0GX2X",
+      "title": "Your Soul, User and Agents files are written",
+      "body": "All three written from the interview — one pass, no follow-ups needed. Open Customization if you want to change any of it.",
+      "at": 1785938238067,
+      "conversationId": "ask-showcase",
+      "deeplink": "wolffishcloud://chat?id=ask-showcase",
+      "phase": "completed",
+      "read": true,
+      "archived": false
+    },
+    {
+      "id": "01KZ7T742KENZWB64JQQJAEQMD",
+      "title": "Approve the force-push?",
+      "body": "Rebasing the release branch onto main means force-pushing it to origin. Nothing has been pushed yet — say go and I will finish.",
+      "at": 1785895030867,
+      "conversationId": "approval-showcase",
+      "deeplink": "wolffishcloud://chat?id=approval-showcase",
+      "phase": "needs_input",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KZ7SRTEVXTDFK3NARBJMBH5W",
+      "title": "Cutting the 1.0.18 release branch",
+      "body": "Three steps: rebase onto main, clear the download cache, install ffmpeg. I will stop before anything is pushed.",
+      "at": 1785894562267,
+      "conversationId": "approval-showcase",
+      "deeplink": null,
+      "phase": "started",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KZ6H0PTBGC3PVA33NFKPK3GE",
+      "title": "Eleven chart types, one conversation",
+      "body": "Every chart the desktop can draw is now in one place: bars, lines, area, scatter, pie, radar, gauge, heatmap and the rest.",
+      "at": 1785851829067,
+      "conversationId": "chart-showcase",
+      "deeplink": "wolffishcloud://chat?id=chart-showcase",
+      "phase": "completed",
+      "read": true,
+      "archived": false
+    },
+    {
+      "id": "01KZ57TH5VJ36GBF3MM7K2SFDF",
+      "title": "The file type showcase is built",
+      "body": "One card per file type the app can open — images, video, audio, PDF, Office documents, code and archives — in a single conversation.",
+      "at": 1785808635067,
+      "conversationId": "file-showcase",
+      "deeplink": "wolffishcloud://chat?id=file-showcase",
+      "phase": "completed",
+      "read": true,
+      "archived": true
+    },
+    {
+      "id": "01KYXZH38GWGN46XGRMPW6GX2M",
+      "title": "Your model access changed",
+      "body": "An admin added two models to your plan and retired one. Nothing you are running was using the retired one.",
+      "at": 1785565056272,
+      "conversationId": null,
+      "deeplink": "wolffishcloud://settings/model",
+      "phase": "info",
+      "read": true,
+      "archived": true
+    },
+    {
+      "id": "01KYXZG4GV3ZRY3HJWKKKRVNV0",
+      "title": "Workspace disk breakdown is done",
+      "body": "2.4 GB of the 3.1 GB is sitting in downloads. I left the cache alone as you asked; the five heaviest files are listed in the reply.",
+      "at": 1785565024795,
+      "conversationId": "2026-08-01_09-14-27_412-7e41c8",
+      "deeplink": "wolffishcloud://chat?id=2026-08-01_09-14-27_412-7e41c8",
+      "phase": "completed",
+      "read": true,
+      "archived": true
+    },
+    {
+      "id": "01KXPXBESYCYV1V152RZJY8BQC",
+      "title": "The FPS runs in one file",
+      "body": "Pointer lock, WASD, a level and collision in a single HTML page. Open it straight off disk — no server needed.",
+      "at": 1784254151486,
+      "conversationId": "2026-07-17_04-36-05_263-8241fe",
+      "deeplink": "wolffishcloud://chat?id=2026-07-17_04-36-05_263-8241fe",
+      "phase": "completed",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KXPWXSDWV3AM3ZNSSKJ8569V",
+      "title": "Textures, or flat colours?",
+      "body": "Everything else is in one file. Textures mean base64 blobs and a much bigger page — say the word and I will inline them.",
+      "at": 1784253703612,
+      "conversationId": "2026-07-17_04-36-05_263-8241fe",
+      "deeplink": null,
+      "phase": "needs_input",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KXPW8ZVHA8R7BW6HT7JJ20TA",
+      "title": "Pointer lock is the fiddly part",
+      "body": "Chrome needs the request inside a user gesture, so the canvas takes a click to start rather than locking on load.",
+      "at": 1784253022065,
+      "conversationId": "2026-07-17_04-36-05_263-8241fe",
+      "deeplink": null,
+      "phase": "info",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KXPVKK8NSC6TKTP9TVJW0TCT",
+      "title": "Started on the Three.js FPS",
+      "body": "One HTML file, no build step. Pointer lock and the movement loop first, then the level.",
+      "at": 1784252321045,
+      "conversationId": "2026-07-17_04-36-05_263-8241fe",
+      "deeplink": null,
+      "phase": "started",
+      "read": false,
+      "archived": false
+    },
+    {
+      "id": "01KXP3TD7C18M3KCKBNVKCP9YY",
+      "title": "The iPhone connection is gone",
+      "body": "Removed the pairing, its keychain entry and the stale sync folder. Nothing else was touching it.",
+      "at": 1784227378412,
+      "conversationId": "2026-07-16_21-27-34_988-b7b509",
+      "deeplink": null,
+      "phase": "completed",
+      "read": true,
+      "archived": false
+    }
+  ]
+}

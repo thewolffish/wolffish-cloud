@@ -89,6 +89,12 @@ export type NotifyPhoneRequest = {
   phase: NotifyPhase
   urgency: NotifyUrgency
   deeplink: string | null
+  /**
+   * The conversation this notification came out of, from the turn scope —
+   * harness identity, exactly like runId, and never the model's to choose.
+   * Null only for a run that has no conversation of its own yet.
+   */
+  conversationId: string | null
   runId: string
 }
 
@@ -273,6 +279,19 @@ async function notifyPhone(
   // background automations both carry one.
   const scope = turnScope.getStore()
   const runId = scope?.turnId ?? 'untracked'
+  /**
+   * The conversation this notification comes OUT of — sent on every frame,
+   * whatever the model asked for as a destination.
+   *
+   * These are two different questions and the phone needs both. `deeplink` is
+   * where a TAP goes, and it is the model's call right down to omitting it.
+   * This is which conversation raised the notification, and it is what the
+   * phone puts a badge on. Inferring the second from the first is what made a
+   * conversation that had sent five notifications wear a 2: the ones the model
+   * sent without a deeplink — which this tool deliberately permits — named no
+   * conversation at all, so the phone had nothing to count them against.
+   */
+  const conversationId = scope?.conversationId ?? null
 
   // WHERE a tap lands stays 100% the model's choice — no deeplink still means
   // a tap simply opens the app, and nothing here invents a destination. What
@@ -330,7 +349,7 @@ async function notifyPhone(
   // cannot quietly re-fire a send the model made exactly once.
   let result: NotifyResultFrame
   try {
-    result = await deps.notify({ title, body, phase, urgency, deeplink, runId })
+    result = await deps.notify({ title, body, phase, urgency, deeplink, conversationId, runId })
   } catch (error) {
     // Never left this machine — no phone paired, notifications switched off by
     // the user, the relay link down. Nothing about it is unknown, and if the

@@ -367,6 +367,7 @@ async function run(): Promise<void> {
       phase: 'needs_input',
       urgency: 'high',
       deeplink: null,
+      conversationId: '2026-08-05_10-00-00',
       runId: 'turn_abc'
     }
 
@@ -425,6 +426,12 @@ async function run(): Promise<void> {
     )
     ok('ttl derived from phase (needs_input=300)', sentFrame.ttl === TTL_BY_PHASE.needs_input)
     ok('runId travels with the frame', sentFrame.runId === 'turn_abc')
+    // …and so does the conversation it came out of, which is what the phone
+    // badges. Separate from the deeplink (null here) on purpose.
+    ok(
+      'the raising conversation travels with the frame',
+      sentFrame.conversationId === '2026-08-05_10-00-00' && sentFrame.deeplink === null
+    )
     ok('result id matches the frame id', result.notificationId === sentFrame.notificationId)
 
     // The user switch both withdraws the tool and kills the direct path.

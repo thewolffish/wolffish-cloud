@@ -617,6 +617,19 @@ export type NotifyFrame = {
   body: string
   urgency: NotifyUrgency
   deeplink: string | null
+  /**
+   * The conversation this notification came OUT of — the run's own, stamped
+   * by the desktop from the same turn scope `runId` comes from and never
+   * taken from the model. Null only when the run has no conversation yet.
+   *
+   * NOT the same question as `deeplink`, which is where a TAP goes and is the
+   * model's choice (it may be absent entirely, or point at another screen).
+   * The phone badges the conversation a notification came out of; inferring
+   * that from the deeplink meant a notify_phone call with no deeplink — which
+   * the tool deliberately allows — badged nothing at all, so a conversation
+   * that had raised five notifications wore a 2.
+   */
+  conversationId: string | null
   /** Seconds. */
   ttl: number
   /** Unix ms at the desktop. */
@@ -669,6 +682,12 @@ export function parseNotification(raw: Record<string, unknown>): NotificationFra
       ? (raw.urgency as NotifyUrgency)
       : 'normal',
     deeplink: isAllowedDeeplink(raw.deeplink) ? raw.deeplink : null,
+    // Absent from anything older than the frame that introduced it, and the
+    // phone falls back to reading the deeplink — which is what it always did.
+    conversationId:
+      typeof raw.conversationId === 'string' && CONVERSATION_ID_SHAPE.test(raw.conversationId)
+        ? raw.conversationId
+        : null,
     ttl: Math.min(NOTIFY_TTL_MAX, Math.max(NOTIFY_TTL_MIN, Math.round(ttlRaw))),
     ts: typeof raw.ts === 'number' && Number.isFinite(raw.ts) ? raw.ts : Date.now()
   }
