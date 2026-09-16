@@ -326,6 +326,29 @@ async function run(): Promise<void> {
         })
     )
     ok('a non-id conversation reference is refused', !titleAsId.success && sent.length === 3)
+
+    // WHICH CONVERSATION RAISED IT is a different question from where a tap
+    // goes, and it is stamped on every frame regardless — harness identity,
+    // like runId. Reading the badge off the deeplink instead is what made a
+    // conversation that had sent five notifications wear a 2: the ones sent
+    // without a deeplink (which the tool deliberately allows, above) named no
+    // conversation, so the phone had nothing to count them against.
+    ok(
+      'a notification with no deeplink still names the conversation it came from',
+      sent[0]?.conversationId === 'conv-2026-08-05_10-00-00'
+    )
+    ok(
+      'and so does one that deep-links somewhere else entirely',
+      sent[1]?.conversationId === 'conv-2026-08-05_10-00-00'
+    )
+
+    // Last, because the two refusals above assert on `sent.length`: a run with
+    // no conversation of its own stamps null, and the phone falls back to
+    // reading the deeplink exactly as it did before the field existed.
+    await turnScope.run({ turnId: 'turn_dl_6', conversationId: null, autonomous: true }, () =>
+      plugin.execute('notify_phone', { title: 't', body: 'b', phase: 'info' })
+    )
+    ok('a run with no conversation stamps null', sent[3]?.conversationId === null)
   }
 
   // ------------------------------------------------------------ channel layer
