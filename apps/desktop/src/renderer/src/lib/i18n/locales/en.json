@@ -1349,7 +1349,17 @@
       "chars": "chars"
     },
     "docxViewer": {
-      "loading": "Loading document"
+      "loading": "Loading document",
+      "pageOf": "Page {{index}} of {{count}}"
+    },
+    "presentationViewer": {
+      "loading": "Rendering slides",
+      "slideOf": "Slide {{index}} of {{count}}",
+      "partial": "Showing the first {{count}} of {{total}} slides"
+    },
+    "viewerPager": {
+      "previous": "Previous",
+      "next": "Next"
     },
     "spreadsheetViewer": {
       "loading": "Loading spreadsheet"

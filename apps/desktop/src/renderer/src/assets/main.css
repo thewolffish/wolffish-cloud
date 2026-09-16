@@ -380,3 +380,25 @@ textarea,
   color: var(--hljs-deletion-fg);
   background-color: var(--hljs-deletion-bg);
 }
+
+/* Word pages painted by docx-preview. The library scopes everything it emits
+   under .docx, but it leaves the page itself transparent with black text —
+   which is unreadable on our dark surface. A page is paper: give it white,
+   in both themes, and let the document's own colours sit on it. */
+.docx-surface section.docx {
+  background: #ffffff;
+  color: #111111;
+  margin: 0 auto 12px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+}
+
+.docx-surface section.docx:last-child {
+  margin-bottom: 0;
+}
+
+/* Word's page width (8.5in = 816px) is wider than a chat card. The viewer
+   sets `zoom` to fit, which reflows rather than blurs; this keeps the page
+   from forcing a horizontal scrollbar before that measurement lands. */
+.docx-surface {
+  max-width: 100%;
+}

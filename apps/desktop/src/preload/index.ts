@@ -2292,6 +2292,19 @@ export type UploadCopyProgress = {
   totalBytes: number
 }
 
+/** Where a deck's rendered slides live, and the canvas they were drawn on.
+ *  Dual decl — the source of truth is src/main/uploads/deck-preview.ts. */
+export type DeckPreview = {
+  /** Workspace-relative path per rendered slide, in presentation order. */
+  slides: string[]
+  /** Slides the deck holds — larger than `slides.length` when a very large
+   *  deck stopped at the render budget. */
+  totalSlides: number
+  /** Slide canvas in CSS px at 96 DPI; the card takes its aspect from this. */
+  width: number
+  height: number
+}
+
 export type UploadApi = {
   pickFile: () => Promise<string[]>
   pickFolder: () => Promise<string | null>
@@ -2308,6 +2321,12 @@ export type UploadApi = {
   }) => Promise<UploadedFileMetadata>
   readFile: (relativePath: string) => Promise<ArrayBuffer | null>
   exists: (relativePath: string) => Promise<boolean>
+  /** Render every slide of a .pptx/.potx to SVG files inside the workspace and
+   *  return where they landed. Null when the deck can't be parsed (legacy .ppt,
+   *  encrypted, truncated) — the caller falls back to the plain file card.
+   *  Cached on the deck's mtime + size, so this is cheap after the first call.
+   *  (Dual decl — see DeckPreview in src/main/uploads/deck-preview.ts.) */
+  renderDeck: (relativePath: string) => Promise<DeckPreview | null>
   getMetadata: (relativePath: string) => Promise<UploadFileMeta | null>
   isSupported: (fileName: string) => Promise<boolean>
   validate: (payload: {
@@ -2665,6 +2684,7 @@ const api: WolffishApi = {
     saveFile: (payload) => ipcRenderer.invoke('upload:saveFile', payload),
     saveBuffer: (payload) => ipcRenderer.invoke('upload:saveBuffer', payload),
     readFile: (relativePath) => ipcRenderer.invoke('upload:readFile', relativePath),
+    renderDeck: (relativePath) => ipcRenderer.invoke('upload:renderDeck', relativePath),
     exists: (relativePath) => ipcRenderer.invoke('upload:exists', relativePath),
     getMetadata: (relativePath) => ipcRenderer.invoke('upload:getMetadata', relativePath),
     isSupported: (fileName) => ipcRenderer.invoke('upload:isSupported', fileName),

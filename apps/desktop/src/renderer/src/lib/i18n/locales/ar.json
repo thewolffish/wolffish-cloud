@@ -1353,7 +1353,17 @@
       "chars": "حرف"
     },
     "docxViewer": {
-      "loading": "جارٍ تحميل المستند"
+      "loading": "جارٍ تحميل المستند",
+      "pageOf": "صفحة {{index}} من {{count}}"
+    },
+    "presentationViewer": {
+      "loading": "جارٍ عرض الشرائح",
+      "slideOf": "شريحة {{index}} من {{count}}",
+      "partial": "عرض أول {{count}} شريحة من {{total}}"
+    },
+    "viewerPager": {
+      "previous": "السابق",
+      "next": "التالي"
     },
     "spreadsheetViewer": {
       "loading": "جارٍ تحميل الجدول"

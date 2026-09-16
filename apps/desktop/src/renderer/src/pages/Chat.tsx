@@ -15,6 +15,7 @@ import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PathCard } from '@components/common/path-card/PathCard'
 import { canonicalPath } from '@components/common/path-card/pathStat'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { PresentationViewer } from '@components/common/presentation-viewer/PresentationViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
@@ -5416,6 +5417,16 @@ function renderSegments(
             } else if (ext === 'docx') {
               blocks.push(
                 <DocxViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                />
+              )
+            } else if (ext === 'pptx' || ext === 'potx') {
+              blocks.push(
+                <PresentationViewer
                   key={`doc_${seg.segmentId}_${di}`}
                   filePath={doc.path}
                   fileExists={true}
