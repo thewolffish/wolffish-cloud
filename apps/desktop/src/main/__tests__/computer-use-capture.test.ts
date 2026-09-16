@@ -24,7 +24,7 @@
  * Run: npx tsx --tsconfig tsconfig.node.json src/main/__tests__/computer-use-capture.test.ts
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -32,6 +32,32 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // apps/desktop/src/main/__tests__ -> repo root
 const REPO = path.resolve(HERE, '..', '..', '..', '..', '..')
 const read = (rel: string): string => readFileSync(path.join(REPO, rel), 'utf8')
+
+/**
+ * Every screen the phone's settings tab renders, with its path.
+ *
+ * §3's phone check used to be one read of services.tsx, and that single read
+ * was itself the defect. When the browser extension panel moved to
+ * channels.tsx the canary broke loudly — but the two NEGATIVES beside it went
+ * quiet at the same moment, still passing over a file that no longer held a
+ * screenshot row of any kind. A computer-use width row added to channels.tsx,
+ * right beside the browser pair that now lives there, would have sailed
+ * through green. The invariant is about the phone, not about a filename, so
+ * read the whole tree.
+ */
+const phoneScreens = ((): { rel: string; body: string }[] => {
+  const out: { rel: string; body: string }[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name.endsWith('.tsx'))
+        out.push({ rel: path.relative(REPO, full), body: readFileSync(full, 'utf8') })
+    }
+  }
+  walk(path.join(REPO, 'apps/mobile/src/app/settings'))
+  return out
+})()
 
 const PLUGIN_REL = 'capabilities/computer-use/plugin/index.mjs'
 const pluginSource = read(PLUGIN_REL)
@@ -259,9 +285,8 @@ async function run(): Promise<void> {
     assert.ok(/export async function getComputerUseConfig/.test(workspace))
   })
 
-  await check('the phone cannot set them: not in the whitelist, not on the screen', () => {
+  await check('the phone cannot set them: not in the whitelist, not on any screen', () => {
     const main = read('apps/desktop/src/main/index.ts')
-    const services = read('apps/mobile/src/app/settings/services.tsx')
     const demoConfig = read('apps/mobile/src/state/demoConfig.ts')
 
     // applyMobileSettings' switch is a whitelist; an unlisted key throws, which
@@ -278,15 +303,38 @@ async function run(): Promise<void> {
     assert.ok(/case 'browserScreenshotMaxWidth'/.test(main))
     assert.ok(/case 'browserScreenshotFormat'/.test(main))
 
+    // Two ways this half can empty itself out and keep passing: a walk that
+    // finds nothing, and a row syntax that stops being spelled `field="…"`.
+    // Both would leave the negatives below matching an empty corpus, which is
+    // the failure that let the browser panel's move go half-noticed.
     assert.ok(
-      !/field="screenshotMaxWidth"/.test(services),
-      'the phone must not render a computer-use width row'
+      phoneScreens.length >= 10,
+      `expected the phone's settings screens, walked ${phoneScreens.length}`
     )
     assert.ok(
-      !/field="screenshotFormat"/.test(services),
-      'the phone must not render a computer-use format row'
+      phoneScreens.some((s) => /field="\w+"/.test(s.body)),
+      'no field="…" rows found — the checks below would match nothing'
     )
-    assert.ok(/field="browserScreenshotMaxWidth"/.test(services))
+
+    const renderedBy = (field: string): string[] =>
+      phoneScreens.filter((s) => s.body.includes(`field="${field}"`)).map((s) => s.rel)
+
+    assert.deepEqual(
+      renderedBy('screenshotMaxWidth'),
+      [],
+      'no phone screen may render a computer-use width row'
+    )
+    assert.deepEqual(
+      renderedBy('screenshotFormat'),
+      [],
+      'no phone screen may render a computer-use format row'
+    )
+    // Wherever the browser panel is filed — Services once, Channels now — its
+    // own pair stays phone-editable.
+    assert.ok(
+      renderedBy('browserScreenshotMaxWidth').length > 0,
+      'the browser extension pair must still be rendered on some phone screen'
+    )
 
     assert.ok(!/^\s*'screenshotMaxWidth',$/m.test(demoConfig), 'not in DESKTOP_EDITABLE')
     assert.ok(!/^\s*'screenshotFormat',$/m.test(demoConfig), 'not in DESKTOP_EDITABLE')
