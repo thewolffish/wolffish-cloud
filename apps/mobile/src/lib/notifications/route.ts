@@ -2,7 +2,7 @@ import { parseDeeplink, type DeeplinkTarget } from '@/lib/bridge/protocol'
 import type { Href } from 'expo-router'
 
 /**
- * Where a `wolffish://…` deeplink goes in this app, and the ONE place that
+ * Where a `wolffishcloud://…` deeplink goes in this app, and the ONE place that
  * answers it.
  *
  * Two surfaces ask: a tap on the OS banner (lib/notifications/push.ts) and a
@@ -17,8 +17,8 @@ import type { Href } from 'expo-router'
  * do something arbitrary instead of nothing).
  */
 
-/** The in-app route a target names. `wolffish://chat?id=X` is `/chat?id=X`,
- *  `wolffish://settings/model` is `/settings/model` — the deeplink table and
+/** The in-app route a target names. `wolffishcloud://chat?id=X` is `/chat?id=X`,
+ *  `wolffishcloud://settings/model` is `/settings/model` — the deeplink table and
  *  this app's own routes are the same list, by construction. */
 export function hrefFor(target: DeeplinkTarget): Href {
   if (target.route === 'chat' && target.conversationId) {
