@@ -1,27 +1,25 @@
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
-import { BrowserLogo } from '@/components/core/browserLogos'
 import { Input } from '@/components/core/Input'
 import type { SelectOption } from '@/components/core/Select'
 import { SERVICE_LOGOS } from '@/components/core/providerLogos'
-import { ConfigSelectRow, ConfigTextRow } from '@/components/settings/ConfigRows'
+import { ConfigSelectRow } from '@/components/settings/ConfigRows'
 import { PanelScreen, Section, StatusDot } from '@/components/settings/SettingsUI'
 import { cn } from '@/lib/utils/cn'
-import {
-  useConfigValue,
-  useDemoConfig,
-  type ExtensionBrowser,
-  type ExtensionReadiness
-} from '@/state/demoConfig'
+import { useConfigValue, useDemoConfig } from '@/state/demoConfig'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Text, View } from 'react-native'
 
 /**
  * Services — the desktop's service panels, with the config.json surface each
- * one owns: STT, TTS, Computer Use and the Browser Extension are edited here;
- * web search is read-only because it is the organization's lane — one key at
- * the API edge, none on any device. Every editable row binds to a single flat
- * config key.
+ * one owns: STT, TTS and Computer Use are edited here; web search is read-only
+ * because it is the organization's lane — one key at the API edge, none on any
+ * device. Every editable row binds to a single flat config key.
+ *
+ * The browser extension is NOT one of them. A browser Wolffish drives is a
+ * place it works on your behalf rather than a connection it borrows, which is
+ * why the desktop keeps that panel under Channels › Browser — and so does this
+ * app, next to the terminal.
  */
 
 /** Kokoro's English voice catalog, verbatim from the desktop TTS panel. */
@@ -159,15 +157,6 @@ const STT_LANGUAGES: readonly SelectOption<string>[] = [
 /** Whisper sizes the desktop offers, plus the turbo build the workspace runs. */
 const STT_MODELS = ['tiny', 'base', 'small', 'medium', 'large', 'large-v3-turbo']
 
-const SCREENSHOT_WIDTHS: readonly SelectOption<string>[] = ['640', '960', '1280', '1920'].map(
-  (value) => ({ value, label: `${value}px` })
-)
-
-const SCREENSHOT_FORMATS: readonly SelectOption<string>[] = [
-  { value: 'jpeg', label: 'JPEG' },
-  { value: 'png', label: 'PNG' }
-]
-
 /**
  * Section header: the service's brand mark and name on the leading edge, and
  * — for the services that have a link to be up or down — the connection state
@@ -208,97 +197,11 @@ function ServiceHeader({
   )
 }
 
-/**
- * One connected browser, exactly as the desktop's extension panel draws it:
- * the browser's mark, its name with the major version, and the identity line
- * (profile · OS · connected time), with the extension version as a chip.
- */
-function BrowserCard({ browser }: { browser: ExtensionBrowser }): React.JSX.Element {
-  const { t } = useTranslation()
-  const major = browser.browserVersion ? browser.browserVersion.split('.')[0] : null
-  const connectedAt = browser.connectedAt
-    ? t('settings.services.browserExtension.connectedAtTime', {
-        time: new Date(browser.connectedAt).toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      })
-    : null
-  const detail = [browser.profileEmail, browser.os, connectedAt].filter(Boolean).join(' · ')
-  return (
-    <View className="bg-bg flex-row items-center gap-3 rounded-xl px-3 py-2.5">
-      <BrowserLogo browser={browser.browser} size={20} />
-      <View className="min-w-0 flex-1 flex-col">
-        <Text numberOfLines={1} className="text-fg font-sans-medium text-left text-sm">
-          {browser.name}
-          {major ? <Text className="text-muted font-sans"> {major}</Text> : null}
-        </Text>
-        {detail ? (
-          <Text numberOfLines={1} className="text-muted text-left font-sans text-xs">
-            {detail}
-          </Text>
-        ) : null}
-      </View>
-      {browser.extensionVersion ? (
-        <Text className="bg-surface text-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
-          v{browser.extensionVersion}
-        </Text>
-      ) : null}
-    </View>
-  )
-}
-
-/**
- * The desktop's readiness verdict, reduced to one row.
- *
- * It renders NOTHING when there is nothing to say — no desktop has reported
- * yet, or it reported a tier of 'none' with no blockers. A permanently grey
- * "unknown" row would be worse than silence: the point of this row is that the
- * user can act on it, and the fix itself lives on the desktop.
- */
-function ReadinessRow({ readiness }: { readiness: ExtensionReadiness }): React.JSX.Element | null {
-  const { t } = useTranslation()
-  if (!readiness.ready && readiness.blockers === 0 && readiness.tier === 'none') return null
-  const label = readiness.ready
-    ? t('settings.services.browserExtension.readinessReady')
-    : readiness.blockers > 0
-      ? t('settings.services.browserExtension.readinessBlockers', { count: readiness.blockers })
-      : t('settings.services.browserExtension.readinessLimited')
-  return (
-    <View className="bg-bg flex-col gap-1 rounded-xl px-3 py-2.5">
-      <View className="flex-row items-center gap-2">
-        <StatusDot tone={readiness.ready ? 'ok' : readiness.blockers > 0 ? 'error' : 'busy'} />
-        {/* The label is a sentence, so it wraps rather than truncating — but it
-            has to give up its width first, or the tier chip is pushed off the
-            card (the same min-w-0/flex-1 the browser rows above use). */}
-        <Text className="text-fg font-sans-medium min-w-0 flex-1 text-left text-sm">{label}</Text>
-        <Text className="bg-surface text-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
-          {t(`settings.services.browserExtension.tier.${readiness.tier}`, {
-            defaultValue: readiness.tier
-          })}
-        </Text>
-      </View>
-      {/* The first blocker only. The desktop walks the rest. */}
-      {readiness.top ? (
-        <Text className="text-muted text-left font-sans text-xs leading-5">{readiness.top}</Text>
-      ) : null}
-      {!readiness.ready ? (
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.browserExtension.readinessFixOnDesktop')}
-        </Text>
-      ) : null}
-    </View>
-  )
-}
-
 export default function ServicesScreen(): React.JSX.Element {
   // Desktop-owned values: pull the current ones when this screen opens.
   useFreshConfig()
   const { t } = useTranslation()
   const services = useDemoConfig((state) => state.services)
-  const extensionBrowsers = useDemoConfig((state) => state.extensionBrowsers)
-  const extensionReadiness = useDemoConfig((state) => state.extensionReadiness)
-  const port = useConfigValue('browserExtensionPort')
   const braveEnabled = useConfigValue('braveEnabled')
   const byKey = new Map(services.map((service) => [service.key, service]))
 
@@ -398,49 +301,6 @@ export default function ServicesScreen(): React.JSX.Element {
             to edit — same shape as the Brave row above. */}
         <Text className="text-muted text-left font-sans text-xs leading-5">
           {t('settings.services.computerUse.agentControlled')}
-        </Text>
-      </Section>
-
-      <Section>
-        <ServiceHeader
-          serviceKey="browserExtension"
-          connected={byKey.get('browserExtension')?.connected ?? false}
-        />
-        {extensionBrowsers.map((browser, index) => (
-          <BrowserCard key={`${browser.browser}-${index}`} browser={browser} />
-        ))}
-        <ReadinessRow readiness={extensionReadiness} />
-        {/* The port stays the desktop's: moving it restarts the pairing
-            server that extension connections dial into. */}
-        <View className="flex-col gap-1.5">
-          <Text className="text-muted font-sans-medium text-left text-sm">
-            {t('settings.services.browserExtension.port')}
-          </Text>
-          <Input value={port} editable={false} />
-          <Text className="text-muted text-left font-sans text-xs leading-5">
-            {t('settings.services.browserExtension.portManagedOnDesktop')}
-          </Text>
-        </View>
-        <ConfigSelectRow
-          field="browserScreenshotMaxWidth"
-          label={t('settings.services.screenshotMaxWidth')}
-          options={SCREENSHOT_WIDTHS}
-        />
-        <ConfigSelectRow
-          field="browserScreenshotFormat"
-          label={t('settings.services.screenshotFormat')}
-          options={SCREENSHOT_FORMATS}
-        />
-        <ConfigTextRow
-          field="browserScreenshotQuality"
-          label={t('settings.services.browserExtension.quality')}
-          placeholder="80"
-          keyboardType="number-pad"
-        />
-        {/* Not the generic desktop-only note — the settings above ARE editable
-            here; only the install-and-pair handshake is desktop-bound. */}
-        <Text className="text-muted text-left font-sans text-xs leading-5">
-          {t('settings.services.browserExtension.pairingNote')}
         </Text>
       </Section>
     </PanelScreen>

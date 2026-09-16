@@ -100,6 +100,35 @@
       "taskResults": "نتائج المهام",
       "taskResultsDescription": "الإيقاف يبقي خلاصة الهاتف نظيفة: الردود، والملفات المسلّمة، والأسئلة والموافقات، والتفكير، والأخطاء. التفعيل ينقل كل استدعاء أداة ونتيجته. تسجيل الاتصال يعمل دائماً ولا يتأثر بهذا.",
       "enabled": "مفعّل",
+      "browser": {
+        "title": "المتصفح",
+        "extension": "امتداد المتصفح",
+        "extensionDescription": "ما إذا كان أحد المتصفحات على حاسوبك متصلاً به.",
+        "extensionConnected": "متصل",
+        "extensionNone": "غير متصل",
+        "connectedAtTime": "اتصل عند {{time}}",
+        "readinessReady": "كل ما يحتاجه Wolffish متوفر.",
+        "readinessLimited": "يصل Wolffish إلى جزء من المتصفح فقط.",
+        "readinessBlockers": "{{count}} عائق يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_zero": "لا شيء يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_one": "عائق واحد يمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_two": "عائقان يمنعان Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_few": "{{count}} عوائق تمنع Wolffish من تشغيل متصفحك.",
+        "readinessBlockers_many": "{{count}} عائقًا يمنع Wolffish من تشغيل متصفحك.",
+        "readinessFixOnDesktop": "افتح لوحة إضافة المتصفح في تطبيق الكمبيوتر لمعالجته.",
+        "tier": {
+          "full": "كامل",
+          "degraded": "محدود",
+          "managed": "مُدار",
+          "none": "غير متاح"
+        },
+        "port": "منفذ الاقتران",
+        "portManagedOnDesktop": "يُدار المنفذ من تطبيق الكمبيوتر.",
+        "screenshotMaxWidth": "عرض لقطة الشاشة",
+        "screenshotFormat": "صيغة لقطة الشاشة",
+        "quality": "جودة JPEG (1-100)",
+        "pairingNote": "تثبيت الامتداد واقترانه يتمّان على الحاسوب."
+      },
       "cli": {
         "title": "سطر الأوامر",
         "description": "وولفيش داخل الطرفية على حاسوبك — الوكيل نفسه، والإعدادات نفسها، والمحادثات نفسها، دون الحاجة إلى نافذة.",
@@ -138,32 +167,8 @@
         "tts": "تحويل النص إلى كلام",
         "computerUse": "استخدام الحاسوب"
       },
-      "screenshotMaxWidth": "عرض لقطة الشاشة",
-      "screenshotFormat": "صيغة لقطة الشاشة",
       "brave": {
         "orgProvided": "البحث في الويب توفّره مؤسستك."
-      },
-      "browserExtension": {
-        "port": "منفذ الاقتران",
-        "quality": "جودة JPEG (1-100)",
-        "pairingNote": "تثبيت الامتداد واقترانه يتمّان على الحاسوب.",
-        "portManagedOnDesktop": "يُدار المنفذ من تطبيق الكمبيوتر.",
-        "connectedAtTime": "اتصل عند {{time}}",
-        "readinessReady": "كل ما يحتاجه Wolffish متوفر.",
-        "readinessLimited": "يصل Wolffish إلى جزء من المتصفح فقط.",
-        "readinessBlockers": "{{count}} عائق يمنع Wolffish من تشغيل متصفحك.",
-        "readinessBlockers_zero": "لا شيء يمنع Wolffish من تشغيل متصفحك.",
-        "readinessBlockers_one": "عائق واحد يمنع Wolffish من تشغيل متصفحك.",
-        "readinessBlockers_two": "عائقان يمنعان Wolffish من تشغيل متصفحك.",
-        "readinessBlockers_few": "{{count}} عوائق تمنع Wolffish من تشغيل متصفحك.",
-        "readinessBlockers_many": "{{count}} عائقًا يمنع Wolffish من تشغيل متصفحك.",
-        "readinessFixOnDesktop": "افتح لوحة إضافة المتصفح في تطبيق الكمبيوتر لمعالجته.",
-        "tier": {
-          "full": "كامل",
-          "degraded": "محدود",
-          "managed": "مُدار",
-          "none": "غير متاح"
-        }
       },
       "sttModel": "نموذج Whisper",
       "sttLanguage": "اللغة",

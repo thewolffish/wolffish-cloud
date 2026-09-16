@@ -235,18 +235,100 @@ describe('Channels — the terminal', () => {
   })
 })
 
+/**
+ * The browser channel — the desktop's Browser sub-tab, which lived on the
+ * Services screen until it moved here. Two things are worth holding: the card
+ * says in words whether any browser is reachable (the row above the list is
+ * the only thing on the card when no browser has answered), and its screenshot
+ * settings still write the browser's own keys rather than a neighbour's.
+ */
+describe('Channels — the browser', () => {
+  beforeEach(() => {
+    resetOutboxForTests()
+    mockRpc.mockReset()
+    mockRpc.mockResolvedValue({ ok: true })
+    useDemoConfig.setState({
+      services: [{ key: 'browserExtension', connected: true, connections: [] }],
+      extensionBrowsers: [
+        {
+          browser: 'chrome',
+          name: 'Chrome',
+          browserVersion: '141.0.7390.55',
+          os: 'macOS',
+          profileEmail: 'alturkeyy@gmail.com',
+          extensionVersion: '1.4.0',
+          connectedAt: null
+        }
+      ],
+      extensionReadiness: {
+        ready: false,
+        tier: 'degraded',
+        blockers: 2,
+        top: 'Site access is limited to the tab you pick.'
+      },
+      browserExtensionPort: '23152',
+      browserScreenshotQuality: '80'
+    })
+  })
+
+  it('draws the connected browser, the desktop’s verdict and the port', async () => {
+    await draw(<ChannelsScreen />)
+    expect(screen.getByText('Browser')).toBeTruthy()
+    expect(screen.getByLabelText('Browser extension Connected')).toBeTruthy()
+    // Name and major version are one Text with a nested one, so this is the
+    // composed line the card actually shows.
+    expect(screen.getByText('Chrome 141')).toBeTruthy()
+    expect(screen.getByText(/2 things are stopping Wolffish/)).toBeTruthy()
+    expect(screen.getByText('Site access is limited to the tab you pick.')).toBeTruthy()
+    expect(screen.getByDisplayValue('23152')).toBeTruthy()
+  })
+
+  it('says so in words when no browser has connected', async () => {
+    useDemoConfig.setState({
+      services: [{ key: 'browserExtension', connected: false, connections: [] }],
+      extensionBrowsers: [],
+      extensionReadiness: { ready: false, tier: 'none', blockers: 0, top: null }
+    })
+    await draw(<ChannelsScreen />)
+    expect(screen.getByLabelText('Browser extension Not connected')).toBeTruthy()
+    // Nothing to report is reported as nothing: no permanently grey verdict.
+    expect(screen.queryByText('Not reachable')).toBeNull()
+  })
+
+  it('the screenshot quality field writes the browser’s own key', async () => {
+    await draw(<ChannelsScreen />)
+    fireEvent.changeText(screen.getByDisplayValue('80'), '60')
+    await waitFor(() => {
+      expect(configSetCalls()).toEqual([
+        [Rpc.configSet, { settings: { browserScreenshotQuality: '60' } }]
+      ])
+    })
+    expect(useDemoConfig.getState().browserScreenshotQuality).toBe('60')
+  })
+})
+
 describe('Channels summary', () => {
   it('reads each channel from its own state, not from being paired', async () => {
     useDemoConfig.setState({
       mobileNotifications: true,
+      services: [{ key: 'browserExtension', connected: true, connections: [] }],
       cli: { pathInstalled: true, serviceActive: true, runMode: 'gui', mechanism: 'launchd' }
     })
     await draw(<ChannelsSummary />)
-    expect(screen.getByLabelText('Phone notifications On, CLI On')).toBeTruthy()
+    expect(screen.getByLabelText('Phone notifications On, CLI On, Browser On')).toBeTruthy()
 
     useDemoConfig.setState({ mobileNotifications: false })
     await waitFor(() => {
-      expect(screen.getByLabelText('Phone notifications Off, CLI On')).toBeTruthy()
+      expect(screen.getByLabelText('Phone notifications Off, CLI On, Browser On')).toBeTruthy()
+    })
+
+    // The browser answers the same question its own way: a browser with the
+    // extension talking to the desktop, or nothing to drive.
+    useDemoConfig.setState({
+      services: [{ key: 'browserExtension', connected: false, connections: [] }]
+    })
+    await waitFor(() => {
+      expect(screen.getByLabelText('Phone notifications Off, CLI On, Browser Off')).toBeTruthy()
     })
 
     // A command the shell cannot find is a channel you cannot reach — and an
@@ -255,7 +337,7 @@ describe('Channels summary', () => {
       cli: { pathInstalled: null, serviceActive: true, runMode: 'gui', mechanism: 'launchd' }
     })
     await waitFor(() => {
-      expect(screen.getByLabelText('Phone notifications Off, CLI Off')).toBeTruthy()
+      expect(screen.getByLabelText('Phone notifications Off, CLI Off, Browser Off')).toBeTruthy()
     })
   })
 })
