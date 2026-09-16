@@ -297,18 +297,82 @@ desk.send({
     body: 'there',
     urgency: 'normal',
     deeplink: null,
+    conversationId: '2026-09-17_11-02-33',
     ttl: 60,
     ts: Date.now()
   }
 })
 const delivered = await phone.next((f) => f.t === 'notification')
 check('notification reaches the connected phone in-band', delivered.frame?.notificationId === 'n1')
+// WHICH CONVERSATION RAISED IT is a different question from where a tap goes,
+// and the phone badges by it. notify_phone lets the model omit the deeplink —
+// this frame does — so without this field those notifications belong to
+// nothing. It rides in-band because deliverNotify spreads the frame; pinned
+// here because the day someone rebuilds that frame field by field, as the
+// personal edition's relay does, it would go silently.
+check(
+  'the raising conversation reaches the phone in-band, with no deeplink to infer it from',
+  delivered.frame?.conversationId === '2026-09-17_11-02-33' && delivered.frame?.deeplink === null,
+  JSON.stringify(delivered.frame)
+)
+// …and the desktop's send time, which is what the phone dates the card by
+// rather than when the handset happened to receive it.
+check('the desktop send time rides along', typeof delivered.frame?.ts === 'number')
 phone.send({
   t: 'push',
   frame: { v: 1, type: 'notification_ack', notificationId: 'n1' }
 })
 const nr = await desk.next((f) => f.t === 'notify_result')
 check('desktop hears the in-band route', nr.frame?.route === 'inband', JSON.stringify(nr))
+
+// An older desktop sends no conversationId at all. Delivered anyway — a
+// notification is still worth having without it, and the phone falls back to
+// reading the deeplink as it always did.
+desk.send({
+  t: 'notify',
+  frame: {
+    v: 1,
+    type: 'notify',
+    notificationId: 'n2',
+    runId: 'r',
+    phase: 'info',
+    title: 'hi',
+    body: 'there',
+    urgency: 'normal',
+    deeplink: null,
+    ttl: 60,
+    ts: Date.now()
+  }
+})
+const old = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === 'n2')
+check('a frame with no conversationId is delivered, not refused', old.frame?.conversationId === null)
+phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: 'n2' } })
+await desk.next((f) => f.t === 'notify_result')
+
+// …and one that could not be a conversation id is sanitized rather than
+// passed on: the phone keys a badge by this, and the Expo path reads it
+// straight out of `data` without re-validating.
+desk.send({
+  t: 'notify',
+  frame: {
+    v: 1,
+    type: 'notify',
+    notificationId: 'n3',
+    runId: 'r',
+    phase: 'info',
+    title: 'hi',
+    body: 'there',
+    urgency: 'normal',
+    deeplink: null,
+    conversationId: 'my morning digest!',
+    ttl: 60,
+    ts: Date.now()
+  }
+})
+const junk = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === 'n3')
+check('a conversationId that is not one arrives as null', junk.frame?.conversationId === null)
+phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: 'n3' } })
+await desk.next((f) => f.t === 'notify_result')
 
 // A second socket for the same phone replaces the first.
 const phoneB = socket(`${WS_BASE}/v1/bridge/ws?role=phone&access_token=${P2}&name=iPhone`)

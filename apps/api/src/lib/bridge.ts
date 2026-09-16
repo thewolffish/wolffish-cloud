@@ -41,6 +41,10 @@ export const BridgeClose = {
 
 /** One frame may not exceed this — the runtime's own WebSocket ceiling. */
 const MAX_FRAME_BYTES = 1024 * 1024
+/** Conversation ids ARE filenames on the desktop, so this is that same safe
+ *  set — the shape both clients validate a deeplink id against. */
+const CONVERSATION_ID_RE = /^[A-Za-z0-9._-]{1,128}$/
+
 /** How long an in-band notification may wait for the phone's ack before the
  *  push fallback fires. The phone acks the moment it renders. */
 const INBAND_ACK_MS = 2_000
@@ -454,9 +458,29 @@ export class UserBridge extends DurableObject<Env> {
       result('dropped', 'malformed notify frame')
       return
     }
+    /**
+     * The conversation this notification came OUT of, shape-checked HERE
+     * because this is the only place both delivery paths pass through.
+     *
+     * Conversation ids are filenames on the desktop, so this is that same safe
+     * set. It matters because the phone keys a badge by it: the in-band frame
+     * is re-validated on arrival (parseNotification), but the Expo payload is
+     * read straight out of `data`, so anything not caught here would key a
+     * badge bucket no screen can show and no read can clear.
+     */
+    const conversationId =
+      typeof frame.conversationId === 'string' && CONVERSATION_ID_RE.test(frame.conversationId)
+        ? frame.conversationId
+        : null
     const phones = this.ctx.getWebSockets('phone')
     if (phones.length > 0) {
-      const encoded = JSON.stringify({ t: 'notification', frame: { ...frame, type: 'notification' } })
+      // Spread, then override: the frame travels whole so a field this build
+      // does not know still reaches the phone, but `conversationId` is the
+      // sanitized one rather than whatever arrived.
+      const encoded = JSON.stringify({
+        t: 'notification',
+        frame: { ...frame, type: 'notification', conversationId }
+      })
       for (const ws of phones) this.raw(ws, encoded)
       const acked = await new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => {
@@ -499,7 +523,7 @@ export class UserBridge extends DurableObject<Env> {
         // `url`, which is where a tap goes and which notify_phone lets the
         // model omit entirely; a notification with no destination still came
         // from somewhere, and the phone has no other way to learn where.
-        conversationId: frame.conversationId ?? null,
+        conversationId,
         // When the DESKTOP sent it. Without this the phone's notification log
         // can only date a pushed one by when the handset received it: minutes
         // late out of a tray, hours late for a phone that was off.
