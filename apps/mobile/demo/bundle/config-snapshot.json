@@ -552,6 +552,12 @@
       "screenshotFormat": "jpeg",
       "screenshotQuality": 80,
       "connected": true,
+      "readiness": {
+        "ready": true,
+        "tier": "full",
+        "blockers": 0,
+        "top": null
+      },
       "browsers": [
         {
           "browser": "chrome",

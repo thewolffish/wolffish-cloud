@@ -268,8 +268,11 @@ function ReadinessRow({ readiness }: { readiness: ExtensionReadiness }): React.J
     <View className="bg-bg flex-col gap-1 rounded-xl px-3 py-2.5">
       <View className="flex-row items-center gap-2">
         <StatusDot tone={readiness.ready ? 'ok' : readiness.blockers > 0 ? 'error' : 'busy'} />
-        <Text className="text-fg font-sans-medium text-left text-sm">{label}</Text>
-        <Text className="bg-surface text-muted ms-auto rounded px-1.5 py-0.5 font-mono text-[11px]">
+        {/* The label is a sentence, so it wraps rather than truncating — but it
+            has to give up its width first, or the tier chip is pushed off the
+            card (the same min-w-0/flex-1 the browser rows above use). */}
+        <Text className="text-fg font-sans-medium min-w-0 flex-1 text-left text-sm">{label}</Text>
+        <Text className="bg-surface text-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
           {t(`settings.services.browserExtension.tier.${readiness.tier}`, {
             defaultValue: readiness.tier
           })}
