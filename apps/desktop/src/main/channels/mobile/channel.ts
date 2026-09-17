@@ -253,6 +253,33 @@ export type PairedPhone = {
   connected: boolean
   /** Since when, for the phone that is on the bridge; null for the rest. */
   connectedSince: number | null
+  /**
+   * Whether a notification can reach this phone while it is NOT on screen,
+   * as the org records it.
+   *
+   *   unknown  this build of the app has never registered for push here
+   *   none     registered without a token: notification permission is off on
+   *            the handset, or it is a simulator. In-band only — honest, and
+   *            not a fault to chase.
+   *   live     a push token is registered and nothing has said it is dead
+   *   dead     Expo answered DeviceNotRegistered — uninstalled, or the token
+   *            rotated. It re-registers by itself the next time the app opens.
+   *
+   * This is the answer to the question the model could not ask before: a
+   * notification that says `dropped` because the phone was asleep AND has no
+   * token is a different situation from one that simply missed its ack, and
+   * only the org ever knew which.
+   */
+  push: {
+    state: 'unknown' | 'none' | 'live' | 'dead'
+    /** The last error Expo reported for this handset, verbatim ('' if none).
+     *  `InvalidCredentials` here is about the org's Expo project, not the
+     *  phone. */
+    error: string
+    /** When a delivery RECEIPT last confirmed a push arrived. A send does not
+     *  set this; only proof does. */
+    deliveredAt: number | null
+  }
 }
 
 export type MobileStatus = {
@@ -280,6 +307,15 @@ export type MobileStatus = {
 /** A pairing offer as the org minted it (POST /v1/pair/offer). */
 export type PairOffer = { id: string; code: string; qr: string; expiresAt: number }
 
+/**
+ * How long to let a freshly connected phone register for push before
+ * re-reading its device row. The registration is one frame the phone sends on
+ * connect, so this only has to outlast a round trip — long enough that the
+ * re-list sees the new state, short enough that the panel does not sit on a
+ * stale one while someone is looking at it.
+ */
+const PUSH_REGISTRATION_GRACE_MS = 2_000
+
 /** A device row as the org lists it (GET /v1/devices). */
 export type WireDevice = {
   id: string
@@ -294,6 +330,17 @@ export type WireDevice = {
   pair_method: string
   created_at: string
   last_seen_at: string | null
+  /** What the ORG knows about this handset's ability to receive a push (api
+   *  migration 0022). Absent from an older API, which is why every reader
+   *  below treats a missing block as 'unknown' rather than as a fault. */
+  push?: {
+    state: string
+    registered_at: string | null
+    sent_at: string | null
+    delivered_at: string | null
+    error: string
+    error_at: string | null
+  }
   paired: boolean
   current: boolean
 }
@@ -729,6 +776,14 @@ export class MobileChannel {
         // desktop missed (the claim event raced a reconnect) — re-list.
         if (state.phones.some((p) => !this.phones.some((d) => d.id === p.deviceId))) {
           void this.refreshPhones()
+        } else {
+          // A KNOWN phone that just appeared re-registers for push as it
+          // connects, and that registration is written on the org's device
+          // row — so the copy held here went stale the instant the phone
+          // arrived. Re-listed after a beat, which is what lets the panel
+          // (and the model, through channel_status) see a handset become
+          // pushable again without waiting for the next sign-in.
+          setTimeout(() => void this.refreshPhones(), PUSH_REGISTRATION_GRACE_MS).unref?.()
         }
       }
       // The phone is where every parked card lives. Lose the last one and
@@ -3010,7 +3065,15 @@ export class MobileChannel {
           lastSeenAt: d.last_seen_at ? Date.parse(d.last_seen_at) || null : null,
           pairMethod: d.pair_method === 'qr' || d.pair_method === 'code' ? d.pair_method : null,
           connected: live.has(d.id),
-          connectedSince: live.get(d.id)?.connectedAt ?? null
+          connectedSince: live.get(d.id)?.connectedAt ?? null,
+          push: {
+            state:
+              d.push?.state === 'none' || d.push?.state === 'live' || d.push?.state === 'dead'
+                ? d.push.state
+                : 'unknown',
+            error: d.push?.error ?? '',
+            deliveredAt: d.push?.delivered_at ? Date.parse(d.push.delivered_at) || null : null
+          }
         }
       }),
       bridge: this.bridgeState,

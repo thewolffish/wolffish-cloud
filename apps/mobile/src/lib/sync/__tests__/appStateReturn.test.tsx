@@ -18,6 +18,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const mockRefreshPush = jest.fn()
 const mockReconcilePresented = jest.fn()
 jest.mock('@/lib/notifications/push', () => ({
+  attachNotificationHandlers: jest.fn(),
   refreshPushRegistration: () => mockRefreshPush(),
   reconcilePresentedNotifications: () => mockReconcilePresented()
 }))

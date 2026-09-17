@@ -29,6 +29,12 @@ type DeviceRow = {
   status: string
   created_at: string
   last_seen_at: string | null
+  push_state: string
+  push_registered_at: string | null
+  push_sent_at: string | null
+  push_delivered_at: string | null
+  push_error: string
+  push_error_at: string | null
   sessions: number
 }
 
@@ -37,6 +43,8 @@ devices.get('/devices', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT d.id, d.platform, d.name, d.app_version, d.model, d.os, d.os_version,
        d.pair_method, d.status, d.created_at, d.last_seen_at,
+       d.push_state, d.push_registered_at, d.push_sent_at, d.push_delivered_at,
+       d.push_error, d.push_error_at,
        (SELECT COUNT(*) FROM device_sessions s
          WHERE s.device_id = d.id AND s.revoked_at IS NULL AND s.expires_at > ?2) AS sessions
      FROM devices d WHERE d.user_id = ?1 AND d.status = 'active'
@@ -56,6 +64,24 @@ devices.get('/devices', async (c) => {
       pair_method: d.pair_method ?? '',
       created_at: d.created_at,
       last_seen_at: d.last_seen_at,
+      /**
+       * Whether this device can be reached by a push notification, and what
+       * Expo last said about it (see migration 0022).
+       *
+       * The desktop's Mobile panel and its `channel_status` both read this:
+       * before it existed, the only place a phone's pushability was recorded
+       * was inside that user's bridge object, so the model could tell the
+       * user a notification was sent but never that the handset had no way to
+       * receive one.
+       */
+      push: {
+        state: d.push_state ?? 'unknown',
+        registered_at: d.push_registered_at,
+        sent_at: d.push_sent_at,
+        delivered_at: d.push_delivered_at,
+        error: d.push_error ?? '',
+        error_at: d.push_error_at
+      },
       paired: d.sessions > 0,
       current: d.id === auth.dev
     }))

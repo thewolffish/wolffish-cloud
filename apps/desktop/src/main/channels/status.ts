@@ -113,7 +113,7 @@ function mobileSnapshot(s: MobileStatus): ChannelStatusSnapshot {
   const detail = connected
     ? `${live.map(name).join(', ')} connected`
     : bridge?.status === 'connected'
-      ? `${s.phones.map(name).join(', ')} paired — the app is not open`
+      ? `${s.phones.map(name).join(', ')} paired — the app is not open${pushNote(s)}`
       : bridge?.status === 'connecting' || bridge?.status === 'reconnecting'
         ? `${s.phones.map(name).join(', ')} paired — this desktop is reconnecting to the org`
         : bridge?.status === 'error'
@@ -127,6 +127,30 @@ function mobileSnapshot(s: MobileStatus): ChannelStatusSnapshot {
     detail,
     reconnect: connected ? '' : MOBILE_WAKE
   }
+}
+
+/**
+ * Whether a notification can still land on a phone that is not on screen —
+ * the difference between "asleep in a pocket, and reachable" and "asleep, and
+ * there is no way to reach it".
+ *
+ * Said HERE because this line is what the agent reads before deciding how to
+ * reach someone, and it is the one thing it could never find out for itself.
+ * A phone that cannot be pushed makes notify_phone a near-certain `dropped`;
+ * the model that knows it says so in the conversation, instead of ending a
+ * turn believing it left something on a lock screen that nothing can reach.
+ */
+function pushNote(s: MobileStatus): string {
+  const phones = s.phones.filter((p) => !p.connected)
+  if (phones.length === 0) return ''
+  if (phones.some((p) => p.push.state === 'live')) return ', but push can still reach it'
+  if (phones.every((p) => p.push.state === 'none')) {
+    return ', and push is off on the handset — notifications cannot reach it until the app is opened'
+  }
+  if (phones.some((p) => p.push.state === 'dead')) {
+    return ', and its push token is dead (reinstalled or rotated) — opening the app re-registers it'
+  }
+  return ', and it has never registered for push — notifications cannot reach it while it is closed'
 }
 
 /**

@@ -42,6 +42,9 @@ const phone = (connected: boolean, extra: Record<string, unknown> = {}): unknown
   pairMethod: 'qr',
   connected,
   connectedSince: connected ? Date.now() : null,
+  // A phone that has registered a push token, which is the ordinary case and
+  // the only one where "the app is not open" still means reachable.
+  push: { state: 'live', error: '', deliveredAt: null },
   ...extra
 })
 
@@ -122,6 +125,49 @@ check('paired but the app is closed is NOT connected — and says it is still pa
   assert.match(row.detail, /paired/, 'down must not read as gone')
   assert.match(row.detail, /not open/)
   assert.ok(row.reconnect.length > 0, 'a disconnected channel owes the user a way back')
+})
+
+/**
+ * Whether a CLOSED app can still be reached, which is the whole question
+ * notify_phone turns on and the one thing the agent cannot find out for
+ * itself. Before this, every closed phone read identically — so a model
+ * looking at a handset with no push token saw "paired, the app is not open"
+ * and reasonably concluded a notification would wait for them there.
+ */
+check('a closed phone says whether push can still reach it', () => {
+  const live = mobileRow({ paired: true, phones: [phone(false)], bridge: bridge('connected') })
+  assert.match(live.detail, /push can still reach it/)
+
+  const off = mobileRow({
+    paired: true,
+    phones: [phone(false, { push: { state: 'none', error: '', deliveredAt: null } })],
+    bridge: bridge('connected')
+  })
+  assert.match(off.detail, /push is off on the handset/)
+  assert.doesNotMatch(off.detail, /can still reach/)
+
+  const dead = mobileRow({
+    paired: true,
+    phones: [
+      phone(false, { push: { state: 'dead', error: 'DeviceNotRegistered', deliveredAt: null } })
+    ],
+    bridge: bridge('connected')
+  })
+  assert.match(dead.detail, /token is dead/)
+
+  const never = mobileRow({
+    paired: true,
+    phones: [phone(false, { push: { state: 'unknown', error: '', deliveredAt: null } })],
+    bridge: bridge('connected')
+  })
+  assert.match(never.detail, /never registered for push/)
+})
+
+// A connected phone is reachable over the tunnel, so the push question is
+// noise there — the line must stay about what is true right now.
+check('a connected phone says nothing about push', () => {
+  const row = mobileRow({ paired: true, phones: [phone(true)], bridge: bridge('connected') })
+  assert.doesNotMatch(row.detail, /push/)
 })
 
 check('reconnecting and connecting are named, not lumped into "closed"', () => {

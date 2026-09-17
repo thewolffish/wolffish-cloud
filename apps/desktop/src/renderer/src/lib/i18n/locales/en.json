@@ -895,6 +895,14 @@
         "code": "Typed code"
       },
       "connectedSince": "Connected since",
+      "push": "Push notifications",
+      "pushValue": {
+        "live": "Registered — can reach a closed app",
+        "none": "Off on this phone — open app only",
+        "dead": "Needs the app opened once",
+        "unknown": "Not registered yet"
+      },
+      "pushDelivered": "Push last confirmed",
       "endpoint": "Endpoint",
       "frames": "Frames",
       "bytes": "Traffic",

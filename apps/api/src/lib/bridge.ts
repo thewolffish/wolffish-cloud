@@ -26,6 +26,14 @@
  * an idle desktop costs nothing; the auto-response answers keepalive pings
  * without waking it.
  */
+import {
+  errorCodeOf,
+  getExpoReceipts,
+  sendExpoPush,
+  tokenPrefix,
+  type ExpoErrorCode,
+  type ExpoPushMessage
+} from '@/lib/expo-push'
 import { DurableObject } from 'cloudflare:workers'
 import type { Env } from '@/index'
 
@@ -48,7 +56,46 @@ const CONVERSATION_ID_RE = /^[A-Za-z0-9._-]{1,128}$/
 /** How long an in-band notification may wait for the phone's ack before the
  *  push fallback fires. The phone acks the moment it renders. */
 const INBAND_ACK_MS = 2_000
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
+/** Where both platforms stop counting: iOS shows 999+, Android's launchers
+ *  give up well before that. A number past this is noise on a lock screen. */
+const BADGE_COUNT_MAX = 999
+/** Expo's own recommendation: give a ticket this long before asking what
+ *  became of it. Sooner and the receipt simply is not made yet. */
+const RECEIPT_SWEEP_DELAY_MS = 15 * 60_000
+/** How long a notificationId is remembered, so a resend replays its original
+ *  outcome instead of buzzing the same pocket again. */
+const NOTIFY_DEDUP_RETENTION_MS = 24 * 3_600_000
+/** Expo forgets receipts after about a day; a ticket we never got one for is
+ *  abandoned at the same horizon rather than swept forever. */
+const TICKET_RETENTION_MS = NOTIFY_DEDUP_RETENTION_MS
+/** Floor between alarm firings, so a failing receipt fetch can never turn the
+ *  sweep into a tight loop. */
+const MIN_ALARM_GAP_MS = 60_000
+/** The Android channel the phone creates at launch. The id must match what
+ *  the handset registered or Android silently drops the notification. */
+const ANDROID_CHANNEL_ID = 'agent-runs'
+
+/** Durable Object storage prefixes, all three push-owned. */
+const PUSH_PREFIX = 'push:'
+const TICKET_PREFIX = 'ticket:'
+const RESULT_PREFIX = 'notif:'
+
+/**
+ * Transport priority for one push, per platform.
+ *
+ * Expo's two priorities do not mean the same thing on the two platforms. APNs
+ * 5 is a power hint — the notification still arrives. FCM `normal` is a
+ * QUEUE: a phone in Doze holds the message until its next maintenance window,
+ * minutes at best and hours overnight, which is precisely the asleep-and-
+ * closed case push exists for. So Android is always sent high, whatever the
+ * model chose: every push here is a user-visible notification the model
+ * deliberately sent, which is what FCM reserves high priority for, and the
+ * phone cannot show the difference anyway — one channel, at HIGH importance.
+ */
+function expoPriority(platform: 'ios' | 'android', urgency: unknown): 'default' | 'high' {
+  if (platform === 'android') return 'high'
+  return urgency === 'high' ? 'high' : 'default'
+}
 
 export type BridgeRole = 'desktop' | 'phone'
 
@@ -75,6 +122,26 @@ type PushRegistration = {
   badge: number
   updatedAt: number
 }
+
+/** An Expo ticket awaiting its receipt. Key: `ticket:<ticketId>`. */
+type TicketRecord = {
+  ticketId: string
+  deviceId: string
+  notificationId: string
+  sentAt: number
+}
+
+/** The routing decision the desktop is answered with, and the model reads. */
+type NotifyResult = {
+  v: 1
+  type: 'notify_result'
+  notificationId: string | null
+  route: 'inband' | 'push' | 'dropped'
+  reason?: string
+}
+
+/** Idempotency memory for a processed notify. Key: `notif:<notificationId>`. */
+type ResultRecord = { result: NotifyResult; at: number }
 
 export type PresenceDevice = {
   deviceId: string
@@ -119,7 +186,14 @@ export class UserBridge extends DurableObject<Env> {
       case '/close': {
         const device = url.searchParams.get('device') ?? ''
         const closed = this.closeDevice(device, BridgeClose.Revoked, 'revoked')
-        if (device) await this.ctx.storage.delete(`push:${device}`)
+        // A revoked device stops being pushable the moment it leaves, rather
+        // than lingering until its token dies of old age: the handset that
+        // holds it has just been told to wipe everything the notifications
+        // would be about.
+        if (device) {
+          await this.ctx.storage.delete(`${PUSH_PREFIX}${device}`)
+          await this.markPush(device, { state: 'unknown', registeredAt: null, error: '' })
+        }
         return Response.json({ ok: true, closed })
       }
       case '/event': {
@@ -398,30 +472,55 @@ export class UserBridge extends DurableObject<Env> {
 
   // ── Push notifications ──────────────────────────────────────────────────
 
+  /**
+   * Phone-side push control frames. Registrations are keyed by the ORG's
+   * device id, never by anything the handset makes up: the socket already
+   * proved which device it is when it authenticated, so a phone cannot
+   * register a token against a device that is not itself.
+   */
   private async handlePush(from: Attachment, frame: Record<string, unknown> | undefined): Promise<void> {
     if (!frame || typeof frame.type !== 'string' || !from.deviceId) return
-    const key = `push:${from.deviceId}`
+    const key = `${PUSH_PREFIX}${from.deviceId}`
     switch (frame.type) {
       case 'register_push': {
         const current = (await this.ctx.storage.get<PushRegistration>(key)) ?? null
+        const token = typeof frame.expoPushToken === 'string' ? frame.expoPushToken : null
         const next: PushRegistration = {
-          token: typeof frame.expoPushToken === 'string' ? frame.expoPushToken : null,
+          token,
           platform: frame.platform === 'android' ? 'android' : 'ios',
           appVersion: typeof frame.appVersion === 'string' ? frame.appVersion : null,
           badge: current?.badge ?? 0,
           updatedAt: Date.now()
         }
         await this.ctx.storage.put(key, next)
+        // A REGISTRATION WITHOUT A TOKEN IS NOT A FAILURE and must not read
+        // like one: permission refused and "this is a simulator" both land
+        // here, and both mean in-band delivery only, honestly. What it does
+        // mean is that a phone previously marked `dead` is alive again as
+        // soon as it comes back with a token.
+        await this.markPush(from.deviceId, {
+          state: token ? 'live' : 'none',
+          registeredAt: Date.now(),
+          ...(token ? { error: '' } : {})
+        })
+        console.log(
+          `[push] device registered: ${from.deviceId} (${next.platform}, app ` +
+            `${next.appVersion ?? 'unknown'}, token ${tokenPrefix(token)})`
+        )
         return
       }
       case 'unregister_push':
         await this.ctx.storage.delete(key)
+        await this.markPush(from.deviceId, { state: 'unknown', registeredAt: null })
+        console.log(`[push] device unregistered: ${from.deviceId}`)
         return
       case 'set_badge': {
         const current = await this.ctx.storage.get<PushRegistration>(key)
         if (!current) return
-        const count = typeof frame.count === 'number' && Number.isFinite(frame.count) ? frame.count : 0
-        await this.ctx.storage.put(key, { ...current, badge: Math.max(0, Math.round(count)) })
+        const raw = typeof frame.count === 'number' && Number.isFinite(frame.count) ? frame.count : 0
+        const count = Math.min(BADGE_COUNT_MAX, Math.max(0, Math.round(raw)))
+        if (current.badge === count) return
+        await this.ctx.storage.put(key, { ...current, badge: count })
         return
       }
       case 'notification_ack': {
@@ -435,29 +534,64 @@ export class UserBridge extends DurableObject<Env> {
   }
 
   /**
-   * The desktop's agent asked for a notification. In-band first: every
-   * connected phone gets the frame and the first ack settles it. Otherwise
-   * — or when nobody acks in time — every registered push token gets an
-   * Expo push. The desktop learns which route it took.
+   * The desktop's agent asked for a notification. Routing decision tree, in
+   * order:
+   *
+   *   1. already processed?      -> replay the stored result, send nothing
+   *   2. a phone socket is live  -> deliver in-band, answer `inband`, then
+   *      wait ~2 s for the ack and fall back to Expo push if it never comes
+   *      (the phone dedupes by notificationId, so an overlap is invisible)
+   *   3. no live phone, a token  -> answer `push`, then send via Expo
+   *   4. nothing to deliver on   -> dropped, with the reason that names the
+   *      seam rather than the symptom
+   *
+   * THE DESKTOP IS ANSWERED BEFORE THE SLOW PART, AND THE SLOW PART IS
+   * AWAITED HERE. Those are two separate rules and both were learned the hard
+   * way.
+   *
+   * Answering first is what keeps the model's turn from hanging on exp.host's
+   * round trip — and the answer would not improve by waiting, because a
+   * ticket means Expo accepted the message, not that a handset got it. What
+   * establishes delivery is the receipt sweep in `alarm()`, minutes later; a
+   * dead token found there prunes the registration, so the NEXT notify tells
+   * the truth instead of this one guessing at it.
+   *
+   * Awaiting rather than `ctx.waitUntil` is not a preference. In a Durable
+   * Object, waitUntil does not extend the lifetime of anything: work handed
+   * to it from a WebSocket message handler is abandoned the moment that
+   * handler returns, which here meant `pushViaExpo` never reached its first
+   * fetch — every off-screen notification answered `push` and sent nothing at
+   * all. Awaiting costs this one user's object a few hundred milliseconds
+   * with the answer already on the wire, and other frames still interleave at
+   * the await points (the phone's own ack arrives during exactly this wait).
    */
   private async deliverNotify(desktop: WebSocket, frame: Record<string, unknown> | undefined): Promise<void> {
     const notificationId = typeof frame?.notificationId === 'string' ? frame.notificationId : ''
-    const result = (route: 'inband' | 'push' | 'dropped', reason?: string): void => {
-      this.send(desktop, {
-        t: 'notify_result',
-        frame: {
-          v: 1,
-          type: 'notify_result',
-          notificationId: notificationId || null,
-          route,
-          ...(reason ? { reason } : {})
-        }
-      })
+    const answer = (result: NotifyResult): void => {
+      this.send(desktop, { t: 'notify_result', frame: result })
     }
     if (!frame || !notificationId) {
-      result('dropped', 'malformed notify frame')
+      answer({
+        v: 1,
+        type: 'notify_result',
+        notificationId: null,
+        route: 'dropped',
+        reason: 'malformed notify frame'
+      })
       return
     }
+
+    // Idempotency: a re-sent notificationId gets its original outcome and
+    // triggers nothing. The desktop mints these ids, so this is trustworthy —
+    // and it is what keeps a resend (a reconnect mid-flight, a retry the
+    // harness did not suppress) from buzzing the same pocket twice.
+    const resultKey = `${RESULT_PREFIX}${notificationId}`
+    const prior = await this.ctx.storage.get<ResultRecord>(resultKey)
+    if (prior) {
+      answer(prior.result)
+      return
+    }
+
     /**
      * The conversation this notification came OUT of, shape-checked HERE
      * because this is the only place both delivery paths pass through.
@@ -472,48 +606,132 @@ export class UserBridge extends DurableObject<Env> {
       typeof frame.conversationId === 'string' && CONVERSATION_ID_RE.test(frame.conversationId)
         ? frame.conversationId
         : null
+
     const phones = this.ctx.getWebSockets('phone')
-    if (phones.length > 0) {
-      // Spread, then override: the frame travels whole so a field this build
-      // does not know still reaches the phone, but `conversationId` is the
-      // sanitized one rather than whatever arrived.
-      const encoded = JSON.stringify({
-        t: 'notification',
-        frame: { ...frame, type: 'notification', conversationId }
-      })
-      for (const ws of phones) this.raw(ws, encoded)
-      const acked = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => {
-          this.ackWaiters.delete(notificationId)
-          resolve(false)
-        }, INBAND_ACK_MS)
-        this.ackWaiters.set(notificationId, () => {
-          clearTimeout(timer)
-          this.ackWaiters.delete(notificationId)
-          resolve(true)
+    const registrations = [
+      ...(await this.ctx.storage.list<PushRegistration>({ prefix: PUSH_PREFIX }))
+    ]
+    const pushable = registrations.filter(([, reg]) => Boolean(reg.token))
+
+    let result: NotifyResult
+    /** What still has to happen once the desktop has its answer. */
+    let deliver: (() => Promise<void>) | null = null
+    if (phones.length === 0 && pushable.length === 0) {
+      result = {
+        v: 1,
+        type: 'notify_result',
+        notificationId,
+        route: 'dropped',
+        reason: registrations.length
+          ? 'the phone is not connected and has no push token registered — notification permission ' +
+            'is off on the handset, or it is a simulator, which cannot receive push'
+          : 'no phone has registered for notifications on this account'
+      }
+    } else {
+      // Count the notification the moment a delivery path exists — once per
+      // notificationId (replays returned above), never per send attempt, so
+      // the in-band try and its push fallback cannot double-count.
+      await this.bumpBadges(registrations)
+      if (phones.length > 0) {
+        // Spread, then override: the frame travels whole so a field this build
+        // does not know still reaches the phone, but `conversationId` is the
+        // sanitized one rather than whatever arrived.
+        const encoded = JSON.stringify({
+          t: 'notification',
+          frame: { ...frame, type: 'notification', conversationId }
         })
-      })
-      if (acked) {
-        result('inband')
-        return
+        for (const ws of phones) this.raw(ws, encoded)
+        result = { v: 1, type: 'notify_result', notificationId, route: 'inband' }
+        deliver = () => this.fallBackUnlessAcked(notificationId, frame, conversationId)
+      } else {
+        result = { v: 1, type: 'notify_result', notificationId, route: 'push' }
+        deliver = () => this.pushViaExpo(notificationId, frame, conversationId)
       }
     }
-    const registrations = await this.ctx.storage.list<PushRegistration>({ prefix: 'push:' })
-    const targets: Array<{ key: string; reg: PushRegistration }> = []
-    for (const [key, reg] of registrations) if (reg.token) targets.push({ key, reg })
-    if (targets.length === 0) {
-      result('dropped', phones.length ? 'phone did not acknowledge and has no push token' : 'no phone registered for push')
-      return
+
+    await this.ctx.storage.put(resultKey, { result, at: Date.now() } satisfies ResultRecord)
+    // Make sure SOMETHING will prune this idempotency record eventually.
+    await this.armAlarm(Date.now() + NOTIFY_DEDUP_RETENTION_MS)
+    answer(result)
+    if (deliver) {
+      // Never throws outward: a notification is the last thing that should be
+      // able to close a user's bridge socket.
+      await deliver().catch((error) => {
+        console.error(`[push] ${notificationId}: delivery failed: ${String(error)}`)
+      })
     }
-    const messages = targets.map(({ reg }) => ({
-      to: reg.token,
+  }
+
+  /** One unread more on every registered phone, clamped where the platforms
+   *  stop counting. The phone overwrites this with its own absolute
+   *  `set_badge` as soon as it is on screen — this is only the number the OS
+   *  paints while the app is dead. */
+  private async bumpBadges(entries: [string, PushRegistration][]): Promise<void> {
+    await Promise.all(
+      entries.map(([key, reg]) =>
+        this.ctx.storage.put(key, {
+          ...reg,
+          badge: Math.min(BADGE_COUNT_MAX, (reg.badge ?? 0) + 1)
+        })
+      )
+    )
+  }
+
+  /** The in-band ack window: give the phone a moment, then push anyway. The
+   *  phone's own seen-set is what keeps the pair from rendering twice. */
+  private async fallBackUnlessAcked(
+    notificationId: string,
+    frame: Record<string, unknown>,
+    conversationId: string | null
+  ): Promise<void> {
+    const acked = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.ackWaiters.delete(notificationId)
+        resolve(false)
+      }, INBAND_ACK_MS)
+      this.ackWaiters.set(notificationId, () => {
+        clearTimeout(timer)
+        this.ackWaiters.delete(notificationId)
+        resolve(true)
+      })
+    })
+    if (acked) return
+    console.warn(`[push] ${notificationId}: no ack within ${INBAND_ACK_MS}ms — pushing`)
+    await this.pushViaExpo(notificationId, frame, conversationId)
+  }
+
+  /**
+   * Send one notification to every registered token and deal with the tickets.
+   *
+   * A TICKET IS NOT A DELIVERY. `push/send` answers 200 with per-message
+   * tickets, and an error ticket — a dead token, a broken FCM key — arrives
+   * under that same 200. Treating the HTTP status as the outcome is how a
+   * phone that could not be pushed for weeks kept being reported as pushed.
+   */
+  private async pushViaExpo(
+    notificationId: string,
+    frame: Record<string, unknown>,
+    conversationId: string | null
+  ): Promise<void> {
+    const registrations = await this.ctx.storage.list<PushRegistration>({ prefix: PUSH_PREFIX })
+    const targets: { key: string; deviceId: string; reg: PushRegistration; token: string }[] = []
+    for (const [key, reg] of registrations) {
+      if (reg.token) {
+        targets.push({ key, deviceId: key.slice(PUSH_PREFIX.length), reg, token: reg.token })
+      }
+    }
+    if (targets.length === 0) return
+
+    const ttl = typeof frame.ttl === 'number' ? frame.ttl : 900
+    const messages: ExpoPushMessage[] = targets.map(({ reg, token }) => ({
+      to: token,
       title: String(frame.title ?? ''),
       body: String(frame.body ?? ''),
       sound: 'default',
-      badge: reg.badge + 1,
-      ttl: typeof frame.ttl === 'number' ? frame.ttl : 900,
-      priority: frame.urgency === 'high' ? 'high' : 'normal',
-      ...(reg.platform === 'android' ? { channelId: 'agent-runs' } : {}),
+      badge: reg.badge ?? 0,
+      ttl,
+      priority: expoPriority(reg.platform, frame.urgency),
+      channelId: ANDROID_CHANNEL_ID,
       data: {
         notificationId,
         runId: frame.runId ?? '',
@@ -530,32 +748,231 @@ export class UserBridge extends DurableObject<Env> {
         ts: typeof frame.ts === 'number' ? frame.ts : Date.now()
       }
     }))
-    try {
-      const res = await fetch(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          ...(this.env.EXPO_ACCESS_TOKEN ? { authorization: `Bearer ${this.env.EXPO_ACCESS_TOKEN}` } : {})
-        },
-        body: JSON.stringify(messages),
-        signal: AbortSignal.timeout(10_000)
-      })
-      if (!res.ok) {
-        result('dropped', `push service answered ${res.status}`)
-        return
+
+    const tickets = await sendExpoPush(this.env, messages)
+    let stored = 0
+    for (let i = 0; i < targets.length; i += 1) {
+      const target = targets[i]!
+      const ticket = tickets[i]
+      if (!ticket) {
+        // Transport or HTTP failure — expo-push.ts has already logged what.
+        await this.markPush(target.deviceId, {
+          error: 'push service unreachable',
+          errorAt: Date.now()
+        })
+        continue
       }
-      // The badge the OS shows while the app is dead counts up per push;
-      // the phone resets it (set_badge) whenever its own state changes.
-      await Promise.all(
-        targets.map(({ key, reg }) => this.ctx.storage.put(key, { ...reg, badge: reg.badge + 1 }))
+      if (ticket.status === 'error') {
+        await this.onPushError(
+          notificationId,
+          target.key,
+          target.deviceId,
+          target.token,
+          errorCodeOf(ticket),
+          ticket.message
+        )
+        continue
+      }
+      await this.ctx.storage.put(`${TICKET_PREFIX}${ticket.id}`, {
+        ticketId: ticket.id,
+        deviceId: target.deviceId,
+        notificationId,
+        sentAt: Date.now()
+      } satisfies TicketRecord)
+      await this.markPush(target.deviceId, { sentAt: Date.now() })
+      stored += 1
+    }
+    // Receipts are what actually prove delivery — sweep them after Expo's
+    // recommended 15 minutes.
+    if (stored > 0) await this.armAlarm(Date.now() + this.sweepDelayMs())
+  }
+
+  /**
+   * One failed ticket or receipt, in the only two flavours that differ: the
+   * ones that condemn THIS handset, and the ones that condemn the org's whole
+   * Expo project. Both end up on the device row, because the row is what an
+   * admin, the desktop panel and the model can all actually read.
+   */
+  private async onPushError(
+    notificationId: string,
+    key: string | null,
+    deviceId: string,
+    token: string | null,
+    code: ExpoErrorCode,
+    message?: string
+  ): Promise<void> {
+    if (code === 'DeviceNotRegistered') {
+      // The token is dead (app uninstalled, token rotated away). Drop the
+      // registration so later notifies degrade honestly instead of pretending
+      // to push, and leave the state on the row saying why.
+      if (key) await this.ctx.storage.delete(key)
+      await this.markPush(deviceId, { state: 'dead', error: code, errorAt: Date.now() })
+      console.warn(
+        `[push] ${notificationId}: DeviceNotRegistered — registration for ${deviceId} removed ` +
+          `(token ${tokenPrefix(token)})`
       )
-      result('push')
-    } catch (err) {
-      result('dropped', `push service unreachable: ${(err as Error).message}`)
+      return
+    }
+    await this.markPush(deviceId, { error: code, errorAt: Date.now() })
+    if (code === 'InvalidCredentials') {
+      console.error(
+        `[push] ${notificationId}: InvalidCredentials — the FCM/APNs credentials on the org's ` +
+          'Expo project are broken; NO push will deliver for anyone until they are fixed'
+      )
+    } else if (code === 'MessageTooBig') {
+      console.error(`[push] ${notificationId}: MessageTooBig — payload over 4 KiB`)
+    } else if (code === 'MessageRateExceeded') {
+      console.error(`[push] ${notificationId}: MessageRateExceeded for ${deviceId}`)
+    } else {
+      console.error(`[push] ${notificationId}: error ${code}: ${message ?? ''}`)
     }
   }
 
+  /**
+   * What the org believes about one phone's pushability, on the device row
+   * where every other reader already looks. Best-effort by design: a failed
+   * write must never cost the notification it was describing.
+   */
+  private async markPush(
+    deviceId: string,
+    patch: {
+      state?: 'unknown' | 'none' | 'live' | 'dead'
+      registeredAt?: number | null
+      sentAt?: number
+      deliveredAt?: number
+      error?: string
+      errorAt?: number
+    }
+  ): Promise<void> {
+    if (!deviceId) return
+    const sets: string[] = []
+    const values: unknown[] = []
+    const push = (column: string, value: unknown): void => {
+      values.push(value)
+      sets.push(`${column} = ?${values.length}`)
+    }
+    const iso = (at: number | null | undefined): string | null =>
+      typeof at === 'number' ? new Date(at).toISOString() : null
+    if (patch.state !== undefined) push('push_state', patch.state)
+    if (patch.registeredAt !== undefined) push('push_registered_at', iso(patch.registeredAt))
+    if (patch.sentAt !== undefined) push('push_sent_at', iso(patch.sentAt))
+    if (patch.deliveredAt !== undefined) push('push_delivered_at', iso(patch.deliveredAt))
+    if (patch.error !== undefined) push('push_error', patch.error)
+    if (patch.errorAt !== undefined) push('push_error_at', iso(patch.errorAt))
+    if (sets.length === 0) return
+    values.push(deviceId)
+    try {
+      await this.env.DB.prepare(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?${values.length}`)
+        .bind(...values)
+        .run()
+    } catch {
+      // The notification matters more than the bookkeeping about it.
+    }
+  }
+
+  /**
+   * Receipt sweep and storage hygiene — the DO's single alarm, shared by both
+   * jobs that need one.
+   *
+   * RECEIPTS ARE THE ONLY PROOF. Tickets always look successful once Expo has
+   * taken the message; whether APNs or FCM ever accepted it is answered here,
+   * fifteen minutes later. A DeviceNotRegistered receipt is the reliable
+   * signal that a token died, and an InvalidCredentials receipt is the ONLY
+   * place broken FCM/APNs credentials on the Expo project ever surface —
+   * without this sweep an org can push into a void indefinitely while every
+   * surface reports success.
+   */
+  async alarm(): Promise<void> {
+    const now = Date.now()
+
+    const tickets = await this.ctx.storage.list<TicketRecord>({ prefix: TICKET_PREFIX })
+    const due: [string, TicketRecord][] = []
+    for (const [key, ticket] of tickets) {
+      if (ticket.sentAt + this.sweepDelayMs() <= now) due.push([key, ticket])
+    }
+
+    if (due.length > 0) {
+      const receipts = await getExpoReceipts(
+        this.env,
+        due.map(([, t]) => t.ticketId)
+      )
+      if (receipts) {
+        for (const [key, ticket] of due) {
+          const receipt = receipts[ticket.ticketId]
+          if (!receipt) {
+            // Expo has not made one yet, or never will. Either way this
+            // ticket has had its window; holding it changes nothing.
+            console.warn(`[push] no receipt for ticket ${ticket.ticketId} — dropped from sweep`)
+          } else if (receipt.status === 'error') {
+            await this.onPushError(
+              ticket.notificationId,
+              `${PUSH_PREFIX}${ticket.deviceId}`,
+              ticket.deviceId,
+              null,
+              errorCodeOf(receipt),
+              receipt.message
+            )
+          } else {
+            await this.markPush(ticket.deviceId, { deliveredAt: now, error: '' })
+          }
+          await this.ctx.storage.delete(key)
+        }
+      } else {
+        // Receipt endpoint unreachable: keep the due tickets for the next
+        // sweep, but never forever — Expo forgets receipts after about a day.
+        for (const [key, ticket] of due) {
+          if (ticket.sentAt + TICKET_RETENTION_MS <= now) {
+            console.warn(`[push] ticket ${ticket.ticketId} abandoned — receipts unreachable for 24h`)
+            await this.ctx.storage.delete(key)
+          }
+        }
+      }
+    }
+
+    // Prune idempotency records past their retention.
+    const results = await this.ctx.storage.list<ResultRecord>({ prefix: RESULT_PREFIX })
+    for (const [key, record] of results) {
+      if (record.at + NOTIFY_DEDUP_RETENTION_MS <= now) await this.ctx.storage.delete(key)
+    }
+
+    // Re-arm for whatever remains, with a floor so a failing sweep can never
+    // turn into a tight loop of alarms.
+    let next: number | null = null
+    const remainingTickets = await this.ctx.storage.list<TicketRecord>({ prefix: TICKET_PREFIX })
+    for (const [, ticket] of remainingTickets) {
+      const at = ticket.sentAt + this.sweepDelayMs()
+      next = next === null ? at : Math.min(next, at)
+    }
+    const remainingResults = await this.ctx.storage.list<ResultRecord>({ prefix: RESULT_PREFIX })
+    for (const [, record] of remainingResults) {
+      const at = record.at + NOTIFY_DEDUP_RETENTION_MS
+      next = next === null ? at : Math.min(next, at)
+    }
+    if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, now + this.alarmGapMs()))
+  }
+
+  /**
+   * The receipt window, and the floor between alarms. Both are overridable by
+   * env vars no deployment sets — the local push smoke turns fifteen minutes
+   * into two seconds, because a sweep that only runs a quarter of an hour
+   * after a send is otherwise proved by nothing at all, and it is the half of
+   * delivery that knows whether the org's Expo credentials work.
+   */
+  private sweepDelayMs(): number {
+    const override = Number(this.env.PUSH_SWEEP_DELAY_MS ?? '')
+    return Number.isFinite(override) && override > 0 ? override : RECEIPT_SWEEP_DELAY_MS
+  }
+
+  private alarmGapMs(): number {
+    const override = Number(this.env.PUSH_SWEEP_DELAY_MS ?? '')
+    return Number.isFinite(override) && override > 0 ? override : MIN_ALARM_GAP_MS
+  }
+
+  /** Move the single DO alarm earlier if needed; never postpone one. */
+  private async armAlarm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm()
+    if (current === null || at < current) await this.ctx.storage.setAlarm(at)
+  }
   // ── Wire helpers ────────────────────────────────────────────────────────
 
   private send(ws: WebSocket, frame: unknown): void {

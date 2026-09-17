@@ -518,6 +518,18 @@ function PhoneRow({
           label={t('settings.mobile.connectedSince')}
           value={phone.connected ? stamp(phone.connectedSince) : '—'}
         />
+        {/* Whether a notification can reach this phone while the app is
+            CLOSED — the only state in this panel that is about something the
+            user cannot see by looking at the handset. `none` is the honest
+            outcome of declining the permission prompt, not a fault, so it
+            reads as a fact rather than an error; `dead` is the one that wants
+            an action, and the action is simply opening the app. */}
+        <Row
+          label={t('settings.mobile.push')}
+          value={t(`settings.mobile.pushValue.${phone.push.state}`)}
+          className={phone.push.state === 'dead' ? 'text-amber-600 dark:text-amber-500' : undefined}
+        />
+        <Row label={t('settings.mobile.pushDelivered')} value={stamp(phone.push.deliveredAt)} />
         <Row label={t('settings.mobile.deviceId')} value={phone.id} mono className="col-span-2" />
       </dl>
     </div>

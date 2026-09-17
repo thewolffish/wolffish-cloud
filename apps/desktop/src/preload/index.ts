@@ -1989,6 +1989,17 @@ export type MobilePairedPhone = {
   pairMethod: 'qr' | 'code' | null
   connected: boolean
   connectedSince: number | null
+  /**
+   * Whether a notification can reach this phone while the app is CLOSED, as
+   * the org records it (api migration 0022). `none` means the handset refused
+   * the permission or is a simulator — in-band only, and honest; `dead` means
+   * Expo rejected its token and opening the app once re-registers it.
+   */
+  push: {
+    state: 'unknown' | 'none' | 'live' | 'dead'
+    error: string
+    deliveredAt: number | null
+  }
 }
 
 export type MobileStatus = {

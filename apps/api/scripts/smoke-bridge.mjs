@@ -278,6 +278,15 @@ check(
   ev.topic === 'conversation.upserted' && ev.payload?.id === 'c1'
 )
 
+/**
+ * Notification ids are UNIQUE PER RUN. The bridge remembers every one for a
+ * day and replays its original outcome rather than delivering twice, so fixed
+ * ids would make the SECOND run of this file assert against the first run's
+ * answers — passing while exercising nothing.
+ */
+const RUN = Date.now().toString(36)
+const nid = (name) => `${RUN}-${name}`
+
 // Push registration + a notify with no ack → falls to push (no real token
 // here, so the bridge reports dropped with a reason rather than lying).
 phone.send({
@@ -290,7 +299,7 @@ desk.send({
   frame: {
     v: 1,
     type: 'notify',
-    notificationId: 'n1',
+    notificationId: nid('n1'),
     runId: 'r',
     phase: 'info',
     title: 'hi',
@@ -303,7 +312,7 @@ desk.send({
   }
 })
 const delivered = await phone.next((f) => f.t === 'notification')
-check('notification reaches the connected phone in-band', delivered.frame?.notificationId === 'n1')
+check('notification reaches the connected phone in-band', delivered.frame?.notificationId === nid('n1'))
 // WHICH CONVERSATION RAISED IT is a different question from where a tap goes,
 // and the phone badges by it. notify_phone lets the model omit the deeplink —
 // this frame does — so without this field those notifications belong to
@@ -320,7 +329,7 @@ check(
 check('the desktop send time rides along', typeof delivered.frame?.ts === 'number')
 phone.send({
   t: 'push',
-  frame: { v: 1, type: 'notification_ack', notificationId: 'n1' }
+  frame: { v: 1, type: 'notification_ack', notificationId: nid('n1') }
 })
 const nr = await desk.next((f) => f.t === 'notify_result')
 check('desktop hears the in-band route', nr.frame?.route === 'inband', JSON.stringify(nr))
@@ -333,7 +342,7 @@ desk.send({
   frame: {
     v: 1,
     type: 'notify',
-    notificationId: 'n2',
+    notificationId: nid('n2'),
     runId: 'r',
     phase: 'info',
     title: 'hi',
@@ -344,9 +353,9 @@ desk.send({
     ts: Date.now()
   }
 })
-const old = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === 'n2')
+const old = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === nid('n2'))
 check('a frame with no conversationId is delivered, not refused', old.frame?.conversationId === null)
-phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: 'n2' } })
+phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: nid('n2') } })
 await desk.next((f) => f.t === 'notify_result')
 
 // …and one that could not be a conversation id is sanitized rather than
@@ -357,7 +366,7 @@ desk.send({
   frame: {
     v: 1,
     type: 'notify',
-    notificationId: 'n3',
+    notificationId: nid('n3'),
     runId: 'r',
     phase: 'info',
     title: 'hi',
@@ -369,10 +378,92 @@ desk.send({
     ts: Date.now()
   }
 })
-const junk = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === 'n3')
+const junk = await phone.next((f) => f.t === 'notification' && f.frame?.notificationId === nid('n3'))
 check('a conversationId that is not one arrives as null', junk.frame?.conversationId === null)
-phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: 'n3' } })
+phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: nid('n3') } })
 await desk.next((f) => f.t === 'notify_result')
+
+// A RESEND OF THE SAME notificationId IS NOT A SECOND NOTIFICATION. The
+// desktop mints these ids, so the bridge remembers the outcome for a day and
+// replays it: a reconnect mid-flight, or a retry the harness failed to
+// suppress, must not buzz the same pocket twice. Nothing is forwarded — which
+// is asserted below by the NEXT notification being n4, not another n1.
+desk.send({
+  t: 'notify',
+  frame: {
+    v: 1,
+    type: 'notify',
+    notificationId: nid('n1'),
+    runId: 'r',
+    phase: 'info',
+    title: 'hi again',
+    body: 'there again',
+    urgency: 'normal',
+    deeplink: null,
+    ttl: 60,
+    ts: Date.now()
+  }
+})
+const replay = await desk.next((f) => f.t === 'notify_result')
+check(
+  'a repeated notificationId replays its original result',
+  replay.frame?.notificationId === nid('n1') && replay.frame?.route === 'inband',
+  JSON.stringify(replay.frame)
+)
+desk.send({
+  t: 'notify',
+  frame: {
+    v: 1,
+    type: 'notify',
+    notificationId: nid('n4'),
+    runId: 'r',
+    phase: 'info',
+    title: 'hi',
+    body: 'there',
+    urgency: 'normal',
+    deeplink: null,
+    ttl: 60,
+    ts: Date.now()
+  }
+})
+const next = await phone.next((f) => f.t === 'notification')
+check('the replay forwarded nothing to the phone', next.frame?.notificationId === nid('n4'))
+phone.send({ t: 'push', frame: { v: 1, type: 'notification_ack', notificationId: nid('n4') } })
+await desk.next((f) => f.t === 'notify_result')
+
+// The org's own record of whether this handset can be pushed. It registered
+// above WITHOUT a token (permission refused, or a simulator), and `none` is
+// the honest word for that — not a fault, and not the same as never having
+// asked, which is what `unknown` means.
+const pushRows = (await api('/v1/devices', { token: D })).json?.devices ?? []
+const pushRow = pushRows.find((d) => d.id === phoneDeviceId)
+check(
+  'a registration with no token records push state "none"',
+  pushRow?.push?.state === 'none' && typeof pushRow?.push?.registered_at === 'string',
+  JSON.stringify(pushRow?.push)
+)
+
+// …and a token moves it to `live`, which is what the desktop panel and
+// channel_status read to tell the model a notification can actually land.
+phone.send({
+  t: 'push',
+  frame: {
+    v: 1,
+    type: 'register_push',
+    expoPushToken: 'ExponentPushToken[smoke-not-a-real-token]',
+    platform: 'ios',
+    appVersion: '1.0.49'
+  }
+})
+await sleep(200)
+const liveRow = ((await api('/v1/devices', { token: D })).json?.devices ?? []).find(
+  (d) => d.id === phoneDeviceId
+)
+check(
+  'a registration with a token records push state "live"',
+  liveRow?.push?.state === 'live',
+  JSON.stringify(liveRow?.push)
+)
 
 // A second socket for the same phone replaces the first.
 const phoneB = socket(`${WS_BASE}/v1/bridge/ws?role=phone&access_token=${P2}&name=iPhone`)

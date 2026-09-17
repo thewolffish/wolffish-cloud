@@ -33,7 +33,7 @@ neither gate ever holds one.
 | `CONFIG_ENC_KEY` | strongly | 32 random bytes, base64: seals every settings row at rest. `openssl rand -base64 32` |
 | `BRAVE_API_KEY` | for search | The search plan's key. `SEARCH_PROVIDERS` replaces it with a JSON pool of plans |
 | `PUBLISH_TOKEN` | for CI | The capability-publish key — see step 5. Absent, the publish lane answers 404 |
-| `EXPO_ACCESS_TOKEN` | only if | The Expo project enforces enhanced push security |
+| `EXPO_ACCESS_TOKEN` | for notifications | The Expo push token. The organization's Expo account enforces Enhanced Security for Push Notifications, so without this **no phone receives a notification while its app is closed** — and nothing else reports the gap. Mint one at [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens); `GET /admin/gates` answers `push.configured` |
 
 <Warning>
 `ADMIN_RESET_CODE_READ` is deliberately **not** in the committed config. Setting it to `1` lets an

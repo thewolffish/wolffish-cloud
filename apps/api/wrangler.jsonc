@@ -22,8 +22,12 @@
  * - CONFIG_ENC_KEY      32 random bytes, base64: seals every user's synced
  *                       config row at rest in D1 (lib/config-crypto.ts).
  *                       Mint one with: openssl rand -base64 32
- * - EXPO_ACCESS_TOKEN   optional; only when the Expo project enforces
- *                       enhanced push security (the bridge's push fallback).
+ * - EXPO_ACCESS_TOKEN   REQUIRED for phone notifications. The org's Expo
+ *                       account enforces Enhanced Security for Push
+ *                       Notifications, so exp.host answers 401 without it and
+ *                       nothing is delivered to any phone that is not on
+ *                       screen. `GET /admin/gates` answers push.configured.
+ *                         npx wrangler secret put EXPO_ACCESS_TOKEN
  * - PUBLISH_TOKEN       the CI publish key: `/publish/*` (src/routes/publish.ts)
  *                       accepts it as a bearer token for org capability
  *                       writes and nothing else, which is how a push to main

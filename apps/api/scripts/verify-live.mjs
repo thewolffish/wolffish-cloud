@@ -1186,6 +1186,39 @@ check(
   check('pairing + bridge smoke passes end to end', run.status === 0, summary)
 }
 
+// ── 9.5 · the push lane: can this deployment reach a closed app at all? ──
+// The one part of notifications no smoke run can prove from outside: pushing
+// for real needs a live handset. What the edge CAN answer is whether the lane
+// is wired — and it has to be asked out loud, because a deployment with no
+// EXPO_ACCESS_TOKEN does not push at reduced capacity, it pushes nothing,
+// while every other surface goes on reporting notifications as sent.
+{
+  const gates = await api('/admin/gates', { token: O })
+  const push = gates.json?.push
+  check('the push lane reports itself', Boolean(push), JSON.stringify(gates.json ?? {}).slice(0, 200))
+  if (push?.configured) {
+    check('push is configured (EXPO_ACCESS_TOKEN present)', true)
+    // Fleet health, as the org's own device rows record it. `dead` handsets
+    // are normal in small numbers — an uninstall leaves one behind until the
+    // app is opened again — but an InvalidCredentials anywhere in here is the
+    // org's Expo project being broken for everyone, which is worth a red line
+    // on a release gate rather than a note in a log nobody reads.
+    const broken = push.last_error?.error === 'InvalidCredentials'
+    check(
+      'no InvalidCredentials in the fleet (the org Expo credentials are sound)',
+      !broken,
+      JSON.stringify(push.last_error ?? {})
+    )
+    console.log(`   push devices: ${JSON.stringify(push.devices ?? {})}`)
+  } else {
+    skip(
+      'push delivery to a closed app',
+      'EXPO_ACCESS_TOKEN is not set on this deployment — only phones with the app ' +
+        'open will ever receive a notification (npx wrangler secret put EXPO_ACCESS_TOKEN)'
+    )
+  }
+}
+
 // owner signs out
 check('owner logout', (await api('/v1/logout', { token: O, body: {} })).status === 200)
 

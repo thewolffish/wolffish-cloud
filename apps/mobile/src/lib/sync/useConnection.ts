@@ -1,4 +1,8 @@
-import { reconcilePresentedNotifications, refreshPushRegistration } from '@/lib/notifications/push'
+import {
+  attachNotificationHandlers,
+  reconcilePresentedNotifications,
+  refreshPushRegistration
+} from '@/lib/notifications/push'
 import { clearOverlays, seedOverlays } from '@/lib/sync/overlays'
 import { clearDesktopUpdater, seedDesktopUpdater } from '@/lib/sync/updater'
 import { attachLiveUpdates, reconcile, refreshConfig } from '@/lib/sync/sync'
@@ -125,6 +129,18 @@ export function useConnection(): void {
         // stacking — safe on a reconnect that reuses the same client.
         attachLiveUpdates()
         attachTurnStream()
+        // The notification topic AND the push module's record of which socket
+        // to send on. Both live behind this one call, which is why it cannot
+        // be skipped as "just a listener": without it `activeTunnel` stays
+        // null, so register_push is never sent, the bridge has no token for
+        // this phone, and every notify is answered `dropped` — while in-band
+        // frames arrive at a socket with no handler and go unacked.
+        attachNotificationHandlers(bridgeClient)
+        // Register on this socket now. The foreground listener above covers
+        // later returns, but a cold start connects without any AppState
+        // change, and until a registration lands the bridge does not know
+        // this phone exists for notifications at all.
+        void refreshPushRegistration()
         void reconcile().catch(() => undefined)
       }
       if (isConnected && !wasConnected) {

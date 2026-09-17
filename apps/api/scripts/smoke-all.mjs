@@ -4,7 +4,8 @@
  *
  *   npx wrangler dev --port 8787        (with .dev.vars pointing at the mocks:
  *   node scripts/mock-deepinfra.mjs      MODEL_UPSTREAMS / SEARCH_PROVIDERS,
- *   node scripts/mock-brave.mjs          plus PUBLISH_TOKEN for smoke-publish)
+ *   node scripts/mock-brave.mjs          EXPO_PUSH_BASE + EXPO_ACCESS_TOKEN,
+ *   node scripts/mock-expo.mjs           plus PUBLISH_TOKEN for smoke-publish)
  *   npm test
  *
  * Suites that PATCH the org (admin, search) are followed by a pause before
@@ -22,7 +23,11 @@ const SUITES = [
   'smoke-search.mjs',
   'smoke-publish.mjs',
   { file: 'smoke-ai.mjs', pauseMs: 65_000 },
-  'smoke-archive.mjs'
+  'smoke-archive.mjs',
+  // Last, and after the org-patching suites: it pairs a phone of its own and
+  // unpairs it on the way out, so nothing that asserts "one phone at a time"
+  // can run while it holds one.
+  'smoke-push.mjs'
 ]
 
 const health = await fetch(`${BASE}/health`).then((r) => r.json()).catch(() => null)

@@ -1238,14 +1238,65 @@ admin.get('/gates', async (c) => {
   const modelGate = c.env.MODEL_GATE.get(c.env.MODEL_GATE.idFromName('org'))
   const searchGate = c.env.SEARCH_GATE.get(c.env.SEARCH_GATE.idFromName('org'))
   const userId = c.req.query('user_id') ?? null
-  const [model, search, tokens, searches] = await Promise.all([
+  const [model, search, tokens, searches, push] = await Promise.all([
     modelGate.stats().catch(() => null),
     searchGate.stats().catch(() => null),
     userId ? modelGate.standing(userId).catch(() => null) : null,
-    userId ? searchGate.standing(userId).catch(() => null) : null
+    userId ? searchGate.standing(userId).catch(() => null) : null,
+    pushLane(c.env)
   ])
-  return c.json({ model, search, ...(userId ? { standing: { user_id: userId, tokens, searches } } : {}) })
+  return c.json({
+    model,
+    search,
+    push,
+    ...(userId ? { standing: { user_id: userId, tokens, searches } } : {})
+  })
 })
+
+/**
+ * The push lane, beside the model and search lanes it sits with — because it
+ * fails the same way they do and, until this existed, in total silence.
+ *
+ * `configured` is the one an operator needs first: the org's Expo account has
+ * Enhanced Security for Push Notifications switched on, so a deployment with
+ * no EXPO_ACCESS_TOKEN secret does not push at reduced capacity — it pushes
+ * nothing at all, for everyone, while every other surface reports sends as
+ * having gone out. The counts beneath it are the fleet's own answer to the
+ * next question: of the phones this org has, how many could actually be
+ * reached right now, and what did the last failure say?
+ *
+ * `dead` and a recent `error` of InvalidCredentials mean the FCM/APNs
+ * credentials on the Expo project are broken, not the handsets.
+ */
+async function pushLane(env: Env): Promise<{
+  configured: boolean
+  devices: Record<string, number>
+  last_error: { device_id: string; error: string; at: string | null } | null
+}> {
+  const [counts, failure] = await Promise.all([
+    env.DB.prepare(
+      `SELECT push_state AS state, COUNT(*) AS n FROM devices
+        WHERE platform = 'mobile' AND status = 'active' GROUP BY push_state`
+    )
+      .all<{ state: string; n: number }>()
+      .catch(() => null),
+    env.DB.prepare(
+      `SELECT id, push_error, push_error_at FROM devices
+        WHERE push_error <> '' ORDER BY push_error_at DESC LIMIT 1`
+    )
+      .first<{ id: string; push_error: string; push_error_at: string | null }>()
+      .catch(() => null)
+  ])
+  const devices: Record<string, number> = {}
+  for (const row of counts?.results ?? []) devices[row.state] = row.n
+  return {
+    configured: Boolean(env.EXPO_ACCESS_TOKEN),
+    devices,
+    last_error: failure
+      ? { device_id: failure.id, error: failure.push_error, at: failure.push_error_at }
+      : null
+  }
+}
 
 /**
  * Run the nightly maintenance now — the same bounded jobs the cron runs

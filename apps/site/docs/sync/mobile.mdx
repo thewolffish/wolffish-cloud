@@ -117,7 +117,30 @@ phone goes away.
 
 A notification the desktop's agent sends is delivered in-band over the bridge when the phone is on
 screen. If the phone does not acknowledge within two seconds — it acks the moment it renders — the
-bridge falls back to an Expo push using the token in its push register.
+bridge falls back to an Expo push using the token in its push register. The desktop is answered
+with the routing decision immediately, before any of that reaches Expo: the model's turn never
+waits on a push service, and the answer would not improve by waiting.
+
+**A send is not a delivery.** Expo answers `push/send` with HTTP 200 and reports per-message failure
+inside the body, so the bridge reads the tickets rather than the status code. A `DeviceNotRegistered`
+ticket deletes that phone's registration on the spot — the token is dead, and the next notification
+says so honestly instead of pretending to push. Fifteen minutes after any send, a Durable Object
+alarm sweeps the stored ticket ids through Expo's receipts endpoint, which is the only thing that
+proves a handset got it; an `InvalidCredentials` receipt is the only place broken FCM/APNs
+credentials on the organization's Expo project ever surface.
+
+Every one of those outcomes lands on the device row, which is what `GET /v1/devices`, the desktop's
+Mobile panel, the agent's own `channel_status` and the admin layer all read. `push.state` is
+`live` (a token is registered), `none` (the handset refused the permission, or it is a simulator —
+in-band delivery only, and not a fault), `dead` (Expo rejected the token; opening the app
+re-registers it) or `unknown` (never registered). It is why the agent can tell the difference
+between a phone that is asleep in a pocket and reachable, and one that nothing can reach.
+
+<Warning>
+The push fallback needs the `EXPO_ACCESS_TOKEN` secret. The organization's Expo account enforces
+Enhanced Security for Push Notifications, so without it every send is rejected and only phones with
+the app already open receive anything. `GET /admin/gates` answers `push.configured`.
+</Warning>
 
 ## Unpairing
 

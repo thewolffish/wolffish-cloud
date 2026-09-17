@@ -43,11 +43,35 @@ export type Env = {
   /** One per user: the live desktop↔phone link (see lib/bridge.ts). */
   USER_BRIDGE: DurableObjectNamespace<UserBridge>
   /**
-   * Optional Expo push access token. Only needed when the Expo project has
-   * "enhanced push security" switched on; the bridge sends pushes without it
-   * otherwise.
+   * Expo push access token — REQUIRED for phone notifications.
+   *
+   * The Expo account this org's mobile app belongs to has Enhanced Security
+   * for Push Notifications switched on, so exp.host answers 401 to any send
+   * without this header: no token is not "degraded push", it is no push at
+   * all, for every user, while the desktop and the model go on reporting that
+   * notifications were sent. `GET /admin/gates` reports `push.configured`
+   * for exactly this reason, and lib/expo-push.ts logs an auth failure as its
+   * own distinct error rather than as transport noise.
+   *
+   * Mint one at https://expo.dev/settings/access-tokens, then:
+   *   npx wrangler secret put EXPO_ACCESS_TOKEN
+   *
+   * Typed optional because the binding genuinely can be absent — in-band
+   * delivery to a phone that is on screen keeps working without it.
    */
   EXPO_ACCESS_TOKEN?: string
+  /**
+   * Where the Expo push API lives. Unset everywhere but the local smoke lane,
+   * which points it at scripts/mock-expo.mjs — a deployment that sets this is
+   * sending its users' notifications somewhere other than Expo.
+   */
+  EXPO_PUSH_BASE?: string
+  /**
+   * Milliseconds between a push send and its receipt sweep, in place of the
+   * fifteen minutes Expo recommends. Local smoke lane only — a deployment
+   * that shortens this asks Expo for receipts that do not exist yet.
+   */
+  PUSH_SWEEP_DELAY_MS?: string
   RESEND_API_KEY: string
   JWT_SECRET: string
   /**

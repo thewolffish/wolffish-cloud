@@ -167,6 +167,20 @@ operator draining a backlog.
     **and** every write. See [Organization controls](/governance/org-controls).
   </Accordion>
 
+  <Accordion title="Phone notifications never arrive">
+    Three seams, and they fail differently. **The lane**: `GET /admin/gates` answers
+    `push.configured` — false means `EXPO_ACCESS_TOKEN` is missing, and with Enhanced Security on
+    the Expo account that is a total outage for everyone, not a degradation. **The handset**:
+    `GET /v1/devices` answers a `push.state` per phone — `none` is notification permission refused
+    (or a simulator, which cannot hold a token), `dead` is a token Expo rejected, and opening the
+    app re-registers it. **The credentials**: a `push.last_error` of `InvalidCredentials` is the
+    organization's FCM/APNs keys on the Expo project being broken, not the phone.
+
+    A notification the agent reports as UNCONFIRMED was never seen to arrive; it may still have. A
+    push the bridge accepted is only proven by its delivery receipt, swept fifteen minutes later,
+    which is what sets `push.delivered_at`.
+  </Accordion>
+
   <Accordion title="A phone shows content but cannot send">
     Two different failures. `GET /v1/bridge/status` says whether the desktop is on the bridge; the
     phone's own socket says whether the organization is reachable. A phone that can read but not run
