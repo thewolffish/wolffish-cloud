@@ -388,17 +388,23 @@ textarea,
 .docx-surface section.docx {
   background: #ffffff;
   color: #111111;
-  margin: 0 auto 12px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  /* The page fills the viewer rather than floating on a desk: a document card
+     is not a print-preview, and a shadowed sheet inset from both edges spends
+     the width the text needs — most of it, in the expanded sheet. */
+  margin: 0;
 }
 
-.docx-surface section.docx:last-child {
-  margin-bottom: 0;
+/* Consecutive pages butt together, so the only thing marking the join is a
+   hairline — enough to tell a footer from the header under it, without the
+   card-on-a-desk framing. */
+.docx-surface section.docx + section.docx {
+  border-top: 1px solid rgb(0 0 0 / 0.12);
 }
 
-/* Word's page width (8.5in = 816px) is wider than a chat card. The viewer
-   sets `zoom` to fit, which reflows rather than blurs; this keeps the page
-   from forcing a horizontal scrollbar before that measurement lands. */
+/* Word's page width (A4 = 794px, Letter = 816px) rarely matches the surface.
+   The viewer sets `zoom` to fit the page to the FULL viewer width, which
+   reflows rather than blurs; this keeps the page from forcing a horizontal
+   scrollbar before that measurement lands. */
 .docx-surface {
   max-width: 100%;
 }

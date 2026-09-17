@@ -2,6 +2,7 @@ process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { attachFilesToAutomation, removeAutomationFile } from '@main/automations/files'
+import { installAttention } from '@main/attention'
 import { braveService, type BraveStatus } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
@@ -154,6 +155,7 @@ import { sudoSession } from '@main/runtime/sudoSession'
 import { Thalamus } from '@main/runtime/thalamus'
 import { turnScope } from '@main/runtime/corpus'
 import { countdowns } from '@main/runtime/countdown'
+import { waits } from '@main/runtime/wait'
 import { registerCountdownCapability } from '@main/runtime/countdown-capability'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
@@ -2368,6 +2370,12 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Native "needs you" signal — the Dock bounce / taskbar flash the channel
+  // raises when a turn ends or a card blocks on the user while they are in
+  // another app. Pointed at the main window only: the tray popup is not a
+  // window anyone is waiting at.
+  installAttention(mainBrowserWindow)
+
   // <webview> guests. Two browser-tab behaviors the bare tag lacks: a popup
   // (window.open, target=_blank) never becomes a naked BrowserWindow — an
   // http(s) target goes to the system browser, anything else is dropped —
@@ -2897,6 +2905,13 @@ app.whenReady().then(async () => {
     pending: () => countdowns.pending()
   })
   registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
+  // Blocking waits (`wait`, utilities). No cross-turn plumbing: a wait lives
+  // and dies inside the tool call that is holding its turn open, so its cards
+  // ride that turn's broca and its only outside input is a mid-turn message —
+  // which the turn runner already hands to WaitManager.interrupt.
+  agent.cerebellum.setWaitHost({
+    start: (input, signal) => waits.start(input, signal)
+  })
   // Every transition reaches the renderer and the phone — the arming turn's
   // broca carries only the `armed` state; counting/fired/aborted happen after
   // the turn ended and have no stream to ride. → MOBILE_CONFIG_SILENT.

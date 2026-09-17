@@ -1,5 +1,59 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
+/**
+ * Word writes its bullets as private-use codepoints in the Symbol and
+ * Wingdings fonts — the default bullet is U+F0B7 in Symbol — and neither font
+ * carries a drawable glyph there on the platforms this app runs on, so every
+ * bulleted list in every Word document comes out as a column of tofu boxes.
+ *
+ * docx-preview puts those glyphs in a generated `::before { content }` rule
+ * rather than in the DOM, so there is no text node to fix: the rules have to
+ * be rewritten. Swap the codepoint for its real Unicode equivalent and stop
+ * asking for the font that cannot draw it.
+ */
+const SYMBOL_BULLETS: Record<string, string> = {
+  '\uF06E': '■', // Symbol: filled square
+  '\uF071': '◆', // Symbol: filled diamond
+  '\uF075': '◆',
+  '\uF0A7': '▪', // Symbol: small filled square
+  '\uF0A8': '□', // Symbol: hollow square
+  '\uF0B7': '•', // Symbol: the default Word bullet
+  '\uF0D8': '➢', // Wingdings: arrowhead
+  '\uF0FC': '✓' // Wingdings: check mark
+}
+
+const PRIVATE_USE = /[\uF000-\uF0FF]/
+
+function unmojibakeBullets(): void {
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList
+    try {
+      rules = sheet.cssRules
+    } catch {
+      // A stylesheet we may not read is not one docx-preview wrote.
+      continue
+    }
+    for (const rule of Array.from(rules)) {
+      const styled = rule as CSSStyleRule
+      if (!styled.style || !styled.selectorText) continue
+      const content = styled.style.content
+      if (!content || !PRIVATE_USE.test(content)) continue
+      styled.style.content = content.replace(/[\uF000-\uF0FF]/g, (ch) => SYMBOL_BULLETS[ch] ?? '•')
+      styled.style.fontFamily = 'inherit'
+    }
+  }
+}
+
+export type UseDocxPagesOptions = {
+  /**
+   * Largest zoom the page may take. The card fits and never magnifies (1) —
+   * it is a preview, and blowing a page up there just shows less of it. The
+   * expanded sheet is for reading, so it fills the width and is only capped
+   * to keep a very wide monitor from rendering the page at 3x.
+   */
+  maxZoom?: number
+}
+
 export type DocxPagesState = {
   status: 'loading' | 'ready' | 'failed'
   /** 0-based index of the page currently at the top of the viewport. */
@@ -26,7 +80,8 @@ export type DocxPagesState = {
  * chip appears exactly when a document really has separate pages. There are no
  * paging controls — the document scrolls, so scrolling IS the navigation.
  */
-export function useDocxPages(filePath: string): DocxPagesState {
+export function useDocxPages(filePath: string, options: UseDocxPagesOptions = {}): DocxPagesState {
+  const maxZoom = options.maxZoom ?? 1
   const hostRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const pagesRef = useRef<HTMLElement[]>([])
@@ -72,6 +127,7 @@ export function useDocxPages(filePath: string): DocxPagesState {
           useBase64URL: false
         })
         if (cancelled) return
+        unmojibakeBullets()
         pagesRef.current = Array.from(host.querySelectorAll<HTMLElement>('section'))
         setPageCount(pagesRef.current.length)
         setStatus('ready')
@@ -85,9 +141,10 @@ export function useDocxPages(filePath: string): DocxPagesState {
     }
   }, [filePath])
 
-  // A Word page is 816px wide at 96 DPI — wider than a chat card. Scale the
-  // whole document down to fit with `zoom`, which re-lays the text out at the
-  // smaller size instead of blurring it the way a transform would.
+  // A Word page is 794px (A4) or 816px (Letter) at 96 DPI, which almost never
+  // matches the surface. Scale the document to the FULL viewer width with
+  // `zoom`, which re-lays the text out at the new size instead of blurring it
+  // the way a transform would.
   useEffect(() => {
     if (status !== 'ready') return
     const host = hostRef.current
@@ -107,13 +164,18 @@ export function useDocxPages(filePath: string): DocxPagesState {
       // Fit the PAGE, never the content. Something wider than its own page (a
       // big table) keeps overflowing and the scroller lets you reach it —
       // squeezing the whole document to swallow it would misrepresent it.
-      host.style.zoom = String(Math.min(1, available / pageWidth))
+      //
+      // Scale the page rather than forcing its width: a section carries the
+      // real page geometry, and stretching it would reflow text the file
+      // paginated for a different measure, so the page breaks on screen would
+      // stop matching the ones in Word.
+      host.style.zoom = String(Math.min(maxZoom, available / pageWidth))
     }
     fit()
     const observer = new ResizeObserver(fit)
     observer.observe(scroller)
     return () => observer.disconnect()
-  }, [status])
+  }, [status, maxZoom])
 
   // Which page is in view. Measured from bounding rects rather than offsetTop
   // so the `zoom` above never skews the arithmetic.

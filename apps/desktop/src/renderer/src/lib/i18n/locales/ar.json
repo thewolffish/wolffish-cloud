@@ -1320,6 +1320,17 @@
       "unavailableFile": "الملف غير متوفر",
       "unavailablePath": "المسار غير متوفر"
     },
+    "optionsCard": {
+      "heading_zero": "لا توجد خيارات للنسخ",
+      "heading_one": "خيار واحد للنسخ",
+      "heading_two": "خياران للنسخ",
+      "heading_few": "{{count}} خيارات للنسخ",
+      "heading_many": "{{count}} خيارًا للنسخ",
+      "heading_other": "{{count}} خيار للنسخ",
+      "tabsLabel": "الخيارات",
+      "optionCount": "الخيار {{current}} من {{total}}",
+      "copy": "انسخ هذا الخيار"
+    },
     "questionCard": {
       "otherLabel": "شيء آخر",
       "otherDescription": "أخبر وولفيش بما يجب فعله بالضبط بدلاً من ذلك",
@@ -1366,7 +1377,12 @@
       "next": "التالي"
     },
     "spreadsheetViewer": {
-      "loading": "جارٍ تحميل الجدول"
+      "loading": "جارٍ تحميل الجدول",
+      "empty": "هذه الورقة فارغة",
+      "sheets": "الأوراق",
+      "clipped": "عرض أول {{rows}} صف",
+      "tierValues": "ملف xls. قديم — التنسيق غير محفوظ في هذه الصيغة",
+      "tierPlain": "ملف نصي عادي — لا يوجد تنسيق لعرضه"
     },
     "changeModel": "تغيير النموذج",
     "modelLabel": "النموذج: {{model}}",
@@ -1764,6 +1780,21 @@
         "superseded": "استُبدل بعدّ تنازلي أحدث.",
         "relaunch": "أُسقط لأن Wolffish أُعيد تشغيله قبل أن يُنفَّذ."
       }
+    },
+    "wait": {
+      "status": {
+        "waiting": "بالانتظار",
+        "elapsed": "انتهى الانتظار",
+        "interrupted": "استيقظ مبكرًا",
+        "canceled": "أُوقف"
+      },
+      "remaining": "بقي {{duration}}",
+      "waitingHint": "ينتظر {{duration}} قبل المتابعة. أرسل رسالة للمتابعة الآن.",
+      "elapsedHint": "انتظر {{duration}} ثم تابع.",
+      "interruptedHint": "أرسلت رسالة بعد {{duration}}، فتابع مبكرًا.",
+      "canceledHint": "أُوقف بعد {{duration}}.",
+      "inputPlaceholder": "أرسل رسالة للمتابعة الآن",
+      "send": "إرسال"
     },
     "planMode": {
       "label": "خطة",

@@ -134,6 +134,7 @@ export class TurnRenderer {
     // tick.
     this.taskState = new Map()
     this.countdownState = new Map()
+    this.waitState = new Map()
     this.workflowState = new Map()
     this.deliveredThisTurn = new Set()
     this.startedAt = Date.now()
@@ -205,6 +206,9 @@ export class TurnRenderer {
         return
       case 'countdown':
         this.#countdown(segment.snapshot)
+        return
+      case 'wait':
+        this.#wait(segment.snapshot)
         return
       case 'compaction_started':
         if (!this.verbose) return
@@ -299,6 +303,37 @@ export class TurnRenderer {
     this.#line(`${mark} ${c.bold(label)} ${c.gray(detail)}`)
   }
 
+  // A blocking wait. Never hidden, verbose or not: minutes of deliberate
+  // silence with nothing on screen is the definition of a hang. Typing in the
+  // composer is already a mid-turn message, which is what ends a wait — so
+  // the line says that rather than pointing at a control the terminal lacks.
+  #wait(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return
+    const id = snapshot.waitId ?? 'wait'
+    const status = snapshot.status ?? 'waiting'
+    if (this.waitState.get(id) === status) return
+    this.waitState.set(id, status)
+    const reason = snapshot.reason ?? 'waiting'
+    const mark =
+      status === 'waiting' ? icon.tool() : status === 'canceled' ? icon.fail() : icon.ok()
+    const seconds = Number(snapshot.seconds ?? 0)
+    const pretty =
+      seconds < 60
+        ? `${Math.round(seconds)}s`
+        : seconds < 3600
+          ? `${Math.round(seconds / 60)}m`
+          : `${Math.round((seconds / 3600) * 10) / 10}h`
+    const detail =
+      status === 'waiting'
+        ? `waiting ${pretty} — send a message to continue now`
+        : status === 'elapsed'
+          ? `waited ${pretty}`
+          : status === 'interrupted'
+            ? 'woken early by your message'
+            : 'stopped'
+    this.#line(`${mark} ${c.bold(reason)} ${c.gray(detail)}`)
+  }
+
   #workflow(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return
     const id = snapshot.workflowId ?? 'workflow'
@@ -385,6 +420,7 @@ export class TurnRenderer {
     this.toolStartedAt.clear()
     this.taskState.clear()
     this.countdownState.clear()
+    this.waitState.clear()
     this.workflowState.clear()
     this.deliveredThisTurn.clear()
     this.sawProse = false

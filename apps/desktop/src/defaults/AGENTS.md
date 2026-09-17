@@ -240,6 +240,8 @@ extension/
 ├── side-panel/            the in-browser side-panel UI
 │   ├── assets/                its compiled JS/CSS
 │   └── fonts/                 its fonts
+├── options/               the extension settings page (cursor overlay, site access)
+│   └── assets/                its compiled JS/CSS
 ├── offscreen/             offscreen document for background DOM work
 │   └── assets/
 ├── _locales/              i18n message catalogs
@@ -381,7 +383,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (35 capabilities, plus two built into the app)
+### The full catalog (37 capabilities, plus two built into the app)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -397,9 +399,10 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | **Web** | `.web-search` | `web_search` (Brave, through the org's `/v1/search` lane — no key on the device), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** browsers (Chrome, Edge, Brave, Firefox — several can be connected at once) via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_screenshot`, `ext_wait`, …; `ext_browsers` lists connections, `ext_use_browser` picks one per conversation) |
-| **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
+| **Documents** | `.document` | docx/html/md — `doc_design` (the Word design manual), `document_read/create/modify/validate/render/convert/merge`. `document_create` is a style engine: formatting lives in named Word styles, so the file stays editable and its headings reach the navigation pane and the table of contents |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
-| | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |
+| | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze`; formulas are written with computed cached values so the file reads back as numbers, and `spreadsheet_chart` writes a real native chart |
+| | `.presentation` | pptx/potx — `deck_design` (the deck design manual), `presentation_read/create/modify/validate/render`. `presentation_create` is a layout engine: the model picks a layout per slide and supplies content, the engine owns geometry, type and colour |
 | | `.dataviz` | The chart manual — `dataviz`, read **before** building any chart (`.chart.json` cards, SVG inside PDFs, channel fallbacks) |
 | | `.pdf-design` | The document-design manual — `pdf_design`, read **before** authoring a report, brief or proposal |
 | | `.web-design` | The web-design manual — `web_design`, read **before** authoring an HTML page or web deliverable |
@@ -415,6 +418,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
 | | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` (masked), `get_secret` (reveal on request) |
 | | `.ask` | Ask the user one or more multiple-choice questions via an in-app card — `ask_user` |
+| | `.options` | Offer the user several alternative snippets — code, commands, config, drafts — as one tabbed card they can read and copy — `offer_options` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
 | | `.knowledge` | The agent amends its own long-term beliefs — `knowledge_list`, `knowledge_read`, `knowledge_add`, `knowledge_edit`, `knowledge_forget`, `knowledge_rewrite`, `knowledge_restore`; every write keeps the previous version as `<file>.bak`, so "unlearn that" is reversible |
 | | `.projects` | Shared instructions + file lists a fresh conversation starts from — `project_list`, `project_view`, `project_create`, `project_update`, `project_add_files`, `project_remove_file`, `project_delete`, `project_conversations` |

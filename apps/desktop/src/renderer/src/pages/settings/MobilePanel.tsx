@@ -17,7 +17,6 @@ import {
   Tick02Icon,
   Unlink01Icon
 } from 'hugeicons-react'
-import QRCode from 'qrcode'
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -120,7 +119,13 @@ export function MobilePanel(): React.JSX.Element {
   useEffect(() => {
     if (!payload) return
     let alive = true
-    void QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 1, width: 240 })
+    // Loaded here rather than at the top: qrcode is only ever needed once a
+    // pairing offer exists, and a static import pins it into the main bundle
+    // for everyone — including the many sessions that never open this panel.
+    void import('qrcode')
+      .then(({ default: QRCode }) =>
+        QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 1, width: 240 })
+      )
       .then((url) => {
         if (alive) setQrFor({ payload, url })
       })

@@ -48,6 +48,7 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   appendTextSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
@@ -549,13 +550,14 @@ export class CliChannel {
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
+        else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
-        scheduleMirror(segment.kind === 'countdown')
+        scheduleMirror(segment.kind === 'countdown' || segment.kind === 'wait')
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {

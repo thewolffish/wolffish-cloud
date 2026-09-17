@@ -7,6 +7,7 @@ import { PresentationViewer } from '@components/common/presentation-viewer/Prese
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { isPathHydrating, useHydrationFileVersion } from '@lib/hydration/hydrationStore'
 import { cn } from '@lib/utils/cn'
@@ -179,6 +180,18 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
       />
     )
   }
+  // Before the plain-text check: a .csv often arrives typed text/plain, and it
+  // belongs in the grid rather than the markdown viewer.
+  if (isSpreadsheetAttachment(att)) {
+    return (
+      <SpreadsheetViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+      />
+    )
+  }
   if (isMarkdownAttachment(att) || isPlainTextAttachment(att)) {
     return (
       <MarkdownFileViewer
@@ -253,6 +266,12 @@ function isPresentationAttachment(att: MessageAttachment): boolean {
 
 function isDocumentAttachment(att: MessageAttachment): boolean {
   return /\.docx$/i.test(att.originalName)
+}
+
+/** Legacy binary .xls reads for values only, but it still reads — unlike .doc
+ *  and .ppt, which stay plain file cards. */
+function isSpreadsheetAttachment(att: MessageAttachment): boolean {
+  return /\.(xlsx|xlsm|xltx|xls|csv)$/i.test(att.originalName)
 }
 
 function isMarkdownAttachment(att: MessageAttachment): boolean {

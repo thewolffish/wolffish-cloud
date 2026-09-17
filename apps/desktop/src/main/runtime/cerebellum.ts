@@ -20,6 +20,7 @@ import type {
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
 import type { CountdownSnapshot, WorkflowAgentView } from '@main/runtime/broca'
 import type { CountdownArmInput, CountdownArmResult } from '@main/runtime/countdown'
+import type { WaitStartInput, WaitStartResult } from '@main/runtime/wait'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -235,6 +236,69 @@ export type ApprovalDescription = {
 
 /** The single tool the `ask` capability exposes. */
 export const ASK_USER_TOOL = 'ask_user'
+/** The single tool the `options` capability exposes. */
+export const OFFER_OPTIONS_TOOL = 'offer_options'
+
+/** One alternative on an offer_options card. */
+export type OfferedOption = {
+  /** Short tab label (2–4 words). */
+  title: string
+  /** Optional one-line note under the title — the trade-off this option makes. */
+  description?: string
+  /** Language id when `content` is raw code; absent means the content is markdown. */
+  language?: string
+  /** The body, copied verbatim when the user hits copy. */
+  content: string
+}
+
+/**
+ * The tab letter for position i: A…Z, then AA, AB … — the spreadsheet column
+ * scheme. Every renderer (desktop, mobile, CLI, the text channels, the PDF
+ * export) mirrors this, so the letter the model names in its reply is the
+ * letter the user sees.
+ */
+export function optionLetter(index: number): string {
+  let n = index
+  let out = ''
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return out
+}
+
+/**
+ * Recover an offer_options card from its persisted tool_call args. Kept as
+ * tolerant as the plugin's own normalizer — the same synonyms it accepts (a
+ * bare string option, `label`/`code`/`text`/`value`) must survive here, or a
+ * card the user saw in the app would render empty on a channel.
+ */
+export function parseOfferedOptions(args: Record<string, unknown> | undefined): OfferedOption[] {
+  const raw = Array.isArray(args?.options) ? args.options : []
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  const out: OfferedOption[] = []
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const content = item.trim()
+      if (content) out.push({ title: `Option ${optionLetter(out.length)}`, content })
+      continue
+    }
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const content = str(r.content) || str(r.code) || str(r.text) || str(r.value)
+    if (!content) continue
+    const title = str(r.title) || str(r.label)
+    const description = str(r.description)
+    const language = str(r.language) || str(r.lang)
+    out.push({
+      title: title || `Option ${optionLetter(out.length)}`,
+      ...(description ? { description } : {}),
+      ...(language ? { language } : {}),
+      content
+    })
+  }
+  return out
+}
 
 /** One selectable choice on an ask-the-user question card. */
 export type AskUserOption = {
@@ -766,6 +830,21 @@ export type CountdownHost = {
   pending: () => CountdownSnapshot | null
 }
 
+/**
+ * Blocking waits, injected into the `utilities` plugin via its init context
+ * (PluginContext.wait). Implemented in the main process over the WaitManager
+ * singleton: it renders the waiting card, blocks for as long as the model
+ * asked, and resolves early when the user sends a mid-turn message.
+ */
+export type WaitHost = {
+  /**
+   * Block for `input.seconds`, showing a card that says why. Resolves with
+   * how the wait ended (`elapsed` / `interrupted` / `canceled`) — never
+   * rejects, and never imposes a maximum.
+   */
+  start: (input: WaitStartInput, signal?: AbortSignal) => Promise<WaitStartResult>
+}
+
 export type VoiceHost = {
   /** Current TTS defaults, normalized field-by-field. */
   getTts: () => Promise<{ defaultVoice: string; defaultSpeed: string; voiceReplies: boolean }>
@@ -898,6 +977,11 @@ export type PluginContext = {
    */
   countdown?: CountdownHost
   /**
+   * Blocking waits for the `utilities` capability's `wait` tool. Present
+   * once main calls setWaitHost — see WaitHost.
+   */
+  wait?: WaitHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -992,6 +1076,12 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'filesystem',
   'shell',
   'ask',
+  // The tabbed copy-and-paste card (offer_options). Core for the same reason
+  // `ask` is: the moment the honest answer is "here are a few ways", the card
+  // must be one call away — a discovery hop before a presentational tool is a
+  // hop the model simply doesn't take, and the fallback (stacking variants as
+  // raw code blocks in the reply) is exactly what it exists to replace.
+  'options',
   'utilities',
   'web-search',
   'secrets',
@@ -1109,6 +1199,7 @@ export class Cerebellum {
   private cloudHost?: CloudHost
   private voiceHost?: VoiceHost
   private countdownHost?: CountdownHost
+  private waitHost?: WaitHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1325,6 +1416,15 @@ export class Cerebellum {
    */
   setCountdownHost(host: CountdownHost): void {
     this.countdownHost = host
+  }
+
+  /**
+   * Wire the blocking-wait host (implemented in the main process over the
+   * WaitManager singleton) that the `utilities` capability's `wait` tool
+   * receives in its init context. Set once at startup; survives reload().
+   */
+  setWaitHost(host: WaitHost): void {
+    this.waitHost = host
   }
 
   setVoiceHost(host: VoiceHost): void {
@@ -2629,6 +2729,7 @@ export class Cerebellum {
         cloud: this.cloudHost,
         voice: this.voiceHost,
         countdown: this.countdownHost,
+        wait: this.waitHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

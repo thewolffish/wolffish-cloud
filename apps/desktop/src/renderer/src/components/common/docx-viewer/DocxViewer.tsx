@@ -26,9 +26,10 @@ export type DocxViewerProps = {
  * visible surface is simpler than moving nodes between them.
  *
  * Pages are scrolled, not paged — the only overlay is a chip saying which page
- * you are on. The page itself is scaled to the card's width, so nothing runs
- * off the side; content that is wider than its own page still scrolls, because
- * shrinking the whole document to hide that would misrepresent it.
+ * you are on. The page is scaled to fill the surface edge to edge, so the
+ * viewer width is the page width; content that is wider than its own page
+ * still scrolls, because shrinking the whole document to hide that would
+ * misrepresent it.
  */
 export function DocxViewer({
   filePath,
@@ -97,7 +98,12 @@ function DocxSurface({
   onFailed?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { status, page, pageCount, hostRef, scrollRef } = useDocxPages(filePath)
+  // The card fits the page and stops there; the expanded sheet is for reading,
+  // so it fills its width — capped so a very wide monitor does not render the
+  // page at three times size.
+  const { status, page, pageCount, hostRef, scrollRef } = useDocxPages(filePath, {
+    maxZoom: expanded ? 2 : 1
+  })
 
   useEffect(() => {
     if (status === 'failed') onFailed?.()
@@ -115,7 +121,9 @@ function DocxSurface({
     >
       <div
         ref={scrollRef}
-        className={cn('bg-muted/10 min-h-0 overflow-auto p-3', expanded ? 'flex-1' : 'max-h-100')}
+        // No padding: the page is painted edge to edge, so the viewer width IS
+        // the page width. The tint only shows while the document is loading.
+        className={cn('bg-muted/10 min-h-0 overflow-auto', expanded ? 'flex-1' : 'max-h-100')}
       >
         {status !== 'ready' && (
           <div className="flex h-50 w-full items-center justify-center">

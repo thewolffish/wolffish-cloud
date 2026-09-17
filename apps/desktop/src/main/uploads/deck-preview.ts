@@ -136,6 +136,7 @@ export async function renderDeckPreview(relativePath: string): Promise<DeckPrevi
 
   const written: string[] = []
   let canvas = { width: 1280, height: 720 }
+  let canvasMeasured = false
   let totalBytes = 0
 
   for (let i = 0; i < Math.min(slides.length, MAX_SLIDES); i++) {
@@ -146,7 +147,13 @@ export async function renderDeckPreview(relativePath: string): Promise<DeckPrevi
       // One unpaintable slide shouldn't cost the reader the other twenty.
       continue
     }
-    if (i === 0) canvas = slideCanvas(svg)
+    // The first slide that actually painted, not slide 0: an unpaintable first
+    // slide is skipped above, and keying on its index would leave a 4:3 deck
+    // stuck on the 16:9 default for every slide after it.
+    if (!canvasMeasured) {
+      canvas = slideCanvas(svg)
+      canvasMeasured = true
+    }
     totalBytes += Buffer.byteLength(svg)
     if (totalBytes > MAX_TOTAL_BYTES) break
 

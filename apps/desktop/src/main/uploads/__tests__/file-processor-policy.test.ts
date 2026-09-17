@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     'deck.pptx',
     vision
   )
-  ok('pptx note: honest python/shell route', noteText(r10).includes('python-pptx'))
+  ok('pptx note: names presentation_read', noteText(r10).includes('presentation_read'))
 
   // --- Archives: never unpacked, and ask before acting -----------------
   const zip = await write('project.zip', Buffer.from('PKzip-bytes-placeholder'))

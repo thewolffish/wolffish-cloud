@@ -63,7 +63,13 @@ jest.mock('@/lib/cloud/bridge', () => ({
 }))
 
 import { Event, Rpc } from '@/lib/bridge/protocol'
-import { attachTurnStream, interject, isOwnInterjection } from '@/lib/sync/prompt'
+import {
+  attachTurnStream,
+  interject,
+  isOwnInterjection,
+  seedActiveRuns,
+  withdrawInterjection
+} from '@/lib/sync/prompt'
 import { useChatRuntime } from '@/state/chatRuntime'
 
 const CONVERSATION = 'conv-1'
@@ -250,6 +256,137 @@ describe('what the desktop says became of it', () => {
     expect(pendingIds()).toEqual([ID])
     // Not ours to re-send, and not ours to put in the composer.
     expect(callsTo(Rpc.sendMessage)).toHaveLength(0)
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBeUndefined()
+  })
+})
+
+describe('coming back to a turn this phone already spoke into', () => {
+  // A fresh id per case. `sentInterjections` is module state and outlives a
+  // test, so reusing ID here would let an ADOPTION FROM AN EARLIER TEST stand
+  // in for the one under test — the assertion would hold with the re-adopt
+  // deleted, which is no assertion at all.
+  let relaunched = ''
+  let counter = 0
+
+  const seed = (channel: string): void => {
+    counter += 1
+    relaunched = `m_17000000001${counter.toString().padStart(2, '0')}_relnch`
+    mockRpc.mockImplementation(async (method: string) => {
+      if (method === Rpc.activeRuns) return { conversationIds: [CONVERSATION] }
+      if (method === Rpc.pendingInterjections) {
+        return {
+          pending: [
+            {
+              messageId: relaunched,
+              text: 'skip the tests',
+              attachments: [],
+              channel,
+              sentAt: 1700000000000
+            }
+          ]
+        }
+      }
+      if (method === Rpc.sendMessage) return { conversationId: CONVERSATION }
+      if (method === Rpc.turnMirror) return { message: null, asks: [], approvals: [] }
+      return {}
+    })
+    // The process that minted it is gone: nothing here knows it is ours.
+    expect(isOwnInterjection(relaunched)).toBe(false)
+  }
+
+  it('re-adopts the rows it sent, so a stop still returns them to the composer', async () => {
+    seed('mobile')
+    await seedActiveRuns()
+    expect(pendingIds()).toEqual([relaunched])
+    expect(isOwnInterjection(relaunched)).toBe(true)
+
+    // Ownership is what decides whether a `withdrawn` push touches OUR
+    // composer or merely un-draws someone else's row. The re-send after a
+    // turn_ended is the desktop's job now, but a STOP still hands the words
+    // back here, and that needs the row to be recognised as ours.
+    emit(Event.interjection, withdrawnEvent('canceled', relaunched))
+    await flush()
+    expect(pendingIds()).toEqual([])
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBe('skip the tests')
+  })
+
+  it('does not adopt a row another surface sent', async () => {
+    seed('electron')
+    await seedActiveRuns()
+    expect(pendingIds()).toEqual([relaunched])
+    expect(isOwnInterjection(relaunched)).toBe(false)
+  })
+})
+
+/**
+ * The withdraw, and the one case the desktop cannot be the authority on: an
+ * ask that never reached it. No `withdrawn` push is coming for a message the
+ * desktop was never told about, so a row taken down on the strength of one
+ * would take the user's words with it silently.
+ */
+describe('taking a message back', () => {
+  beforeEach(async () => {
+    desktopAccepts()
+    await interject({ conversationId: CONVERSATION, messageId: ID, text: 'skip the tests' })
+  })
+
+  it('leaves the give-back to the desktop when the ask lands', async () => {
+    await withdrawInterjection(CONVERSATION, ID)
+    expect(pendingIds()).toEqual([])
+    expect(callsTo(Rpc.withdrawInterjection)).toHaveLength(1)
+    // The push decides; nothing is put back here on its own.
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBeUndefined()
+  })
+
+  it('hands the words back itself when the ask never lands', async () => {
+    mockRpc.mockImplementation(async (method: string) => {
+      if (method === Rpc.withdrawInterjection) throw new Error('socket closed')
+      return {}
+    })
+    await withdrawInterjection(CONVERSATION, ID)
+    expect(pendingIds()).toEqual([])
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBe('skip the tests')
+    expect(isOwnInterjection(ID)).toBe(false)
+  })
+})
+
+/**
+ * The reconnect sweep. Rows for a conversation the desktop reports no run for
+ * belong to a turn that ended while this phone was away — which is the same
+ * thing as saying its pushes were missed, so nothing here knows whether the
+ * agent read them. Between dropping a message the user wrote and handing it
+ * back to the composer, only one of those is recoverable.
+ */
+describe('the sweep for turns that ended while the phone was away', () => {
+  it('gives our own words back rather than dropping them with the row', async () => {
+    desktopAccepts()
+    await interject({ conversationId: CONVERSATION, messageId: ID, text: 'skip the tests' })
+    expect(pendingIds()).toEqual([ID])
+
+    // The desktop reports nothing running in this conversation.
+    mockRpc.mockImplementation(async (method: string) => {
+      if (method === Rpc.activeRuns) return { conversationIds: [] }
+      return {}
+    })
+    await seedActiveRuns()
+    expect(pendingIds()).toEqual([])
+    expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBe('skip the tests')
+    expect(isOwnInterjection(ID)).toBe(false)
+  })
+
+  it('merely un-draws a row another surface sent', async () => {
+    useChatRuntime.getState().putPending(CONVERSATION, {
+      id: 'm_1700000000009_other1',
+      role: 'user',
+      content: 'from the desktop composer',
+      timestamp: 1
+    })
+    mockRpc.mockImplementation(async (method: string) => {
+      if (method === Rpc.activeRuns) return { conversationIds: [] }
+      return {}
+    })
+    await seedActiveRuns()
+    expect(pendingIds()).toEqual([])
     expect(useChatRuntime.getState().draftRestores[CONVERSATION]).toBeUndefined()
   })
 })

@@ -312,8 +312,8 @@ async function processDocument(
  * Per-format tool guidance. Small files get the one exact call that reads
  * them whole; big files get the traversal workflow plus the no-skip
  * contract. Guidance only ever names tools that actually exist for the
- * format: xlsx/pptx have no document_read support, and pptx has no reader
- * capability at all (python/shell is the honest route there).
+ * format: xlsx has no document_read support, and pptx is read through the
+ * presentation capability rather than document_read.
  */
 function documentReferenceNote(
   absPath: string,
@@ -334,7 +334,10 @@ function documentReferenceNote(
       : `- spreadsheet_read pages through sheets; for real analysis (aggregation, stats, pivots) load it with your spreadsheet or python tools — never eyeball thousands of rows\n` +
         `- spreadsheet_convert to .csv turns it into plain text you can slice with shell tools (head, rg, awk)`
   } else if (ext === '.pptx') {
-    guidance = `Extract the slide text with your python tool (python-pptx) or shell (unzip -p "${absPath}" ppt/slides/slide1.xml — one XML per slide; the text lives in <a:t> elements)${small ? '' : ', working through the slides in batches'}.`
+    guidance = small
+      ? `Read it with presentation_read before answering anything about its contents — it returns every slide's text and speaker notes in order.`
+      : `- presentation_read pages through the deck; pass from_slide/to_slide to work through a long one in batches\n` +
+        `- Editing it? presentation_read FIRST, then presentation_modify (replace_text is exact-match), then presentation_validate`
   } else if (ext === '.csv' || ext === '.tsv') {
     guidance = small
       ? `Read it in full with file_read before answering anything about its contents; use your python or spreadsheet tools for any analysis.`

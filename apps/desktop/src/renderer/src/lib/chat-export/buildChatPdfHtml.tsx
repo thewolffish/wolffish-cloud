@@ -5,6 +5,7 @@ import {
   latestTodoLists,
   todoListId,
   type CountdownSnapshot,
+  type WaitSnapshot,
   type TodoItem,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
@@ -23,8 +24,8 @@ import remarkGfm from 'remark-gfm'
  * walks each assistant message's segments in the same order with the same
  * visibility rules — verbose on prints tool cards (and subagent rails)
  * inline where they appear; verbose off prints the clean feed: text and
- * answered ask_user questions only — tool cards (successful, failed, and
- * denied alike) are dropped. What it doesn't reproduce is interactive chrome
+ * answered ask_user questions and offer_options cards only — tool cards
+ * (successful, failed, and denied alike) are dropped. What it doesn't reproduce is interactive chrome
  * (expand toggles, players, file viewers, compaction cards) — file deliveries
  * stay visible through the model's prose, which always prints.
  *
@@ -42,6 +43,7 @@ type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 type ToolStatus = 'running' | 'success' | 'failed' | 'denied'
 
 const ASK_USER_TOOL = 'ask_user'
+const OFFER_OPTIONS_TOOL = 'offer_options'
 
 /** Print equivalents of the ToolCard's scrollable clamps (max-h-48 etc.). */
 const ACTION_CLAMP = 300
@@ -200,6 +202,67 @@ function askBlock(call: ToolCallSegment, result: ToolResultSegment): string {
   return `<div class="tool ask">${parts.join('')}</div>`
 }
 
+/**
+ * The tab letter for position i: A…Z, then AA … — mirrors the plugin and
+ * every card renderer, so a reply that says "option C" points at the same
+ * option in print as on screen.
+ */
+function optionLetter(index: number): string {
+  let n = index
+  let out = ''
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return out
+}
+
+/**
+ * An offer_options card — always printed, like the always-visible card in the
+ * feed. Tabs can't print, so every option is stacked in order under its
+ * letter and title; the body renders as markdown (a `language` fences the
+ * content first, exactly as the card does).
+ */
+function optionsBlock(call: ToolCallSegment): string {
+  const raw = Array.isArray(call.args.options) ? call.args.options : []
+  const parts: string[] = []
+  const title = typeof call.args.title === 'string' ? call.args.title.trim() : ''
+  if (title) parts.push(`<div class="ask-q" dir="auto">${escapeHtml(title)}</div>`)
+  let shown = 0
+  for (const item of raw) {
+    const r =
+      typeof item === 'string'
+        ? { content: item }
+        : item && typeof item === 'object'
+          ? (item as Record<string, unknown>)
+          : null
+    if (!r) continue
+    const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+    const content = str(r.content) || str(r.code) || str(r.text) || str(r.value)
+    if (!content) continue
+    const letter = optionLetter(shown)
+    const label = str(r.title) || str(r.label) || `Option ${letter}`
+    const description = str(r.description)
+    const language = str(r.language) || str(r.lang)
+    const longest = (content.match(/`{3,}/g) ?? []).reduce(
+      (max, run) => Math.max(max, run.length),
+      2
+    )
+    const fence = '`'.repeat(Math.max(3, longest + 1))
+    const body = language ? `${fence}${language}\n${content}\n${fence}` : content
+    parts.push(
+      `<div class="opt"><div class="opt-head" dir="auto"><span class="opt-letter">${escapeHtml(letter)}</span>${escapeHtml(label)}</div>` +
+        (description
+          ? `<div class="ask-details" dir="auto">${escapeHtml(description)}</div>`
+          : '') +
+        `<div class="content" dir="auto">${markdownHtml(body)}</div></div>`
+    )
+    shown += 1
+  }
+  if (shown === 0) return ''
+  return `<div class="tool ask">${parts.join('')}</div>`
+}
+
 function markdownPart(text: string): string {
   return `<div class="content" dir="auto">${markdownHtml(text)}</div>`
 }
@@ -226,6 +289,26 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
 }
 
 /** The countdown card as a static block — label, state, what it ran. */
+/**
+ * A blocking wait as a static block — mirrors WaitCard's terminal line (the
+ * live clock and its input have nothing to say on paper).
+ */
+function waitBlock(snapshot: WaitSnapshot): string {
+  const seconds = Math.round(snapshot.seconds)
+  const spent = snapshot.endedAt
+    ? Math.round((snapshot.endedAt - snapshot.startedAt) / 1000)
+    : seconds
+  const detail =
+    snapshot.status === 'elapsed'
+      ? `waited ${seconds}s`
+      : snapshot.status === 'interrupted'
+        ? `woken after ${spent}s of ${seconds}s by a message`
+        : snapshot.status === 'canceled'
+          ? `stopped after ${spent}s`
+          : `waiting ${seconds}s`
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">wait · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.reason)} — ${escapeHtml(detail)}</div></div>`
+}
+
 function countdownBlock(snapshot: CountdownSnapshot): string {
   const detail =
     snapshot.status === 'aborted'
@@ -331,6 +414,9 @@ function assistantParts(
     } else if (seg.kind === 'countdown') {
       flushText()
       parts.push(countdownBlock(seg.snapshot))
+    } else if (seg.kind === 'wait') {
+      flushText()
+      parts.push(waitBlock(seg.snapshot))
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
       flushText()
@@ -339,6 +425,14 @@ function assistantParts(
       if (seg.name === ASK_USER_TOOL) {
         // Answered questions always print, matching the always-visible card.
         if (result) parts.push(askBlock(seg, result))
+        continue
+      }
+      if (seg.name === OFFER_OPTIONS_TOOL) {
+        // Copy-and-paste options always print too — the card is content the
+        // model produced FOR the user, never tool mechanics. Built from the
+        // call's args alone; its result is a one-line confirmation.
+        const block = optionsBlock(seg)
+        if (block) parts.push(block)
         continue
       }
       // The feed's clean-mode rule: tool cards are verbose-only — successful
@@ -425,6 +519,15 @@ const STYLE = `
   .ask-details { margin-top: 3px; color: #5b6270; font-size: 12px; }
   .ask-options { margin: 5px 0 0; padding-inline-start: 22px; font-size: 12px; }
   .ask-answer { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eceef2; color: #5b6270; font-size: 11px; }
+
+  /* offer_options card — every option stacked, tabs being unprintable. */
+  .opt { margin-top: 9px; }
+  .opt:first-child { margin-top: 0; }
+  .opt-head { font-weight: 600; font-size: 12px; }
+  .opt-letter {
+    display: inline-block; min-width: 15px; border-radius: 4px; background: #f3f4f6;
+    color: #4b5563; text-align: center; font-size: 10px; margin-inline-end: 6px;
+  }
 
   /* Workflow card — static print of the run's final snapshot. */
   .wf-note { margin-top: 5px; font-size: 11px; color: #5b6270; }

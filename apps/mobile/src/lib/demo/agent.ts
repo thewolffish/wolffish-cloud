@@ -56,6 +56,72 @@ export function isTurnActive(conversationId: string): boolean {
   return activeTurns.has(conversationId)
 }
 
+/**
+ * MID-TURN MESSAGES, demo-side — the desktop's turn-runner inbox, on this
+ * phone. A message sent while a demo turn is thinking parks here and the turn
+ * reads it at its one stop point (`finish` below), where it becomes a
+ * `user_message` segment on the assistant message, exactly as the desktop's
+ * does. The demo never runs a second turn for it: two turns in one
+ * conversation would share this module's single live stream and single
+ * `activeTurns` entry, and the first to finish would end the other's overlay.
+ */
+type DemoInterjection = {
+  messageId: string
+  text: string
+  attachments?: MessageAttachment[]
+  voicePrompt?: boolean
+  timestamp: number
+}
+const demoInboxes = new Map<string, DemoInterjection[]>()
+
+/**
+ * Park a message on the running demo turn. False when there is no turn to
+ * park it on — the caller sends it as an ordinary demo prompt, the same
+ * answer `Rpc.interject` gives with `no_live_turn`.
+ */
+export function demoInterject(conversationId: string, message: DemoInterjection): boolean {
+  if (!activeTurns.has(conversationId)) return false
+  demoInboxes.set(conversationId, [...(demoInboxes.get(conversationId) ?? []), message])
+  return true
+}
+
+/** Take one back before the turn reads it — the pending bubble's X. */
+export function withdrawDemoInterjection(
+  conversationId: string,
+  messageId: string
+): DemoInterjection | null {
+  const inbox = demoInboxes.get(conversationId)
+  const found = inbox?.find((message) => message.messageId === messageId)
+  if (!inbox || !found) return null
+  const next = inbox.filter((message) => message.messageId !== messageId)
+  if (next.length === 0) demoInboxes.delete(conversationId)
+  else demoInboxes.set(conversationId, next)
+  return found
+}
+
+/** Everything parked for one conversation, taken off the list. */
+function takeDemoInbox(conversationId: string): DemoInterjection[] {
+  const inbox = demoInboxes.get(conversationId) ?? []
+  demoInboxes.delete(conversationId)
+  return inbox
+}
+
+/** The `user_message` segments a read inbox becomes, in arrival order. */
+function interjectionSegments(turnId: string, read: DemoInterjection[]): Segment[] {
+  return read.map((message, index) => ({
+    kind: 'user_message',
+    turnId,
+    segmentId: `seg_u${index}`,
+    messageId: message.messageId,
+    text: message.text,
+    ...(message.attachments && message.attachments.length > 0
+      ? { attachments: message.attachments }
+      : {}),
+    ...(message.voicePrompt ? { voicePrompt: true } : {}),
+    timestamp: message.timestamp
+  }))
+}
+
 /** Desktop titling fallback: an 80-char slice of the first prompt. */
 export function deriveTitle(text: string, attachments?: MessageAttachment[]): string {
   const trimmed = text.trim().replace(/\s+/g, ' ')
@@ -179,6 +245,11 @@ function startAssistantTurn(
   const finish = async (): Promise<void> => {
     activeTurns.delete(conversationId)
     const reply = buildDemoReply()
+    // The stop point: whatever was sent mid-turn is read now, and lands in
+    // the assistant message ahead of the reply — the user's words at the
+    // point they were taken in, which is also what retires their pending
+    // bubble (conversations/feed.ts checks the transcript for the id).
+    const read = takeDemoInbox(conversationId)
     const segments: Segment[] = [
       {
         kind: 'active_model',
@@ -187,6 +258,7 @@ function startAssistantTurn(
         provider: brain.provider,
         model: brain.model
       },
+      ...interjectionSegments(turnId, read),
       { kind: 'text', turnId, segmentId: 'seg_1', delta: reply },
       {
         kind: 'turn_end',
@@ -233,6 +305,13 @@ function startAssistantTurn(
     // either way — but releasing it before the query has re-read would leave
     // the reply in neither place for a frame. Same contract as a paired turn.
     await refetchConversation(conversationId)
+    // The stored copy now carries their segments, so the pending rows come
+    // down — the demo's stand-in for the desktop's `delivered` push. Dropped
+    // after the refetch for the same reason the live row is: the bubble must
+    // exist in the transcript before it stops existing beside it.
+    for (const message of read) {
+      useChatRuntime.getState().dropPending(conversationId, message.messageId)
+    }
     useChatRuntime.getState().endStream(conversationId)
     // The same terminal record a paired turn gets from the desktop's
     // turn.status, so the conversations sheet tints this row identically with
@@ -249,6 +328,17 @@ export function stopDemoTurn(conversationId: string): void {
   if (!turn) return
   if (turn.timer) clearTimeout(turn.timer)
   activeTurns.delete(conversationId)
-  useChatRuntime.getState().endStream(conversationId)
+  // A turn stopped before its stop point never read what was waiting for it.
+  // Those are still messages the user wrote and never sent, so they go back
+  // to the composer — the desktop's `withdrawn` (reason `canceled`) by hand,
+  // since nothing pushes here.
+  const runtime = useChatRuntime.getState()
+  for (const message of takeDemoInbox(conversationId)) {
+    runtime.dropPending(conversationId, message.messageId)
+    if (message.text && !message.voicePrompt) {
+      runtime.restoreDraft(conversationId, message.text)
+    }
+  }
+  runtime.endStream(conversationId)
   markRun(conversationId, 'stopped')
 }

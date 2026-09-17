@@ -3,6 +3,7 @@ import { CodeEditor, type CodeLanguage } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import { ImageLightbox } from '@components/common/image-viewer/ImageViewer'
+import { SheetGrid } from '@components/common/spreadsheet-viewer/SheetGrid'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -11,8 +12,9 @@ import type { ViewerTreeNode } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
+import { readWorkbook } from '@lib/spreadsheet/workbook'
+import type { WorkbookModel } from '@lib/spreadsheet/types'
 import mammoth from 'mammoth'
-import * as XLSX from 'xlsx'
 import {
   ArrowDown01Icon,
   ArrowLeft02Icon,
@@ -917,43 +919,39 @@ function WorkspaceDocx({
 }
 
 function WorkspaceSpreadsheet({
-  relativePath
+  relativePath,
+  fileName
 }: {
   relativePath: string
   fileName: string
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [sheetNames, setSheetNames] = useState<string[]>([])
-  const [activeSheet, setActiveSheet] = useState(0)
-  const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null)
-  const [error, setError] = useState(false)
+  // Stamped with the path it belongs to, so switching files reads as "loading"
+  // without a synchronous reset inside the effect.
+  const [loaded, setLoaded] = useState<{
+    path: string
+    workbook: WorkbookModel | null
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
         const buffer: ArrayBuffer = await window.api.viewer.readBinaryFile(relativePath)
-        const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' })
-        if (cancelled) return
-        setWorkbook(wb)
-        setSheetNames(wb.SheetNames)
+        const model = await readWorkbook(buffer, fileName)
+        if (!cancelled) setLoaded({ path: relativePath, workbook: model })
       } catch {
-        if (!cancelled) setError(true)
+        if (!cancelled) setLoaded({ path: relativePath, workbook: null })
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [relativePath])
+  }, [relativePath, fileName])
 
-  const html = useMemo(() => {
-    if (!workbook) return null
-    const name = workbook.SheetNames[activeSheet]
-    const sheet = name ? workbook.Sheets[name] : undefined
-    return sheet ? XLSX.utils.sheet_to_html(sheet) : null
-  }, [workbook, activeSheet])
+  const ready = loaded?.path === relativePath ? loaded : null
 
-  if (error) {
+  if (ready && !ready.workbook) {
     return (
       <div className="flex min-h-full flex-1 flex-col items-center justify-center gap-2 p-6">
         <File01Icon size={32} className="text-muted" />
@@ -962,37 +960,17 @@ function WorkspaceSpreadsheet({
     )
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {html !== null ? (
-        <div
-          className="spreadsheet-preview bg-surface text-fg flex-1 overflow-auto p-4 text-xs"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      ) : (
-        <div className="flex-1" />
-      )}
-      {sheetNames.length > 1 && (
-        <div className="border-border flex gap-1 overflow-x-auto border-t px-2 py-1">
-          {sheetNames.map((name, idx) => (
-            <button
-              key={name}
-              type="button"
-              onClick={() => setActiveSheet(idx)}
-              className={cn(
-                'shrink-0 rounded px-2 py-0.5 text-[11px]',
-                idx === activeSheet
-                  ? 'bg-primary/10 text-primary font-medium'
-                  : 'text-muted hover:text-fg cursor-pointer'
-              )}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  if (!ready?.workbook) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <span className="text-muted animate-pulse text-xs">
+          {t('chat.spreadsheetViewer.loading')}
+        </span>
+      </div>
+    )
+  }
+
+  return <SheetGrid workbook={ready.workbook} variant="page" />
 }
 
 // ---------------------------------------------------------------------------

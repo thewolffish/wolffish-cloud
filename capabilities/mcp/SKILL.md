@@ -1,6 +1,6 @@
 ---
 name: mcp
-description: Manage Wolffish's MCP (Model Context Protocol) server connections — list, add, test, enable, disable, remove, and sign in to the external tool servers whose tools become available to you. Changes reflect live in Settings → MCP.
+description: "Manage Wolffish's MCP (Model Context Protocol) server connections — list, add, test, enable, disable, remove, and sign in to the external tool servers whose tools become available to you — and BUILD new MCP servers, scaffolding a runnable one and testing it through this same client. Changes reflect live in Settings → MCP."
 triggers:
   - mcp
   - model context protocol
@@ -13,7 +13,42 @@ triggers:
   - remove mcp
   - list mcp
   - external tools
+  - build an mcp server
+  - create an mcp server
+  - write an mcp server
+  - mcp server for
+  - expose to claude desktop
+  - expose tools to
+  - tools for cursor
+  - scaffold mcp
+  - mcp sdk
+  - model context protocol server
 tools:
+  - name: mcp_build
+    readOnly: true
+    description: "Load the MCP server authoring guide into context. Call this BEFORE writing any MCP server — it covers the fork that decides the whole build (a tool for YOURSELF is skill_create, not a server), tool-surface design, the output discipline that decides whether a server is usable (cap, cursor, filter, never truncate silently), errors that name the next action, transport choice, the scaffold-add-test loop, and the evaluation to run before declaring it done."
+    parameters:
+      server:
+        type: string
+        required: false
+        description: "One line naming the server you are about to build — stating it commits you to following the guide."
+  - name: mcp_scaffold
+    description: "Write a runnable stdio MCP server project to disk — server.mjs on the official SDK, package.json, README, .gitignore — in a new folder named after the server. It runs before you edit it, and its one example tool is complete on purpose (described schema, capped and cursored list that never truncates silently, an error that names the next action) so you copy the right shape. Then implement the real tools, mcp_add it by the printed command, mcp_test it, and CALL the tools for real. Call mcp_build first."
+    parameters:
+      directory:
+        type: string
+        description: Absolute path to the PARENT directory; the project folder is created inside it, named after the server slug.
+      name:
+        type: string
+        description: "Human name for the server, e.g. \"Acme Billing\". The folder and package name are slugified from it."
+      description:
+        type: string
+        required: false
+        description: One line saying what the server is for. Goes into package.json and the README.
+      tool_prefix:
+        type: string
+        required: false
+        description: "Prefix for the tool names, e.g. \"acme\" gives acme_list_items. Defaults to the slug."
   - name: mcp_list
     readOnly: true
     description: List every configured MCP server — its name, whether it's a local command (stdio) or a remote URL, its live status (connected, connecting, needs sign-in, offline, disabled), and how many tools it currently exposes. Call this first so you can reference a server by name or number for the other tools.

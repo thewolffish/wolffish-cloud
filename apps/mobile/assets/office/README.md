@@ -30,43 +30,16 @@ also one behaviour to test.
   where `entry.mjs` is:
 
   ```js
-  import {
-    getGroupChildren,
-    getParagraphAlignment,
-    getShapeKind,
-    getShapeParagraphCount,
-    getSlideShapes,
-    getSlides,
-    isShapePlaceholder,
-    loadPresentation,
-    setParagraphAlignment
-  } from '@office-kit/pptx'
+  import { getSlides, loadPresentation } from '@office-kit/pptx'
   import { renderSlideToSvg } from '@office-kit/pptx-preview'
   import { renderAsync } from 'docx-preview'
   import * as XLSX from 'xlsx'
   globalThis.WolffishOffice = {
-    pptx: {
-      loadPresentation,
-      getSlides,
-      renderSlideToSvg,
-      // Paragraph API the page's alignment repair needs (see office-page.webjs).
-      getSlideShapes,
-      getGroupChildren,
-      getShapeKind,
-      isShapePlaceholder,
-      getShapeParagraphCount,
-      getParagraphAlignment,
-      setParagraphAlignment
-    },
+    pptx: { loadPresentation, getSlides, renderSlideToSvg },
     docx: { renderAsync },
     xlsx: XLSX
   }
   ```
-
-  The seven shape/paragraph functions beyond the first three are what lets
-  `office-page.webjs` left-align text an autoshape leaves unstated — the same
-  repair `deck-preview.ts` makes in wolffish-app's main process. Drop them and
-  the page's repair silently no-ops and decks render centre-aligned.
 
   SheetJS comes from **cdn.sheetjs.com, not npm**, and that is load-bearing:
   the `xlsx` package on npm is frozen at 0.18.5, which carries two unfixed

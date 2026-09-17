@@ -208,6 +208,44 @@ export type CountdownSnapshot = {
   abortedBy?: CountdownAbortReason
 }
 
+/** How a `wait` ended — or that it hasn't. */
+export type WaitStatus = 'waiting' | 'elapsed' | 'interrupted' | 'canceled'
+
+/**
+ * The deterministic state of one `wait` call (utilities). The tool BLOCKS for
+ * as long as the model asked for — there is no ceiling — so this snapshot is
+ * what the user sees meanwhile: why the agent is idle, when it means to wake,
+ * and an input that ends the wait early by sending a message into the running
+ * turn.
+ *
+ * Carried whole on every `wait` segment; each snapshot REPLACES the previous
+ * one for the same waitId (see upsertWaitSegment), so exactly one card
+ * persists per wait and live/reloaded conversations render identically. Two
+ * snapshots are emitted per wait — `waiting` at the start, one terminal state
+ * at the end — and the start one rides the checkpoint's structural flush, so
+ * a wait that outlives the app still left its card on disk.
+ */
+export type WaitSnapshot = {
+  waitId: string
+  /** Where the card lives — the WaitCard needs it to interject. */
+  conversationId: string | null
+  /** The model's own words for why it is waiting. Shown as the card's title. */
+  reason: string
+  /** What the model asked for, in seconds. Uncapped by design. */
+  seconds: number
+  status: WaitStatus
+  startedAt: number
+  /** startedAt + seconds, the card's deadline. Fixed at start. */
+  endsAt: number
+  endedAt?: number
+  /**
+   * What the user sent to cut the wait short, when they did. The text itself
+   * reaches the model as an ordinary mid-turn message (the interjection path
+   * owns it) — this copy is for the card's record only.
+   */
+  interruptedBy?: string
+}
+
 /**
  * One item of the model's task list (todo_write). The whole list rides every
  * `todo` segment; consumers upsert by turnId so a turn shows exactly ONE
@@ -267,6 +305,26 @@ export function upsertCountdownSegment(
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i]
     if (s.kind === 'countdown' && s.snapshot.countdownId === segment.snapshot.countdownId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+/**
+ * Replace-by-id upsert for wait snapshot segments — the countdown contract,
+ * keyed by snapshot.waitId. One card per wait on every surface, so the
+ * terminal snapshot resolves the waiting card in place instead of stacking a
+ * second.
+ */
+export function upsertWaitSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'wait' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'wait' && s.snapshot.waitId === segment.snapshot.waitId) {
       segments[i] = segment
       return
     }
@@ -502,6 +560,18 @@ export type Segment =
       turnId: string
       segmentId: string
       snapshot: CountdownSnapshot
+    }
+  | {
+      /**
+       * Full-state snapshot of a blocking `wait` (see WaitSnapshot).
+       * Replace-by-waitId semantics on every surface. Display-only: both
+       * model-context rebuild paths ignore it — the tool_result carries
+       * what the model needs to know about how the wait ended.
+       */
+      kind: 'wait'
+      turnId: string
+      segmentId: string
+      snapshot: WaitSnapshot
     }
   | {
       kind: 'compaction_started'
@@ -845,6 +915,17 @@ export class Broca {
   emitCountdown(turnId: string, snapshot: CountdownSnapshot): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'countdown', turnId, segmentId: this.nextId(), snapshot })
+  }
+
+  /**
+   * Emit a wait snapshot into the active turn — the `waiting` card and its
+   * terminal state, both from inside the blocking tool call (WaitManager,
+   * via the turn emitter Agent registers). Consumers upsert by
+   * snapshot.waitId — see upsertWaitSegment.
+   */
+  emitWait(turnId: string, snapshot: WaitSnapshot): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'wait', turnId, segmentId: this.nextId(), snapshot })
   }
 
   emitCompactionStarted(

@@ -1316,6 +1316,13 @@
       "unavailableFile": "File is unavailable",
       "unavailablePath": "Path is unavailable"
     },
+    "optionsCard": {
+      "heading_one": "{{count}} option to copy",
+      "heading_other": "{{count}} options to copy",
+      "tabsLabel": "Options",
+      "optionCount": "Option {{current}} of {{total}}",
+      "copy": "Copy this option"
+    },
     "questionCard": {
       "otherLabel": "Something else",
       "otherDescription": "Tell wolffish exactly what to do instead",
@@ -1362,7 +1369,12 @@
       "next": "Next"
     },
     "spreadsheetViewer": {
-      "loading": "Loading spreadsheet"
+      "loading": "Loading spreadsheet",
+      "empty": "This sheet is empty",
+      "sheets": "Sheets",
+      "clipped": "Showing the first {{rows}} rows",
+      "tierValues": "Legacy .xls file — formatting is not stored in this format",
+      "tierPlain": "Plain text file — no formatting to show"
     },
     "changeModel": "Change model",
     "modelLabel": "Model: {{model}}",
@@ -1631,6 +1643,21 @@
         "superseded": "Replaced by a newer countdown.",
         "relaunch": "Dropped because Wolffish was relaunched before it fired."
       }
+    },
+    "wait": {
+      "status": {
+        "waiting": "Waiting",
+        "elapsed": "Waited",
+        "interrupted": "Woken early",
+        "canceled": "Stopped"
+      },
+      "remaining": "{{duration}} left",
+      "waitingHint": "Waiting {{duration}} before continuing. Send a message to carry on now.",
+      "elapsedHint": "Waited {{duration}}, then carried on.",
+      "interruptedHint": "You sent a message after {{duration}}, so it carried on early.",
+      "canceledHint": "Stopped after {{duration}}.",
+      "inputPlaceholder": "Send a message to continue now",
+      "send": "Send"
     },
     "planMode": {
       "label": "Plan",

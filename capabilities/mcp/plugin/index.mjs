@@ -12,10 +12,38 @@
  * Nothing is touched by hand.
  */
 
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+
 // MCP-management bridge, injected at init by the main process.
 let mcp
 
+// Read relative to this module so they resolve from the repo default and from
+// the dot-prefixed runtime folder alike.
+const AUTHORING_URL = new URL('../authoring.md', import.meta.url)
+const TEMPLATE_DIR = new URL('../templates/', import.meta.url)
+
 const toolDefinitions = [
+  {
+    name: 'mcp_build',
+    description: 'Load the MCP server authoring guide.',
+    parameters: { type: 'object', properties: { server: { type: 'string' } } }
+  },
+  {
+    name: 'mcp_scaffold',
+    description: 'Write a runnable stdio MCP server project to disk.',
+    parameters: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        tool_prefix: { type: 'string' }
+      },
+      required: ['directory', 'name']
+    }
+  },
   {
     name: 'mcp_list',
     description:
@@ -293,14 +321,146 @@ async function authorizeServer(args) {
   }
 }
 
+// ── Authoring ─────────────────────────────────────────────────────────────
+// Wolffish is itself an MCP client, which is what makes authoring worth having
+// here: scaffold -> implement -> mcp_add -> mcp_test -> call the tools for real
+// closes the loop inside one turn, instead of writing a server nobody runs.
+
+async function buildGuide() {
+  try {
+    const text = await fs.readFile(AUTHORING_URL, 'utf8')
+    return { success: true, output: text.trimEnd() }
+  } catch (err) {
+    return { success: false, error: `mcp_build: could not read authoring.md (${err instanceof Error ? err.message : String(err)})` }
+  }
+}
+
+// The workspace root the cerebellum hands us at init; ~/.wfc/workspace when
+// running headless (tests) or under a host that never called init.
+let contextWorkspaceRoot = ''
+
+function workspaceRoot() {
+  return contextWorkspaceRoot || path.join(os.homedir(), '.wfc', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. A scaffold told
+// to write to "servers" lands in the workspace the agent keeps its files in,
+// never the process cwd (the repo in dev, "/" in a packaged app). Mirrors the
+// filesystem plugin.
+function resolveDir(input) {
+  if (!input || typeof input !== 'string') throw new Error('directory is required')
+  if (input === '~') return os.homedir()
+  if (input.startsWith('~/') || input.startsWith('~\\')) return path.join(os.homedir(), input.slice(2))
+  return path.resolve(workspaceRoot(), input)
+}
+
+function slugify(value) {
+  const slug = String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  if (!slug) throw new Error('name must contain at least one letter or digit')
+  return slug
+}
+
+function applyTokens(text, tokens) {
+  return text.replace(/__([A-Z]+)__/g, (whole, key) => (key in tokens ? tokens[key] : whole))
+}
+
+async function scaffoldServer(args) {
+  let dir
+  let slug
+  try {
+    dir = resolveDir(args.directory)
+    slug = slugify(args.name)
+  } catch (err) {
+    return { success: false, error: `mcp_scaffold: ${err.message}` }
+  }
+  const title = String(args.name).trim()
+  const description = String(args.description || `MCP server for ${title}`).trim()
+  const prefix = slugify(args.tool_prefix || slug).replace(/-/g, '_')
+  const target = path.join(dir, slug)
+
+  try {
+    const existing = await fs.readdir(target).catch(() => null)
+    if (existing && existing.length) {
+      return {
+        success: false,
+        error: `mcp_scaffold: ${target} already exists and is not empty — choose another directory, or clear that one first`
+      }
+    }
+
+    const tokens = {
+      TITLE: title,
+      SLUG: slug,
+      PREFIX: prefix,
+      DESCRIPTION: description,
+      ENV: `${slug.toUpperCase().replace(/-/g, '_')}_TOKEN`,
+      ABSPATH: target
+    }
+    const [serverTpl, readmeTpl] = await Promise.all([
+      fs.readFile(new URL('server.mjs.tpl', TEMPLATE_DIR), 'utf8'),
+      fs.readFile(new URL('README.md.tpl', TEMPLATE_DIR), 'utf8')
+    ])
+    const pkg = {
+      name: slug,
+      version: '0.1.0',
+      private: true,
+      type: 'module',
+      description,
+      bin: { [slug]: './server.mjs' },
+      dependencies: { '@modelcontextprotocol/sdk': '^1.0.0', zod: '^3.23.8' }
+    }
+    const files = {
+      'server.mjs': applyTokens(serverTpl, tokens),
+      'README.md': applyTokens(readmeTpl, tokens),
+      'package.json': `${JSON.stringify(pkg, null, 2)}\n`,
+      '.gitignore': 'node_modules/\n'
+    }
+
+    await fs.mkdir(target, { recursive: true })
+    for (const [name, content] of Object.entries(files)) {
+      await fs.writeFile(path.join(target, name), content, 'utf8')
+    }
+    await fs.chmod(path.join(target, 'server.mjs'), 0o755).catch(() => {})
+
+    const entry = path.join(target, 'server.mjs')
+    return {
+      success: true,
+      output: [
+        `Scaffolded ${title} at ${target}`,
+        ...Object.keys(files).sort().map((f) => `  ${f}`),
+        '',
+        'It runs before you edit it. Next:',
+        `  1. npm install --prefix ${target}`,
+        `  2. node ${entry}  — stderr should print "${slug} ready on stdio"`,
+        `  3. mcp_add name: ${slug}, command: node ${entry}`,
+        `  4. mcp_test name: ${slug} — then CALL the tools for real; connecting is not working`,
+        '',
+        `The example tool ${prefix}_list_items is the shape to copy: a described schema, a`,
+        'capped and cursored list that never truncates silently, and an error that names the',
+        'next action. Replace listItems() with the real call, then add tools one at a time.',
+        '',
+        'Call mcp_build for the authoring guide if you have not already — it covers the',
+        'tool-surface design, output discipline, and the evaluation to run before you',
+        'call the server done.'
+      ].join('\n')
+    }
+  } catch (err) {
+    return { success: false, error: `mcp_scaffold: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
 const plugin = {
   name: 'mcp',
   tools: toolDefinitions,
   async init(context) {
     mcp = context?.mcp
+    contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
   },
   async execute(toolName, args) {
     switch (toolName) {
+      case 'mcp_build':
+        return buildGuide()
+      case 'mcp_scaffold':
+        return scaffoldServer(args ?? {})
       case 'mcp_list':
         return listServers()
       case 'mcp_add':

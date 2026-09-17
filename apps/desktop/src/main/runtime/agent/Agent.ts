@@ -1,4 +1,5 @@
 import { countdowns } from '@main/runtime/countdown'
+import { waits } from '@main/runtime/wait'
 import {
   createConversation,
   loadConversation,
@@ -60,6 +61,7 @@ import {
   appendTextSegment,
   upsertWorkflowSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
   type SegmentSink,
@@ -934,12 +936,19 @@ export class Agent {
     const unregisterCountdownEmitter = countdowns.registerTurnEmitter(turn.turnId, (snapshot) =>
       broca.emitCountdown(turn.turnId, snapshot)
     )
+    // Same pattern for a blocking `wait`: its card is emitted from inside the
+    // tool call that is holding this turn open, so it can only reach the user
+    // through this turn's broca.
+    const unregisterWaitEmitter = waits.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitWait(turn.turnId, snapshot)
+    )
     try {
       return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
         this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
       )
     } finally {
       unregisterCountdownEmitter()
+      unregisterWaitEmitter()
     }
   }
 
@@ -2717,11 +2726,14 @@ export class Agent {
       // run in the sealed conversation, mirroring every other persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'countdown') upsertCountdownSegment(segments, seg)
+      else if (seg.kind === 'wait') upsertWaitSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
-      scheduleMirror(false)
+      // Countdown snapshots flush immediately — a card counting down, or
+      // flipping to fired/aborted, should not wait out the text throttle.
+      scheduleMirror(seg.kind === 'countdown' || seg.kind === 'wait')
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {

@@ -8,6 +8,8 @@
 //     whatever channel they're on (in-app, the terminal, the phone).
 //   - show_path: push an openable location card for a folder/file on disk
 //     into the in-app chat (folder → Open, file → Reveal in folder).
+//   - wait: block this turn for as long as the model asks, behind a card
+//     that says why and lets the user cut it short.
 
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
@@ -143,6 +145,104 @@ async function showPath(args) {
   }
 }
 
+// The blocking-wait host (PluginContext.wait), wired by main over the
+// WaitManager singleton. Absent only in a runtime that never set it — the
+// tool then says so instead of pretending to sleep.
+let waitHost = null
+
+// Accepts the duration in whichever unit the model reached for. `seconds` is
+// the documented one; minutes/hours exist because an hour-long wait written
+// as 3600 is easy to fat-finger by an order of magnitude, and a model that
+// writes `hours: 1` should not be punished for it.
+//
+// Fields normally ADD, so a composite duration works: { hours: 1, minutes: 30 }
+// is ninety minutes. The exception is the RESTATEMENT — every field filled in
+// with the same duration in its own unit, e.g. { seconds: 240, minutes: 4 },
+// which a live model produced on the very first desktop run and which naive
+// addition silently doubled. When every non-zero field expresses the identical
+// duration, that duration is the answer, counted once. Ambiguous only in the
+// case where a model really does mean "4 minutes AND another 240 seconds",
+// which nothing would ever write that way.
+function resolveSeconds(args) {
+  const pick = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+  const parts = [pick(args?.seconds), pick(args?.minutes) * 60, pick(args?.hours) * 3600].filter(
+    (n) => n > 0
+  )
+  if (parts.length === 0) return 0
+  if (parts.every((n) => n === parts[0])) return parts[0]
+  return parts.reduce((a, b) => a + b, 0)
+}
+
+function humanDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60)
+    const s = Math.round(seconds % 60)
+    return s ? `${m}m ${s}s` : `${m}m`
+  }
+  const h = Math.floor(seconds / 3600)
+  const m = Math.round((seconds % 3600) / 60)
+  return m ? `${h}h ${m}m` : `${h}h`
+}
+
+async function wait(args, signal) {
+  if (!waitHost || typeof waitHost.start !== 'function') {
+    return {
+      success: false,
+      error:
+        'wait is unavailable in this runtime. Do the next step now, or schedule it with automation_create.'
+    }
+  }
+  const seconds = resolveSeconds(args)
+  if (seconds <= 0) {
+    return {
+      success: false,
+      error:
+        'How long? Pass a positive "seconds" (or "minutes" / "hours"). There is no maximum — ask for the wait the job actually needs.'
+    }
+  }
+  const reason = typeof args?.reason === 'string' ? args.reason.trim() : ''
+  if (!reason) {
+    return {
+      success: false,
+      error:
+        'reason is required — one line, in the user\'s words, saying what you are waiting for. It is the card\'s title, and an unexplained pause reads as a hang.'
+    }
+  }
+
+  const result = await waitHost.start({ reason, seconds }, signal)
+  if (!result.ok) return { success: false, error: result.error }
+
+  const { status, waitedSeconds } = result.outcome
+  const asked = humanDuration(seconds)
+  const spent = humanDuration(waitedSeconds)
+  if (status === 'elapsed') {
+    return {
+      success: true,
+      output:
+        `Waited ${asked}. Now do the one thing you were waiting to do — once, whether that is an action, ` +
+        'a file or an answer. Finish any remaining tool call before you write your closing line, so you never ' +
+        'report the outcome, keep working, and report it again.',
+      meta: { label: `Waited ${asked}` }
+    }
+  }
+  if (status === 'interrupted') {
+    return {
+      success: true,
+      output:
+        `The wait ended after ${spent} of ${asked} because the user sent a message — it follows this result and is their latest word. ` +
+        'Do what it asks, or — if it only tells you to carry on — the one thing the wait was for. Never both, and never twice. ' +
+        'Finish any remaining tool call before you write your closing line, so you never report the outcome, keep working, ' +
+        'and report it again.',
+      meta: { label: 'Wait interrupted' }
+    }
+  }
+  return {
+    success: false,
+    error: `The run was stopped after ${spent} of ${asked}. Nothing was waited out.`
+  }
+}
+
 function describeAction(toolName, args) {
   if (toolName === 'send_file') {
     const f = String(args?.file ?? args?.path ?? '').trim()
@@ -151,6 +251,17 @@ function describeAction(toolName, args) {
       description: f
         ? `Deliver ${path.basename(f)} to the conversation`
         : 'Deliver a file to the conversation',
+      risk: 'low'
+    }
+  }
+  if (toolName === 'wait') {
+    const seconds = resolveSeconds(args)
+    const reason = String(args?.reason ?? '').trim()
+    return {
+      title: 'Wait',
+      description: seconds
+        ? `Pause for ${humanDuration(seconds)}${reason ? ` — ${reason}` : ''}`
+        : 'Pause before continuing',
       risk: 'low'
     }
   }
@@ -198,6 +309,37 @@ const toolDefinitions = [
       },
       required: ['path']
     }
+  },
+  {
+    name: 'wait',
+    description:
+      "Pause this turn for as long as you need, then carry on exactly where you left off. NO MAXIMUM — ten seconds or four hours, you decide; ask for the wait the job actually needs and never chop one long wait into a poll loop. While it runs the chat shows a card with your reason, a countdown to the moment you will wake, and a box the user can type into to end the wait early; anything they send from anywhere (that box, the composer, their phone, the terminal) wakes you at once and arrives as their next message. USE IT whenever the next step is simply not possible yet and WILL be after some time has passed, and you intend to finish the job yourself in this same turn: a build, deploy, render, upload or scan you kicked off and must let run; a rate limit or cooldown to ride out; a page, inbox, feed or file you must re-check after a while; anything the user asked you to do 'in a bit', 'after N minutes', or 'once that finishes'. This is the ONLY way to pause and keep everything — the conversation, the files you opened, what you already worked out, the rest of your plan. PREFER IT over shell sleep commands (they show the user nothing and cannot be interrupted), over polling the same tool over and over, and over telling the user you will come back later. DO NOT use it to look busy, to pad a reply, or before an action you could take right now. TWO THINGS THIS IS NOT: (1) an action that must land AFTER your reply is sent — restarting or quitting something, anything that would cut off the message announcing it — use countdown_start; (2) a job for hours or days from now, or one you can hand over in writing — use automation_create with a one-time schedule (\"In (2h)\", \"Once (...)\"): it starts a fresh run later that begins with only what you wrote into its instruction, so spell that out self-contained (it can look up earlier runs and past conversations once it is running). Between those two: if what you would have to hand over is a whole working state you already have here, wait; if a paragraph covers it, schedule it and free this turn.",
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description:
+            "Why you are waiting, in one short line the user will read as the card's title — e.g. \"Letting the deploy finish\", \"Waiting out the API cooldown\", \"Giving the render 10 minutes\". Required: a pause with no explanation is indistinguishable from a hang."
+        },
+        seconds: {
+          type: 'number',
+          description:
+            'How long to wait, in seconds. No maximum. Pass the duration in ONE unit — seconds, minutes or hours — never the same duration restated in two of them. Several DIFFERENT units add up, so use that only for a composite like hours 1 + minutes 30.'
+        },
+        minutes: {
+          type: 'number',
+          description:
+            'How long to wait, in minutes, instead of seconds. Adds to hours for a composite duration.'
+        },
+        hours: {
+          type: 'number',
+          description:
+            'How long to wait, in hours, instead of seconds. Adds to minutes for a composite duration.'
+        }
+      },
+      required: ['reason']
+    }
   }
 ]
 
@@ -207,13 +349,16 @@ const plugin = {
   describeAction,
   async init(context) {
     contextWorkspaceRoot = typeof context?.workspaceRoot === 'string' ? context.workspaceRoot : ''
+    waitHost = context?.wait ?? null
   },
-  async execute(toolName, args) {
+  async execute(toolName, args, signal) {
     switch (toolName) {
       case 'send_file':
         return sendFile(args)
       case 'show_path':
         return showPath(args)
+      case 'wait':
+        return wait(args, signal)
       default:
         return { success: false, error: `utilities: unknown tool ${toolName}` }
     }

@@ -107,6 +107,7 @@ import type { TurnSink } from '@main/channels/channel'
 import {
   appendTextSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertWorkflowSegment,
   type CountdownSnapshot,
   type Segment
@@ -117,6 +118,7 @@ import type {
   InterjectResult,
   InterjectionEvent
 } from '@main/runtime/agent/interjection'
+import { OFFER_OPTIONS_TOOL } from '@main/runtime/cerebellum'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
 import path from 'node:path'
@@ -195,7 +197,7 @@ const MIRROR_RETRY_MS = 250
 
 /**
  * What a non-verbose phone is shown WHILE a turn runs: assistant prose,
- * file-bearing results and errors, task cards — the clean feed the Mobile
+ * file-bearing results and errors, options cards — the clean feed the Mobile
  * panel's "Task results / off" setting describes. Tool mechanics are held
  * back from the live push, exactly as they were when this channel nudged
  * instead of mirroring; the stored body the phone reads afterwards still
@@ -217,7 +219,15 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // the turn persists.
     segment.kind === 'reasoning' ||
     segment.kind === 'tool_result' ||
+    // The copy-and-paste options card. This is the ONLY tool_call the clean
+    // feed relays, and it has to be: its ENTIRE content lives in the call's
+    // args — there is no result to fall back on — so stripping it here would
+    // leave the phone with nothing to draw until the turn persisted.
+    (segment.kind === 'tool_call' && segment.name === OFFER_OPTIONS_TOOL) ||
     segment.kind === 'countdown' ||
+    // Why the agent went quiet. A wait with no card is indistinguishable
+    // from a hang, which is the one thing the phone must never look like.
+    segment.kind === 'wait' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
   )
@@ -2303,6 +2313,7 @@ export class MobileChannel {
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
+        else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
@@ -2320,7 +2331,7 @@ export class MobileChannel {
         }
         // A card flipping (a countdown arming) should not wait out the text
         // throttle, exactly as in the in-app mirror.
-        scheduleMirror(segment.kind === 'countdown')
+        scheduleMirror(segment.kind === 'countdown' || segment.kind === 'wait')
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         // The phone renders none of these, but the desktop's context-meter

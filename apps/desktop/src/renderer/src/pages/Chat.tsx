@@ -18,6 +18,7 @@ import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { PresentationViewer } from '@components/common/presentation-viewer/PresentationViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
+import { OptionsCard } from '@components/common/options-card/OptionsCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
@@ -27,6 +28,7 @@ import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
+import { WaitCard } from '@components/common/wait-card/WaitCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
@@ -45,6 +47,7 @@ import {
   todoListId,
   latestTodoLists,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -5057,6 +5060,11 @@ type RenderResult = { blocks: ReactNode; empty: boolean }
 // QuestionCard rather than a generic tool card.
 const ASK_USER_TOOL = 'ask_user'
 
+// The `options` capability's single tool. Its tool_call renders as a tabbed
+// OptionsCard rather than a generic tool card — copy-and-paste content the
+// model produced FOR the user, so it shows on the clean feed too.
+const OFFER_OPTIONS_TOOL = 'offer_options'
+
 function renderSegments(
   segments: Segment[],
   approvals: Record<string, ApprovalCardState> | undefined,
@@ -5220,6 +5228,13 @@ function renderSegments(
       blocks.push(
         <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
       )
+    } else if (seg.kind === 'wait') {
+      // The blocking-wait card: one per wait, upserted by waitId, carrying
+      // its own input while it runs. Output FOR the user — it renders
+      // regardless of verbose, like the countdown card: a turn that went
+      // quiet with no explanation reads as a hang.
+      flushText()
+      blocks.push(<WaitCard key={`wait-${seg.snapshot.waitId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'user_message') {
       // A message the user sent mid-turn, at the exact point the agent read
       // it. Output FROM the user — always visible, clean feed included, and
@@ -5262,6 +5277,17 @@ function renderSegments(
             />
           )
         }
+        continue
+      }
+
+      // offer_options renders its tabbed copy-and-paste card from the call's
+      // args alone — there is no answer and no live state, so it draws the
+      // instant the call lands and identically forever after. Always visible,
+      // clean feed included: like a delivered file or a PathCard it is a
+      // deliberate model act, not tool mechanics. Skip everything else for
+      // this call (the result is a one-line confirmation for the model).
+      if (seg.name === OFFER_OPTIONS_TOOL) {
+        blocks.push(<OptionsCard key={`options_${seg.segmentId}`} args={seg.args} />)
         continue
       }
 
@@ -6555,6 +6581,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
       else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
+      else if (segment.kind === 'wait') upsertWaitSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }

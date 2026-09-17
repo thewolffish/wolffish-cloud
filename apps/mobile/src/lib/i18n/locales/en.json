@@ -908,6 +908,12 @@
         "run": "Run"
       }
     },
+    "optionsCard": {
+      "heading_one": "{{count}} option to copy",
+      "heading_other": "{{count}} options to copy",
+      "optionCount": "Option {{current}} of {{total}}",
+      "copy": "Copy this option"
+    },
     "questionCard": {
       "otherLabel": "Something else",
       "yourAnswer": "Your answer",
@@ -1001,6 +1007,21 @@
         "relaunch": "Dropped because Wolffish was relaunched before it fired."
       }
     },
+    "wait": {
+      "status": {
+        "waiting": "Waiting",
+        "elapsed": "Waited",
+        "interrupted": "Woken early",
+        "canceled": "Stopped"
+      },
+      "remaining": "{{duration}} left",
+      "waitingHint": "Waiting {{duration}} before continuing. Send a message to carry on now.",
+      "elapsedHint": "Waited {{duration}}, then carried on.",
+      "interruptedHint": "You sent a message after {{duration}}, so it carried on early.",
+      "canceledHint": "Stopped after {{duration}}.",
+      "inputPlaceholder": "Send a message to continue now",
+      "send": "Send"
+    },
     "approval": {
       "level": {
         "safe": "Safe",
@@ -1080,38 +1101,38 @@
     "notConnected": "Connect to your organization to see the leaderboard.",
     "error": "Couldn't load the leaderboard."
   },
-    "notifications": {
-      "title": "Notifications",
-      "tabs": {
-        "inbox": "Notifications",
-        "archive": "Archive"
-      },
-      "markAllRead": "Mark all read",
-      "archiveAll": "Archive all",
-      "markRead": "Mark as read",
-      "archive": "Archive",
-      "confirmReadAll": {
-        "title": "Mark all as read?",
-        "message": "All {{count}} notifications in this list will be marked as read. Their unread marks go with them."
-      },
-      "confirmArchiveAll": {
-        "title": "Archive all?",
-        "message": "All {{count}} notifications in this list move to the archive, and are marked as read. You can still read them under Archive."
-      },
-      "new": "New",
-      "empty": "No notifications yet.",
-      "emptyHint": "Wolffish tells you here when a run finishes, fails or needs you.",
-      "archiveEmpty": "Nothing archived.",
-      "conversationEmpty": "Nothing left here — everything this conversation sent is archived.",
-      "archiveEmptyHint": "Archived notifications are kept here, out of the list.",
-      "phase": {
-        "started": "Started",
-        "needs_input": "Needs you",
-        "failed": "Failed",
-        "completed": "Done",
-        "info": "Update"
-      }
+  "notifications": {
+    "title": "Notifications",
+    "tabs": {
+      "inbox": "Notifications",
+      "archive": "Archive"
     },
+    "markAllRead": "Mark all read",
+    "archiveAll": "Archive all",
+    "markRead": "Mark as read",
+    "archive": "Archive",
+    "confirmReadAll": {
+      "title": "Mark all as read?",
+      "message": "All {{count}} notifications in this list will be marked as read. Their unread marks go with them."
+    },
+    "confirmArchiveAll": {
+      "title": "Archive all?",
+      "message": "All {{count}} notifications in this list move to the archive, and are marked as read. You can still read them under Archive."
+    },
+    "new": "New",
+    "empty": "No notifications yet.",
+    "emptyHint": "Wolffish tells you here when a run finishes, fails or needs you.",
+    "archiveEmpty": "Nothing archived.",
+    "conversationEmpty": "Nothing left here — everything this conversation sent is archived.",
+    "archiveEmptyHint": "Archived notifications are kept here, out of the list.",
+    "phase": {
+      "started": "Started",
+      "needs_input": "Needs you",
+      "failed": "Failed",
+      "completed": "Done",
+      "info": "Update"
+    }
+  },
   "units": {
     "bytes": "{{value}} B",
     "kilobytes": "{{value}} KB",

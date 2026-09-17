@@ -269,6 +269,33 @@ async function run(): Promise<void> {
     JSON.stringify(clean?.segments?.map((s) => s.kind))
   )
 
+  // ... but the options card IS pushed: its ENTIRE content rides the call's
+  // args and there is no result to fall back on, so holding the call back
+  // would leave the phone with nothing to draw until the turn persisted.
+  pushes.length = 0
+  turn.onSegment({
+    kind: 'tool_call',
+    turnId: 'turn_1',
+    segmentId: 's2a',
+    toolCallId: 'c2',
+    name: 'offer_options',
+    args: {
+      options: [
+        { title: 'A', content: 'x' },
+        { title: 'B', content: 'y' }
+      ]
+    }
+  })
+  await afterThrottle()
+  const withOptions = appended().at(-1)?.payload.message as {
+    segments?: Array<{ kind: string; name?: string }>
+  }
+  ok(
+    'clean feed: the offer_options call IS pushed live',
+    (withOptions?.segments ?? []).some((s) => s.kind === 'tool_call' && s.name === 'offer_options'),
+    JSON.stringify(withOptions?.segments?.map((s) => s.kind))
+  )
+
   // The user's OWN mid-turn message is not tool mechanics and is never held
   // back: the phone takes its pending bubble down the instant the `delivered`
   // push lands, so a clean feed that filtered this out made the words the user

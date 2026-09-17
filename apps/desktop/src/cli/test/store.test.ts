@@ -76,6 +76,68 @@ describe('segment reducer', () => {
     expect(rest.length).toBeGreaterThan(0)
   })
 
+  test('offer_options folds to an options part, never a tool row', () => {
+    const store = createAppStore()
+    applySegment(
+      store,
+      seg('tool_call', {
+        toolCallId: 'o1',
+        name: 'offer_options',
+        args: {
+          title: 'Three ways',
+          options: [
+            { title: 'Plain', description: 'no deps', language: 'ts', content: 'const a = 1' },
+            'a bare string option',
+            { label: 'Synonyms', code: 'npm i' },
+            { title: 'dropped — no content' }
+          ]
+        }
+      }),
+      { live: true }
+    )
+    // Its result is a one-line confirmation for the model — it must not turn
+    // the card into a tool row or append one of its own.
+    applySegment(
+      store,
+      seg('tool_result', { toolCallId: 'o1', status: 'success', output: 'Showed the user a card' }),
+      { live: true }
+    )
+    const [state] = store
+    const last = state.feed[state.feed.length - 1]
+    if (last.kind !== 'assistant') throw new Error('expected assistant')
+    expect(last.parts.map((p) => p.kind)).toEqual(['options'])
+    const part = last.parts[0]
+    if (part.kind !== 'options') throw new Error('expected options part')
+    expect(part.title).toBe('Three ways')
+    // A contentless entry is dropped, and the letters close over the gap — a
+    // shifted letter would make the model's "option C" point at the wrong one.
+    expect(part.options.map((o) => `${o.letter}:${o.title}`)).toEqual([
+      'A:Plain',
+      'B:Option B',
+      'C:Synonyms'
+    ])
+    expect(part.options.map((o) => o.content)).toEqual([
+      'const a = 1',
+      'a bare string option',
+      'npm i'
+    ])
+    expect(part.options[0].language).toBe('ts')
+    expect(part.options[0].description).toBe('no deps')
+  })
+
+  test('offer_options with nothing usable draws no part at all', () => {
+    const store = createAppStore()
+    applySegment(
+      store,
+      seg('tool_call', { toolCallId: 'o2', name: 'offer_options', args: { options: [] } }),
+      { live: true }
+    )
+    const [state] = store
+    const last = state.feed[state.feed.length - 1]
+    if (last.kind !== 'assistant') throw new Error('expected assistant')
+    expect(last.parts.length).toBe(0)
+  })
+
   test('todo replaces by list id across turns', () => {
     const store = createAppStore()
     applySegment(store, seg('todo', { items: [{ content: 'a', status: 'pending' }] }), {

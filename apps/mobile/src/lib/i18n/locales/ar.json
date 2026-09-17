@@ -906,6 +906,16 @@
         "run": "تشغيل"
       }
     },
+    "optionsCard": {
+      "heading_zero": "لا توجد خيارات للنسخ",
+      "heading_one": "خيار واحد للنسخ",
+      "heading_two": "خياران للنسخ",
+      "heading_few": "{{count}} خيارات للنسخ",
+      "heading_many": "{{count}} خيارًا للنسخ",
+      "heading_other": "{{count}} خيار للنسخ",
+      "optionCount": "الخيار {{current}} من {{total}}",
+      "copy": "انسخ هذا الخيار"
+    },
     "questionCard": {
       "otherLabel": "شيء آخر",
       "yourAnswer": "إجابتك",
@@ -1006,6 +1016,21 @@
         "superseded": "استُبدل بعدّ تنازلي أحدث.",
         "relaunch": "أُسقط لأن Wolffish أُعيد تشغيله قبل أن يُنفَّذ."
       }
+    },
+    "wait": {
+      "status": {
+        "waiting": "بالانتظار",
+        "elapsed": "انتهى الانتظار",
+        "interrupted": "استيقظ مبكرًا",
+        "canceled": "أُوقف"
+      },
+      "remaining": "بقي {{duration}}",
+      "waitingHint": "ينتظر {{duration}} قبل المتابعة. أرسل رسالة للمتابعة الآن.",
+      "elapsedHint": "انتظر {{duration}} ثم تابع.",
+      "interruptedHint": "أرسلت رسالة بعد {{duration}}، فتابع مبكرًا.",
+      "canceledHint": "أُوقف بعد {{duration}}.",
+      "inputPlaceholder": "أرسل رسالة للمتابعة الآن",
+      "send": "إرسال"
     },
     "approval": {
       "level": {
@@ -1338,38 +1363,38 @@
     "notConnected": "اتصل بمؤسستك لعرض لوحة الصدارة.",
     "error": "تعذّر تحميل لوحة الصدارة."
   },
-    "notifications": {
-      "title": "الإشعارات",
-      "tabs": {
-        "inbox": "الإشعارات",
-        "archive": "الأرشيف"
-      },
-      "markAllRead": "تعليم الكل كمقروء",
-      "archiveAll": "أرشفة الكل",
-      "markRead": "تعليم كمقروء",
-      "archive": "أرشفة",
-      "confirmReadAll": {
-        "title": "تعليم الكل كمقروء؟",
-        "message": "ستُعلَّم كل الإشعارات في هذه القائمة ({{count}}) كمقروءة، وتختفي علامات عدم القراءة معها."
-      },
-      "confirmArchiveAll": {
-        "title": "أرشفة الكل؟",
-        "message": "ستنتقل كل الإشعارات في هذه القائمة ({{count}}) إلى الأرشيف وتُعلَّم كمقروءة. يمكنك قراءتها لاحقاً من تبويب الأرشيف."
-      },
-      "new": "جديد",
-      "empty": "لا توجد إشعارات بعد.",
-      "emptyHint": "يخبرك ولففيش هنا عند انتهاء التشغيل أو فشله أو حاجته إليك.",
-      "archiveEmpty": "لا يوجد شيء في الأرشيف.",
-      "conversationEmpty": "لم يتبقَّ شيء هنا — كل ما أرسلته هذه المحادثة مؤرشف.",
-      "archiveEmptyHint": "تُحفظ الإشعارات المؤرشفة هنا بعيداً عن القائمة.",
-      "phase": {
-        "started": "بدأ",
-        "needs_input": "يحتاجك",
-        "failed": "فشل",
-        "completed": "اكتمل",
-        "info": "تحديث"
-      }
+  "notifications": {
+    "title": "الإشعارات",
+    "tabs": {
+      "inbox": "الإشعارات",
+      "archive": "الأرشيف"
     },
+    "markAllRead": "تعليم الكل كمقروء",
+    "archiveAll": "أرشفة الكل",
+    "markRead": "تعليم كمقروء",
+    "archive": "أرشفة",
+    "confirmReadAll": {
+      "title": "تعليم الكل كمقروء؟",
+      "message": "ستُعلَّم كل الإشعارات في هذه القائمة ({{count}}) كمقروءة، وتختفي علامات عدم القراءة معها."
+    },
+    "confirmArchiveAll": {
+      "title": "أرشفة الكل؟",
+      "message": "ستنتقل كل الإشعارات في هذه القائمة ({{count}}) إلى الأرشيف وتُعلَّم كمقروءة. يمكنك قراءتها لاحقاً من تبويب الأرشيف."
+    },
+    "new": "جديد",
+    "empty": "لا توجد إشعارات بعد.",
+    "emptyHint": "يخبرك ولففيش هنا عند انتهاء التشغيل أو فشله أو حاجته إليك.",
+    "archiveEmpty": "لا يوجد شيء في الأرشيف.",
+    "conversationEmpty": "لم يتبقَّ شيء هنا — كل ما أرسلته هذه المحادثة مؤرشف.",
+    "archiveEmptyHint": "تُحفظ الإشعارات المؤرشفة هنا بعيداً عن القائمة.",
+    "phase": {
+      "started": "بدأ",
+      "needs_input": "يحتاجك",
+      "failed": "فشل",
+      "completed": "اكتمل",
+      "info": "تحديث"
+    }
+  },
   "units": {
     "bytes": "{{value}} بايت",
     "kilobytes": "{{value}} ك.ب",

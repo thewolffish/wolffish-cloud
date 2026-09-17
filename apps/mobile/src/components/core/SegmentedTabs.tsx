@@ -12,6 +12,12 @@ import { Pressable, Text, View } from 'react-native'
  * Sized to the Button/Input/Select control metrics (h-10, rounded-lg). The
  * active segment is inert: re-pressing what is already selected is not a
  * change, and treating it as one would reset whatever the tab holds.
+ *
+ * The track is `bg-surface` — the CARDS' colour, not the page's. Every screen
+ * that uses this sits on `bg-bg`, so a `bg-bg` track left the unselected half
+ * of the control indistinguishable from the page behind it: a lone filled pill
+ * floating in nothing, with no edge to say the other tab was a tab at all.
+ * Surface gives the whole strip the same body the content below it has.
  */
 export function SegmentedTabs<T extends string>({
   value,
@@ -36,7 +42,7 @@ export function SegmentedTabs<T extends string>({
       accessibilityRole="tablist"
       accessibilityLabel={accessibilityLabel}
       className={cn(
-        'border-border bg-bg h-10 w-full flex-row items-stretch rounded-lg border p-0.5',
+        'border-border bg-surface h-10 w-full flex-row items-stretch rounded-lg border p-0.5',
         className
       )}
     >

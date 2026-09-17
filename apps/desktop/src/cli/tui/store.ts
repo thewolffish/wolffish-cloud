@@ -35,9 +35,17 @@ export type Part =
       expanded: boolean
       worker?: string
     }
+  /**
+   * The model's copy-and-paste options card (offer_options). Its whole
+   * content rides the tool CALL's args — there is no result to wait for —
+   * so the part is complete the instant the call lands and identical on a
+   * reload.
+   */
+  | { kind: 'options'; id: string; toolCallId: string; title?: string; options: OptionItem[] }
   | { kind: 'todo'; id: string; listId: string; items: TodoItem[] }
   | { kind: 'workflow'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'task'; id: string; snapshot: Record<string, unknown> }
+  | { kind: 'wait'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'countdown'; id: string; snapshot: Record<string, unknown> }
   | {
       kind: 'compaction'
@@ -63,6 +71,72 @@ export type Part =
       attachments: Attachment[]
       timestamp: number
     }
+
+/** The `options` capability's single tool — folded to an options part, not a tool row. */
+const OFFER_OPTIONS_TOOL = 'offer_options'
+
+/**
+ * The tab letter for position i: A…Z, then AA … — mirrors the plugin and
+ * every other renderer, so "option C" in the reply is option C on screen.
+ */
+function optionLetter(index: number): string {
+  let n = index
+  let out = ''
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return out
+}
+
+/**
+ * Recover an options card from its persisted tool_call args. As tolerant as
+ * the plugin's own normalizer — the same synonyms it accepts (a bare string,
+ * `label`/`code`/`text`/`value`) must survive, or a card the user saw in the
+ * app would come back empty here.
+ */
+function parseOptionItems(raw: unknown): OptionItem[] {
+  if (!Array.isArray(raw)) return []
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  const out: OptionItem[] = []
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const content = item.trim()
+      if (content)
+        out.push({
+          letter: optionLetter(out.length),
+          title: `Option ${optionLetter(out.length)}`,
+          content
+        })
+      continue
+    }
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const content = str(r.content) || str(r.code) || str(r.text) || str(r.value)
+    if (!content) continue
+    const letter = optionLetter(out.length)
+    const title = str(r.title) || str(r.label)
+    const description = str(r.description)
+    const language = str(r.language) || str(r.lang)
+    out.push({
+      letter,
+      title: title || `Option ${letter}`,
+      ...(description ? { description } : {}),
+      ...(language ? { language } : {}),
+      content
+    })
+  }
+  return out
+}
+
+/** One alternative on an options card, already lettered for display. */
+export type OptionItem = {
+  letter: string
+  title: string
+  description?: string
+  language?: string
+  content: string
+}
 
 export type TodoItem = { id?: string; content: string; status: string }
 
@@ -441,6 +515,29 @@ export function applySegment(
     case 'tool_call': {
       const name = String(segment.name ?? 'tool')
       const toolCallId = String(segment.toolCallId ?? segmentId)
+      // offer_options is a card, never a tool row: everything it draws is in
+      // these args, so it folds to its own part here and skips the tool
+      // bookkeeping entirely (its result is a one-line confirmation written
+      // for the model). Drawn in clean and verbose alike — content the model
+      // produced FOR the user, not tool mechanics.
+      if (name === OFFER_OPTIONS_TOOL) {
+        const args = (segment.args as Record<string, unknown>) ?? {}
+        const options = parseOptionItems(args.options)
+        if (options.length > 0) {
+          const title = typeof args.title === 'string' ? args.title.trim() : ''
+          editParts((parts) => {
+            for (const q of parts) if (q.kind === 'reasoning' && !q.endedAt) q.endedAt = Date.now()
+            parts.push({
+              kind: 'options',
+              id: segmentId,
+              toolCallId,
+              ...(title ? { title } : {}),
+              options
+            })
+          })
+        }
+        return
+      }
       editParts((parts) => {
         // Close any open reasoning run: the model moved on to acting.
         for (const p of parts) if (p.kind === 'reasoning' && !p.endedAt) p.endedAt = Date.now()
@@ -524,14 +621,17 @@ export function applySegment(
     }
     case 'workflow':
     case 'task':
-    case 'countdown': {
+    case 'countdown':
+    case 'wait': {
       const snapshot = (segment.snapshot as Record<string, unknown>) ?? {}
       const keyField =
         segment.kind === 'workflow'
           ? 'workflowId'
           : segment.kind === 'task'
             ? 'taskId'
-            : 'countdownId'
+            : segment.kind === 'wait'
+              ? 'waitId'
+              : 'countdownId'
       const key = String(snapshot[keyField] ?? segmentId)
       let replaced = false
       set(
@@ -542,7 +642,10 @@ export function applySegment(
             for (const part of message.parts) {
               if (
                 part.kind === segment.kind &&
-                (part.kind === 'workflow' || part.kind === 'task' || part.kind === 'countdown') &&
+                (part.kind === 'workflow' ||
+                  part.kind === 'task' ||
+                  part.kind === 'countdown' ||
+                  part.kind === 'wait') &&
                 String(part.snapshot[keyField] ?? part.id) === key
               ) {
                 part.snapshot = snapshot
@@ -555,7 +658,7 @@ export function applySegment(
       if (!replaced) {
         editParts((parts) =>
           parts.push({
-            kind: segment.kind as 'workflow' | 'task' | 'countdown',
+            kind: segment.kind as 'workflow' | 'task' | 'countdown' | 'wait',
             id: segmentId,
             snapshot
           })

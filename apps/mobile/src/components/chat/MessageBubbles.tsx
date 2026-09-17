@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next'
 import { Pressable, Text, View } from 'react-native'
 import { ApprovalCard } from '@/components/chat/ApprovalCard'
 import { CountdownCard } from '@/components/chat/CountdownCard'
+import { WaitCard } from '@/components/chat/WaitCard'
 import {
   CompactionCard,
   ModelChip,
@@ -42,6 +43,7 @@ import { FileBlock } from '@/components/chat/FileBlock'
 import { MarkdownView, markdownHasTable } from '@/components/chat/MarkdownView'
 import { NEEDS_SELECT_SHEET, openSelectMarkdown } from '@/components/chat/SelectTextSheet'
 import { QuestionCard } from '@/components/chat/QuestionCard'
+import { OptionsCard } from '@/components/chat/OptionsCard'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { TodoCard } from '@/components/chat/TodoCard'
 import { ToolCard } from '@/components/chat/ToolCard'
@@ -229,6 +231,10 @@ export const AssistantMessageView = memo(function AssistantMessageView({
     // ask_user renders as its card while the turn is parked on it and once it
     // has been answered; with neither there is nothing to show yet.
     if (block.type === 'question') return !!asks[block.call.toolCallId] || !!block.result
+    // offer_options draws from its call's args alone, so it renders the
+    // instant the call lands and always — clean feed included, like a
+    // delivered file: it is content the model produced FOR the user.
+    if (block.type === 'options') return true
     // An anchor earns its place only when a live card renders on it.
     if (block.type === 'toolAnchor')
       return !!asks[block.toolCallId] || !!live.approvals[block.toolCallId]
@@ -421,6 +427,8 @@ function renderBlock(
         </View>
       )
     }
+    case 'options':
+      return <OptionsCard call={block.call} />
     case 'question': {
       const ask = asks[block.call.toolCallId]
       return (
@@ -468,6 +476,10 @@ function renderBlock(
     case 'countdown':
       // Turn-end countdown — output FOR the user, never verbose-gated.
       return <CountdownCard snapshot={block.snapshot} />
+    case 'wait':
+      // Why the agent went quiet — output FOR the user, never verbose-gated:
+      // a silent turn with no card is indistinguishable from a hang.
+      return <WaitCard snapshot={block.snapshot} conversationId={conversationId} />
     case 'todo':
       // The model's task list — output FOR the user, so never verbose-gated.
       return <TodoCard items={block.items} />

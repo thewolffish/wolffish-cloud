@@ -33,6 +33,53 @@ tools:
         type: string
         description: "Folder or file to show. Absolute (/Users/you/Projects), home-relative (~/Downloads), or workspace-relative (files/)."
         required: true
+  - name: wait
+    readOnly: true
+    description: >-
+      Pause this turn for as long as you need, then carry on exactly where you left off.
+      NO MAXIMUM — ten seconds or four hours, you decide; ask for the wait the job actually
+      needs and never chop one long wait into a poll loop. While it runs the chat shows a card
+      with your reason, a countdown to the moment you will wake, and a box the user can type
+      into to end the wait early; anything they send from anywhere (that box, the composer,
+      their phone, the terminal) wakes you at once and arrives as their next message.
+      USE IT whenever the next step is simply not possible yet and WILL be after some time has
+      passed, and you intend to finish the job yourself in this same turn: a build, deploy,
+      render, upload or scan you kicked off and must let run; a rate limit or cooldown to ride
+      out; a page, inbox, feed or file you must re-check after a while; anything the user asked
+      you to do "in a bit", "after N minutes", or "once that finishes". This is the ONLY way to
+      pause and keep everything — the conversation, the files you opened, what you already
+      worked out, the rest of your plan. PREFER IT over shell sleep commands (they show the user
+      nothing and cannot be interrupted), over polling the same tool over and over, and over
+      telling the user you will come back later. DO NOT use it to look busy, to pad a reply, or
+      before an action you could take right now. TWO THINGS THIS IS NOT: (1) an action that must
+      land AFTER your reply is sent — restarting or quitting something, anything that would cut
+      off the message announcing it — use countdown_start; (2) a job for hours or days from now,
+      or one you can hand over in writing — use automation_create with a one-time schedule
+      ("In (2h)", "Once (...)"): it starts a fresh run later that begins with only what you wrote
+      into its instruction, so spell that out self-contained (it can look up earlier runs and past
+      conversations once it is running). Between those two: if what you would have to hand over is
+      a whole working state you already have here, wait; if a paragraph covers it, schedule it and
+      free this turn.
+    parameters:
+      reason:
+        type: string
+        description: >-
+          Why you are waiting, in one short line the user will read as the card's title — e.g.
+          "Letting the deploy finish", "Waiting out the API cooldown", "Giving the render 10
+          minutes". Required: a pause with no explanation is indistinguishable from a hang.
+        required: true
+      seconds:
+        type: number
+        description: >-
+          How long to wait, in seconds. No maximum. Pass the duration in ONE unit — seconds,
+          minutes or hours — never the same duration restated in two of them. Several DIFFERENT
+          units add up, so use that only for a composite like hours 1 + minutes 30.
+      minutes:
+        type: number
+        description: "How long to wait, in minutes, instead of seconds. Adds to hours for a composite duration."
+      hours:
+        type: number
+        description: "How long to wait, in hours, instead of seconds. Adds to minutes for a composite duration."
 ---
 
 # Utilities

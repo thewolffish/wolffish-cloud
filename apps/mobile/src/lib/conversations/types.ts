@@ -126,6 +126,28 @@ export type CountdownSnapshot = {
   abortedBy?: CountdownAbortReason
 }
 
+export type WaitStatus = 'waiting' | 'elapsed' | 'interrupted' | 'canceled'
+
+/**
+ * A blocking `wait` — mirrors the desktop's WaitSnapshot in broca.ts. The
+ * agent asked to be idle for `seconds` (there is no maximum) and this is the
+ * card that says why, until when, and offers the box that ends it early.
+ * Snapshots REPLACE each other by waitId; the card derives its clock from
+ * endsAt locally, so a four-hour wait costs two segments.
+ */
+export type WaitSnapshot = {
+  waitId: string
+  conversationId: string | null
+  reason: string
+  seconds: number
+  status: WaitStatus
+  startedAt: number
+  endsAt: number
+  endedAt?: number
+  /** What the user sent to cut it short. The card's record only. */
+  interruptedBy?: string
+}
+
 /**
  * One provider failure behind an errored turn — the desktop's
  * NoProviderAvailableInfo, verbatim. Rides the turn_end segment over the wire
@@ -216,6 +238,7 @@ export type Segment =
   | { kind: 'separator'; turnId: string; segmentId: string }
   | { kind: 'workflow'; turnId: string; segmentId: string; snapshot: WorkflowSnapshot }
   | { kind: 'countdown'; turnId: string; segmentId: string; snapshot: CountdownSnapshot }
+  | { kind: 'wait'; turnId: string; segmentId: string; snapshot: WaitSnapshot }
   | {
       kind: 'compaction_started'
       turnId: string

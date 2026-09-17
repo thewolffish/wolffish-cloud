@@ -160,97 +160,6 @@
 
   // --- pptx -----------------------------------------------------------------
 
-  /**
-   * Serif and monospace faces the renderer would otherwise strand on a
-   * sans-serif fallback. Mirrors `repairFontFallbacks` in wolffish-app's
-   * deck-preview.ts — keep the two in step.
-   */
-  var SERIF_FACES = [
-    'cambria', 'georgia', 'times', 'times new roman', 'garamond', 'book antiqua',
-    'palatino', 'palatino linotype', 'baskerville', 'libre baskerville',
-    'playfair display', 'merriweather', 'lora', 'crimson text', 'crimson pro',
-    'spectral', 'bitter', 'constantia', 'cardo', 'caladea'
-  ]
-  var MONO_FACES = [
-    'consolas', 'courier', 'courier new', 'menlo', 'monaco', 'cascadia code',
-    'cascadia mono', 'sf mono', 'liberation mono', 'dejavu sans mono'
-  ]
-
-  /**
-   * The renderer ends every font stack with the deck's own body font and a
-   * sans-serif generic, so a Cambria heading on a phone — which has neither
-   * Cambria nor Calibri — falls back to a sans and the deck loses the face
-   * that made it look like itself. Give each stack a generic of the RIGHT
-   * class, keeping the requested face first so nothing changes where it is
-   * installed.
-   */
-  function repairFontFallbacks(svg) {
-    return svg.replace(/font-family:([^;"]+)/g, function (whole, stack) {
-      var first = stack.split(',')[0].trim().replace(/^['"]|['"]$/g, '')
-      if (!first) return whole
-      var key = first.toLowerCase()
-      if (/^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/.test(key)) return whole
-      var tail
-      if (MONO_FACES.indexOf(key) >= 0 || /\bmono\b/.test(key)) {
-        tail = ["'Liberation Mono'", 'Consolas', "'Courier New'", 'monospace']
-      } else if (SERIF_FACES.indexOf(key) >= 0 || /serif/.test(key)) {
-        tail = ['Caladea', 'Georgia', "'Times New Roman'", 'serif']
-      } else {
-        tail = ['Carlito', "'Helvetica Neue'", 'Arial', 'sans-serif']
-      }
-      tail = tail.filter(function (f) {
-        return f.replace(/'/g, '').toLowerCase() !== key
-      })
-      return "font-family:'" + first + "', " + tail.join(', ')
-    })
-  }
-
-  /**
-   * Text in an autoshape that states no alignment: the renderer follows the
-   * authoring convention and CENTRES it, while PowerPoint resolves the same
-   * silence through the deck's own default and leaves it left. pptxgenjs
-   * writes every run of text as a bare autoshape, so a deck faithful in
-   * PowerPoint came out centre-aligned — title, headings and all. Same repair
-   * as `anchorTextLeft` in wolffish-app's deck-preview.ts.
-   *
-   * Needs the paragraph API, which only reaches this bundle when entry.mjs
-   * exports it (see README). Without it this is a no-op and the deck renders
-   * as it did before — never an error.
-   */
-  function anchorTextLeft(pptx, slide) {
-    if (!pptx.getSlideShapes || !pptx.getParagraphAlignment || !pptx.setParagraphAlignment) return
-    var walk = function (shapes) {
-      for (var i = 0; i < shapes.length; i++) {
-        var shape = shapes[i]
-        if (pptx.getShapeKind && pptx.getShapeKind(shape) === 'group') {
-          if (pptx.getGroupChildren) walk(pptx.getGroupChildren(shape))
-          continue
-        }
-        if (pptx.isShapePlaceholder && pptx.isShapePlaceholder(shape)) continue
-        var paragraphs = 0
-        try {
-          paragraphs = pptx.getShapeParagraphCount(shape)
-        } catch (error) {
-          continue
-        }
-        for (var p = 0; p < paragraphs; p++) {
-          try {
-            if (pptx.getParagraphAlignment(shape, p) === null) {
-              pptx.setParagraphAlignment(shape, p, 'left')
-            }
-          } catch (error) {
-            // A shape whose text model will not answer keeps what it had.
-          }
-        }
-      }
-    }
-    try {
-      walk(pptx.getSlideShapes(slide))
-    } catch (error) {
-      // Never let a repair stop a slide from painting.
-    }
-  }
-
   /** `viewBox="0 0 960 720"` — the only place the renderer states the canvas. */
   function svgAspect(svg) {
     var box = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg)
@@ -273,8 +182,7 @@
         if (!box || box.dataset.painted) return ''
         var svg
         try {
-          anchorTextLeft(pptx, slides[i])
-          svg = repairFontFallbacks(pptx.renderSlideToSvg(deck, slides[i]))
+          svg = pptx.renderSlideToSvg(deck, slides[i])
         } catch (error) {
           // One unpaintable slide must not cost the reader the other twenty —
           // wolffish-app's rule. Keep the position, show it empty.

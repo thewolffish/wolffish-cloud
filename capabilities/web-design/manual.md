@@ -57,6 +57,12 @@ Then, before writing markup:
   3–5 sections, rail optional. A manual: cover + rail + 8–18 numbered sections +
   glossary/FAQ. Never pad to look thorough.
 
+**Then read the plan back once before writing markup.** Ask of each decision — voice,
+accent, component mix, the cover treatment — *would I have arrived here for any page
+on any subject?* If yes, it is a default wearing the costume of a choice; change it
+and say what you changed and why. This costs one paragraph and is the only step that
+catches a page that is competent and anonymous.
+
 ## 3. Architecture — one flowing column with a fixed rail
 
 Screen pages **flow** — no fixed sheets, no page numbers, no `overflow: hidden`.
@@ -620,6 +626,24 @@ When the page language is Arabic (or the automation is Arabic-first):
   structural component. In essays, prose is the point; use section heads and
   pull-quote-style `.note` blocks for rhythm instead.
 
+## 10.5 Words are part of the design
+
+Copy makes a page feel templated exactly as fast as layout does. It is content, not
+decoration, and it gets the same intentionality as spacing and color.
+
+- **Name things the way the reader would.** Plain verbs, sentence case, no filler.
+  "Turn off notifications", not "Notification preference management".
+- **A link says where it goes**, a button says what it does, and it keeps the same
+  word afterwards — a control labelled *Export* produces a file the page calls an
+  export, not a "download".
+- **Every eyebrow and label must carry information.** An eyebrow reading
+  "OVERVIEW" above an obvious overview is chrome; one reading "Where the time goes"
+  is a second headline. If a label only names the component type, delete it.
+- **Empty and error states give direction, not mood.** Say what happened and what
+  to do next, in the page's own voice. Nothing apologises; nothing is vague.
+- **Each written element does one job.** A lead that restates the headline is one
+  of them doing nothing.
+
 ## 11. Verify before delivering — mandatory
 
 You never deliver a page you have not looked at. The failure modes — horizontal
@@ -703,3 +727,13 @@ UI, no gradient text, accessibility floor (landmarks, focus, contrast, labels).
     anchors that land under nothing. The rail is the contract with the reader.
 12. **The unlabeled figure**: no caption claim, no `aria-label`, arrows that mean
     "related somehow". Label at the mark; claim in the caption.
+13. **The generated-page tells** — small, individually defensible, and damning in
+    company, because they show up whatever the subject:
+    - meta strings joined with middle dots (`Draft · Internal · 2026`);
+    - an arrow appended to link or button text (`Read more →`);
+    - labels built as `WORD — fragment` with a spaced em dash;
+    - a tinted near-black (`#0B0B0B`, `#111`) where the `--ink` token belongs —
+      every color on the page comes from a token, including the dark ones;
+    - one word of a headline in italic, bold, or the accent. Accent a whole line
+      or nothing; a single highlighted word is the commonest generated flourish.
+    Each is legitimate when the subject actually calls for it. None is a default.

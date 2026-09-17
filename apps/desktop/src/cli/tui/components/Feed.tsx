@@ -229,6 +229,12 @@ function AssistantRow(props: {
             <Match when={part.kind === 'todo'}>
               <TodoPart items={(part as Extract<Part, { kind: 'todo' }>).items} />
             </Match>
+            <Match when={part.kind === 'options'}>
+              <OptionsPart
+                part={part as Extract<Part, { kind: 'options' }>}
+                syntax={props.syntax}
+              />
+            </Match>
             <Match when={part.kind === 'workflow'}>
               <WorkflowPart snapshot={(part as Extract<Part, { kind: 'workflow' }>).snapshot} />
             </Match>
@@ -237,6 +243,9 @@ function AssistantRow(props: {
             </Match>
             <Match when={part.kind === 'countdown'}>
               <CountdownPart snapshot={(part as Extract<Part, { kind: 'countdown' }>).snapshot} />
+            </Match>
+            <Match when={part.kind === 'wait'}>
+              <WaitPart snapshot={(part as Extract<Part, { kind: 'wait' }>).snapshot} />
             </Match>
             <Match when={part.kind === 'compaction'}>
               <CompactionPart part={part as Extract<Part, { kind: 'compaction' }>} />
@@ -581,6 +590,79 @@ function Card(props: {
   )
 }
 
+/**
+ * The model's copy-and-paste options card (offer_options). A row of lettered
+ * tabs on top — click one to switch — and the selected option's body
+ * underneath, rendered as markdown. "copy" puts the RAW content on the system
+ * clipboard (the same 4-tier path /copy uses), which is this surface's copy
+ * button. The tabs WRAP rather than scrolling sideways: the app's card scrolls
+ * its row horizontally, but a terminal has no hidden horizontal overflow to
+ * scroll into, so wrapping is how the same row stays fully reachable here.
+ *
+ * Purely presentational, like the app's card: nothing is sent back, and the
+ * whole thing is rebuilt from the tool call's args on a reload.
+ */
+function OptionsPart(props: {
+  part: Extract<Part, { kind: 'options' }>
+  syntax: Accessor<SyntaxStyle>
+}): JSX.Element {
+  const app = useApp()
+  const p = theme
+  const [active, setActive] = createSignal(0)
+  const options = () => props.part.options
+  const current = () => options()[Math.min(active(), options().length - 1)]
+  // A `language` means the content is raw code, so it is fenced HERE rather
+  // than by the model — with a fence long enough to survive content that
+  // carries backtick fences of its own.
+  const body = (): string => {
+    const option = current()
+    if (!option?.language) return option?.content ?? ''
+    const longest = (option.content.match(/`{3,}/g) ?? []).reduce(
+      (max, run) => Math.max(max, run.length),
+      2
+    )
+    const fence = '`'.repeat(Math.max(3, longest + 1))
+    return `${fence}${option.language}\n${option.content}\n${fence}`
+  }
+  const copy = async (): Promise<void> => {
+    const text = current()?.content ?? ''
+    if (!text) return
+    const { copyToClipboard } = await import('../../lib/clipboard.mjs')
+    try {
+      await copyToClipboard(text)
+      app.toast.success(`copied option ${current()?.letter ?? ''}`.trim())
+    } catch (error) {
+      app.toast.error(error)
+    }
+  }
+  return (
+    <Card title={props.part.title ?? `${options().length} options to copy`} color={p().accent}>
+      <box flexDirection="row" gap={2} flexWrap="wrap">
+        <For each={options()}>
+          {(option, i) => (
+            <text
+              fg={active() === i() ? p().accent : p().muted}
+              attributes={active() === i() ? TextAttributes.BOLD : TextAttributes.NONE}
+              onMouseUp={() => setActive(i())}
+            >
+              {`${option.letter} ${truncate(option.title, 24)}`}
+            </text>
+          )}
+        </For>
+        <text fg={p().dim} onMouseUp={() => void copy()}>
+          {'  copy'}
+        </text>
+      </box>
+      <Show when={current()?.description}>
+        <text fg={p().muted} wrapMode="word">
+          {current()?.description}
+        </text>
+      </Show>
+      <markdown content={body()} syntaxStyle={props.syntax()} fg={p().text} />
+    </Card>
+  )
+}
+
 function TodoPart(props: { items: Array<{ content: string; status: string }> }): JSX.Element {
   const p = theme
   const done = () =>
@@ -757,6 +839,57 @@ function CountdownPart(props: { snapshot: Record<string, unknown> }): JSX.Elemen
       </Show>
     </Card>
   )
+}
+
+/**
+ * The blocking-wait card in the terminal. No input of its own — typing in
+ * the CLI composer is already a mid-turn message, which is exactly what ends
+ * a wait, so the hint points there instead of inventing a second control.
+ */
+function WaitPart(props: { snapshot: Record<string, unknown> }): JSX.Element {
+  const p = theme
+  const [now, setNow] = createSignal(Date.now())
+  const timer = setInterval(() => setNow(Date.now()), 500)
+  onCleanup(() => clearInterval(timer))
+  const status = () => String(props.snapshot.status ?? '')
+  const waiting = () => status() === 'waiting'
+  const endsAt = () =>
+    typeof props.snapshot.endsAt === 'number' ? (props.snapshot.endsAt as number) : 0
+  const remaining = () => Math.max(0, endsAt() - now())
+  const reason = () => String(props.snapshot.reason ?? 'waiting')
+  const color = () => (waiting() ? p().warn : status() === 'canceled' ? p().muted : p().good)
+  return (
+    <Card title={`Wait · ${reason()}`} color={color()}>
+      <Show
+        when={waiting()}
+        fallback={
+          <text fg={p().muted}>
+            {status() === 'elapsed'
+              ? 'waited out'
+              : status() === 'interrupted'
+                ? 'woken early by your message'
+                : 'stopped'}
+          </text>
+        }
+      >
+        <text fg={p().text}>
+          {'continues in '}
+          <span style={{ fg: p().warn, bold: true }}>{formatWaitRemaining(remaining())}</span>
+          <span style={{ fg: p().dim }}>{'   send a message to continue now'}</span>
+        </text>
+      </Show>
+    </Card>
+  )
+}
+
+/** "1h 4m" / "12m" / "45s" — matches the desktop card's shape. */
+function formatWaitRemaining(ms: number): string {
+  const s = Math.ceil(ms / 1000)
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.ceil(s / 60)}m`
+  const h = Math.floor(s / 3600)
+  const m = Math.round((s % 3600) / 60)
+  return m ? `${h}h ${m}m` : `${h}h`
 }
 
 function CompactionPart(props: { part: Extract<Part, { kind: 'compaction' }> }): JSX.Element {

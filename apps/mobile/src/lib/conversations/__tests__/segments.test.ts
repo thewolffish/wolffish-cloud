@@ -371,6 +371,44 @@ describe('buildRenderBlocks', () => {
     expect(blocks[0]?.type).toBe('question')
   })
 
+  it('routes offer_options to an options block and absorbs its result', () => {
+    // The card draws from the CALL's args alone; its result is a one-line
+    // confirmation written for the model, so it must not raise a tool row or
+    // an orphan anchor of its own.
+    const blocks = buildRenderBlocks(
+      message([
+        {
+          kind: 'tool_call',
+          turnId: 't1',
+          segmentId: 's1',
+          toolCallId: 'c1',
+          name: 'offer_options',
+          args: {
+            title: 'Three ways',
+            options: [
+              { title: 'Plain', language: 'ts', content: 'const a = 1' },
+              { title: 'Other', content: 'b' }
+            ]
+          }
+        },
+        {
+          kind: 'tool_result',
+          turnId: 't1',
+          segmentId: 's2',
+          toolCallId: 'c1',
+          status: 'success',
+          output:
+            'Showed the user a card with 2 options they can read and copy: A. Plain, B. Other.'
+        }
+      ])
+    )
+    expect(blocks.map((b) => b.type)).toEqual(['options'])
+    const block = blocks[0]
+    if (block.type !== 'options') throw new Error('expected options block')
+    expect(block.call.name).toBe('offer_options')
+    expect(block.call.args.title).toBe('Three ways')
+  })
+
   it('anchors an unmatched tool_result at its place in the stream', () => {
     // The clean-feed live mirror strips tool_call segments, so mid-turn a
     // parked card's result arrives with no call to pair with — the anchor

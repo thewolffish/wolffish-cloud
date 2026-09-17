@@ -17,6 +17,7 @@ import {
   parkInterjection,
   releaseInterjection
 } from '@main/channels/interjection-store'
+import { waits } from '@main/runtime/wait'
 import type { ChatHistoryMessage } from '@preload/index'
 
 /**
@@ -324,6 +325,12 @@ export class TurnRunner {
       }
     )
     this.emitInterjection(conversationId, item, 'pending')
+    // A blocking `wait` on this lane ends the moment the user speaks — from
+    // the wait card's own input, the composer, or any channel. The text is
+    // NOT consumed here: it stays in the inbox above and is delivered as an
+    // ordinary mid-turn message at the agent's next stop point, which is the
+    // wait's own tool result. One copy, in the order the user saw it.
+    waits.interrupt(conversationId, item.text)
     return { status: 'pending', durable }
   }
 

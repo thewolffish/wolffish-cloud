@@ -73,6 +73,7 @@ jobs:
             src/main/runtime/__tests__/usage-brave.test.ts \
             src/main/runtime/__tests__/vision.test.ts \
             src/main/runtime/__tests__/countdown.test.ts \
+            src/main/runtime/__tests__/wait.test.ts \
             src/main/runtime/__tests__/screen-indicator.test.ts \
             src/main/runtime/__tests__/todo-guard.test.ts \
             src/main/channels/__tests__/mobile-channel-settings.test.ts \

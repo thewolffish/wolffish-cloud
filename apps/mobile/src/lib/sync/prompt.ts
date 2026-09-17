@@ -319,10 +319,23 @@ export async function seedActiveRuns(): Promise<void> {
     // A conversation with pending rows but no run cannot have any: the turn
     // ended while this phone was away and the withdraw pushes went with it.
     // Only judged against a real answer — an older desktop threw above.
+    //
+    // The rows go, but OUR words do not go with them. Missing the pushes is
+    // exactly missing the answer to "was it read?", so this is the one sweep
+    // that cannot know — and between dropping a message the user wrote and
+    // handing it back to the composer it was written in, only one of those is
+    // recoverable. A row another surface sent is merely un-drawn, as its
+    // `withdrawn` push would have done.
     const running = new Set(ids.filter((id): id is string => typeof id === 'string'))
-    for (const key of Object.keys(useChatRuntime.getState().pending)) {
+    const runtime = useChatRuntime.getState()
+    for (const [key, rows] of Object.entries(runtime.pending)) {
       if (key.startsWith('\u0000')) continue // the id-less screen key is not a conversation
-      if (!running.has(key)) useChatRuntime.getState().clearPending(key)
+      if (running.has(key)) continue
+      for (const row of rows) {
+        if (!row.id || !sentInterjections.delete(row.id)) continue
+        if (row.content && !row.voicePrompt) runtime.restoreDraft(key, row.content)
+      }
+      runtime.clearPending(key)
     }
   } catch {
     // Silent, and deliberately not reportRpcFailure: a desktop that predates
@@ -379,6 +392,18 @@ async function seedPendingInterjections(conversationId: string): Promise<void> {
     .filter((row) => (row as { held?: unknown } | null)?.held !== true)
     .map(interjectionRow)
     .filter((row): row is ConversationMessage => row !== null)
+  // Re-adopt the ones this phone sent. Ownership lives in `sentInterjections`,
+  // which is module state and therefore gone after a relaunch — and without
+  // it a `withdrawn` push for our own message reads as another surface's and
+  // is merely un-drawn, losing words the user wrote. `channel` is what the
+  // desktop files each row under, and the phone is the only `mobile` sender
+  // on a pairing, so it survives the process where the set does not.
+  for (const row of raw) {
+    if ((row as { held?: unknown } | null)?.held === true) continue
+    const sender = (row as { channel?: unknown } | null)?.channel
+    const id = (row as { messageId?: unknown } | null)?.messageId
+    if (sender === 'mobile' && typeof id === 'string' && id) sentInterjections.add(id)
+  }
   useChatRuntime.getState().setPending(conversationId, rows)
 }
 
@@ -1025,19 +1050,44 @@ export async function interject(input: InterjectInput): Promise<InterjectResult>
 const INTERJECT_VOICE_TIMEOUT_MS = 120_000
 
 /**
- * Take a pending message back. The row comes down at the tap; the desktop's
- * `withdrawn` push (reason `user`) is what puts the words back in the
- * composer. A desktop that says no — the agent read it a beat ago — has
- * already pushed `delivered`, and the segment is on screen.
+ * Take a pending message back — and with it, the words.
+ *
+ * The row comes down at the tap; the desktop's `withdrawn` push (reason
+ * `user`) is what puts the words back in the composer. A desktop that says no
+ * — the agent read it a beat ago — has already pushed `delivered`, and the
+ * segment is on screen.
+ *
+ * Unless the desktop is never reached at all. Then no push is coming: not a
+ * `withdrawn`, not a `delivered`, nothing — and a row taken down on a promise
+ * nobody made takes the user's words with it. So the ask is made first and
+ * the give-back is OURS whenever it did not land, which is the one case the
+ * desktop cannot be the authority on.
  */
 export async function withdrawInterjection(
   conversationId: string,
   messageId: string
 ): Promise<void> {
+  const runtime = useChatRuntime.getState()
+  const row = (runtime.pending[conversationId] ?? []).find((m) => m.id === messageId)
+  runtime.dropPending(conversationId, messageId)
   const tunnel = bridgeClient.active
-  useChatRuntime.getState().dropPending(conversationId, messageId)
-  if (!tunnel || !bridgeClient.connected) return
-  await tunnel.rpc(Rpc.withdrawInterjection, { conversationId, messageId }).catch(() => undefined)
+  const giveBack = (): void => {
+    sentInterjections.delete(messageId)
+    // A voice note's words are its transcript, which lives on the desktop —
+    // there is nothing here to put back in the field.
+    if (row?.content && !row.voicePrompt) {
+      useChatRuntime.getState().restoreDraft(conversationId, row.content)
+    }
+  }
+  if (!tunnel || !bridgeClient.connected) {
+    giveBack()
+    return
+  }
+  const answer = await tunnel
+    .rpc(Rpc.withdrawInterjection, { conversationId, messageId })
+    .catch(() => null)
+  // A transfer that failed is the offline case with extra steps.
+  if (answer === null) giveBack()
 }
 
 /** Test seam: whether an id is one this phone is waiting on. */
