@@ -45,7 +45,7 @@ const EXPO_PROJECT_ID: string | null = '77373918-d2f5-4e72-b6f2-4b3d984ce560'
 // exist only after the first Play upload (Play Console → App signing).
 // const DEEP_LINK_HOSTS = ['wolffi.sh', 'www.wolffi.sh']
 // Bumped by scripts/provision.js — keep the exact format of these lines.
-export const APP_VERSION = '1.0.49'
+export const APP_VERSION = '1.0.50'
 export const CODE_VERSION = 37
 export const UPDATE_DATE = '2026-09-17T00:00:00.000Z'
 // Sampled from the top edge of assets/images/splash.png so the storyboard
