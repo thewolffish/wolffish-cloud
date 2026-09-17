@@ -42,14 +42,23 @@ const MATRIX: Array<[string, FileViewerKind]> = [
   ['voice/reply.ogg', 'audio'],
   ['voice/reply.flac', 'audio'],
   ['voice/reply.opus', 'audio'],
-  // documents — desktop PdfViewer / SpreadsheetViewer / DocxViewer / FileCard
+  // documents — desktop PdfViewer / SpreadsheetViewer / DocxViewer /
+  // PresentationViewer / FileCard
   ['files/report.pdf', 'pdf'],
   ['files/data.csv', 'sheet'],
   ['files/data.tsv', 'sheet'],
-  ['files/book.xlsx', 'file'],
-  ['files/book.xls', 'file'],
-  ['files/letter.docx', 'file'],
-  ['files/deck.pptx', 'file'],
+  ['files/book.xlsx', 'workbook'],
+  ['files/book.xls', 'workbook'],
+  ['files/letter.docx', 'document'],
+  ['files/deck.pptx', 'slides'],
+  // …and the formats no engine in the office bundle reads, which stay file
+  // cards that hand the document to an app that can open it.
+  ['files/legacy.doc', 'file'],
+  ['files/legacy.ppt', 'file'],
+  ['files/notes.rtf', 'file'],
+  ['files/sheet.ods', 'file'],
+  ['files/letter.odt', 'file'],
+  ['files/deck.odp', 'file'],
   // text — desktop MarkdownFileViewer
   ['files/README.md', 'markdown'],
   ['files/notes.mdx', 'markdown'],

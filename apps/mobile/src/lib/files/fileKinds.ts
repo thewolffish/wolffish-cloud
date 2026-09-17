@@ -6,8 +6,10 @@
  *   image (incl. svg)        → ImageViewer          (mobile: inline + lightbox)
  *   audio / video            → Audio/VideoPlayer    (mobile: same)
  *   pdf                      → PdfViewer            (mobile: WebView preview)
- *   docx                     → DocxViewer           (mobile: card + open)
- *   xlsx / xls / csv         → SpreadsheetViewer    (mobile: csv/tsv table, xlsx card)
+ *   docx                     → DocxViewer           (mobile: OfficeFileCard)
+ *   pptx                     → PresentationViewer   (mobile: OfficeFileCard)
+ *   xlsx / xls               → SpreadsheetViewer    (mobile: OfficeFileCard)
+ *   csv / tsv                → SpreadsheetViewer    (mobile: native table)
  *   md / mdx / markdown, txt → MarkdownFileViewer   (mobile: same, expandable)
  *   html / htm               → HtmlFileViewer       (mobile: WebView + source)
  *   anything else            → FileCard
@@ -34,6 +36,9 @@ export type FileViewerKind =
   | 'code'
   | 'html'
   | 'sheet'
+  | 'document'
+  | 'workbook'
+  | 'slides'
   | 'chart'
   | 'file'
 
@@ -129,19 +134,21 @@ const CODE_LANGS: Record<string, string> = {
   diff: 'diff'
 }
 
-/** Office documents mobile hands to the system viewer rather than rendering. */
-const OFFICE_EXTS = new Set([
-  'docx',
-  'doc',
-  'rtf',
-  'odt',
-  'xlsx',
-  'xls',
-  'ods',
-  'pptx',
-  'ppt',
-  'odp'
-])
+/**
+ * Formats the office card renders inline (lib/office/html), one kind per
+ * engine. `.xls` joins the workbooks because SheetJS reads the legacy binary
+ * format too — the full build, not the mini one, which is why the bundle takes
+ * the larger of the two. What is deliberately absent is everything no engine
+ * reads: legacy binary .doc and .ppt, and OpenDocument .odt/.ods/.odp/.rtf.
+ * Those stay file cards that hand the document to an app that can open it —
+ * which on iOS means the system viewer, the one place it renders them.
+ */
+const DOCUMENT_EXTS = new Set(['docx'])
+const WORKBOOK_EXTS = new Set(['xlsx', 'xls'])
+const SLIDES_EXTS = new Set(['pptx'])
+
+/** Office formats mobile hands to the system viewer rather than rendering. */
+const OFFICE_EXTS = new Set(['doc', 'rtf', 'odt', 'ods', 'ppt', 'odp'])
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -170,6 +177,11 @@ const MIME_BY_EXT: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  // The legacy trio never renders inline, but the share sheet still offers a
+  // better "open in…" list when the file goes out with its real type.
+  doc: 'application/msword',
+  xls: 'application/vnd.ms-excel',
+  ppt: 'application/vnd.ms-powerpoint',
   zip: 'application/zip'
 }
 
@@ -270,6 +282,9 @@ export function classifyFile(pathOrName: string, declared?: DeclaredFileKind): F
   if (MARKDOWN_EXTS.has(ext)) return { ...base, kind: 'markdown' }
   if (TEXT_EXTS.has(ext)) return { ...base, kind: 'text' }
   if (SHEET_EXTS.has(ext)) return { ...base, kind: 'sheet' }
+  if (DOCUMENT_EXTS.has(ext)) return { ...base, kind: 'document' }
+  if (WORKBOOK_EXTS.has(ext)) return { ...base, kind: 'workbook' }
+  if (SLIDES_EXTS.has(ext)) return { ...base, kind: 'slides' }
   if (OFFICE_EXTS.has(ext)) return { ...base, kind: 'file' }
   if (CODE_LANGS[ext]) return { ...base, kind: 'code', language: CODE_LANGS[ext] }
 

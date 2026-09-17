@@ -6,6 +6,7 @@ import type { Align } from '@/components/chat/FileChrome'
 import {
   GenericFileCard,
   HtmlFileCard,
+  OfficeFileCard,
   PdfFileCard,
   SheetFileCard,
   TextFileCard
@@ -106,6 +107,10 @@ export function FileBlock({
       return <HtmlFileCard {...shared} />
     case 'sheet':
       return <SheetFileCard {...shared} />
+    case 'document':
+    case 'workbook':
+    case 'slides':
+      return <OfficeFileCard {...shared} />
     case 'markdown':
     case 'text':
     case 'code':

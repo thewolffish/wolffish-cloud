@@ -30,6 +30,9 @@ const FILES: Record<string, string> = {
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>',
   'files/book.xlsx': 'binary-xlsx',
   'files/letter.docx': 'binary-docx',
+  'files/deck.pptx': 'binary-pptx',
+  'files/legacy.doc': 'binary-doc',
+  'files/legacy.ppt': 'binary-ppt',
   'files/archive.zip': 'binary-zip',
   // A raw literal (not JSON.stringify): jest.mock factories may only
   // reference this map while its initializer is entirely call-free.
@@ -137,10 +140,28 @@ jest.mock('@/lib/pdf/html', () => ({
   }))
 }))
 
+// The office card drives its page over `injectJavaScript`, so the fake frame
+// has to carry that method on its ref — a bare View would make the pager throw
+// rather than fail an assertion.
+const mockInjectJavaScript = jest.fn()
+
 jest.mock('react-native-webview', () => {
   const { View } = jest.requireActual('react-native')
-  return { WebView: (props: object) => <View testID="webview" {...props} /> }
+  const { forwardRef, useImperativeHandle } = jest.requireActual('react')
+  const WebView = forwardRef((props: object, ref: unknown) => {
+    useImperativeHandle(ref, () => ({ injectJavaScript: mockInjectJavaScript }))
+    return <View testID="webview" {...props} />
+  })
+  return { WebView }
 })
+
+jest.mock('@/lib/office/html', () => ({
+  OFFICE_MAX_INLINE_BYTES: 8 * 1024 * 1024,
+  ensureOfficeHostDocument: jest.fn(async () => ({
+    uri: 'file:///cache/office-host/host.html',
+    directory: 'file:///cache/office-host/'
+  }))
+}))
 
 jest.mock('expo-video', () => {
   const { View } = jest.requireActual('react-native')
@@ -173,6 +194,7 @@ jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => und
 import '@/lib/i18n'
 import { FileBlock } from '@/components/chat/FileBlock'
 import { resolveWorkspaceFile } from '@/lib/files/fileCache'
+import { ensureOfficeHostDocument } from '@/lib/office/html'
 import { ensurePdfHostDocument } from '@/lib/pdf/html'
 import * as Sharing from 'expo-sharing'
 import { Platform } from 'react-native'
@@ -308,6 +330,26 @@ describe('FileBlock — one delivered file per supported type', () => {
     expect(screen.getByTestId('webview')).toBeTruthy()
   })
 
+  it('takes the page\u2019s own height and leaves the feed its gesture', async () => {
+    await renderBlock(<FileBlock relPath="files/page.html" declared="file" />)
+    const frame = await waitFor(() => screen.getByTestId('webview'))
+    // Until the page reports a size the card holds the reserved window, which
+    // scrolls because anything might be under the fold.
+    expect(frame.props.scrollEnabled).toBe(true)
+
+    // 300pt of card; a page that lays itself out 720 wide is shown at 300/720,
+    // so its 360 CSS pixels of content stand 150pt tall here.
+    await fireEvent(frame, 'layout', { nativeEvent: { layout: { width: 300, height: 640 } } })
+    await fireEvent(frame, 'message', {
+      nativeEvent: { data: JSON.stringify({ type: 'size', height: 360, width: 720 }) }
+    })
+
+    const shown = screen.getByTestId('webview')
+    expect(shown.parent?.props.style).toMatchObject({ height: 150 })
+    // It fits — so the page hands every drag back to the chat list.
+    expect(shown.props.scrollEnabled).toBe(false)
+  })
+
   it('renders markdown as rich text, not source', async () => {
     await renderBlock(<FileBlock relPath="files/README.md" declared="file" />)
     await waitFor(() => expect(screen.getByText('Title')).toBeTruthy())
@@ -374,9 +416,149 @@ describe('FileBlock — one delivered file per supported type', () => {
     expect(screen.queryByLabelText('Share as image')).toBeNull()
   })
 
+  /**
+   * Word, Excel and PowerPoint all render through one card and one engine
+   * bundle, on both platforms. The card is checked on what it does with what
+   * the page reports back — the page count that turns into a pager, the sheet
+   * names that replace it, and the error that sends the file to the OS.
+   */
+  const post = async (payload: object): Promise<void> => {
+    // fireEvent, never a hand-rolled act(): calling act() directly in an RNTL
+    // screen test corrupts the act scope and silently empties every render
+    // that follows it in the file.
+    await fireEvent(screen.getByTestId('webview'), 'message', {
+      nativeEvent: { data: JSON.stringify(payload) }
+    })
+  }
+  const ready = (pages: number, labels: string[] | null = null): Promise<void> =>
+    post({ type: 'ready', pages, labels })
+
+  it('scrolls a Word document rather than paging it', async () => {
+    await renderBlock(
+      <FileBlock relPath="files/letter.docx" declared="document" sizeBytes={2048} />
+    )
+    await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+
+    expect(ensureOfficeHostDocument).toHaveBeenCalledWith(
+      'file:///cache/files/letter.docx',
+      'docx',
+      expect.objectContaining({ surface: '#ffffff', fg: '#0d1117' }),
+      expect.stringContaining('files/letter.docx')
+    )
+    // The page may not read a second file — the document is inside it.
+    expect(screen.getByTestId('webview').props.allowFileAccessFromFileURLs).toBe(false)
+    // Live in the feed, and able to give the gesture back when it runs out —
+    // without this a document would swallow the chat list's pan on Android.
+    expect(screen.getByTestId('webview').props.nestedScrollEnabled).toBe(true)
+
+    await ready(4)
+    await waitFor(() => expect(screen.getByText('Page 1 of 4 · 2 KB')).toBeTruthy())
+
+    // A document is read, not flipped through: no chevrons, and the position
+    // line simply follows wherever the reader has scrolled to.
+    expect(screen.queryByLabelText('Next')).toBeNull()
+    expect(screen.queryByLabelText('Previous')).toBeNull()
+
+    await post({ type: 'page', index: 1 })
+    await waitFor(() => expect(screen.getByText('Page 2 of 4 · 2 KB')).toBeTruthy())
+  })
+
+  it('gives a workbook sheet tabs rather than a pager', async () => {
+    await renderBlock(<FileBlock relPath="files/book.xlsx" declared="document" sizeBytes={2048} />)
+    await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+    expect(ensureOfficeHostDocument).toHaveBeenCalledWith(
+      'file:///cache/files/book.xlsx',
+      'xlsx',
+      expect.anything(),
+      expect.stringContaining('files/book.xlsx')
+    )
+
+    await ready(3, ['Species', 'Readings', 'Notes'])
+    // Every sheet is one tap away, named — the desktop's SheetTabs, not a
+    // pager that would make the reader count to the sheet they want.
+    await waitFor(() => expect(screen.getByLabelText('Species')).toBeTruthy())
+    expect(screen.getByLabelText('Readings')).toBeTruthy()
+    expect(screen.getByLabelText('Notes')).toBeTruthy()
+    expect(screen.queryByLabelText('Next')).toBeNull()
+    expect(screen.queryByLabelText('Previous')).toBeNull()
+
+    await fireEvent.press(screen.getByLabelText('Notes'))
+    expect(mockInjectJavaScript).toHaveBeenCalledWith('window.wolffishGoTo(2);true;')
+  })
+
+  it('counts slides in a deck and carries the place into the expanded sheet', async () => {
+    await renderBlock(<FileBlock relPath="files/deck.pptx" declared="document" sizeBytes={2048} />)
+    await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+
+    await ready(7)
+    await waitFor(() => expect(screen.getByText('Slide 1 of 7 · 2 KB')).toBeTruthy())
+    await fireEvent.press(screen.getByLabelText('Next'))
+    await waitFor(() => expect(screen.getByText('Slide 2 of 7 · 2 KB')).toBeTruthy())
+
+    await fireEvent.press(screen.getByLabelText('Expand'))
+    await waitFor(() => expect(screen.getByLabelText('Close')).toBeTruthy())
+    // The sheet's frame mounts at the top; the card restores the reader's place.
+    mockInjectJavaScript.mockClear()
+    await ready(7)
+    expect(mockInjectJavaScript).toHaveBeenCalledWith('window.wolffishGoTo(1);true;')
+  })
+
+  it('disables the pager at both ends, so the last page is reachable', async () => {
+    await renderBlock(<FileBlock relPath="files/deck.pptx" declared="document" sizeBytes={2048} />)
+    await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+    await ready(3)
+
+    // Slide 1: back is dead, forward is live.
+    await waitFor(() => expect(screen.getByText('Slide 1 of 3 · 2 KB')).toBeTruthy())
+    expect(screen.getByLabelText('Previous')).toBeDisabled()
+    expect(screen.getByLabelText('Next')).not.toBeDisabled()
+
+    await fireEvent.press(screen.getByLabelText('Next'))
+    await fireEvent.press(screen.getByLabelText('Next'))
+
+    // The last slide is a place the pager can actually arrive at — it used to
+    // be unreachable, because the index was inferred from a scroll offset that
+    // clamps at the bottom, and Next stayed enabled doing nothing.
+    await waitFor(() => expect(screen.getByText('Slide 3 of 3 · 2 KB')).toBeTruthy())
+    expect(screen.getByLabelText('Next')).toBeDisabled()
+    expect(screen.getByLabelText('Previous')).not.toBeDisabled()
+  })
+
+  it('degrades to the file card when no engine can render the document', async () => {
+    await renderBlock(
+      <FileBlock relPath="files/letter.docx" declared="document" sizeBytes={2048} />
+    )
+    await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+
+    await post({ type: 'error', reason: 'unsupported' })
+
+    await waitFor(() => expect(screen.queryByTestId('webview')).toBeNull())
+    expect(screen.getByText('DOCX · 2 KB')).toBeTruthy()
+    await fireEvent.press(screen.getByLabelText('letter.docx'))
+    expect(Sharing.shareAsync).toHaveBeenCalledWith('file:///cache/files/letter.docx')
+  })
+
+  it('degrades when the page never answers at all', async () => {
+    jest.useFakeTimers()
+    try {
+      await renderBlock(
+        <FileBlock relPath="files/deck.pptx" declared="document" sizeBytes={2048} />
+      )
+      await waitFor(() => expect(screen.getByTestId('webview')).toBeTruthy())
+      // No 'ready', no 'error', no load failure — a truncated engine asset or a
+      // renderer that died before it ran. The watchdog is the only thing that
+      // stops the card holding an empty frame for the rest of the session.
+      jest.advanceTimersByTime(20_000)
+      await waitFor(() => expect(screen.queryByTestId('webview')).toBeNull())
+      expect(screen.getByText('PPTX · 2 KB')).toBeTruthy()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it.each([
-    ['files/book.xlsx', 'book.xlsx', 'XLSX'],
-    ['files/letter.docx', 'letter.docx', 'DOCX'],
+    ['files/legacy.doc', 'legacy.doc', 'DOC'],
+    ['files/legacy.ppt', 'legacy.ppt', 'PPT'],
     ['files/archive.zip', 'archive.zip', 'ZIP']
   ])('hands %s to the system viewer through a file card', async (relPath, name, ext) => {
     await renderBlock(<FileBlock relPath={relPath} declared="file" sizeBytes={2048} />)
