@@ -482,7 +482,9 @@ export default function ChatScreen(): React.JSX.Element {
       voicePrompt: boolean,
       runtime: ReturnType<typeof useChatRuntime.getState>
     ): Promise<void> => {
-      if (demoInterject(cid, { messageId, text, attachments, voicePrompt, timestamp: Date.now() })) {
+      if (
+        demoInterject(cid, { messageId, text, attachments, voicePrompt, timestamp: Date.now() })
+      ) {
         return
       }
       runtime.dropPending(cid, messageId)
