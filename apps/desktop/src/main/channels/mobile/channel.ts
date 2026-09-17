@@ -2282,6 +2282,35 @@ export class MobileChannel {
       // the byte pacing either.
       this.pushMessageAppended(conversationId, message, userMessage, { urgent })
     }
+    /**
+     * The FINISHED turn, to this machine's window, once.
+     *
+     * `emitMirror` above refuses to fire for a turn that no longer holds the
+     * conversation's slot, and `onDone` releases that slot first — so the
+     * renderer's last snapshot is whatever stood at the previous tick, up to
+     * a whole reply behind (a short answer finishes inside the 500ms throttle,
+     * leaving the window on the FIRST snapshot: usually a model chip alone,
+     * which draws as an empty bubble under the prompt). The phone doesn't
+     * notice — `pushConversationRefresh` makes it refetch the saved body —
+     * but nothing told the window, so it sat on that stub until the app was
+     * restarted. This is the window's counterpart of that refresh: one last
+     * snapshot, past the throttle and past the slot guard, carrying exactly
+     * what `persistTurn` writes under the same id the ticks already used.
+     */
+    const flushFinalMirror = (error?: string): void => {
+      if (mirrorTimer) {
+        clearTimeout(mirrorTimer)
+        mirrorTimer = null
+      }
+      try {
+        const full = buildAssistantMessage(acc)
+        if (!full) return
+        if (error) full.error = error
+        this.rendererMirror?.(conversationId, full, userMessage)
+      } catch {
+        // a broken renderer bridge must never affect the turn
+      }
+    }
     const scheduleMirror = (immediate: boolean): void => {
       const sinceLast = Date.now() - lastMirrorAt
       if (immediate || sinceLast >= MIRROR_THROTTLE_MS) {
@@ -2434,6 +2463,7 @@ export class MobileChannel {
         this.turns.delete(conversationId)
         this.drainTurnRequests(turnId, 'turn ended')
         this.log(`turn ${turnId} finished`)
+        flushFinalMirror()
         // Disk first, pushes second: the refresh push triggers the phone's
         // body refetch, and a refetch that outruns the save would hand back
         // a transcript without the reply — the exact hole this sink closes.
@@ -2446,6 +2476,7 @@ export class MobileChannel {
         this.turns.delete(conversationId)
         this.drainTurnRequests(turnId, 'turn failed')
         this.log(`turn ${turnId} failed — ${error}`)
+        flushFinalMirror(error)
         // A failed turn still persists what streamed before it broke —
         // matching every other channel, and keeping both transcripts honest
         // about how far the answer got.

@@ -106,6 +106,23 @@ async function run(): Promise<void> {
     },
     serializeCapabilities: async () => []
   } as never)
+  // The other half of the mirror: the same snapshots, into THIS machine's
+  // window (index.ts wires this to the conversation:messageMirror broadcast).
+  const windowMirrors: Array<{ conversationId: string; content: string; segments: number }> = []
+  ;(
+    channel as unknown as {
+      setMessageMirror: (
+        l: (id: string, m: { content?: string; segments?: unknown[] } | null) => void
+      ) => void
+    }
+  ).setMessageMirror((conversationId, message) => {
+    if (!message) return
+    windowMirrors.push({
+      conversationId,
+      content: message.content ?? '',
+      segments: message.segments?.length ?? 0
+    })
+  })
   ;(channel as unknown as { registerHandlers: (t: unknown) => void }).registerHandlers(fakeTunnel)
   // The tunnel is normally set when one connects; the push helpers read it.
   ;(channel as unknown as { bridge: unknown }).bridge = fakeTunnel
@@ -373,12 +390,33 @@ async function run(): Promise<void> {
     cacheHitRate: 0.2,
     cost: 0.0123
   })
+  // The last words of a reply land INSIDE the 500ms throttle — the common case
+  // for a short answer, and for the tail of any answer. The mirror that would
+  // have carried them is a trailing timer, and `onDone` releases the turn's
+  // slot before it can fire, so nothing was ever sent: the window kept the
+  // snapshot from before (for a fast reply, the very first one — a model chip
+  // with no prose, drawn as an empty bubble) and the phone's own
+  // refetch-on-refresh hid the hole from every test we had.
+  turn.onSegment({ kind: 'text', turnId: 'turn_1', segmentId: 's4', delta: ' Nearly' })
+  turn.onSegment({ kind: 'text', turnId: 'turn_1', segmentId: 's4', delta: ' done.' })
+  const windowMirrorsBeforeDone = windowMirrors.length
   pushes.length = 0
   turn.onDone()
   await new Promise((resolve) => setTimeout(resolve, 100))
   const saved = await loadConversation(sent.conversationId)
   const assistant = saved?.messages.find((m) => m.role === 'assistant')
   ok('the reply is persisted', assistant !== undefined)
+  ok(
+    'the finished turn is mirrored into this window once more at the end',
+    windowMirrors.length === windowMirrorsBeforeDone + 1,
+    `${windowMirrorsBeforeDone} → ${windowMirrors.length}`
+  )
+  ok(
+    '... carrying exactly what was saved, not the snapshot before the last words',
+    windowMirrors.at(-1)?.content === assistant?.content &&
+      windowMirrors.at(-1)?.segments === (assistant?.segments?.length ?? 0),
+    `${JSON.stringify(windowMirrors.at(-1))} vs ${JSON.stringify(assistant?.content)}`
+  )
   ok('the context-meter stats are persisted with the reply', saved?.stats != null)
   ok(
     'the meter reads the last brain call (in + cacheRead + cacheWrite)',

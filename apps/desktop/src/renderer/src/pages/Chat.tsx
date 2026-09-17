@@ -35,7 +35,11 @@ import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Markdown } from '@components/core/Markdown'
 import { useToast } from '@components/core/toast/useToast'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
-import { mapConversationMessage, mapConversationMessages } from '@lib/conversation-open'
+import {
+  mapConversationMessage,
+  mapConversationMessages,
+  reconcileFeedWithDisk
+} from '@lib/conversation-open'
 import { isPathHydrating, useHydrationFileVersion } from '@lib/hydration/hydrationStore'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -1338,13 +1342,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // fetches them: the feed would sit stale until reopened, and our next save
   // (a whole-file write of this stale copy) would drop them entirely.
   //
-  // Appends the new tail ONLY, leaving every message object we already hold
-  // untouched, so React re-renders nothing but the arriving bubbles — no
-  // remount, no reflow. Re-mapping the whole conversation would remint every
-  // message id and remount every item (images reloading, path cards
-  // re-statting, the scroll jumping), which is exactly the flash to avoid. The
-  // tail is safe to take by index because messages are append-only on disk
-  // (see conversations.ts): anything past what we already hold IS new.
+  // The diff itself is reconcileFeedWithDisk: it appends the arriving bubbles
+  // and refreshes in place the one message a live channel mirror left us a
+  // half-written copy of (see there). Both work message-by-message, id-keyed,
+  // so React re-renders only what actually changed — re-mapping the whole
+  // conversation would remint every id and remount every item (images
+  // reloading, path cards re-statting, the scroll jumping), which is exactly
+  // the flash to avoid.
   useEffect(() => {
     if (!activeConversationId) return
     const targetId = activeConversationId
@@ -1359,37 +1363,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (pendingTurnIdRef.current !== null) return
       const conv = await window.api.conversation.load(targetId)
       if (cancelled || !conv || conversationIdRef.current !== targetId) return
-      setMessages((prev) => {
-        const persistedPrev = prev.filter(isPersistedMessage)
-        // Id-keyed diff when both sides are fully id'd (every post-migration
-        // file and every live feed): the tail is exactly the disk messages
-        // the feed doesn't hold. Positions can't fool it — a diverged writer
-        // reconciled by the merge may land its message BEFORE ours in the
-        // file, where a count-based slice would grab our own messages back
-        // as "new" and duplicate them in the feed. Appended at the end even
-        // if the file holds it mid-array: feed order self-corrects on the
-        // next full load, and an append is what keeps React from remounting
-        // the bubbles we already show.
-        if (conv.messages.every((m) => m.id) && persistedPrev.every((m) => m.id)) {
-          const known = new Set(persistedPrev.map((m) => m.id))
-          const tail = conv.messages.filter((m) => !known.has(m.id!))
-          // Nothing new — return prev so React bails out and nothing
-          // re-renders. This is the overwhelmingly common case: the broadcast
-          // fires for every conversation, most of which aren't ours.
-          if (tail.length === 0) return prev
-          return [...prev, ...mapConversationMessages({ ...conv, messages: tail })]
-        }
-        // Transition fallback (an id-less message on either side): count what
-        // we hold the way the WRITER counts it, or the slice below takes the
-        // wrong messages. Safe here because id-less files also merge
-        // positionally — disk stays append-only relative to this feed.
-        const have = persistedPrev.length
-        if (conv.messages.length <= have) return prev
-        return [
-          ...prev,
-          ...mapConversationMessages({ ...conv, messages: conv.messages.slice(have) })
-        ]
-      })
+      setMessages((prev) => reconcileFeedWithDisk(prev, conv, isPersistedMessage))
       // Another surface just wrote this conversation — the phone finishing a
       // turn we are watching, a heartbeat run landing in it. Its stats are the
       // only thing that can move OUR meter here (this session owns no turn —

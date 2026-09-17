@@ -92,7 +92,8 @@ jobs:
             src/main/__tests__/media-url.test.ts \
             src/main/__tests__/computer-use-capture.test.ts \
             src/main/__tests__/voice-settings-catalog.test.ts \
-            src/main/__tests__/conversation-titler.test.ts; do
+            src/main/__tests__/conversation-titler.test.ts \
+            src/renderer/src/lib/__tests__/conversation-sync.test.ts; do
             echo "━━━ $t"
             npx tsx --tsconfig tsconfig.node.json "$t"
           done
