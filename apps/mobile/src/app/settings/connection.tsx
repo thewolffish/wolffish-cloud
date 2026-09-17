@@ -46,6 +46,17 @@ export default function ConnectionScreen(): React.JSX.Element {
   const toast = useToast()
   const setPaired = useAppStore((state) => state.setPaired)
   const demoMode = useAppStore((state) => state.demoMode)
+  const paired = useAppStore((state) => state.paired)
+  /**
+   * The org let go of this phone while it was in use — revoked from the
+   * desktop's Mobile panel, signed out by an admin, a refresh token rotated
+   * out from under it (lib/sync/useConnection). Not demo, not paired, and
+   * nothing navigates the user anywhere when it happens: they are standing
+   * in the app holding a phone whose link is gone. This screen is where they
+   * land to fix it, so it states the case plainly and keeps all three exits
+   * — reconnect, pair again, wipe — reachable.
+   */
+  const signedOut = !demoMode && !paired
   const liveState = useBridgeState()
   const demoState = useDemoConnectionState()
   // One variable for every row below, so none of them knows which mode it is
@@ -56,7 +67,9 @@ export default function ConnectionScreen(): React.JSX.Element {
   // the live path uses, over the demo's own (idle) state.
   const { label: statusLabel, tone: statusTone } = demoMode
     ? { label: t('connection.demoNotPaired'), tone: 'idle' as const }
-    : liveStatus
+    : signedOut
+      ? { label: t('connection.status.signedOut'), tone: 'error' as const }
+      : liveStatus
   const readLastSyncAt = demoMode ? getDemoLastSyncAt : getLastSyncedAt
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -114,11 +127,40 @@ export default function ConnectionScreen(): React.JSX.Element {
     }
   }
 
-  /** Drop the socket and build a fresh one — the manual version of what
-   *  returning to the app does, for a link that has gone quiet. Not awaited:
-   *  the status row above reports the outcome as it happens. */
+  /**
+   * Drop the socket and build a fresh one — the manual version of what
+   * returning to the app does, for a link that has gone quiet. Not awaited:
+   * the status row above reports the outcome as it happens.
+   *
+   * Signed out, `bridgeClient.refresh()` returns without dialling at all
+   * (it has nothing to authenticate with), which would make this a button
+   * that visibly does nothing. So that branch re-reads the keystore first:
+   * a session CAN outlive the flag — a store that rehydrated behind a
+   * launch-time dial, a reinstall that kept the keychain — and finding one
+   * is a genuine reconnect. Finding none is the answer the user came for,
+   * said out loud instead of swallowed.
+   */
   const reconnect = (): void => {
-    bridgeClient.refresh()
+    if (!signedOut) {
+      bridgeClient.refresh()
+      return
+    }
+    void (async () => {
+      setBusy(true)
+      try {
+        await cloudSession.load()
+        if (cloudSession.isSignedIn) {
+          setPaired(true)
+          bridgeClient.refresh()
+        } else {
+          toast.show({ tone: 'error', message: t('connection.reconnectSignedOut') })
+        }
+      } catch {
+        toast.show({ tone: 'error', message: t('connection.reconnectSignedOut') })
+      } finally {
+        setBusy(false)
+      }
+    })()
   }
 
   /**
@@ -127,28 +169,41 @@ export default function ConnectionScreen(): React.JSX.Element {
    * phone are a copy of the org's record, readable by anyone holding the
    * unlocked phone; the org keeps the originals, so pairing again restores
    * all of it.
+   *
+   * The wipe is the part that must not be optional. Every step before it
+   * talks to something that may not be there — the badge count and the push
+   * registration live on the bridge, the revoke needs the org — and a phone
+   * asking to be erased is very often a phone whose link is already gone.
+   * Running them inside the same try as the wipe meant one throw out there
+   * skipped the erase entirely and reported "could not finish signing out"
+   * over a device that still held every conversation. So the reachable work
+   * is best-effort and individually guarded, and the local erase runs
+   * afterwards no matter how it went; only a failure of the erase itself is
+   * worth telling the user about, because only then is anything still here.
    */
   const signOut = async (): Promise<void> => {
     setBusy(true)
     setConfirming(false)
+    if (!demoMode) {
+      // Badges and the push registration first, while the socket may still
+      // be up: the bridge's per-device count and token are reachable only
+      // over the live socket, and a signed-out phone must stop being
+      // pushable. Unreachable is a normal outcome here, not a failure —
+      // the registration then outlives the pairing until its token dies.
+      await clearAllBadges().catch(() => undefined)
+      await unregisterPush().catch(() => undefined)
+      // Revokes at the org when it answers, and drops the keystore record
+      // either way (lib/cloud/session signOut).
+      await bridgeClient.disconnect().catch(() => undefined)
+    }
     try {
-      if (demoMode) {
-        await factoryResetDevice()
-      } else {
-        // Badges and the push registration first, while the socket is still
-        // up: the bridge's per-device count and token are reachable only over
-        // the live socket, and a signed-out phone must stop being pushable.
-        await clearAllBadges()
-        await unregisterPush()
-        await bridgeClient.disconnect()
-        await factoryResetDevice()
-        setPaired(false)
-      }
+      await factoryResetDevice()
     } catch {
       setBusy(false)
       toast.show({ tone: 'error', message: t('connection.signOutFailed') })
       return
     }
+    if (!demoMode) setPaired(false)
     setBusy(false)
     router.replace('/')
   }
@@ -185,6 +240,13 @@ export default function ConnectionScreen(): React.JSX.Element {
         {state.lastError && state.status === 'error' ? (
           <CodeLine label={t('connection.lastError')} value={state.lastError} tone="error" />
         ) : null}
+        {/* The one thing this screen exists to say when the link is gone:
+            what happened, and that nothing here is lost by fixing it. */}
+        {signedOut ? (
+          <Text className="text-muted px-1 pb-1 pt-2 text-left font-sans text-xs leading-relaxed">
+            {t('connection.signedOutBody')}
+          </Text>
+        ) : null}
       </Section>
 
       {/* The desktop as its own card: it is the half that can be away while
@@ -196,16 +258,18 @@ export default function ConnectionScreen(): React.JSX.Element {
           </View>
           <View className="flex-1 gap-0.5">
             <Text className="text-fg text-left font-sans-medium text-sm">
-              {demoMode
+              {demoMode || signedOut
                 ? t('connection.desktopNone')
                 : (desktopName ?? t('connection.desktopUnknown'))}
             </Text>
             <Text className="text-muted text-left font-sans text-xs leading-relaxed">
               {demoMode
                 ? t('connection.desktopNoneHint')
-                : state.desktop
-                  ? t('connection.desktopOnline')
-                  : t('connection.desktopOffline')}
+                : signedOut
+                  ? t('connection.signedOutDesktopHint')
+                  : state.desktop
+                    ? t('connection.desktopOnline')
+                    : t('connection.desktopOffline')}
             </Text>
           </View>
           <View className="mt-1">
@@ -220,7 +284,12 @@ export default function ConnectionScreen(): React.JSX.Element {
           title={t('connection.resync')}
           description={t('connection.resyncHint')}
           action={
-            <Button size="sm" variant="outline" onPress={() => void resync()} disabled={busy}>
+            <Button
+              size="sm"
+              variant="outline"
+              onPress={() => void resync()}
+              disabled={busy || signedOut}
+            >
               {t('connection.resyncNow')}
             </Button>
           }
@@ -272,13 +341,24 @@ export default function ConnectionScreen(): React.JSX.Element {
             </Button>
           }
         />
+        {/* Signed out there is no session left to revoke, so this row stops
+            claiming it revokes one: what is left on the phone is the synced
+            copy, and erasing it is the whole of what this button can still
+            do — which is also the reason it must never be the row that
+            disappears when the link does. */}
         <ActionRow
           icon={<CancelCircleIcon size={18} className="text-rose-500" />}
-          title={t('connection.signOut')}
-          description={t(demoMode ? 'connection.demoSignOutHint' : 'connection.signOutHint')}
+          title={t(signedOut ? 'connection.wipe' : 'connection.signOut')}
+          description={t(
+            demoMode
+              ? 'connection.demoSignOutHint'
+              : signedOut
+                ? 'connection.wipeHint'
+                : 'connection.signOutHint'
+          )}
           action={
             <Button size="sm" variant="danger" onPress={() => setConfirming(true)} disabled={busy}>
-              {t('connection.signOutAction')}
+              {t(signedOut ? 'connection.wipeAction' : 'connection.signOutAction')}
             </Button>
           }
         />
@@ -312,12 +392,20 @@ export default function ConnectionScreen(): React.JSX.Element {
         open={confirming}
         busy={busy}
         title={t(
-          demoMode ? 'connection.demoSignOutConfirmTitle' : 'connection.signOutConfirmTitle'
+          demoMode
+            ? 'connection.demoSignOutConfirmTitle'
+            : signedOut
+              ? 'connection.wipeConfirmTitle'
+              : 'connection.signOutConfirmTitle'
         )}
         message={t(
-          demoMode ? 'connection.demoSignOutConfirmBody' : 'connection.signOutConfirmBody'
+          demoMode
+            ? 'connection.demoSignOutConfirmBody'
+            : signedOut
+              ? 'connection.wipeConfirmBody'
+              : 'connection.signOutConfirmBody'
         )}
-        confirmLabel={t('connection.signOutAction')}
+        confirmLabel={t(signedOut ? 'connection.wipeAction' : 'connection.signOutAction')}
         cancelLabel={t('common.cancel')}
         onConfirm={() => void signOut()}
         onCancel={() => setConfirming(false)}

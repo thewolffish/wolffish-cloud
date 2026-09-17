@@ -55,15 +55,29 @@ jest.mock('@/lib/cloud/bridge', () => {
     }
   }
 })
+// Mutable through getters: a revoked phone has no record and is not signed
+// in, and the screen reads both. Reset in beforeEach.
+const mockSession: { record: unknown; isSignedIn: boolean; load: jest.Mock } = {
+  record: null,
+  isSignedIn: true,
+  load: jest.fn()
+}
+const PAIRED_RECORD = {
+  version: 1,
+  session: { user: { email: 'sara@wolffi.sh' }, deviceId: 'dev_1' },
+  orgName: 'Wolffish Inc',
+  desktop: { id: 'd', name: 'Office iMac' },
+  pairedAt: 1
+}
 jest.mock('@/lib/cloud/session', () => ({
   cloudSession: {
-    current: {
-      version: 1,
-      session: { user: { email: 'sara@wolffi.sh' }, deviceId: 'dev_1' },
-      orgName: 'Wolffish Inc',
-      desktop: { id: 'd', name: 'Office iMac' },
-      pairedAt: 1
+    get current() {
+      return mockSession.record
     },
+    get isSignedIn() {
+      return mockSession.isSignedIn
+    },
+    load: () => mockSession.load(),
     subscribe: () => () => undefined
   }
 }))
@@ -170,6 +184,9 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockAppState.paired = false
   mockAppState.demoMode = true
+  mockSession.record = PAIRED_RECORD
+  mockSession.isSignedIn = true
+  mockSession.load.mockResolvedValue(undefined)
   mockFactoryReset.mockResolvedValue(undefined)
   mockApplySnapshot.mockResolvedValue(true)
   mockClearAllBadges.mockResolvedValue(undefined)
@@ -186,10 +203,18 @@ describe('the settings list row', () => {
     expect(screen.queryByText('Connected')).toBeNull()
   })
 
-  it('is absent on the door — neither paired nor demo', async () => {
+  // Was: "is absent on the door — neither paired nor demo". It is not absent
+  // any more, and that reversal is the fix. Neither paired nor demo is not
+  // only the door — it is also a phone the org revoked mid-use, still
+  // standing in the app with nothing navigating it anywhere. Hiding the row
+  // there hid the only screen that can reconnect, re-pair or erase it.
+  it('is there, and says so, when the org has let this phone go', async () => {
     mockAppState.demoMode = false
+    mockSession.record = null
     await draw(<SettingsScreen />)
-    expect(screen.queryByText('Connection')).toBeNull()
+    expect(screen.getByText('Connection')).toBeTruthy()
+    expect(screen.getByText('Signed out')).toBeTruthy()
+    expect(screen.queryByText('Connected')).toBeNull()
   })
 })
 
@@ -285,5 +310,91 @@ describe('the paired path', () => {
     expect(mockDisconnect).toHaveBeenCalled()
     expect(mockAppState.setPaired).toHaveBeenCalledWith(false)
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/'))
+  })
+})
+
+/**
+ * The revoked phone: unpaired from the desktop's Mobile panel, signed out by
+ * an admin, a refresh token rotated out from under it. `paired` goes false
+ * under a user who is still in the app, and this screen is where they land.
+ */
+describe('signed out mid-use', () => {
+  const signedOut = (): void => {
+    mockAppState.paired = false
+    mockAppState.demoMode = false
+    mockSession.record = null
+    mockSession.isSignedIn = false
+  }
+
+  it('states what happened and keeps every exit on screen', async () => {
+    signedOut()
+    await draw(<ConnectionScreen />)
+
+    expect(screen.getByText('Signed out')).toBeTruthy()
+    expect(screen.getByText(/no longer signed in to your organization/)).toBeTruthy()
+    // All three ways out: rebuild the link, pair again, erase the device.
+    // Reconnect reads twice — the row's title and its button, as Sign out does.
+    expect(screen.getAllByText('Reconnect')).toHaveLength(2)
+    expect(screen.getByText('Pairing screen')).toBeTruthy()
+    expect(screen.getByText('Erase this phone')).toBeTruthy()
+    // And it does not invent a link it does not have.
+    expect(screen.queryByText('Connected')).toBeNull()
+    expect(screen.getByText('No desktop paired')).toBeTruthy()
+  })
+
+  it('erases the device even when nothing on the bridge can be reached', async () => {
+    signedOut()
+    // The state a phone asking to be erased is usually in: the socket is
+    // gone, so the badge clear and the revoke both fail. Before, one of
+    // these throwing skipped the wipe entirely and reported failure over a
+    // device that still held every conversation.
+    mockClearAllBadges.mockRejectedValue(new Error('socket closed'))
+    mockDisconnect.mockRejectedValue(new Error('offline'))
+    await draw(<ConnectionScreen />)
+
+    fireEvent.press(screen.getAllByText('Erase')[0])
+    expect(await screen.findByText('Erase everything on this phone?')).toBeTruthy()
+    const withDialog = screen.getAllByText('Erase')
+    fireEvent.press(withDialog[withDialog.length - 1])
+
+    await waitFor(() => expect(mockFactoryReset).toHaveBeenCalled())
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/'))
+    expect(mockAppState.setPaired).toHaveBeenCalledWith(false)
+    // The wipe succeeded, so the user is told nothing went wrong.
+    expect(mockToastShow).not.toHaveBeenCalledWith(expect.objectContaining({ tone: 'error' }))
+  })
+
+  it('reconnect says there is no session rather than doing nothing', async () => {
+    signedOut()
+    await draw(<ConnectionScreen />)
+
+    const reconnect = screen.getAllByText('Reconnect')
+    fireEvent.press(reconnect[reconnect.length - 1])
+
+    await waitFor(() =>
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tone: 'error',
+          message: expect.stringContaining('pair it again')
+        })
+      )
+    )
+    expect(mockRefresh).not.toHaveBeenCalled()
+  })
+
+  it('reconnect adopts a session that outlived the flag', async () => {
+    signedOut()
+    // The keystore still holds one — a store that rehydrated behind the
+    // launch-time dial. Re-reading it is a real reconnect, not a message.
+    mockSession.load.mockImplementation(async () => {
+      mockSession.isSignedIn = true
+    })
+    await draw(<ConnectionScreen />)
+
+    const reconnect = screen.getAllByText('Reconnect')
+    fireEvent.press(reconnect[reconnect.length - 1])
+
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalled())
+    expect(mockAppState.setPaired).toHaveBeenCalledWith(true)
   })
 })

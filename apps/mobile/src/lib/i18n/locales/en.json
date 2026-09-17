@@ -1523,7 +1523,8 @@
       "waitingDesktop": "Desktop not running",
       "reconnecting": "Reconnecting",
       "error": "Not connected",
-      "idle": "Idle"
+      "idle": "Idle",
+      "signedOut": "Signed out"
     },
     "desktopUnknown": "Your desktop",
     "desktopOnline": "Running and reachable — turns you send run there.",
@@ -1556,6 +1557,15 @@
     "demoSignOutConfirmTitle": "Leave the demo?",
     "demoSignOutConfirmBody": "This clears the demo's sample workspace and returns to the start screen. Demo mode stays one tap away, and entering it again reloads everything.",
     "revoked": "This phone was signed out by your organization.",
+    "signedOutBody": "This phone is no longer signed in to your organization — it was unpaired, signed out by an admin, or its session expired. What it already synced stays readable until you erase it, and pairing again restores everything from your organization's record.",
+    "signedOutDesktopHint": "There is no desktop to reach without a signed-in phone. Pair again to run turns from here.",
+    "reconnectSignedOut": "No session on this phone — pair it again.",
+    "wipe": "Erase this phone",
+    "wipeHint": "Deletes the conversations, settings and files this phone synced.",
+    "wipeAction": "Erase",
+    "wipeDone": "This phone is erased.",
+    "wipeConfirmTitle": "Erase everything on this phone?",
+    "wipeConfirmBody": "This deletes the conversations, settings, files and usage this phone synced — everything the app holds, back to a fresh install. Your organization keeps the record, so pairing again restores it.",
     "how": {
       "pushTitle": "As it happens",
       "pushBody": "Your desktop sends changes the moment they occur — a run from anywhere, a renamed conversation, a setting you edited.",

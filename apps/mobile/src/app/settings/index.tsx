@@ -67,20 +67,26 @@ export default function SettingsScreen(): React.JSX.Element {
     trailing?: React.JSX.Element
     status?: { tone: StatusTone; label: string }
   }> = [
-    ...(paired || demoMode
-      ? [
-          {
-            key: 'connection',
-            href: '/settings/connection',
-            // The globe the pairing sheet uses for the organization row — and no
-            // longer the brain, which belongs to Model two rows down.
-            icon: <Globe02Icon size={18} className="text-muted" />,
-            status: demoMode
-              ? describeBridgeStatus('idle', t)
-              : { tone: connectionStatus.tone, label: connectionStatus.label }
-          }
-        ]
-      : []),
+    // UNCONDITIONAL, and that is the point. When the org revokes this phone —
+    // unpaired from the desktop's Mobile panel, an admin sign-out, a rotated
+    // refresh token — `paired` goes false under a user who is still standing
+    // in the app, and nothing navigates them anywhere. This row used to go
+    // with it, taking the only screen that can reconnect, re-pair or wipe the
+    // device: the moment the link breaks is the moment it is needed, so it is
+    // never the thing that goes missing. Signed out it says so, in red,
+    // because that is the state worth walking into the screen to fix.
+    {
+      key: 'connection',
+      href: '/settings/connection',
+      // The globe the pairing sheet uses for the organization row — and no
+      // longer the brain, which belongs to Model two rows down.
+      icon: <Globe02Icon size={18} className="text-muted" />,
+      status: demoMode
+        ? describeBridgeStatus('idle', t)
+        : paired
+          ? { tone: connectionStatus.tone, label: connectionStatus.label }
+          : { tone: 'error' as const, label: t('connection.status.signedOut') }
+    },
     // The Library, Customization and the Conversations page are NOT here. They
     // are things the user MAKES with the app rather than knobs on it, and they
     // are reached from the conversations sheet in chat — one tap from the only

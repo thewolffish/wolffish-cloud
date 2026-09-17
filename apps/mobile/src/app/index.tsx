@@ -1,5 +1,6 @@
 import { BuildInfo } from '@/components/common/build-info/BuildInfo'
 import { Button } from '@/components/core/Button'
+import { ConfirmDialog } from '@/components/core/ConfirmDialog'
 import { ProgressBar } from '@/components/core/ProgressBar'
 import {
   applyConfigSnapshot,
@@ -7,6 +8,8 @@ import {
   importDemoData,
   type DemoProgress
 } from '@/lib/demo/importer'
+import { countConversations } from '@/lib/conversations/repo'
+import { factoryResetDevice } from '@/lib/demo/factoryReset'
 import { purgeDemoState } from '@/lib/demo/reset'
 import { attachLiveUpdates, initialSync, type SyncProgress } from '@/lib/sync/sync'
 import { attachTurnStream } from '@/lib/sync/prompt'
@@ -66,8 +69,54 @@ export default function Home(): React.JSX.Element {
    */
   const [launchHref] = useState(launchDeeplink)
   useEffect(forgetLaunchDeeplink, [])
+
+  // Only while unpaired: a paired phone redirects out of this screen before
+  // anything here renders, and a count against its whole transcript store is
+  // work nobody asked for.
+  useEffect(() => {
+    if (paired) return
+    let cancelled = false
+    void countConversations()
+      .then((n) => {
+        if (!cancelled) setResidue(n)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [paired])
+
+  /** Erase what the last pairing left, and stay here — this IS where a phone
+   *  with nothing on it belongs. */
+  const eraseDevice = async (): Promise<void> => {
+    setConfirmErase(false)
+    setErasing(true)
+    try {
+      await factoryResetDevice()
+      setResidue(0)
+      toast.show({ tone: 'success', message: t('connection.wipeDone') })
+    } catch {
+      toast.show({ tone: 'error', message: t('connection.signOutFailed') })
+    } finally {
+      setErasing(false)
+    }
+  }
   const [progress, setProgress] = useState<DemoProgress | null>(null)
   const [sync, setSync] = useState<SyncProgress | null>(null)
+  /**
+   * What a previous pairing left behind, counted once on the way in.
+   *
+   * A revoked phone (unpaired from the desktop, an admin sign-out, an expired
+   * session) comes back to this screen on its next launch with every
+   * conversation, file and setting it ever synced still on disk — and the one
+   * screen that can erase them lives in Settings, which only exists on the
+   * far side of this door. Without the row below there is no way out of that
+   * except reinstalling the app. Counted rather than assumed, so a genuinely
+   * fresh install is not offered a wipe of nothing.
+   */
+  const [residue, setResidue] = useState(0)
+  const [erasing, setErasing] = useState(false)
+  const [confirmErase, setConfirmErase] = useState(false)
   const [pairing, setPairing] = useState(false)
   const busy = progress !== null || sync !== null
 
@@ -241,6 +290,32 @@ export default function Home(): React.JSX.Element {
             {paired ? t('home.connectOther') : t('home.demoMode')}
           </Text>
         </Pressable>
+
+        {/* The way out of a revoked pairing. Quiet and last — it is a repair,
+            not an invitation — and shown only when this phone is actually
+            still holding a previous pairing's copy. */}
+        {!paired && residue > 0 ? (
+          <Pressable
+            disabled={busy || erasing}
+            onPress={() => setConfirmErase(true)}
+            className={cn('py-1', (busy || erasing) && 'opacity-50')}
+          >
+            <Text className="font-sans text-sm text-rose-500 underline">
+              {t('connection.wipe')}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        <ConfirmDialog
+          open={confirmErase}
+          busy={erasing}
+          title={t('connection.wipeConfirmTitle')}
+          message={t('connection.wipeConfirmBody')}
+          confirmLabel={t('connection.wipeAction')}
+          cancelLabel={t('common.cancel')}
+          onConfirm={() => void eraseDevice()}
+          onCancel={() => setConfirmErase(false)}
+        />
 
         {/* Progress takes the hint's slot rather than pushing it around. */}
         {statusLine ? (
