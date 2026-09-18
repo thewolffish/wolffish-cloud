@@ -1,6 +1,7 @@
 import {
   listConversations,
   logEvent,
+  lookupTitle,
   readEvents,
   type ConversationSummary,
   type ExtensionEvent
@@ -197,6 +198,12 @@ interface WolffishCommand {
   id: string
   type: string
   params: Record<string, unknown>
+  /**
+   * The conversation this command belongs to. The extension gives each one its
+   * own tab group, so two jobs running at once — or back to back — never share
+   * a tab, and one job's group title can never be left over the next one's work.
+   */
+  session?: string
 }
 
 interface WolffishResponse {
@@ -234,7 +241,21 @@ export class ExtensionServer {
   private currentConversationId: string | null = null
   /** clientId → conversation last events_sync'd to that client's panel. */
   private syncedByClient = new Map<string, string>()
-  private currentTitle: string | null = null
+  /**
+   * conversationId → the freshest title the app has told us about. The side
+   * panel needs a title per conversation, not the one the app window happens
+   * to be showing: a background job runs under its own name. Falls back to the
+   * conversation file on disk; bounded because conversations accumulate.
+   */
+  private titles = new Map<string, string>()
+  /**
+   * Panel pushes run one at a time. `events_sync` switches a panel to a
+   * conversation, so two jobs alternating on one browser must land in the
+   * order they were queued — otherwise the panel ends up showing one
+   * conversation while the server thinks it shows the other, and the next
+   * single event is appended to the wrong timeline.
+   */
+  private syncChain: Promise<void> = Promise.resolve()
   private currentPort = 23152
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
   private readonly requireOrigin: boolean
@@ -378,17 +399,43 @@ export class ExtensionServer {
   setConversationId(id: string | null, title?: string | null): void {
     if (!id) return
     this.currentConversationId = id
-    if (title && title !== 'Untitled') this.currentTitle = title
+    if (title && title !== 'Untitled') this.rememberTitle(id, title)
   }
 
+  /**
+   * A conversation was (re)titled. Recorded for whichever conversation it
+   * names — including one running in the background, whose title the panel
+   * would otherwise show as whatever the app window was last on — and pushed
+   * only when some panel is actually showing that conversation.
+   */
   updateTitle(id: string, title: string): void {
-    if (!title || title === 'Untitled') return
-    if (id !== this.currentConversationId || !this.isConnected()) return
-    if (title === this.currentTitle) return
-    this.currentTitle = title
+    if (!id || !title || title === 'Untitled') return
+    if (this.titles.get(id) === title) return
+    this.rememberTitle(id, title)
+    if (!this.isConnected()) return
     if ([...this.syncedByClient.values()].includes(id)) {
       void this.pushEventsSync(id)
     }
+  }
+
+  private rememberTitle(id: string, title: string): void {
+    this.titles.delete(id)
+    this.titles.set(id, title)
+    // Insertion-ordered, so the oldest key is the first one out.
+    while (this.titles.size > 200) {
+      const oldest = this.titles.keys().next().value
+      if (oldest === undefined) break
+      this.titles.delete(oldest)
+    }
+  }
+
+  /** The title to show for a conversation: freshest first, then disk, then Untitled. */
+  private async titleFor(conversationId: string): Promise<string> {
+    const known = this.titles.get(conversationId)
+    if (known) return known
+    const stored = await lookupTitle(conversationId)
+    if (stored && stored !== 'Untitled') this.rememberTitle(conversationId, stored)
+    return stored || 'Untitled'
   }
 
   /** Connected browsers as shown to the model (selection keys included). */
@@ -413,31 +460,37 @@ export class ExtensionServer {
     params: Record<string, unknown>,
     opts?: SendCommandOptions
   ): Promise<WolffishResponse> {
-    const client = this.resolveClient(
-      opts?.target ?? null,
-      opts?.conversationId ?? this.currentConversationId
-    )
-    return this.dispatchCommand(client, type, params)
+    const conversationId = opts?.conversationId ?? this.currentConversationId
+    const client = this.resolveClient(opts?.target ?? null, conversationId)
+    return this.dispatchCommand(client, type, params, conversationId)
   }
 
   private async dispatchCommand(
     client: ExtensionClient,
     type: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    // Which conversation owns the browser workspace this lands in. Taken from
+    // the caller rather than `currentConversationId`, which is whichever
+    // conversation the user last looked at — not necessarily the one running.
+    conversationId: string | null = this.currentConversationId
   ): Promise<WolffishResponse> {
     const id = randomUUID()
     const command: WolffishCommand = { id, type, params }
+    if (conversationId) command.session = conversationId
 
-    if (this.currentConversationId) {
-      const event = await logEvent(this.currentConversationId, type, params, client.instanceId)
+    // Logged against the conversation that RAN the command, not the one the
+    // app window is showing: a background job's browser activity belongs in
+    // its own timeline, under its own name.
+    if (conversationId) {
+      const event = await logEvent(conversationId, type, params, client.instanceId)
 
       // Sync state is per client: each browser's panel follows only the
       // conversations that browser executes, so a mid-conversation browser
       // switch re-syncs the new browser instead of leaking single events
       // into whatever its panel showed before.
-      if (this.currentConversationId !== this.syncedByClient.get(client.id)) {
-        this.syncedByClient.set(client.id, this.currentConversationId)
-        void this.pushEventsSync(this.currentConversationId, client)
+      if (conversationId !== this.syncedByClient.get(client.id)) {
+        this.syncedByClient.set(client.id, conversationId)
+        void this.pushEventsSync(conversationId, client)
       } else {
         this.pushEventLogged(client, event)
       }
@@ -508,7 +561,7 @@ export class ExtensionServer {
     let passed = 0
     for (const step of steps) {
       try {
-        const res = await this.dispatchCommand(client, step.type, step.params)
+        const res = await this.dispatchCommand(client, step.type, step.params, testId)
         if (res.success) passed++
         else void debug('WARN', `test ${step.type}: ${res.error}`)
       } catch (err) {
@@ -584,7 +637,12 @@ export class ExtensionServer {
     }
     const params: Record<string, unknown> = {}
     if (typeof opts.tabId === 'number') params.tabId = opts.tabId
-    const res = await this.dispatchCommand(client, 'browser_doctor', params)
+    const res = await this.dispatchCommand(
+      client,
+      'browser_doctor',
+      params,
+      opts.conversationId ?? this.currentConversationId
+    )
     if (!res.success) throw new Error(res.error ?? 'browser_doctor failed')
     return {
       browser: this.toBrowserInfo(client, this.selectionKeys()),
@@ -1083,21 +1141,37 @@ export class ExtensionServer {
    * filtering on the per-event attribution; no merging. The internal
    * instanceIds field never crosses the wire.
    */
-  private async conversationsFor(client: ExtensionClient): Promise<ConversationSummary[]> {
-    const all = await listConversations()
+  private async conversationsFor(
+    client: ExtensionClient,
+    listed?: ConversationSummary[]
+  ): Promise<ConversationSummary[]> {
+    const all = listed ?? (await listConversations())
     return all
       .filter((c) => (c.instanceIds ?? [null]).includes(client.instanceId))
       .map((c) => {
         const summary = { ...c }
         delete summary.instanceIds
+        // A title we were told about this session is fresher than the one on
+        // disk — a conversation named seconds ago may not be persisted yet.
+        const known = this.titles.get(c.conversationId)
+        if (known) summary.title = known
         return summary
       })
   }
 
-  private async pushEventsSync(conversationId: string, origin?: ExtensionClient): Promise<void> {
+  private pushEventsSync(conversationId: string, origin?: ExtensionClient): Promise<void> {
+    // Queued rather than run: see `syncChain`.
+    const next = this.syncChain.then(() => this.runEventsSync(conversationId, origin))
+    this.syncChain = next.catch(() => undefined)
+    return next
+  }
+
+  private async runEventsSync(conversationId: string, origin?: ExtensionClient): Promise<void> {
     try {
-      const title = this.currentTitle || 'Untitled'
+      const title = await this.titleFor(conversationId)
       const events = await readEvents(conversationId)
+      // Client-independent, so it is read once rather than once per browser.
+      const listed = await listConversations()
       for (const client of this.identifiedClients()) {
         const slice = this.eventsFor(client, events)
         // A browser that never ran this conversation must not have its
@@ -1109,7 +1183,7 @@ export class ExtensionServer {
           event: 'events_sync',
           data: { conversationId, title, events: slice }
         })
-        const conversations = await this.conversationsFor(client)
+        const conversations = await this.conversationsFor(client, listed)
         const existing = conversations.find((c) => c.conversationId === conversationId)
         if (existing) {
           existing.title = title
@@ -1135,12 +1209,6 @@ export class ExtensionServer {
   private async pushConversationsList(client: ExtensionClient): Promise<void> {
     try {
       const conversations = await this.conversationsFor(client)
-      if (this.currentConversationId && this.currentTitle) {
-        const existing = conversations.find((c) => c.conversationId === this.currentConversationId)
-        if (existing) {
-          existing.title = this.currentTitle
-        }
-      }
       this.sendRaw(client, {
         type: 'event',
         event: 'conversations_list',

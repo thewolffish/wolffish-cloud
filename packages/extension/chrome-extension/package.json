@@ -1,6 +1,6 @@
 {
   "name": "@wolffish-cloud/chrome-extension",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Wolffish browser extension - core settings",
   "type": "module",
   "private": true,

@@ -14,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import WebSocket from 'ws'
 
+import { readEvents } from '../../channels/extension/log'
 import { ExtensionServer } from '../../channels/extension/server'
 import { ensureBridgeToken, extensionFolderPath } from '../../workspace/workspace'
 
@@ -545,6 +546,105 @@ const main = async (): Promise<void> => {
     assert.deepEqual(st.tabs, [])
     const r = await send('browser_take_snapshot', {})
     assert.equal(r.source, 'dom')
+  })
+
+  // ── One workspace per conversation ────────────────────────────────────
+  // Fresh ids per run: the scratch HOME survives between runs, and an event
+  // log left by an earlier run would answer for this one.
+  const RUN = Date.now().toString(36)
+  const CONV_X = `conv-x-${RUN}`
+  const CONV_LI = `conv-li-${RUN}`
+  const CONV_UI = `conv-ui-${RUN}`
+
+  check('each conversation gets its own tab group, tab and title', async () => {
+    const worker = context.serviceWorkers()[0]
+    const sendAs = async (
+      conversationId: string,
+      type: string,
+      params: Record<string, unknown> = {}
+    ): Promise<Record<string, unknown>> => {
+      const res = await server.sendCommand(type, params, { conversationId })
+      if (!res.success) throw new Error(`${type} as ${conversationId}: ${res.error}`)
+      return (res.data ?? {}) as Record<string, unknown>
+    }
+    const groupOf = async (id: number): Promise<number> =>
+      Number(await worker.evaluate(`chrome.tabs.get(${id}).then(t => t.groupId)`))
+    const titleOf = async (groupId: number): Promise<string> =>
+      String(await worker.evaluate(`chrome.tabGroups.get(${groupId}).then(g => g.title)`))
+
+    // The app window sits on a third conversation the whole time: nothing
+    // below may be attributed to it.
+    server.setConversationId(CONV_UI, 'What the user has open')
+
+    // Job 1 opens its page and says what it is doing. The navigate names no
+    // tab: it has to find job 1's own.
+    const x = Number((await sendAs(CONV_X, 'browser_tab_open', {})).tabId)
+    const wentX = await sendAs(CONV_X, 'browser_navigate', { url: `${base}/` })
+    assert.equal(wentX.tabId, x, 'job 1 navigates its own tab')
+    const labelled = await sendAs(CONV_X, 'browser_set_activity', {
+      emoji: '📣',
+      text: 'Posting on X'
+    })
+    assert.equal(labelled.applied, true)
+    const xGroup = await groupOf(x)
+    assert.ok(xGroup >= 0, 'job 1 tab sits in a group')
+    assert.equal(await titleOf(xGroup), '📣 Posting on X')
+
+    // Job 2 arrives. Its own tab, its own group, and a title of its own — the
+    // regression is that it used to open under "📣 Posting on X".
+    const li = Number((await sendAs(CONV_LI, 'browser_tab_open', {})).tabId)
+    assert.notEqual(li, x)
+    const wentLi = await sendAs(CONV_LI, 'browser_navigate', { url: `${base}/terms` })
+    assert.equal(wentLi.tabId, li, "job 2 navigates its own tab, not job 1's")
+    const liGroup = await groupOf(li)
+    assert.ok(liGroup >= 0 && liGroup !== xGroup, `separate groups: ${xGroup} vs ${liGroup}`)
+    assert.equal(await titleOf(liGroup), 'Wolffish')
+
+    // Job 2 labelling its own work leaves job 1's title alone.
+    await sendAs(CONV_LI, 'browser_set_activity', { emoji: '💼', text: 'Posting on LinkedIn' })
+    assert.equal(await titleOf(xGroup), '📣 Posting on X')
+    assert.equal(await titleOf(liGroup), '💼 Posting on LinkedIn')
+
+    // A command that names no tab lands in the sending job's own tab.
+    assert.match(String((await sendAs(CONV_X, 'browser_get_url')).url), /127\.0\.0\.1:\d+\/$/)
+    assert.match(String((await sendAs(CONV_LI, 'browser_get_url')).url), /\/terms$/)
+
+    // Both are Wolffish's own tabs, whichever job is asking.
+    const tabs = (await sendAs(CONV_X, 'browser_tabs_list')).tabs as Array<Record<string, unknown>>
+    for (const id of [x, li]) {
+      assert.equal(tabs.find((t) => t.id === id)?.wolffish, true, `tab ${id} flagged wolffish`)
+    }
+
+    // Resetting one job's label restores its own group title, not the other's.
+    await sendAs(CONV_X, 'browser_set_activity', {})
+    assert.equal(await titleOf(xGroup), 'Wolffish')
+    assert.equal(await titleOf(liGroup), '💼 Posting on LinkedIn')
+  })
+
+  check("each job's events are logged under the job, not the open window", async () => {
+    const titlesOf = async (id: string): Promise<string[]> =>
+      (await readEvents(id)).map((e) => e.title)
+    const x = await titlesOf(CONV_X)
+    const li = await titlesOf(CONV_LI)
+
+    // Each job's own commands, and only its own.
+    assert.ok(
+      x.some((t) => /Tab group: 📣 Posting on X/.test(t)),
+      `job 1 events: ${JSON.stringify(x)}`
+    )
+    assert.ok(
+      li.some((t) => /Tab group: 💼 Posting on LinkedIn/.test(t)),
+      `job 2 events: ${JSON.stringify(li)}`
+    )
+    assert.ok(!x.some((t) => /LinkedIn/.test(t)), 'job 2 did not write into job 1')
+    assert.ok(!li.some((t) => /Posting on X/.test(t)), 'job 1 did not write into job 2')
+    assert.ok(
+      li.some((t) => /\/terms/.test(t)) && !x.some((t) => /\/terms/.test(t)),
+      'the navigations landed in their own logs'
+    )
+
+    // And nothing at all went to the conversation the app window was showing.
+    assert.deepEqual(await readEvents(CONV_UI), [], 'the open window caught no events')
   })
 
   check('doctor with no browser names the blocker', async () => {

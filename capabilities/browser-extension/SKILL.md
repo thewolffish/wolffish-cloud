@@ -422,7 +422,7 @@ tools:
   # Tab Management
   - name: ext_tabs_list
     readOnly: true
-    description: List all open tabs with id, url, title, active state, and a wolffish flag that is true for tabs in the Wolffish tab group and false for the user's own tabs.
+    description: List all open tabs with id, url, title, active state, and a wolffish flag that is true for tabs Wolffish opened (in any of its groups) and false for the user's own tabs.
     parameters:
       windowId:
         type: number
@@ -1246,7 +1246,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Browser Extension
@@ -1319,16 +1319,19 @@ If nothing is connected, `ext_launch_browser` starts the user's browser. If it s
 
 ## Your own tab group
 
-You work in a **Wolffish tab group**, never in the user's tabs. The first command that needs a page creates a fresh tab, coloured blue and labelled `Wolffish`, and every later command lands there by default. The user's own tabs are never navigated, clicked, or typed into. While you work in a tab it shows a small "Wolffish is working in this tab" pill and a cursor that glides to where you act, so the person can watch cause before effect; it disappears after you stop.
+You work in a **Wolffish tab group**, never in the user's tabs. The first command that needs a page creates a fresh tab, coloured blue and labelled `Wolffish`, and every later command lands there by default. The user's own tabs are never navigated, clicked, or typed into.
+
+The group belongs to **this conversation**. Another job — running beside you, or started right after yours — gets a group, a tab and a title of its own: you never land in its page, and its title is never left standing over your work. While you work in a tab it shows a small "Wolffish is working in this tab" pill and a cursor that glides to where you act, so the person can watch cause before effect; it disappears after you stop.
 
 - **Never reuse an open tab.** There is nothing to opt into — the default target is always your own tab. Start a new task or a new site in a *fresh* one with `ext_navigate {url, newTab: true}` or `ext_tab_open {url}` rather than reusing the tab from an unrelated task.
 - **Working across sites**: open each in its own tab (they all join the group) and move between them with `ext_tab_switch`.
 - **Reading the user's page**: only when they ask for it ("what's on this page?"). Call `ext_tabs_list`, find the entry with `wolffish: false` and `active: true`, and pass its `tabId` explicitly. An explicit `tabId` always wins over the default. Never *act* on a user tab — read it, then do the work in your own.
 - If the user closes your tab or the whole group, the next command quietly creates a new one.
+- `wolffish: true` in `ext_tabs_list` marks every tab Wolffish opened, including another job's. Yours is the one unnamed commands already use — leave the others alone unless you have a reason, and name the `tabId` when you do.
 
 ## Saying what you're doing
 
-The tab group's name is yours to write, and it is the only thing the user sees while you work. Judge how much it needs to say:
+The tab group's name is yours to write — your group's, not any other job's — and it is the only thing the user sees while you work. Judge how much it needs to say:
 
 - **One-off basics don't need a label.** Opening a page, a single lookup, one quick read — plain `Wolffish` already says everything useful. Don't ceremonially label trivial work.
 - **A real task does.** Anything spanning several steps, more than one page, or more than a moment: set it as you start — `ext_set_activity {emoji: "🔎", text: "Comparing flights"}` → the group reads `🔎 Comparing flights`. Otherwise the user is watching their browser move with no idea what it's doing, which is the whole problem this solves.

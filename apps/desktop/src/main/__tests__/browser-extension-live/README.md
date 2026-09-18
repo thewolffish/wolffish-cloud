@@ -41,4 +41,6 @@ Handshake (origin + token), per-tab CDP sessions, snapshot + uid actions,
 fill/fill_form/find, CDP screenshot (fullPage + clip), network + console rings,
 dialog latch + handle, emulate echo, file upload by path, download completion,
 overlay presence on touched tabs only (and hidden during capture), doctor
-findings with zero and one client, and the post-action aftermath fields.
+findings with zero and one client, the post-action aftermath fields, and one
+tab group per conversation (two jobs, two tabs, two titles, neither
+inheriting the other's).
