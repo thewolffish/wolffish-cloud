@@ -3,8 +3,8 @@
  * files in, derived from the persisted segments alone. Pins the rules the
  * strip relies on — only successful file-changing calls count, the diff's
  * absolute path wins over the call's argument, a relative argument resolves
- * against the first working folder, and labels read relative to the working
- * folder that contains them.
+ * against the first working folder, and each touched folder collapses to its
+ * top-level parent under the working folder that contains it.
  */
 import type { Segment } from '@preload/index'
 import {
@@ -85,15 +85,19 @@ function main(): void {
   )
   const folders = collectTouchedFolders(messages, [W])
   ok(
-    'one chip per folder, labeled relative to the working folder, files deduplicated',
+    'one chip per parent folder, nested folders collapsed, files deduplicated',
     JSON.stringify(folders) ===
       JSON.stringify([
-        { path: `${W}/src`, label: 'src', files: 1 },
-        { path: `${W}/src/lib`, label: 'src/lib', files: 1 },
+        { path: `${W}/src`, label: 'src', files: 2 },
         { path: `${W}/test`, label: 'test', files: 1 },
         { path: W, label: 'app', files: 1 },
         { path: '/tmp/scratch', label: 'scratch', files: 1 }
       ]),
+    folders
+  )
+  ok(
+    'no chip label reads as a nested path',
+    folders.every((f) => !f.label.includes('/')),
     folders
   )
   ok(

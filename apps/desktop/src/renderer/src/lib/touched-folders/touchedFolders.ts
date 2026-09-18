@@ -7,20 +7,24 @@ import type { Segment } from '@preload/index'
  * conversation is reopened from history.
  *
  * A folder counts as touched when a file-changing tool call (file_edit,
- * file_write, file_patch) completed successfully inside it. The path comes
- * from the result's diff when the tool recorded one (already absolute —
- * the plugin resolved it against the working folder), and from the call's
- * own `path` argument otherwise, resolved against the first working folder
- * when relative. Failed and denied calls changed nothing and are skipped.
+ * file_write, file_patch) completed successfully inside it. Every touched
+ * folder collapses to its parent folder under the working folder — the first
+ * path segment — so the chips name the top-level folders a run worked in,
+ * never a chain of nested ones. The path comes from the result's diff when
+ * the tool recorded one (already absolute — the plugin resolved it against
+ * the working folder), and from the call's own `path` argument otherwise,
+ * resolved against the first working folder when relative. Failed and denied
+ * calls changed nothing and are skipped.
  */
 
 export type TouchedFolder = {
   /** Absolute directory path — what opens when the chip is clicked. */
   path: string
-  /** Short display name: the directory relative to its working folder, or
-   *  the folder's own name for the working folder root and outside paths. */
+  /** Short display name: the top-level directory under its working folder,
+   *  or the folder's own name for the working folder root and paths outside
+   *  every working folder. */
   label: string
-  /** Distinct files changed under this folder, direct children only. */
+  /** Distinct files changed anywhere under this folder. */
   files: number
 }
 
@@ -85,6 +89,23 @@ function labelFor(dir: string, folders: string[]): string {
   return basename(dir)
 }
 
+/**
+ * The folder a changed file is charged to: the file's directory collapsed to
+ * the first path segment under its working folder, so nested folders never
+ * earn chips of their own. Files directly in the working folder collapse to
+ * the working folder itself; paths outside every working folder keep their
+ * own directory.
+ */
+function touchedDir(file: string, folders: string[]): string {
+  const dir = dirname(file)
+  if (!dir) return ''
+  const root = containingFolder(dir, folders)
+  if (!root) return dir
+  if (dir === root) return root
+  const segment = dir.slice(root.length + 1).split('/')[0]
+  return segment ? `${root}/${segment}` : root
+}
+
 /** The file each successful file-changing call touched, in stream order. */
 export function collectChangedFiles(
   messages: SegmentMessage[],
@@ -126,7 +147,7 @@ export function collectTouchedFolders(
 ): TouchedFolder[] {
   const byDir = new Map<string, Set<string>>()
   for (const file of collectChangedFiles(messages, workingFolders)) {
-    const dir = dirname(file)
+    const dir = touchedDir(file, workingFolders)
     if (!dir) continue
     const set = byDir.get(dir) ?? new Set<string>()
     set.add(file)
