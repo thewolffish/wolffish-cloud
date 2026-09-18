@@ -1963,24 +1963,27 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                           </div>
                           {/* The moment the next run lands on, the project and
                               the edit stamp — reference detail, set in the mono
-                              well the guide and folder rows use, and pinned to
-                              the bottom so every card in the row ends on the
-                              same line. */}
+                              well the guide and folder rows use. It follows the
+                              chips immediately rather than being pinned to the
+                              card's floor: a neighbour that is mid-run is one
+                              line taller, and a bottom pin would spend that
+                              difference as a gap ABOVE the well, sinking it
+                              away from the card it belongs to. Top-aligned, the
+                              wells line up across the row and the slack falls
+                              underneath, where nothing has to look at it. */}
                           {metaLine !== '' && (
-                            <code className="border-border bg-bg text-muted mt-auto line-clamp-2 rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
+                            <code className="border-border bg-bg text-muted line-clamp-2 rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
                               {metaLine}
                             </code>
                           )}
                           {/* Running or queued — the last line of the card,
                               under the well, because it is the only thing here
                               that is true for the next few minutes rather than
-                              until you edit the automation. It takes over the
-                              bottom pin when there is no well to carry it. */}
+                              until you edit the automation. */}
                           {busy && (
                             <span
                               className={cn(
                                 'flex items-center gap-1.5 text-xs',
-                                metaLine === '' && 'mt-auto',
                                 busy === 'running'
                                   ? 'text-emerald-600 dark:text-emerald-400'
                                   : 'text-amber-600 dark:text-amber-400'

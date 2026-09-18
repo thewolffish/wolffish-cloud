@@ -388,9 +388,12 @@ export function Projects(): React.JSX.Element {
                       )}
                       {/* Edit stamp, last use and the conversation count —
                           reference detail, in the mono well the automations
-                          cards use, pinned to the bottom so every card in the
-                          row ends on the same line. */}
-                      <code className="border-border bg-bg text-muted mt-auto line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
+                          cards use. It follows the content it describes rather
+                          than being pinned to the card's floor: a taller
+                          neighbour would otherwise push it down on its own
+                          card, opening a gap above the well instead of below
+                          it. */}
+                      <code className="border-border bg-bg text-muted line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
                         {metaLine}
                       </code>
                     </div>
