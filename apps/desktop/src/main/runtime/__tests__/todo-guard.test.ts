@@ -86,6 +86,27 @@ check('ending a turn with open items is sent back once', () => {
   assert.ok(aside.includes('todo_write'), 'must name the tool')
   assert.ok(aside.includes('2 of 3 items unfinished'), 'must say what is open')
   assert.ok(aside.includes('zero characters'), 'must permit the silent close')
+  // Permit, never prescribe. Ordering a model to say nothing is what produced
+  // the 2026-09-18 leak: deepseek-flash could not emit a zero-token content
+  // channel, so it typed the Chinese for "utterly empty" as the run's last
+  // word. The aside reports where things stand; the ending is the model's.
+  assert.doesNotMatch(
+    aside,
+    /then end (?:with an entirely )?empty/i,
+    'must not ORDER the silent close — a demanded silence buys a placeholder'
+  )
+  assert.ok(
+    aside.includes('yours to decide'),
+    "the conversation is the model's: it chooses how the turn ends"
+  )
+  assert.ok(
+    aside.includes('renders BELOW it'),
+    'must hand over the fact the model cannot see — the card lands under the delivered reply'
+  )
+  assert.ok(
+    aside.includes('ANY language'),
+    'the one invariant: a typed stand-in for silence is a message in every script'
+  )
   assert.equal(
     todoCloseoutNudge(open, ended('done'), MAX_TODO_NUDGES),
     null,

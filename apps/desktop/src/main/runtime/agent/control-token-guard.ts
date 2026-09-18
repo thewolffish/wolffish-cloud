@@ -57,10 +57,32 @@
  * the only move that improves anything.
  *
  * The leak typically happens on a turn's FINAL call (there is no next
- * iteration to tell), so an armed notice survives the turn: it is keyed by
- * conversation and drained by that conversation's next model call, whichever
- * turn that is. In-memory only, like the channels' pending format notices —
- * a restart forgets an undelivered notice, which costs nothing (advisory).
+ * iteration to tell), so an armed notice survives the turn and is drained by
+ * the next model call — ANY next model call, in any conversation. One global
+ * slot, not one per conversation.
+ *
+ * That is deliberate, and it is the whole reason this guard does anything at
+ * all for autonomous work. A heartbeat, procedure or automation run mints a
+ * FRESH sealed conversation per run (see `processAutonomous`) and ends after a
+ * single turn, so a notice keyed by conversation was armed into a conversation
+ * that would never make another model call and was silently dropped — the
+ * guard detected every scheduled-run leak and told nobody. Observed live
+ * 2026-09-17: deepseek-flash closed a heartbeat run with a literal
+ * `[Empty response]`, the placeholder check matched it, and the notice died
+ * with the conversation. The model is one model across conversations; the
+ * lesson travels with it even when the conversation does not.
+ *
+ * Delivery into a DIFFERENT conversation carries one extra clause, because the
+ * quoted reply is not in the history the model is looking at and the user
+ * there never saw it: carry the rule forward, raise nothing here. Without that
+ * clause a cross-conversation notice invites an apology to the wrong person
+ * for a message they cannot see.
+ *
+ * Draining is gated to the same roles that arm — worker text never reaches the
+ * user, so a worker must not consume the one notice the master is owed.
+ *
+ * In-memory only, like the channels' pending format notices — a restart
+ * forgets an undelivered notice, which costs nothing (advisory).
  */
 
 /**
@@ -191,6 +213,106 @@ const BRACKETED_TAIL = /(?:^|\n)[ \t]*([([{<（【][^\n]{1,40}?[)\]}>）】])[ \
 const SILENCE_PHRASE =
   /^(?:no\s+(?:content|output|reply|response|text|message|further\s+(?:content|output|reply|response|text|message|comment))|nothing(?:\s+(?:to\s+add|to\s+say|further|more|else))?|empty(?:\s+(?:reply|response|message))?|silence|silent|staying\s+silent|end\s+of\s+(?:turn|reply|response|message))[\s.!…]*$/iu
 
+/**
+ * The same vocabulary in the script the models actually think in.
+ *
+ * The lane is not all English-lab: DeepSeek is the seeded default, and the
+ * router forwards to whatever OpenAI-compatible hosts a deployment wires in —
+ * so a model reaching for the smallest stand-in it can find reaches for the
+ * one in its own language, not the English one. Observed live 2026-09-18:
+ * deepseek-flash closed a heartbeat run with a bare `空空如也` ("utterly
+ * empty"), four characters and four output tokens, the entire final reply of
+ * the run — the English-only check below saw nothing, so the model was never
+ * told and the user got Chinese at the end of an English conversation. The
+ * runtime had just ORDERED that silence, too; see todo-guard for that half of
+ * the fix.
+ *
+ * Brackets are deliberately NOT required here, unlike the English path. The
+ * asymmetry is not an oversight: an unbracketed "Nothing to add." is a
+ * legitimate English answer to a question and must never be second-guessed,
+ * whereas these are set phrases whose entire job is to stand in for an absent
+ * message, and a reply that is nothing but one of them — in a conversation
+ * conducted in another language — has never been anything else.
+ *
+ * Simplified and traditional forms both appear because the labs differ on
+ * which they emit. Single characters (`空`, `无`) stay OFF the list for the same
+ * reason `(none)` is off the English one: each has an ordinary use as real
+ * content, and a false positive spends a tail line arguing with a model that
+ * was writing normally.
+ */
+const CJK_SILENCE_PHRASES = [
+  '空空如也', // "utterly empty" — the observed leak
+  '空无一物',
+  '空無一物',
+  '无内容',
+  '無內容',
+  '无输出',
+  '無輸出',
+  '无回复',
+  '無回覆',
+  '无响应',
+  '無響應',
+  '没有内容',
+  '沒有內容',
+  '没有输出',
+  '沒有輸出',
+  '无更多内容',
+  '無更多內容',
+  '无话可说',
+  '無話可說',
+  '没什么可说的',
+  '沒什麼可說的',
+  '无需回复',
+  '無需回覆',
+  '空回复',
+  '空回覆',
+  '保持沉默',
+  '沉默'
+]
+
+/** Bracket pairs the models reach for, ASCII and full-width/CJK alike. */
+const BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['(', ')'],
+  ['[', ']'],
+  ['{', '}'],
+  ['<', '>'],
+  ['（', '）'],
+  ['【', '】'],
+  ['「', '」'],
+  ['『', '』'],
+  ['〔', '〕']
+]
+
+/** Trailing sentence punctuation, both widths — a stand-in often wears one. */
+const TRAILING_PUNCTUATION = /[\s.。!！?？…、,，:：;；~～-]+$/u
+
+/** `text` with one matched bracket pair peeled off, or `text` unchanged. */
+function unwrapBrackets(text: string): string {
+  for (const [open, close] of BRACKET_PAIRS) {
+    if (text.length > 2 && text.startsWith(open) && text.endsWith(close)) {
+      return text.slice(open.length, -close.length).trim()
+    }
+  }
+  return text
+}
+
+/**
+ * The CJK stand-in in `text`, or null. Matches the whole reply or a line that
+ * sits alone at its end — the same two positions as the English check, since
+ * both shapes have shipped: the phrase as the entire message, and the phrase
+ * stapled under real prose. A phrase inside a sentence is content and never
+ * matches.
+ */
+function cjkSilencePlaceholder(text: string): SilencePlaceholder | null {
+  const trimmed = text.trim()
+  if (trimmed === '') return null
+  const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim()
+  if (lastLine === '') return null
+  const bare = unwrapBrackets(lastLine).replace(TRAILING_PUNCTUATION, '').trim()
+  if (!CJK_SILENCE_PHRASES.includes(bare)) return null
+  return { text: lastLine, trailing: lastLine !== trimmed }
+}
+
 /** A faked silence typed as a bracketed placeholder, and where it sat. */
 export type SilencePlaceholder = { text: string; trailing: boolean }
 
@@ -206,13 +328,17 @@ export type SilencePlaceholder = { text: string; trailing: boolean }
  * control-token list (these carry no tokenizer marker) nor the punctuation
  * check (these are words) saw either one, so nothing ever told the model.
  *
- * Brackets are REQUIRED. An unbracketed "Nothing to add." as an entire reply
- * is a legitimate answer to a question, and this guard must never second-guess
- * a model that answered one.
+ * Brackets are REQUIRED for the English vocabulary. An unbracketed "Nothing to
+ * add." as an entire reply is a legitimate answer to a question, and this guard
+ * must never second-guess a model that answered one. The CJK set phrases
+ * checked first carry no such ambiguity, so they match bare — see
+ * CJK_SILENCE_PHRASES for why the asymmetry is deliberate.
  */
 export function silencePlaceholder(text: string): SilencePlaceholder | null {
   const trimmed = text.trim()
   if (trimmed === '') return null
+  const cjk = cjkSilencePlaceholder(trimmed)
+  if (cjk) return cjk
   const match = BRACKETED_TAIL.exec(trimmed)
   if (!match) return null
   const group = match[1]
@@ -252,13 +378,29 @@ export function silencePlaceholderNotice(placeholder: SilencePlaceholder): strin
   )
 }
 
-/** Pending notice per conversation — armed at the leak, drained by the next model call. */
-const pending = new Map<string, string>()
+/**
+ * The clause appended when the notice is delivered in a different conversation
+ * from the one the leak happened in. It has to override, not soften, the base
+ * notice's "clear it up with the user" advice: here there is no stray
+ * character on screen and no user who saw one.
+ */
+const ELSEWHERE_CLAUSE =
+  'That reply was in a DIFFERENT conversation from this one — it is not in the history above, ' +
+  'and the user you are talking to now never saw it. Do not mention it, apologise for it or ' +
+  'try to clear it up here; there is nothing here to clear up. Carry the rule forward, nothing else.'
 
-/** Arm the notice for `conversationId`'s next model call (latest leak wins). */
+/** The one pending notice — armed at the leak, drained by the next model call anywhere. */
+let pending: { conversationId: string | null; notice: string } | null = null
+
+/**
+ * Arm the notice for the next model call (latest leak wins).
+ *
+ * A single slot, deliberately global: see the header. The conversation id is
+ * remembered only to decide which wording the drain hands back, never to
+ * decide whether the notice is delivered at all.
+ */
 export function armControlTokenNotice(conversationId: string | null, token: string): void {
-  if (!conversationId) return
-  pending.set(conversationId, controlTokenNotice(token))
+  pending = { conversationId, notice: controlTokenNotice(token) }
 }
 
 /**
@@ -269,8 +411,7 @@ export function armControlTokenNotice(conversationId: string | null, token: stri
  * only). Latest leak wins, as above.
  */
 export function armContentFreeReplyNotice(conversationId: string | null, reply: string): void {
-  if (!conversationId) return
-  pending.set(conversationId, contentFreeReplyNotice(reply))
+  pending = { conversationId, notice: contentFreeReplyNotice(reply) }
 }
 
 /**
@@ -284,14 +425,25 @@ export function armSilencePlaceholderNotice(
   conversationId: string | null,
   placeholder: SilencePlaceholder
 ): void {
-  if (!conversationId) return
-  pending.set(conversationId, silencePlaceholderNotice(placeholder))
+  pending = { conversationId, notice: silencePlaceholderNotice(placeholder) }
 }
 
-/** Drain (return and clear) the pending notice, or undefined when none. */
+/**
+ * Drain (return and clear) the pending notice, or undefined when none.
+ *
+ * Delivers wherever the next model call happens — the leak is the model's, not
+ * the conversation's. `conversationId` only selects the wording: the same
+ * conversation gets the notice as written (the stray characters are in the
+ * history above, and the user there did see them), any other gets it plus the
+ * clause that says so.
+ */
 export function drainControlTokenNotice(conversationId: string | null): string | undefined {
-  if (!conversationId) return undefined
-  const notice = pending.get(conversationId)
-  if (notice !== undefined) pending.delete(conversationId)
-  return notice
+  const leak = pending
+  if (!leak) return undefined
+  pending = null
+  const sameConversation =
+    leak.conversationId !== null &&
+    conversationId !== null &&
+    leak.conversationId === conversationId
+  return sameConversation ? leak.notice : `${leak.notice} ${ELSEWHERE_CLAUSE}`
 }

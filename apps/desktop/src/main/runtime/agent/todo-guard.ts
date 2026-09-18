@@ -34,6 +34,24 @@ import type { ParsedResponse } from '@main/runtime/wernicke'
  * finished, and guessing would put a lie on the card. A list a nudged model
  * still leaves open is the model's statement that the work is not done.
  *
+ * The aside REPORTS and never prescribes, which it did not always do. Until
+ * 2026-09-18 it ordered the model to close the list "then end with an entirely
+ * empty response — zero characters", and that order manufactured the exact
+ * failure control-token-guard exists to catch: a heartbeat run on
+ * deepseek-flash closed its list, was told to say nothing, could not emit a
+ * zero-token content channel, and typed the Chinese set phrase for "utterly
+ * empty" instead — four characters, four output tokens, delivered to the user
+ * as the last word of the run. Demanding silence from a model that cannot
+ * produce it buys a placeholder every time.
+ *
+ * So the aside now hands over the two facts the model cannot see for itself —
+ * its last reply is already delivered and unrecallable, and the card renders
+ * BELOW that reply — and leaves the ending where it belongs. The conversation
+ * is the model's: it decides whether the user still needs a closing line or
+ * whether the turn is genuinely finished. The single invariant kept from the
+ * old copy is the one that is not a matter of taste: a typed stand-in for
+ * silence, in any script, is a message and not an ending.
+ *
  * Lists inherited from an earlier turn are a different case (see
  * openTodoNotice in Agent.ts): the runtime tells the model about them, but a
  * turn doing unrelated work is free to leave them alone.
@@ -94,14 +112,21 @@ export function todoCloseoutNudge(
   const user: ChatMessage = {
     role: 'user',
     content:
-      `[System: You are ending your turn, but your task list still shows ${describeOpen(items)} — ` +
-      'that is the checklist card the user is looking at right now. If that work is done, call todo_write ' +
-      'now with every item in its true final state (completed, or cancelled if dropped), then end with an ' +
-      'entirely empty response — zero characters, and no written stand-in for the silence, not even a ' +
-      'parenthesised note saying there is nothing further, since anything ' +
-      'you write is delivered to the user verbatim. If the work is genuinely not done, continue it now; if ' +
-      'you are blocked, call todo_write leaving that item in_progress with a follow-up item naming the blocker, ' +
-      'then end empty. Your reply has already been delivered — nothing further needs saying.]'
+      `[System: Your turn is ending with the task list still showing ${describeOpen(items)} — ` +
+      'that is the checklist card the user is watching, and only a todo_write of yours can move it. ' +
+      'Write every item in its true final state: completed, cancelled if you dropped it, or left ' +
+      'in_progress with a follow-up item naming the blocker if you are genuinely blocked — and if the ' +
+      'work simply is not done, carry on with it instead. ' +
+      'Two facts about where this lands, so the ending is an informed choice and not a guess. Your last ' +
+      'reply has already been delivered to the user; nothing can unsend it or move it. And the card ' +
+      'renders BELOW it, so the card is the last thing they see unless you close with a line of your own. ' +
+      'How the turn ends from there is yours to decide, as every turn is: say whatever they still need to ' +
+      'hear, or — if they genuinely need nothing further — end with an entirely empty response, zero ' +
+      'characters, which is a complete and valid ending. The one thing that is never an ending is a typed ' +
+      'stand-in for that silence: a bracketed status note, a lone punctuation mark, a word or set phrase ' +
+      'meaning "empty" or "nothing further" in ANY language. Those are not silence, they are a message — ' +
+      'everything you write is delivered to the user verbatim, as its own message, in whatever script you ' +
+      'wrote it.]'
   }
 
   const delivered = parsed.text.trim()

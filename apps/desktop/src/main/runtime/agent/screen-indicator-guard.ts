@@ -138,9 +138,12 @@ const SCREEN_INDICATOR_NUDGE_TEXT =
   '"Wolffish is capturing your screen" even though you have stopped. Only computer_glow_off clears it; nothing ' +
   'else will, ever. Call computer_glow_off now. (If you are in fact not finished with their screen, carry on with ' +
   'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
-  'user, so once the indicator is off there is nothing further to say: end with an entirely empty response — zero ' +
-  'characters, and no written stand-in for the silence — not even a parenthesised note saying there is nothing ' +
-  'further, since anything you write is delivered to them verbatim.]'
+  'user and cannot be unsent, so if they need nothing further you can end with an entirely empty response — zero ' +
+  'characters, a complete and valid ending. That is offered, not ordered: how the turn ends is yours to decide, ' +
+  'and if there is something they still need to hear, say it. What is never an ending is a typed stand-in for ' +
+  'the silence — a bracketed note, a lone punctuation mark, a word or set phrase meaning "empty" or "nothing ' +
+  'further" in ANY language — since anything you write is delivered to them verbatim, in whatever script you ' +
+  'wrote it.]'
 
 // ─── Every indicator, one registry ─────────────────────────────────────────
 //
@@ -164,9 +167,12 @@ const MOBILE_INDICATOR_NUDGE_TEXT =
   '"Wolffish is driving <device>" around their simulator even though you have stopped. Only mobile_indicator_off clears it; nothing ' +
   'else will, ever. Call mobile_indicator_off now. (If you are in fact not finished with their device, carry on with ' +
   'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
-  'user, so once the indicator is off there is nothing further to say: end with an entirely empty response — zero ' +
-  'characters, and no written stand-in for the silence — not even a parenthesised note saying there is nothing ' +
-  'further, since anything you write is delivered to them verbatim.]'
+  'user and cannot be unsent, so if they need nothing further you can end with an entirely empty response — zero ' +
+  'characters, a complete and valid ending. That is offered, not ordered: how the turn ends is yours to decide, ' +
+  'and if there is something they still need to hear, say it. What is never an ending is a typed stand-in for ' +
+  'the silence — a bracketed note, a lone punctuation mark, a word or set phrase meaning "empty" or "nothing ' +
+  'further" in ANY language — since anything you write is delivered to them verbatim, in whatever script you ' +
+  'wrote it.]'
 
 export type IndicatorSpec = {
   id: 'screen' | 'mobile'

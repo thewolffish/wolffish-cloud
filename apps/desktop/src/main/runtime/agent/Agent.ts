@@ -1398,13 +1398,22 @@ export class Agent {
         const noProgressSignal = noProgress.signal()
         const noProgressText = noProgressNotice(noProgressSignal) ?? undefined
 
-        // Control-token notice — this conversation's previous model call ended
-        // its visible text in a literal tokenizer control token, which the user
-        // saw as-is (observe-and-notify: the model repairs its own behaviour;
-        // nothing rewrites its output). Drained once per iteration; rides the
-        // same volatile vehicle as the no-progress notice so it never perturbs
-        // the cached prompt prefix. Undefined (the common case) renders nothing.
-        const controlTokenText = drainControlTokenNotice(turn.conversationId ?? null)
+        // Faked-silence notice — the previous model call ended its visible text
+        // in a literal control token, a lone punctuation mark or a bracketed
+        // stand-in for silence, which the user saw as-is (observe-and-notify:
+        // the model repairs its own behaviour; nothing rewrites its output).
+        // Drained once per iteration; rides the same volatile vehicle as the
+        // no-progress notice so it never perturbs the cached prompt prefix.
+        // Undefined (the common case) renders nothing.
+        //
+        // The slot is global, so the notice reaches the model even when the
+        // leak happened in a conversation that ended with it (every autonomous
+        // run mints a fresh sealed conversation, so that is the common case,
+        // not the corner one). Draining is gated to the same roles that arm:
+        // worker text never reaches the user, so a worker must not swallow the
+        // notice the master is owed.
+        const controlTokenText =
+          turn.role !== 'agent' ? drainControlTokenNotice(turn.conversationId ?? null) : undefined
 
         // Screen-indicator notice: present on every iteration from the moment
         // this turn raises the computer-use glow until it lowers it. The
@@ -1893,8 +1902,11 @@ export class Agent {
               `[agent] end_turn with the task list still open — nudging for a todo_write ` +
                 `close-out (${todoNudges}/${MAX_TODO_NUDGES}, iter ${iterationCount})`
             )
-            // Same honour as the indicator nudge: an empty close after the
-            // write is the instructed outcome, not a dropout to chase.
+            // Same honour as the indicator nudge. The aside no longer ORDERS
+            // an empty close — demanding silence from a model that cannot emit
+            // a zero-token content channel is what buys a placeholder — but it
+            // still offers one, so a model that takes it is making the call the
+            // aside handed it, not dropping out. Never chase that.
             emptyTurnNudges = MAX_EMPTY_TURN_NUDGES
             messages.push(...todoNudge)
             continue

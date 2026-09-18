@@ -70,26 +70,49 @@ function testNoticeNamesTokenAndDefers(): void {
   console.log('ok: the notice names the token, offers the silent exit, and defers')
 }
 
-function testArmAndDrainPerConversation(): void {
+function testArmAndDrainReachTheModelAnywhere(): void {
   assert.equal(drainControlTokenNotice('conv-a'), undefined, 'nothing pending initially')
   armControlTokenNotice('conv-a', '<|eos|>')
-  assert.equal(drainControlTokenNotice('conv-b'), undefined, 'other conversations unaffected')
   const drained = drainControlTokenNotice('conv-a')
   assert.ok(drained && drained.includes('<|eos|>'), 'armed notice drains for its conversation')
+  assert.doesNotMatch(
+    drained!,
+    /DIFFERENT conversation/,
+    'same conversation gets the notice as written — the stray text IS in the history above'
+  )
   assert.equal(
     drainControlTokenNotice('conv-a'),
     undefined,
     'drain clears — announced exactly once'
   )
-  // Null conversation id (no conversation to tell) is a no-op on both sides.
+
+  // The hole this guard existed inside until 2026-09-17: every autonomous run
+  // mints a fresh conversation that is sealed after one turn, so a notice that
+  // only drained for its OWN conversation could never be delivered at all.
+  // It now reaches the model's next call wherever that call happens.
+  armControlTokenNotice('conv-sealed-heartbeat', '<|eos|>')
+  const elsewhere = drainControlTokenNotice('conv-b')
+  assert.ok(elsewhere && elsewhere.includes('<|eos|>'), 'a dead conversation still teaches')
+  assert.match(
+    elsewhere!,
+    /DIFFERENT conversation/,
+    'and says so, so the model never apologises here for a message nobody here saw'
+  )
+  assert.match(elsewhere!, /Carry the rule forward/, 'the clause says what to do instead')
+  assert.equal(drainControlTokenNotice('conv-c'), undefined, 'still announced exactly once')
+
+  // A leak with no conversation id still travels; it just never claims to be
+  // the conversation it lands in.
   armControlTokenNotice(null, '<|eos|>')
-  assert.equal(drainControlTokenNotice(null), undefined)
+  const anon = drainControlTokenNotice(null)
+  assert.ok(anon && anon.includes('DIFFERENT conversation'), 'unknown origin never claims "here"')
+
   // Latest leak wins when two arm before a drain.
   armControlTokenNotice('conv-c', '<|eos|>')
   armControlTokenNotice('conv-c', '<|im_end|>')
   const latest = drainControlTokenNotice('conv-c')
   assert.ok(latest && latest.includes('<|im_end|>'), 'latest arm overwrites')
-  console.log('ok: arm/drain is per-conversation, once-only, null-safe, latest-wins')
+  console.log('ok: arm/drain reaches the model anywhere, once-only, latest-wins')
 }
 
 function testContentFreeDetectsFakedSilence(): void {
@@ -141,8 +164,8 @@ function testContentFreeSharesTheNoticeSlot(): void {
   assert.ok(drained && drained.includes('CONTENT-FREE'), 'drains through the shared slot')
   assert.equal(drainControlTokenNotice('conv-d'), undefined, 'drain clears')
   armContentFreeReplyNotice(null, '.')
-  assert.equal(drainControlTokenNotice(null), undefined, 'null conversation id is a no-op')
-  console.log('ok: the content-free notice rides the same per-conversation slot')
+  assert.ok(drainControlTokenNotice(null), 'an id-less leak still travels')
+  console.log('ok: the content-free notice rides the same shared slot')
 }
 
 function testSilencePlaceholderDetectsTheObservedLeaks(): void {
@@ -159,6 +182,12 @@ function testSilencePlaceholderDetectsTheObservedLeaks(): void {
     { text: '(no output)', trailing: true },
     'a marker on its own line after prose is the trailing shape'
   )
+  // Observed live 2026-09-17 (deepseek-flash, heartbeat run): the model's own
+  // reasoning concluded "Let me output nothing" and then typed this instead.
+  assert.deepEqual(silencePlaceholder('[Empty response]'), {
+    text: '[Empty response]',
+    trailing: false
+  })
   // The rest of the vocabulary, in every bracket the models reach for.
   for (const reply of [
     '(nothing to add)',
@@ -173,6 +202,63 @@ function testSilencePlaceholderDetectsTheObservedLeaks(): void {
     assert.ok(silencePlaceholder(reply), `detects ${reply}`)
   }
   console.log('ok: bracketed stand-ins trip, alone and stapled onto prose')
+}
+
+function testSilencePlaceholderDetectsTheChineseLeak(): void {
+  // Observed live 2026-09-18 (deepseek-flash, heartbeat run): the runtime's own
+  // todo close-out nudge ordered "end with an entirely empty response — zero
+  // characters", and the model answered with the Chinese set phrase for
+  // "utterly empty" — four characters, four output tokens, the whole final
+  // reply. Every check here was English-only, so nothing saw it and the model
+  // was never told. See CJK_SILENCE_PHRASES and todo-guard.
+  assert.deepEqual(silencePlaceholder('空空如也'), {
+    text: '空空如也',
+    trailing: false
+  })
+  // Stapled under prose, the same second shape the English vocabulary has.
+  assert.deepEqual(
+    silencePlaceholder('Published, verified live, ledgered.\n\n空空如也'),
+    { text: '空空如也', trailing: true },
+    'a CJK stand-in after real prose is the trailing shape'
+  )
+  // Bare, and inside brackets of either width — both reach the user identically.
+  for (const reply of [
+    '无内容',
+    '無內容',
+    '无输出',
+    '没有内容',
+    '无话可说',
+    '保持沉默',
+    '（无输出）',
+    '[无内容]',
+    '【空回复】',
+    '无内容。'
+  ]) {
+    assert.ok(silencePlaceholder(reply), `detects ${reply}`)
+  }
+  console.log('ok: the Chinese stand-in trips, bare and bracketed, alone and after prose')
+}
+
+function testSilencePlaceholderNeverTripsOnChineseContent(): void {
+  // A set phrase inside a sentence is content, exactly as in English.
+  assert.equal(
+    silencePlaceholder('我们的数据库空空如也，需要重新导入数据'),
+    null,
+    'mid-sentence is Chinese, not a faked silence'
+  )
+  assert.equal(silencePlaceholder('The folder was 空空如也 when I checked it.'), null)
+  assert.equal(
+    silencePlaceholder('任务已完成，所有五条推文已发布。'),
+    null,
+    'a real Chinese wrap-up is a reply, not a stand-in'
+  )
+  // Single characters are deliberately off the list, for the same reason
+  // `(none)` is off the English one: each has an ordinary use as content.
+  assert.equal(silencePlaceholder('空'), null)
+  assert.equal(silencePlaceholder('无'), null)
+  // A longer idiom that merely contains a listed phrase is not that phrase.
+  assert.equal(silencePlaceholder('沉默是金，但这次需要说明'), null)
+  console.log('ok: Chinese prose, single characters and longer idioms never trip')
 }
 
 function testSilencePlaceholderNeverTripsOnContent(): void {
@@ -223,8 +309,8 @@ function testSilencePlaceholderSharesTheNoticeSlot(): void {
   assert.ok(drained && drained.includes('SILENCE-PLACEHOLDER'), 'drains through the shared slot')
   assert.equal(drainControlTokenNotice('conv-e'), undefined, 'drain clears')
   armSilencePlaceholderNotice(null, { text: '(no content)', trailing: false })
-  assert.equal(drainControlTokenNotice(null), undefined, 'null conversation id is a no-op')
-  console.log('ok: the silence-placeholder notice rides the same per-conversation slot')
+  assert.ok(drainControlTokenNotice(null), 'an id-less leak still travels')
+  console.log('ok: the silence-placeholder notice rides the same shared slot')
 }
 
 function main(): void {
@@ -232,11 +318,13 @@ function main(): void {
   testObservedLeakShapesTrip()
   testKnownTokenListTrips()
   testNoticeNamesTokenAndDefers()
-  testArmAndDrainPerConversation()
+  testArmAndDrainReachTheModelAnywhere()
   testContentFreeDetectsFakedSilence()
   testContentFreeNeverTripsOnContent()
   testContentFreeNoticeEchoesAndDefers()
   testSilencePlaceholderDetectsTheObservedLeaks()
+  testSilencePlaceholderDetectsTheChineseLeak()
+  testSilencePlaceholderNeverTripsOnChineseContent()
   testSilencePlaceholderNeverTripsOnContent()
   testSilencePlaceholderNoticeSeparatesTheTwoShapes()
   testSilencePlaceholderSharesTheNoticeSlot()
