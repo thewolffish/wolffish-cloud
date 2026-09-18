@@ -3715,21 +3715,21 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 <Edit02Icon size={16} />
               </button>
             )}
-            {/* Hidden outright when the chat has nothing printable — an
-                always-present-but-disabled download reads as broken. */}
-            {canExportPdf && (
+            {/* No button when there is nothing printable, and none while it
+                couldn't act — the turn running, the export in flight — since
+                a greyed control in the row reads as broken. Both states are
+                transient; the button returns the moment they end. */}
+            {canExportPdf && !busy && !exportingPdf && (
               <button
                 type="button"
                 onClick={() => void exportChatPdf()}
-                disabled={busy || exportingPdf}
                 title={t('chat.downloadPdf')}
                 aria-label={t('chat.downloadPdf')}
                 className={cn(
                   'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-                  'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
+                  'text-muted hover:text-fg hover:bg-border/40',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                  !busy && !exportingPdf && 'cursor-pointer'
+                  'cursor-pointer'
                 )}
               >
                 <Download01Icon size={16} />
@@ -3779,31 +3779,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Mic01Icon size={16} />
             </button>
-            {/* Mid-turn the composer keeps its send arrow — simply the send
-                again (it reaches the running turn; send() branches on
-                `busy`) — while the red submit button next to it stays the
-                Stop. Enter matches the arrow. */}
-            {recPhase === 'idle' && busy && (
-              <button
-                type="button"
-                onClick={() => void send()}
-                disabled={
-                  !hasAnyModel ||
-                  staging ||
-                  (draft.trim().length === 0 && pendingAttachments.length === 0)
-                }
-                title={staging ? t('chat.upload.copyingWait') : t('chat.send')}
-                aria-label={t('chat.send')}
-                className={cn(
-                  'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                  'bg-primary text-primary-fg enabled:hover:brightness-110'
-                )}
-              >
-                <ArrowUp02Icon size={16} />
-              </button>
-            )}
+            {/* Mid-turn the send arrow joins the row only once there is
+                something to send — an empty draft beside a running turn
+                shows nothing but Stop, and the arrow appearing as you type
+                is the sign the message can go through to the running turn
+                (send() branches on `busy`). Enter matches the arrow. */}
+            {recPhase === 'idle' &&
+              busy &&
+              (draft.trim().length > 0 || pendingAttachments.length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => void send()}
+                  disabled={!hasAnyModel || staging}
+                  title={staging ? t('chat.upload.copyingWait') : t('chat.send')}
+                  aria-label={t('chat.send')}
+                  className={cn(
+                    'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    'bg-primary text-primary-fg enabled:hover:brightness-110'
+                  )}
+                >
+                  <ArrowUp02Icon size={16} />
+                </button>
+              )}
             {/* The recorder hides Send (the review row has its own) but never
                 Stop: a turn you can't stop while you happen to be recording
                 would be a trap. */}
