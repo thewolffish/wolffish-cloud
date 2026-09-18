@@ -1,6 +1,6 @@
 {
   "name": "wolffish-cloud-extension",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Browser capability for the Wolffish AI agent",
   "license": "MIT",
   "author": "Younes Alturkey",
@@ -36,6 +36,7 @@
     "copy-env": "bash bash-scripts/copy_env.sh",
     "set-global-env": "bash bash-scripts/set_global_env.sh",
     "release": "bash bash-scripts/release.sh",
+    "bundle": "bash bash-scripts/bundle.sh",
     "module-manager": "pnpm -F module-manager start",
     "postinstall": "pnpm copy-env"
   },

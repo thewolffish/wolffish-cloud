@@ -1,6 +1,6 @@
 {
   "name": "@extension/shared",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Wolffish extension - shared code",
   "type": "module",
   "private": true,

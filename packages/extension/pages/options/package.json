@@ -1,6 +1,6 @@
 {
   "name": "@wolffish/options",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Wolffish extension - settings page",
   "type": "module",
   "private": true,
