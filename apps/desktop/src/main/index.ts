@@ -459,7 +459,12 @@ turnRunner.onInterjection((ev) => {
  * always.
  */
 const interjectionDeps: ReconcilerDeps = {
-  isConversationActive: (id) => turnRunner.isConversationActive(id),
+  // Autonomous runs count as live here too: they hold the inbox through the
+  // off-lane bridge above, so a message parked against one is waiting to be
+  // read, not stranded — and the reconciler must not hold or re-send it out
+  // from under a run that is still going.
+  isConversationActive: (id) =>
+    turnRunner.isConversationActive(id) || agent.isAutonomousRunActive(id),
   liveInboxIds: (id) => turnRunner.liveInterjectionIds(id),
   log: (line) => console.log(`[interjections] ${line}`)
 }
@@ -1070,6 +1075,17 @@ cliChannel.setMessageMirror(mirrorMessageToRenderer)
 // — and this is what makes that feed fill in live instead of sitting on the
 // prompt until the run ends.
 agent.setAutonomousMessageMirror(mirrorMessageToRenderer)
+// And they take mid-turn messages the same way. An automation or heartbeat job
+// runs unattended for minutes — it is the run a user most often wants to steer
+// — but it calls agent.respond() directly instead of riding a TurnRunner lane,
+// so the inbox refused every message aimed at it and the sending window was
+// left holding words it could not show. The bridge lends those runs the
+// runner's own inbox: same accept, same park, same sweep, same reconciler.
+agent.setAutonomousInterjections({
+  open: (conversationId) => turnRunner.openOffLaneRun(conversationId),
+  take: (conversationId, turnId) => turnRunner.drainInterjections(conversationId, turnId),
+  close: (conversationId, reason) => turnRunner.closeOffLaneRun(conversationId, reason)
+})
 // Phone-run turns mirror INTO the renderer — the last quarter of the mirror
 // matrix, and the one that was missing: a turn started on the phone streamed
 // to the phone alone, so the desktop's own window showed a thinking shimmer

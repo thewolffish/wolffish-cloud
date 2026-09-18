@@ -210,6 +210,116 @@ async function run(): Promise<void> {
   await fourth.done
   await waitFor(() => !runner.isConversationActive('conv_c'))
 
+  // ── 7. Off-lane runs: automations, procedures, heartbeat jobs ───────────
+  // These call agent.respond() directly instead of riding a lane, so nothing
+  // registered them as live and interject() refused every message aimed at
+  // them — while the sending window read `busy` and had already put a bubble
+  // up. The bridge (Agent.setAutonomousInterjections, wired in main to these
+  // three calls) lends them this same inbox.
+  ok(
+    'off-lane: idle conversation still says no_live_turn',
+    runner.interject('conv_d', item('m6', 'before the run')).status === 'no_live_turn'
+  )
+  runner.openOffLaneRun('conv_d')
+  ok('off-lane: registered', runner.hasOffLaneRun('conv_d'))
+  ok(
+    'off-lane: NOT reported as a lane turn',
+    !runner.isConversationActive('conv_d'),
+    'an off-lane run must not make a queued lane turn wait behind it'
+  )
+  ok(
+    'off-lane: accepts a mid-turn message',
+    runner.interject('conv_d', item('m7', 'that post text is wrong')).status === 'pending'
+  )
+  ok(
+    'off-lane: pending event',
+    events.at(-1)?.state === 'pending' && events.at(-1)?.messageId === 'm7'
+  )
+  const autonomousDrain = runner.drainInterjections('conv_d', 'turn_autonomous')
+  ok(
+    'off-lane: the run drains it',
+    autonomousDrain.length === 1 && autonomousDrain[0].messageId === 'm7'
+  )
+  ok('off-lane: delivered event', events.at(-1)?.state === 'delivered')
+
+  // Nested/concurrent runs on one conversation: the count, not a flag.
+  runner.openOffLaneRun('conv_d')
+  runner.closeOffLaneRun('conv_d', 'turn_ended')
+  ok('off-lane: still open while a second run holds it', runner.hasOffLaneRun('conv_d'))
+  ok(
+    'off-lane: still accepting',
+    runner.interject('conv_d', item('m8', 'and one more')).status === 'pending'
+  )
+
+  // The last close sweeps what the run never read, exactly as the lane tail does.
+  runner.closeOffLaneRun('conv_d', 'turn_ended')
+  ok('off-lane: closed', !runner.hasOffLaneRun('conv_d'))
+  ok(
+    'off-lane: unread message swept back to its sender',
+    events.at(-1)?.state === 'withdrawn' &&
+      events.at(-1)?.messageId === 'm8' &&
+      events.at(-1)?.reason === 'turn_ended'
+  )
+  ok('off-lane: inbox emptied', runner.pendingInterjections('conv_d').length === 0)
+  ok(
+    'off-lane: refuses again once the run is over',
+    runner.interject('conv_d', item('m9', 'too late')).status === 'no_live_turn'
+  )
+
+  // A Stop hands the words back for the composer to restore, not for a re-send.
+  runner.openOffLaneRun('conv_e')
+  runner.interject('conv_e', item('m10', 'stop that'))
+  runner.closeOffLaneRun('conv_e', 'canceled')
+  ok(
+    'off-lane: a stopped run returns its messages with reason canceled',
+    events.at(-1)?.state === 'withdrawn' &&
+      events.at(-1)?.messageId === 'm10' &&
+      events.at(-1)?.reason === 'canceled'
+  )
+
+  // A lane turn on the same conversation owns the inbox: an off-lane close
+  // must not sweep messages out from under it.
+  gate = deferred<void>()
+  started = deferred<void>()
+  const fifth = send('conv_f', 'lane turn')
+  await started.promise
+  runner.openOffLaneRun('conv_f')
+  runner.interject('conv_f', item('m11', 'for the lane turn'))
+  const before = events.length
+  runner.closeOffLaneRun('conv_f', 'turn_ended')
+  ok(
+    'off-lane: close does not sweep while a lane turn is live',
+    events.length === before && runner.pendingInterjections('conv_f').length === 1
+  )
+  const laneTook = drain!()
+  ok('off-lane: the lane turn reads it', laneTook.length === 1 && laneTook[0].messageId === 'm11')
+  gate.resolve()
+  await fifth.done
+  await waitFor(() => !runner.isConversationActive('conv_f'))
+
+  // And the mirror of it: a channel message can open a lane turn beside a
+  // live automation, and THAT turn ending must not sweep the automation's
+  // inbox out from under a run that is still going.
+  gate = deferred<void>()
+  started = deferred<void>()
+  runner.openOffLaneRun('conv_g')
+  const sixth = send('conv_g', 'a telegram message during the automation')
+  await started.promise
+  runner.interject('conv_g', item('m12', 'for the automation'))
+  gate.resolve()
+  await sixth.done
+  await waitFor(() => !runner.isConversationActive('conv_g'))
+  ok(
+    'off-lane: a lane turn ending does not sweep a live off-lane run’s inbox',
+    !events.some((e) => e.messageId === 'm12' && e.state === 'withdrawn') &&
+      runner.pendingInterjections('conv_g').length === 1
+  )
+  ok(
+    'off-lane: the run can still read it after the lane turn is gone',
+    runner.drainInterjections('conv_g', 'turn_autonomous_2').length === 1
+  )
+  runner.closeOffLaneRun('conv_g', 'turn_ended')
+
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process.exit(1)
 }

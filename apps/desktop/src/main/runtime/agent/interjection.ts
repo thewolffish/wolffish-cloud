@@ -95,6 +95,26 @@ export type InterjectVerdict = { status: InterjectResult['status'] }
 export type InterjectionWithdrawReason = 'user' | 'canceled' | 'turn_ended' | 'error'
 
 /**
+ * How a run that does NOT ride a TurnRunner lane borrows the inbox.
+ *
+ * Automations, procedures and heartbeat jobs call `agent.respond()` directly
+ * (Agent.processAutonomous), so nothing registered them as live and
+ * `interject()` refused every message aimed at them — the one kind of run a
+ * user most wants to steer, since it works unattended for minutes at a time.
+ * The bridge is the three calls that make such a run an ordinary inbox
+ * citizen; main implements it against the TurnRunner, because the runner owns
+ * the Agent and this module may not depend on the channel layer.
+ */
+export type AutonomousInterjectionBridge = {
+  /** The run owns this conversation now — accept messages for it. */
+  open(conversationId: string): void
+  /** The agent loop's stop-point drain, identical to a lane turn's. */
+  take(conversationId: string, turnId: string): Interjection[]
+  /** The run is over: sweep whatever it never read back to its senders. */
+  close(conversationId: string, reason: InterjectionWithdrawReason): void
+}
+
+/**
  * Lifecycle of one interjection, broadcast to every surface watching the
  * conversation (its own channel, NOT chat:turnState — the renderer maps any
  * unknown turn phase to "failed").

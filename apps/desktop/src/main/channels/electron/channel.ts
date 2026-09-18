@@ -498,7 +498,9 @@ export class ElectronChannel {
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         // A countdown card flipping should not wait out the text throttle.
-        scheduleMirror(segment.kind === 'countdown' || segment.kind === 'wait')
+        scheduleMirror(
+          segment.kind === 'countdown' || segment.kind === 'wait' || segment.kind === 'user_message'
+        )
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a workflow snapshot, the
         // turn's end — is the slow, expensive part of a run and takes the

@@ -557,7 +557,9 @@ export class CliChannel {
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
-        scheduleMirror(segment.kind === 'countdown' || segment.kind === 'wait')
+        scheduleMirror(
+          segment.kind === 'countdown' || segment.kind === 'wait' || segment.kind === 'user_message'
+        )
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {

@@ -29,7 +29,9 @@ import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty
 import {
   INTERJECTION_NOTICE,
   interjectionToHistoryMessage,
-  type Interjection
+  type AutonomousInterjectionBridge,
+  type Interjection,
+  type InterjectionWithdrawReason
 } from '@main/runtime/agent/interjection'
 import {
   INDICATOR_OFF_TOOLS,
@@ -509,6 +511,15 @@ export class Agent {
   // open viewer watches it grow and the end-of-turn save replaces it in place.
   private autonomousMirror: MirrorMessageListener | null = null
 
+  // Mid-turn messages for autonomous runs. These runs call respond() directly
+  // rather than going through the TurnRunner, so they had no inbox at all: a
+  // message typed into an automation the user was watching was refused with
+  // `no_live_turn`, the composer's optimistic bubble vanished, and the words
+  // sat invisible until the run ended and the window re-sent them as a fresh
+  // turn. The bridge borrows the runner's inbox — main wires it, because the
+  // runner owns the Agent and not the other way round.
+  private autonomousInterjections: AutonomousInterjectionBridge | null = null
+
   // Autonomous runs in flight, keyed by conversation id. They never pass
   // through the TurnRunner, so this is their half of the two facts an outside
   // observer needs: the cold-start snapshot (chat:activeRuns — a window opened
@@ -684,6 +695,15 @@ export class Agent {
   /** Wire the autonomous-run live message mirror (renderer + phone). */
   setAutonomousMessageMirror(listener: MirrorMessageListener | null): void {
     this.autonomousMirror = listener
+  }
+
+  /**
+   * Wire the autonomous-run mid-turn message inbox (main points it at the
+   * TurnRunner's). Unset, autonomous runs simply cannot be steered — which is
+   * exactly the behaviour this replaces, so leaving it null is safe.
+   */
+  setAutonomousInterjections(bridge: AutonomousInterjectionBridge | null): void {
+    this.autonomousInterjections = bridge
   }
 
   /**
@@ -2610,6 +2630,16 @@ export class Agent {
       channel: conv.channel ?? 'heartbeat',
       title: conv.title
     })
+    // Mid-turn messages for this run. Opened at the try below — everything
+    // between here and there is straight-line setup with no await in it, so
+    // no message can arrive in the gap, and opening inside the try is what
+    // pairs it with the finally that closes it. An inbox left open with
+    // nothing to drain it would accept the user's words and hold them
+    // forever, which is the one outcome this subsystem exists to prevent.
+    const interjections = this.autonomousInterjections
+    // Why whatever the run never read goes back to its sender. Set on the
+    // failure paths; a Stop is read off the controller at close time.
+    let sweepReason: InterjectionWithdrawReason = 'turn_ended'
     emitLifecycle('started')
 
     const segments: import('@main/runtime/broca').Segment[] = []
@@ -2713,12 +2743,19 @@ export class Agent {
      * Idempotent — the `finally` below calls it as a backstop.
      */
     const endRun = (): void => {
+      if (finished) return
       finished = true
       if (mirrorTimer) {
         clearTimeout(mirrorTimer)
         mirrorTimer = null
       }
       this.liveAutonomousRuns.delete(conv.id)
+      // Closes the inbox and sweeps anything the run never got to back to
+      // whoever sent it — the same contract the lane tail gives a chat turn.
+      // Guarded by `finished` above so the catch + finally pair cannot sweep
+      // twice (the second pass would find an empty inbox, but the reason is
+      // only right the first time).
+      interjections?.close(conv.id, controller.signal.aborted ? 'canceled' : sweepReason)
     }
 
     const sink: SegmentSink = (seg) => {
@@ -2733,7 +2770,7 @@ export class Agent {
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
       // Countdown snapshots flush immediately — a card counting down, or
       // flipping to fired/aborted, should not wait out the text throttle.
-      scheduleMirror(seg.kind === 'countdown' || seg.kind === 'wait')
+      scheduleMirror(seg.kind === 'countdown' || seg.kind === 'wait' || seg.kind === 'user_message')
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {
@@ -2829,6 +2866,9 @@ export class Agent {
     // from flipping the app-wide visible-conversation pointer mid-chat.
     let result: AgentTurnResult
     try {
+      // From here the conversation takes mid-turn messages, and endRun() in
+      // the finally below is what gives back whatever the run never read.
+      interjections?.open(conv.id)
       result = await turnScope.run({ turnId, conversationId: conv.id, autonomous: true }, () =>
         this.respond({
           history: [{ role: 'user', content: opts.instruction }],
@@ -2847,10 +2887,17 @@ export class Agent {
           // the one that actually owns these files, which the run's channel
           // already tells us.
           contextFilesOwner: opts.channel === 'procedure' ? 'procedure' : 'automation',
-          workingFolders: opts.workingFolders
+          workingFolders: opts.workingFolders,
+          // Mid-turn messages reach an unattended run exactly as they reach a
+          // chat turn: the loop drains this at its two stop points and each
+          // message becomes a real user entry plus a `user_message` segment.
+          ...(interjections
+            ? { takeInterjections: (): Interjection[] => interjections.take(conv.id, turnId) }
+            : {})
         })
       )
     } catch (err) {
+      sweepReason = 'error'
       endRun()
       flushText()
       await persistRun('end_turn')

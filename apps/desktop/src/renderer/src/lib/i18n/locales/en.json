@@ -1265,6 +1265,7 @@
     "attachFile": "Attach file",
     "interject": {
       "pending": "Read at the next step",
+      "holding": "Waiting for the current turn to finish",
       "withdraw": "Take this message back",
       "placeholder": "Message Wolffish while it works…"
     },

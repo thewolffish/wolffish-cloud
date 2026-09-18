@@ -221,6 +221,20 @@ export class TurnRunner {
   /** Mid-turn user messages parked per conversation — see interject(). */
   private readonly inboxes = new Map<string, Inbox>()
   /**
+   * Conversations owned by a run that never enters a lane — an automation,
+   * procedure or heartbeat job (Agent.processAutonomous calls agent.respond
+   * directly, so it has no entry in `activeTurns`, `chains` or `liveRuns`).
+   *
+   * They still need the inbox: an autonomous run is exactly the kind the user
+   * watches and wants to steer ("that post text is wrong, fix it before
+   * posting"). Without this, interject() answered `no_live_turn` for every
+   * one of them while the window read `busy` — so the composer's optimistic
+   * bubble went up and came straight back down, and the words waited,
+   * invisible, for the run to end. Counted, not a flag, so two runs on one
+   * conversation cannot close each other's inbox.
+   */
+  private readonly offLaneRuns = new Map<string, number>()
+  /**
    * Deadline (ms) for the title-first LLM call. Titling is awaited BEFORE
    * agent.respond, so this is dead air on the front of a new conversation — a
    * hung or very slow provider must never wedge the turn. On expiry titling
@@ -294,14 +308,83 @@ export class TurnRunner {
   }
 
   /**
+   * Register a run that owns this conversation without riding a lane — an
+   * automation, procedure or heartbeat job. It buys exactly two things: the
+   * inbox accepts mid-turn messages for it (see interject), and whatever it
+   * never read is swept back to its senders when it closes.
+   *
+   * Deliberately NOT folded into `isConversationActive`: that count backs the
+   * quit-drain (activeTurnCount), and an autonomous run is neither a lane turn
+   * nor something a queued lane turn should wait behind. The caller pairs this
+   * with closeOffLaneRun in a finally — Agent.processAutonomous does it
+   * through the bridge main wires.
+   */
+  openOffLaneRun(conversationId: string): void {
+    this.offLaneRuns.set(conversationId, (this.offLaneRuns.get(conversationId) ?? 0) + 1)
+  }
+
+  /**
+   * The counterpart. The LAST run to close sweeps the inbox, exactly as the
+   * lane tail does for a lane turn: anything the run never got to goes back
+   * to its sender with the reason, and the park keeps it either way.
+   */
+  closeOffLaneRun(conversationId: string, reason: InterjectionWithdrawReason): void {
+    const remaining = (this.offLaneRuns.get(conversationId) ?? 1) - 1
+    if (remaining > 0) {
+      this.offLaneRuns.set(conversationId, remaining)
+      return
+    }
+    this.offLaneRuns.delete(conversationId)
+    // Only if no lane turn is running on the same conversation — that one owns
+    // the inbox now and drains it before its first call.
+    if (this.isConversationActive(conversationId)) return
+    this.sweepInterjections(conversationId, reason)
+  }
+
+  /** True while an off-lane run owns this conversation. */
+  hasOffLaneRun(conversationId: string): boolean {
+    return this.offLaneRuns.has(conversationId)
+  }
+
+  /**
+   * Would interject() take a message for this conversation right now — a lane
+   * turn OR an off-lane run is there to read it?
+   *
+   * The one definition OF THIS QUESTION. A surface that pre-checks before
+   * doing expensive work (the phone transcribes a voice note before handing
+   * it over, so it asks first) must ask exactly what interject() asks, or the
+   * two drift and the pre-check silently refuses messages the inbox would
+   * have taken — which is how automations lost every mid-turn message aimed
+   * at them.
+   *
+   * NOT a replacement for `isConversationActive`, which backs the quit-drain
+   * and answers a different question. (The electron and CLI channels keep
+   * their own `isConversationActive` over their own `byConversation` maps —
+   * those are untouched by this.)
+   */
+  canInterject(conversationId: string): boolean {
+    return this.isConversationActive(conversationId) || this.hasOffLaneRun(conversationId)
+  }
+
+  /**
+   * The drain an off-lane run's agent loop calls at its stop points — the same
+   * one a lane turn gets threaded as AgentTurnOptions.takeInterjections, so a
+   * message reaches an automation by exactly the path it reaches a chat turn.
+   */
+  drainInterjections(conversationId: string, turnId: string): Interjection[] {
+    return this.takeInterjections(conversationId, turnId)
+  }
+
+  /**
    * Hand a user message to the conversation's RUNNING turn. Accepted whenever
    * a turn is registered on the lane — including the window between send()
    * and the first model call, and a turn still queued behind its
-   * predecessor, since the loop drains the inbox before its first call too.
-   * `no_live_turn` means exactly that: the caller starts a normal turn.
+   * predecessor, since the loop drains the inbox before its first call too —
+   * or whenever an off-lane run (an automation, procedure or heartbeat job)
+   * owns it. `no_live_turn` means exactly that: the caller starts a normal turn.
    */
   interject(conversationId: string, item: Interjection): InterjectResult {
-    if (!this.isConversationActive(conversationId)) return { status: 'no_live_turn' }
+    if (!this.canInterject(conversationId)) return { status: 'no_live_turn' }
     const inbox = this.inboxes.get(conversationId)
     if (inbox) inbox.push(item)
     else this.inboxes.set(conversationId, [item])
@@ -781,7 +864,15 @@ export class TurnRunner {
         // message accepted in that window sat unread until the next turn.
         // Now everything accepted up to the decrement is swept with it, and
         // anything after is refused with no_live_turn.
-        if (remaining <= 0) this.sweepInterjections(conversationId, sweepReason)
+        //
+        // The off-lane guard is the mirror of closeOffLaneRun's lane guard: an
+        // automation can own this conversation while another surface opens a
+        // lane turn beside it, and the lane turn ending must not sweep the
+        // automation's inbox out from under a run that is still going and will
+        // still drain it.
+        if (remaining <= 0 && !this.hasOffLaneRun(conversationId)) {
+          this.sweepInterjections(conversationId, sweepReason)
+        }
       }
     })
 

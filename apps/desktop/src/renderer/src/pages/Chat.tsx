@@ -161,6 +161,17 @@ type PendingInterjection = {
   voiceLang?: string
   /** A voice take whose transcript is still coming back — not handed to the runner yet. */
   transcribing?: boolean
+  /**
+   * Waiting in `heldMessagesRef` for the situation to settle, not in the
+   * runner's inbox: the runner bounced it in the sliver where the turn had
+   * just closed while this window still read busy, and it goes out again on
+   * the busy→idle transition. The row stays up throughout because the
+   * composer was cleared the moment the user pressed Enter, so this is the
+   * only copy of their words on screen — without it they watch a bubble
+   * appear and vanish with nothing to show for it. The X takes it back
+   * locally (there is nothing at the runner to withdraw).
+   */
+  holding?: boolean
   mine: boolean
 }
 
@@ -180,6 +191,13 @@ type HeldMessage =
       attachments: MessageAttachment[]
       voicePrompt?: boolean
       voiceLang?: string
+      /**
+       * Set once this message has been shown as a pending row (a bounce that
+       * is waiting for the busy→idle retry). Carried so the retry reuses the
+       * SAME id: the row retires on the delivered `user_message` segment,
+       * which can only match if the id survives the round trip.
+       */
+      messageId?: string
     }
   | { kind: 'voice'; blob: Blob; blobUrl: string | null }
 
@@ -2084,7 +2102,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       setPendingInterjections((prev) =>
         prev.some((p) => p.messageId === messageId)
           ? prev.map((p) =>
-              p.messageId === messageId ? { ...p, ...item, transcribing: false } : p
+              p.messageId === messageId ? { ...p, ...item, transcribing: false, holding: false } : p
             )
           : [...prev, { conversationId, messageId, ...item, mine: true }]
       )
@@ -2711,17 +2729,57 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             await interjectVoiceBlob(item.blob, item.blobUrl, conversationId)
             continue
           }
-          const accepted = await interjectNow(conversationId, item)
+          // Minted here rather than inside interjectNow so a bounce can keep
+          // the row it just put up and the retry can reuse the same id.
+          const messageId = item.messageId ?? cryptoId()
+          const accepted = await interjectNow(conversationId, item, messageId)
           if (accepted) continue
           // Bounced: the turn closed a moment ago. If this window still
           // reads busy, the idle transition is imminent — wait for it.
           if (busyRef.current || sendingRef.current) {
-            heldMessagesRef.current.unshift(item)
+            heldMessagesRef.current.unshift({ ...item, messageId })
+            // interjectNow took its optimistic row down on the bounce, and
+            // the composer was emptied the moment this was submitted — so
+            // without putting a row back the user's words are on no screen
+            // at all until the retry lands.
+            //
+            // EVERY queued text message gets one, not just the one that
+            // bounced: this returns without draining the rest, and each of
+            // them emptied the composer when it was submitted too. Ids are
+            // minted and written back here so the retry reuses them and the
+            // rows retire against their own delivered segments.
+            const rows: PendingInterjection[] = []
+            heldMessagesRef.current = heldMessagesRef.current.map((held) => {
+              if (held.kind !== 'text') return held
+              const id = held.messageId ?? cryptoId()
+              rows.push({
+                conversationId,
+                messageId: id,
+                text: held.text,
+                attachments: held.attachments,
+                ...(held.voicePrompt ? { voicePrompt: true } : {}),
+                ...(held.voiceLang ? { voiceLang: held.voiceLang } : {}),
+                holding: true,
+                mine: true
+              })
+              return held.messageId ? held : { ...held, messageId: id }
+            })
+            setPendingInterjections((prev) => {
+              const known = new Set(prev.map((p) => p.messageId))
+              const fresh = rows.filter((r) => !known.has(r.messageId))
+              return fresh.length === 0 ? prev : [...prev, ...fresh]
+            })
             return
           }
         }
-        // No live turn: this message is the next turn. Release the flag
-        // first — that send's finally re-enters here for the rest.
+        // No live turn: this message is the next turn — its own bubble is
+        // about to join the feed, so any held row standing in for it goes.
+        if (item.kind === 'text' && item.messageId) {
+          const heldId = item.messageId
+          setPendingInterjections((prev) => prev.filter((p) => p.messageId !== heldId))
+        }
+        // Release the flag first — that send's finally re-enters here for
+        // the rest.
         flushingHeldRef.current = false
         if (item.kind === 'voice') await sendVoiceBlob(item.blob, item.blobUrl)
         else {
@@ -2795,6 +2853,26 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // Not at the runner yet — the transcript is still coming back.
         abortedVoiceInterjectionsRef.current.add(item.messageId)
         setPendingInterjections((prev) => prev.filter((p) => p.messageId !== item.messageId))
+        return
+      }
+      if (item.holding) {
+        // Also not at the runner: it is waiting in heldMessagesRef for the
+        // busy→idle retry, so taking it back means dropping it there and
+        // handing the words to the composer — the same place a withdraw
+        // puts them once the runner does hold the message.
+        heldMessagesRef.current = heldMessagesRef.current.filter(
+          (h) => h.kind === 'voice' || h.messageId !== item.messageId
+        )
+        setPendingInterjections((prev) => prev.filter((p) => p.messageId !== item.messageId))
+        if (item.text.length > 0) {
+          setDraft((prev) => (prev.trim().length > 0 ? `${prev}\n${item.text}` : item.text))
+        }
+        if (!item.voicePrompt && item.attachments.length > 0) {
+          setPendingAttachments((prev) => [
+            ...prev,
+            ...item.attachments.filter((a) => !prev.some((b) => b.filePath === a.filePath))
+          ])
+        }
         return
       }
       let taken = false
@@ -4856,7 +4934,11 @@ function PendingInterjectionBubble({
       voicePrompt={item.voicePrompt}
       footer={
         <div className="text-muted flex items-center gap-1.5 text-xs">
-          <span>{t('chat.interject.pending')}</span>
+          {/* A held row is NOT at the runner — promising it will be read at
+              the next step would be a promise nothing in this process has
+              made. It says what is actually true: it goes out when the turn
+              in front of it finishes. */}
+          <span>{t(item.holding ? 'chat.interject.holding' : 'chat.interject.pending')}</span>
           <button
             type="button"
             onClick={onWithdraw}
