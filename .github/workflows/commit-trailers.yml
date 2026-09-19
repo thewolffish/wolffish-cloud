@@ -1,0 +1,59 @@
+name: commit-trailers
+
+# Every commit this repo receives must credit the agent identity:
+#   Co-Authored-By: Wolffish <noreply@wolffi.sh>
+# Local commits get it from .githooks/commit-msg; this is the backstop for
+# commits made where the hook was not installed (web UI, fresh clone,
+# --no-verify).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  wolffish-trailer:
+    name: every commit credits Wolffish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check trailers
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            commits=$(git rev-list --no-merges "$PR_BASE..$PR_HEAD")
+          else
+            case "$BEFORE" in
+              ""|0000000000000000000000000000000000000000)
+                commits=$(git rev-list --no-merges --max-count=1 "$AFTER") ;;
+              *)
+                commits=$(git rev-list --no-merges "$BEFORE..$AFTER" 2>/dev/null \
+                  || git rev-list --no-merges --max-count=1 "$AFTER") ;;
+            esac
+          fi
+
+          bad=0
+          for sha in $commits; do
+            if ! git show -s --format='%B' "$sha" | grep -qiE '^co-authored-by:.*<noreply@wolffi\.sh>'; then
+              echo "::error::$sha missing trailer: Co-Authored-By: Wolffish <noreply@wolffi.sh>"
+              bad=1
+            fi
+          done
+
+          if [ "$bad" -ne 0 ]; then
+            echo
+            echo "Fix: install the hook (git config core.hooksPath .githooks) so the trailer"
+            echo "is added automatically, then reword the commit, or amend it with:"
+            echo "  git commit --amend --trailer 'Co-Authored-By: Wolffish <noreply@wolffi.sh>'"
+            exit 1
+          fi
+          echo "All checked commits credit Wolffish."

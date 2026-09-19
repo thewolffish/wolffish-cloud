@@ -3,8 +3,8 @@
  * files in, derived from the persisted segments alone. Pins the rules the
  * strip relies on — only successful file-changing calls count, the diff's
  * absolute path wins over the call's argument, a relative argument resolves
- * against the first working folder, and each touched folder collapses to its
- * top-level parent under the working folder that contains it.
+ * against the first working folder, and each touched folder collapses to the
+ * project folder whose tree its path opens.
  */
 import type { Segment } from '@preload/index'
 import {
@@ -103,6 +103,60 @@ function main(): void {
   ok(
     'no working folder: a relative path cannot resolve and is skipped',
     collectTouchedFolders(messages, []).every((f) => f.path.startsWith('/'))
+  )
+  // The case that reached a user: no working folder, absolute paths (every
+  // tool result carries one, so a relative argument resolves by the diff).
+  // Nothing to collapse against must still collapse, or the strip shows the
+  // leaf of every nested path — the chip that read `workflows` for
+  // `wolffish-app/.github/workflows/commit-trailers.yml`.
+  const absolute = [
+    msg([
+      call('a', 'file_write', { path: '/repo/app/.github/workflows/ci.yml' }),
+      result('a', 'success', '/repo/app/.github/workflows/ci.yml'),
+      call('b', 'file_write', { path: '/repo/app/src/lib/deep/nested/x.ts' }),
+      result('b', 'success', '/repo/app/src/lib/deep/nested/x.ts'),
+      call('c', 'file_write', { path: '/repo/app/src/lib/other/y.ts' }),
+      result('c', 'success', '/repo/app/src/lib/other/y.ts')
+    ])
+  ]
+  ok(
+    'no working folder: every path in one project collapses to that project',
+    JSON.stringify(collectTouchedFolders(absolute, [])) ===
+      JSON.stringify([{ path: '/repo/app', label: 'app', files: 3 }]),
+    collectTouchedFolders(absolute, [])
+  )
+  // Two projects whose trees share the same shape — the case a user caught,
+  // where `…/wolffish-app/src/renderer/src/…` and `…/wolffish-cloud/apps/
+  // desktop/src/renderer/src/…` each collapsed to their second `src` and put
+  // two chips both named `src` on the strip. The leftmost boundary keeps each
+  // project whole: `wolffish-app` and `desktop` (`apps` is a container, not a
+  // boundary).
+  const twins = [
+    msg([
+      call('p', 'file_write', { path: '/repo/wolffish-app/src/renderer/src/pages/Chat.tsx' }),
+      result('p', 'success', '/repo/wolffish-app/src/renderer/src/pages/Chat.tsx'),
+      call('q', 'file_write', {
+        path: '/repo/wolffish-cloud/apps/desktop/src/renderer/src/pages/Chat.tsx'
+      }),
+      result('q', 'success', '/repo/wolffish-cloud/apps/desktop/src/renderer/src/pages/Chat.tsx'),
+      call('r', 'file_write', {
+        path: '/repo/wolffish-cloud/apps/desktop/src/main/runtime/__tests__/x.test.ts'
+      }),
+      result(
+        'r',
+        'success',
+        '/repo/wolffish-cloud/apps/desktop/src/main/runtime/__tests__/x.test.ts'
+      )
+    ])
+  ]
+  ok(
+    'no working folder: one chip per project, never two chips named `src`',
+    JSON.stringify(collectTouchedFolders(twins, [])) ===
+      JSON.stringify([
+        { path: '/repo/wolffish-app', label: 'wolffish-app', files: 1 },
+        { path: '/repo/wolffish-cloud/apps/desktop', label: 'desktop', files: 2 }
+      ]),
+    collectTouchedFolders(twins, [])
   )
   ok(
     'the longest containing working folder labels a nested folder',

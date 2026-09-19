@@ -8,11 +8,14 @@ import type { Segment } from '@preload/index'
  *
  * A folder counts as touched when a file-changing tool call (file_edit,
  * file_write, file_patch) completed successfully inside it. Every touched
- * folder collapses to its parent folder under the working folder — the first
- * path segment — so the chips name the top-level folders a run worked in,
- * never a chain of nested ones. The path comes from the result's diff when
- * the tool recorded one (already absolute — the plugin resolved it against
- * the working folder), and from the call's own `path` argument otherwise,
+ * folder collapses to the one folder the chips name — the first path segment
+ * under its working folder, or, with no working folder to read the path
+ * against, the project folder its first source root or dot-directory opens
+ * (projectRootCut) — so a run never costs the strip a chain of nested
+ * directories, and two projects whose trees share a shape never leave two
+ * chips that read the same. The path comes from the result's diff when the
+ * tool recorded one (already absolute — the plugin resolved it against the
+ * working folder), and from the call's own `path` argument otherwise,
  * resolved against the first working folder when relative. Failed and denied
  * calls changed nothing and are skipped.
  */
@@ -21,8 +24,8 @@ export type TouchedFolder = {
   /** Absolute directory path — what opens when the chip is clicked. */
   path: string
   /** Short display name: the top-level directory under its working folder,
-   *  or the folder's own name for the working folder root and paths outside
-   *  every working folder. */
+   *  the working folder's own name for its root, and the project folder for
+   *  paths outside every working folder. */
   label: string
   /** Distinct files changed anywhere under this folder. */
   files: number
@@ -86,24 +89,63 @@ function labelFor(dir: string, folders: string[]): string {
     const rel = dir.slice(root.length).replace(/^\//, '')
     return rel || basename(root)
   }
+  // Outside every working folder the chip is the project folder itself, so its
+  // own name is the label.
   return basename(dir)
 }
 
 /**
- * The folder a changed file is charged to: the file's directory collapsed to
- * the first path segment under its working folder, so nested folders never
- * earn chips of their own. Files directly in the working folder collapse to
- * the working folder itself; paths outside every working folder keep their
- * own directory.
+ * Where the project folder ends for a path with no working folder to read it
+ * against: the index of the first segment that opens a project's tree — a
+ * source root (`src`, `lib`, `test`, …) or a repo-admin dot-directory
+ * (`.github`, `.githooks`, …). Scanning left to right takes the OUTERMOST
+ * boundary, which is what keeps the collapse at the project level: scanning
+ * inward finds the second `src` of `…/src/renderer/src/pages` first and
+ * leaves a chip named `src` for every project shaped that way. Containers
+ * (`apps`, `pages`, `packages`) are not boundaries — they carry named things
+ * — so `…/wolffish-cloud/apps/desktop/src/main/…` reads as `desktop`, the app
+ * the path belongs to. Returns -1 when the path carries no boundary.
+ */
+const BOUNDARY_RE = /^(src|lib|test|tests|docs|doc|scripts)$/
+const PROJECT_MARKER_RE = /^(\.github|\.githooks|\.gitlab|\.circleci|\.vscode|\.idea|\.husky)$/
+
+function projectRootCut(parts: string[]): number {
+  for (let i = 1; i < parts.length; i++) {
+    if (BOUNDARY_RE.test(parts[i]) || PROJECT_MARKER_RE.test(parts[i])) return i
+  }
+  return -1
+}
+
+/**
+ * The folder a changed file is charged to. Every touched directory collapses
+ * to the project folder that opens its tree, so nested directories never earn
+ * chips of their own — the strip names where the work happened, not the leaf
+ * of every path it touched.
+ *
+ * Inside a working folder that folder is its first path segment. With none to
+ * collapse against — a chat whose folders were never set, or whose folder was
+ * since removed — the first boundary from the left settles it (projectRootCut);
+ * a path with no boundary anywhere falls back to its own directory's parent,
+ * keeping the directory itself when only two segments remain.
  */
 function touchedDir(file: string, folders: string[]): string {
   const dir = dirname(file)
   if (!dir) return ''
   const root = containingFolder(dir, folders)
-  if (!root) return dir
-  if (dir === root) return root
-  const segment = dir.slice(root.length + 1).split('/')[0]
-  return segment ? `${root}/${segment}` : root
+  if (root) {
+    if (dir === root) return root
+    const segment = dir.slice(root.length + 1).split('/')[0]
+    return segment ? `${root}/${segment}` : root
+  }
+  const parts = dir.split('/').filter(Boolean)
+  const cut = projectRootCut(parts)
+  if (cut < 0) {
+    if (parts.length <= 2) return dir
+    const up = parts.slice(0, -1).join('/')
+    return dir.startsWith('/') ? `/${up}` : up
+  }
+  const at = parts.slice(0, cut).join('/')
+  return dir.startsWith('/') ? `/${at}` : at
 }
 
 /** The file each successful file-changing call touched, in stream order. */

@@ -8,8 +8,8 @@ import { useTranslation } from 'react-i18next'
  * The folders this conversation has changed files in, as a strip of chips
  * laid over the transcript's top edge — starting after the leading glass
  * disc, on the row the FloatingChrome owns, ending before the trailing disc.
- * One chip per parent folder — each touched directory collapses to its top
- * level under the working folder, so nested folders never each get one —
+ * One chip per parent folder — each touched directory collapses to the top
+ * level of the project it belongs to, so nested folders never each get one —
  * carrying the number of files changed anywhere under it; click opens the
  * folder in the system file manager. The strip never wraps: it scrolls on x,
  * scrollbar hidden, so a run that touches twenty folders costs the transcript
