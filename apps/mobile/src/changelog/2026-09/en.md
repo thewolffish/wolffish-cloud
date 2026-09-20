@@ -1,4 +1,18 @@
-## v1.1.0 — 2026-09-03 `Latest`
+## v1.1.1 — 2026-09-20 `Latest`
+
+### Every Automation, Project and Procedure Picks Its Own Thinking Level
+
+Your saved automations, projects and procedures used to run at **whatever thinking level your chat happened to be set to** — so a nightly summary that needed a light pass could quietly run at maximum, and a deep analysis could run at minimum because you had turned the composer down earlier.
+
+Each one now carries **its own thinking level** — off, normal, high or max — from a switch sitting right on its card, beside the mode pills it already had. New ones start at **the level your chat is showing right now**, so nothing changes until you decide otherwise; from then on the item decides, and its runs use it. **Anything saved before this update keeps following your chat exactly as it always did**, so nothing you already have behaves differently.
+
+The levels on offer are **the ones your selected model actually honours**, so a card can never present a level the model would silently ignore.
+
+### One Setting, Two Screens
+
+The same switch on your phone reads and writes **the very same value** — change it on the desktop and your phone shows it, change it on your phone and the desktop shows it. They are not two copies taking turns; they are one setting seen from two places.
+
+## v1.1.0 — 2026-09-03
 
 ### Your Organization, Not a Relay
 
