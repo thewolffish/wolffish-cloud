@@ -98,6 +98,7 @@ function project(over: Partial<SyncProject> = {}): SyncProject {
     instructions: 'Cite the source table.',
     files: [],
     directories: [],
+    thinking: null,
     createdAt: 1,
     updatedAt: 1,
     ...over

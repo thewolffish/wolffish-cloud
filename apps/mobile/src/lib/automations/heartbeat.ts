@@ -16,6 +16,8 @@
  * the engine's own splitMarkers (main/runtime/brainstem.ts).
  */
 
+import type { ReasoningMode } from '@/lib/bridge/protocol'
+
 /** Recognized schedule kinds, in the engine's own vocabulary. */
 export type ScheduleKind =
   'startup' | 'once' | 'every' | 'hourly' | 'daily' | 'weekday' | 'weekly' | 'monthly' | 'cron'
@@ -48,6 +50,10 @@ export type AutomationBlock = {
   mode: 'single' | 'workflow' | null
   /** Absolute file line of that marker, for in-place rewrites; null if absent. */
   modeLineIndex: number | null
+  /** The `thinking:` marker value; null ⇒ follows the model's thinking mode. */
+  thinking: ReasoningMode | null
+  /** Absolute file line of that marker, for in-place rewrites; null if absent. */
+  thinkingLineIndex: number | null
   /** The `project: <id>` marker — this automation's runs bind to that project. */
   project: string | null
   /** The `icon: <emoji>` marker; null ⇒ the screen's default. */
@@ -319,6 +325,9 @@ export function nextCronMs(expr: string, nowMs: number): number | null {
  * instruction text.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+// The job's own reasoning effort — canonical tokens, matching the engine's
+// THINKING_MARKER_RE (brainstem.ts) and the desktop card's parser.
+const THINKING_MARKER_RE = /^thinking:\s*(off|on|high|max)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 // The display name is free text, so it takes the whole line like the paths.
@@ -342,6 +351,7 @@ export function stripLeadingSettings(text: string): string {
     if (
       line === '' ||
       MODE_MARKER_RE.test(line) ||
+      THINKING_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
       NAME_MARKER_RE.test(line) ||
@@ -402,6 +412,8 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
     let endIdx = i
     let mode: 'single' | 'workflow' | null = null
     let modeLineIndex: number | null = null
+    let thinking: ReasoningMode | null = null
+    let thinkingLineIndex: number | null = null
     let project: string | null = null
     let icon: string | null = null
     let name: string | null = null
@@ -432,6 +444,13 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
         if (m) {
           mode = m[1].toLowerCase() as 'single' | 'workflow'
           modeLineIndex = j
+          if (!isBlock) endIdx = j
+          continue
+        }
+        const th = line.match(THINKING_MARKER_RE)
+        if (th) {
+          thinking = th[1].toLowerCase() as ReasoningMode
+          thinkingLineIndex = j
           if (!isBlock) endIdx = j
           continue
         }
@@ -485,6 +504,8 @@ export function parseAutomations(markdown: string): AutomationBlock[] {
       endLineIndex: endIdx,
       mode,
       modeLineIndex,
+      thinking,
+      thinkingLineIndex,
       project,
       icon,
       name,
@@ -556,6 +577,13 @@ export type AutomationDraft = {
   prompt: string
   icon: string
   projectId: string
+  /**
+   * The reasoning effort a NEW automation is stamped with — the mode the chat
+   * composer is showing when the user taps New, mirroring the desktop's own
+   * create contract. Unused when rewriting an existing block: that one carries
+   * its own marker through (see settingLines).
+   */
+  thinking?: ReasoningMode
 }
 
 /**
@@ -602,11 +630,13 @@ export function escapePromptBody(text: string): string {
 function settingLines(
   draft: AutomationDraft,
   mode: 'single' | 'workflow' | null,
+  thinking: ReasoningMode | null,
   files: readonly string[] = [],
   dirs: readonly string[] = []
 ): string[] {
   return [
     ...(mode ? [`mode: ${mode}`] : []),
+    ...(thinking ? [`thinking: ${thinking}`] : []),
     ...(draft.projectId ? [`project: ${draft.projectId}`] : []),
     // Every automation carries an emoji from birth, so this one is always
     // written; the picker can change it but never remove it.
@@ -636,7 +666,10 @@ export function writeDraft(
   const target = bound ? findBlock(markdown, bound) : null
 
   if (target) {
-    const markers = [...settingLines(draft, target.mode, target.files, target.dirs), '']
+    const markers = [
+      ...settingLines(draft, target.mode, target.thinking, target.files, target.dirs),
+      ''
+    ]
     const block = target.active
       ? [`## ${draft.schedule}`, '', ...markers, ...promptLines]
       : [`<!-- ## ${draft.schedule}`, '', ...markers, ...promptLines, '-->']
@@ -650,9 +683,13 @@ export function writeDraft(
 
   // New automations go before the first HTML comment (the examples block) — the
   // same shape the desktop's page and the automations plugin both produce.
-  const block = [`## ${draft.schedule}`, '', ...settingLines(draft, null), '', ...promptLines].join(
-    '\n'
-  )
+  const block = [
+    `## ${draft.schedule}`,
+    '',
+    ...settingLines(draft, null, draft.thinking ?? null),
+    '',
+    ...promptLines
+  ].join('\n')
   const firstComment = markdown.search(/<!--/)
   const next = (
     firstComment >= 0
@@ -720,6 +757,7 @@ export function addBlockPath(
     if (line === '') continue
     if (
       MODE_MARKER_RE.test(line) ||
+      THINKING_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
       NAME_MARKER_RE.test(line) ||
@@ -787,6 +825,34 @@ export function setBlockMode(
     return lines.join('\n')
   }
   lines.splice(block.lineIndex + 1, 0, '', `mode: ${mode}`)
+  return lines.join('\n')
+}
+
+/**
+ * Rewrite (or insert) an automation's `thinking:` marker. Works for a
+ * switched-off automation too — the marker is a plain line inside the comment
+ * block. The `setBlockMode` contract exactly, one marker over.
+ */
+export function setBlockThinking(
+  markdown: string,
+  block: AutomationBlock,
+  thinking: ReasoningMode
+): string {
+  const lines = markdown.split('\n')
+  if (block.thinkingLineIndex !== null) {
+    lines[block.thinkingLineIndex] = `thinking: ${thinking}`
+    return lines.join('\n')
+  }
+  const singleLineDisabled = /^<!--\s*##\s+.+?\s*-->\s*$/.test(lines[block.lineIndex])
+  if (singleLineDisabled) {
+    // Same hazard setBlockMode's guard covers: splicing after a one-line
+    // comment puts the marker OUTSIDE it, where the engine's comment strip
+    // folds it into the PREVIOUS automation's instructions.
+    const heading = lines[block.lineIndex].replace(/^<!--\s*/, '').replace(/\s*-->\s*$/, '')
+    lines.splice(block.lineIndex, 1, `<!-- ${heading}`, '', `thinking: ${thinking}`, '-->')
+    return lines.join('\n')
+  }
+  lines.splice(block.lineIndex + 1, 0, '', `thinking: ${thinking}`)
   return lines.join('\n')
 }
 

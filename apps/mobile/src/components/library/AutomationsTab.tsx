@@ -15,6 +15,7 @@ import { DEFAULT_PROJECT_ICON } from '@/components/workspace/ProjectDialog'
 import { DialogError, PromptPreview, PromptSheet } from '@/components/workspace/PromptSheet'
 import { EmojiPicker } from '@/components/workspace/EmojiPicker'
 import { ModePills } from '@/components/workspace/ModePills'
+import { ThinkingPills } from '@/components/workspace/ThinkingPills'
 import { ProjectChipRow } from '@/components/workspace/ProjectChipRow'
 import {
   addBlockPath,
@@ -33,6 +34,7 @@ import {
   parseSchedule,
   removeBlockPath,
   setBlockMode,
+  setBlockThinking,
   toggleBlock,
   writeDraft,
   type AutomationBlock,
@@ -52,6 +54,8 @@ import {
   useAutomations
 } from '@/lib/sync/automations'
 import { useProjects, useProjectsWritable } from '@/lib/sync/projects'
+import { useChatReasoning } from '@/lib/sync/useChatReasoning'
+import type { ReasoningMode } from '@/lib/bridge/protocol'
 import { cn } from '@/lib/utils/cn'
 import { formatAbsoluteMoment, formatSignedRelative } from '@/lib/utils/relativeTime'
 import { useLocale } from '@/providers/locale/useLocale'
@@ -88,6 +92,9 @@ export function AutomationsTab(): React.JSX.Element {
   const { data: projects = [] } = useProjects()
   const writable = useProjectsWritable()
   const globalMode = useConfigValue('chatMode')
+  // The chat's reasoning contract: the modes the selected model honours, and
+  // the mode chat is showing right now — what a block with no marker runs at.
+  const reasoning = useChatReasoning()
 
   const [editorFor, setEditorFor] = useState<AutomationBlock | null>(null)
   const [creating, setCreating] = useState(false)
@@ -188,6 +195,21 @@ export function AutomationsTab(): React.JSX.Element {
       void relocate(block, (md, fresh) => setBlockMode(md, fresh, mode))
     },
     [relocate]
+  )
+
+  /**
+   * The thinking switch rewrites the block's own `thinking:` marker through the
+   * same relocate splice the mode toggle uses — the file is the store, so the
+   * write lands on the desktop and both screens reload off one change.
+   * `reasoning.current` is what a block with no marker runs at, so a press that
+   * would change nothing is skipped.
+   */
+  const handleSetThinking = useCallback(
+    (block: AutomationBlock, thinking: ReasoningMode): void => {
+      if ((block.thinking ?? reasoning.current) === thinking) return
+      void relocate(block, (md, fresh) => setBlockThinking(md, fresh, thinking))
+    },
+    [reasoning.current, relocate]
   )
 
   const handleDelete = useCallback((): void => {
@@ -371,6 +393,18 @@ export function AutomationsTab(): React.JSX.Element {
                     onChange={(mode) => handleSetMode(block, mode)}
                   />
                 </View>
+
+                {/* The reasoning switch, on its own line under the pills above
+                    — the phone's width cannot hold three controls in that row,
+                    and the desktop keeps these as two edge-aligned groups too.
+                    It edits the block's own `thinking:` marker, so this
+                    automation runs at it whatever the composer is set to. */}
+                <ThinkingPills
+                  modes={reasoning.modes}
+                  value={block.thinking ?? reasoning.current}
+                  disabled={!writable}
+                  onChange={(thinking) => handleSetThinking(block, thinking)}
+                />
 
                 <Text className="text-muted text-left font-sans text-xs">{metaLine(block)}</Text>
 

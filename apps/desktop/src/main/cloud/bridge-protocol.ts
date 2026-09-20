@@ -257,6 +257,16 @@ export type ConversationMeta = {
 
 export type SyncProjectFile = { path: string; name: string }
 
+/**
+ * The canonical reasoning scale, on the wire.
+ *
+ * Declared here rather than imported because this file has NO imports — it is
+ * vendored byte-identically into the phone, and neither side may reach into
+ * the other's modules. Change both copies together.
+ */
+export type ReasoningMode = 'off' | 'on' | 'high' | 'max'
+export const REASONING_MODES: readonly ReasoningMode[] = ['off', 'on', 'high', 'max']
+
 export type SyncProject = {
   id: string
   title: string
@@ -264,6 +274,8 @@ export type SyncProject = {
   instructions: string
   files: SyncProjectFile[]
   directories: string[]
+  /** The project's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
   createdAt: number
   updatedAt: number
 }
@@ -273,6 +285,8 @@ export type SyncProcedure = {
   title: string
   prompt: string
   mode: 'single' | 'workflow' | null
+  /** The procedure's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
   icon: string
   projectId: string | null
   files: SyncProjectFile[]
@@ -288,6 +302,8 @@ export type AutomationJob = {
   cron: string | null
   nextRunMs: number | null
   mode: 'single' | 'workflow' | null
+  /** The job's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
 }
 
 /**

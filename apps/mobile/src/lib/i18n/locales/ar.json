@@ -1584,6 +1584,7 @@
     "deleteSuccess": "تم حذف الإجراء",
     "saveError": "حدث خطأ ما",
     "modeAria": "وضع التشغيل",
+    "thinkingAria": "مستوى التفكير",
     "addPrompt": "اكتب الإجراء",
     "editPrompt": "تعديل الإجراء"
   },

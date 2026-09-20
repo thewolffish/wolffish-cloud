@@ -21,6 +21,7 @@
  */
 import type { Agent } from '@main/runtime/agent'
 import { catalogModels } from '@main/cloud/catalog'
+import { reasoningModesFor } from '@main/runtime/reasoning'
 import { readViewerFile } from '@main/viewer'
 import { readConfig } from '@main/workspace/workspace'
 import { app } from 'electron'
@@ -317,6 +318,13 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   const thinkingModes = (llm.thinkingModes ?? {}) as Record<string, unknown>
   const thinkingMode = thinkingModes[str(llm.model)]
 
+  // The ordered modes THIS model honours — the same registry the desktop's
+  // brain button renders from, so the phone's Library cards offer exactly what
+  // the org router accepts and never a mode it would silently ignore. A phone
+  // paired with an older desktop gets no list and falls back to the full
+  // canonical scale on its side.
+  const reasoningModes = reasoningModesFor('cloud', str(llm.model))
+
   // The org catalog, straight from main's cache (cloud/catalog.ts) — a
   // synchronous read, never a fetch: a snapshot must not wait 15s behind
   // /v1/models on a cold start, and it must not fail when the session is
@@ -465,6 +473,8 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       ...(typeof thinkingMode === 'string' && THINKING_MODES.has(thinkingMode)
         ? { thinkingMode }
         : {}),
+      // What this model can actually do, in the brain button's own order.
+      reasoningModes,
       // Every model this user is allowed, in the API's own order — the same
       // list this app's composer picker renders, so the phone's chips and the
       // desktop's rows can never offer different models. Prices are left out

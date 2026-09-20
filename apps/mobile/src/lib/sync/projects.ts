@@ -1,7 +1,7 @@
 import { queryClient } from '@/lib/query/queryClient'
 import { bridgeClient } from '@/lib/cloud/bridge'
 import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
-import { Rpc, type SyncProject } from '@/lib/bridge/protocol'
+import { Rpc, type ReasoningMode, type SyncProject } from '@/lib/bridge/protocol'
 import { useAppStore } from '@/state/appStore'
 import { useChatRuntime } from '@/state/chatRuntime'
 import { useDemoConfig } from '@/state/demoConfig'
@@ -43,7 +43,10 @@ function normalize(project: SyncProject): SyncProject {
   return {
     ...project,
     files: project.files ?? [],
-    directories: project.directories ?? []
+    directories: project.directories ?? [],
+    // Absent on a desktop older than the thinking field, and on the demo
+    // bundle published before it — null is "follow the model".
+    thinking: project.thinking ?? null
   }
 }
 
@@ -78,6 +81,7 @@ function snapshotProjects(): SyncProject[] {
     instructions: project.instructions,
     files: project.files ?? [],
     directories: project.directories ?? [],
+    thinking: null,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt
   }))
@@ -172,6 +176,11 @@ export async function updateProject(input: {
   title?: string
   icon?: string
   instructions?: string
+  /**
+   * The project's own reasoning effort. Sent only when the user picked one on
+   * the card; omitted leaves the desktop's stamp alone.
+   */
+  thinking?: ReasoningMode
   files?: Array<{ path: string; name: string }>
   /**
    * Whole-list replace. References only, so nothing is deleted — but a path

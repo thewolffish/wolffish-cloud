@@ -1208,6 +1208,10 @@ function openProcedure(client, id, { verbose = false, onRun = null } = {}) {
         label: 'Switch mode',
         run: (p) => procedures(client, ['mode', id, p.mode === 'workflow' ? 'single' : 'workflow'])
       },
+      {
+        label: 'Set the thinking level',
+        run: () => thinkingInteractive(client, 'procedures', id)
+      },
       { label: 'Bind to a project', run: () => bindProjectInteractive(client, id) },
       { label: 'Rename', run: (p) => renameInteractive(client, 'procedures', p) },
       { label: 'Change the icon', run: (p) => iconInteractive(client, 'procedures', p) },
@@ -1257,6 +1261,7 @@ const KNOWN_PROCEDURE_VERBS = new Set([
   'rename',
   'icon',
   'mode',
+  'thinking',
   'project',
   'files',
   'dirs',
@@ -1285,11 +1290,12 @@ export async function procedures(
       title: 'Procedures',
       empty: `none - ${cmd('procedures new "<title>" "<prompt>"')}`,
       load: () => client.invoke('procedures:list'),
-      columns: ['id', 'title', 'mode', 'files', 'folders'],
+      columns: ['id', 'title', 'mode', 'thinking', 'files', 'folders'],
       row: (p) => [
         c.gray(String(p.id).slice(0, 8)),
         `${p.icon ? p.icon + ' ' : ''}${p.title}`,
         p.mode ?? 'single',
+        thinkingLabel(p.thinking),
         String(p.files?.length ?? 0),
         String(p.directories?.length ?? 0)
       ],
@@ -1394,6 +1400,27 @@ export async function procedures(
       out(`${icon.ok()} ${procedure.title} runs in ${mode}`)
       return 0
     }
+    /**
+     * The procedure's own reasoning effort — the card switch on the desktop
+     * and the phone, from a terminal. Stamping it means this procedure's runs
+     * use it whatever the chat's own thinking mode is set to; `default` hands
+     * the decision back to the chat by clearing the stamp.
+     */
+    case 'thinking':
+    case 'reasoning': {
+      const wanted = (tail[0] ?? '').toLowerCase()
+      if (wanted === 'default' || wanted === 'none' || wanted === 'clear') {
+        await client.invoke('procedures:update', { id: procedure.id, thinking: null })
+        out(`${icon.ok()} ${procedure.title} follows the chat's thinking mode again`)
+        return 0
+      }
+      if (!THINKING_LEVELS.includes(wanted)) {
+        return usageLine(`wfc procedures thinking <id> ${THINKING_LEVELS.join('|')}|default`)
+      }
+      await client.invoke('procedures:update', { id: procedure.id, thinking: wanted })
+      out(`${icon.ok()} ${procedure.title} runs at thinking: ${wanted}`)
+      return 0
+    }
     case 'project': {
       const wanted = tail.join(' ').trim()
       if (!wanted) return usageLine('wfc procedures project <id> <project|none>')
@@ -1426,10 +1453,71 @@ export async function procedures(
       out(c.red(`unknown: ${cmd(`procedures ${verb}`)}`))
       out(
         c.gray(
-          '  list · new · show · run · edit · copy · paste · rename · icon · mode · project · files · dirs · rm'
+          '  list · new · show · run · edit · copy · paste · rename · icon · mode · thinking · project · files · dirs · rm'
         )
       )
       return 2
+  }
+}
+
+/** The canonical reasoning scale, mirroring ReasoningMode on both ends. */
+const THINKING_LEVELS = ['off', 'on', 'high', 'max']
+
+/**
+ * How a stored thinking stamp reads in a table or a card. `null` is not "off"
+ * — it means the item has no stamp of its own and follows the chat's current
+ * mode, which is the promise the desktop and phone cards make too.
+ */
+function thinkingLabel(thinking) {
+  return thinking ?? c.gray('chat')
+}
+
+/**
+ * The same fact as a sentence, for a `show` card — where a bare token beside
+ * a label reads better than a word that needs decoding.
+ */
+function describeThinking(thinking) {
+  return thinking ? thinking : c.gray("chat's current mode")
+}
+
+/** Pick a thinking level interactively, from whatever the item now carries. */
+async function thinkingInteractive(client, feature, id) {
+  for (;;) {
+    const list = await client.invoke(`${feature}:list`)
+    const row = list.find((entry) => entry.id === id)
+    if (!row) {
+      out(c.red('  that item is gone'))
+      return
+    }
+    const current = row.thinking ?? null
+    THINKING_LEVELS.forEach((level, index) => {
+      const mark = level === current ? icon.ok() + ' ' : '  '
+      out(`   ${mark}${c.cyan(String(index + 1).padStart(2))}. ${level}`)
+    })
+    out(
+      `     ${current === null ? icon.ok() + ' ' : '  '}${c.cyan(
+        String(THINKING_LEVELS.length + 1).padStart(2)
+      )}. ${c.gray("follow the chat's mode")}`
+    )
+    out()
+    const answer = (
+      await question(`  ${c.dim(`1-${THINKING_LEVELS.length + 1}, blank cancels`)}: `)
+    ).trim()
+    if (!answer || isQuit(answer)) return
+    const index = Number.parseInt(answer, 10) - 1
+    if (index === THINKING_LEVELS.length) {
+      await client.invoke(`${feature}:update`, { id, thinking: null })
+      out(`${icon.ok()} now follows the chat's thinking mode`)
+      return
+    }
+    if (!THINKING_LEVELS[index]) {
+      outOfRange(THINKING_LEVELS.length + 1)
+      out()
+      continue
+    }
+    await client.invoke(`${feature}:update`, { id, thinking: THINKING_LEVELS[index] })
+    out(`${icon.ok()} thinking: ${THINKING_LEVELS[index]}`)
+    return
   }
 }
 
@@ -1438,6 +1526,7 @@ function showProcedure(procedure) {
   keyValue([
     ['id', c.gray(procedure.id)],
     ['mode', procedure.mode ?? 'single'],
+    ['thinking', describeThinking(procedure.thinking)],
     ['project', procedure.projectId ? c.gray(procedure.projectId) : c.gray('none')],
     ['files', String(procedure.files?.length ?? 0)],
     ['folders', String(procedure.directories?.length ?? 0)]
@@ -1531,6 +1620,10 @@ async function openAutomation(client, initialLabel) {
         run: () => detachFolderInteractive(client, 'automation', label)
       },
       { label: 'Edit every automation (heartbeat.md)', run: () => automations(client, ['edit']) },
+      {
+        label: 'Set the thinking level',
+        run: () => thinkingInteractive(client, 'automations', label)
+      },
       {
         label: c.red('Delete'),
         run: async () => {
@@ -1843,10 +1936,11 @@ export async function automations(client, args, { json = false } = {}) {
       title: 'Automations',
       empty: `none - ${cmd('automations edit')}`,
       load: () => loadJobsSettled(client),
-      columns: ['label', 'schedule', 'files', 'folders', 'next run'],
+      columns: ['label', 'schedule', 'thinking', 'files', 'folders', 'next run'],
       row: (job) => [
         `${job.icon ? job.icon + ' ' : ''}${job.label ?? '—'}`,
         job.cron ?? job.schedule ?? '—',
+        thinkingLabel(job.thinking),
         String(job.files?.length ?? 0),
         String(job.dirs?.length ?? 0),
         job.nextRunMs ? new Date(job.nextRunMs).toLocaleString() : c.gray('—')
@@ -1955,6 +2049,7 @@ function showAutomation(job, { projectLabel = null } = {}) {
     ['schedule', job.cron ?? job.schedule ?? '—'],
     ['next run', job.nextRunMs ? new Date(job.nextRunMs).toLocaleString() : c.gray('—')],
     ['mode', job.mode ?? c.gray('follows the global mode')],
+    ['thinking', describeThinking(job.thinking)],
     [
       'project',
       job.project

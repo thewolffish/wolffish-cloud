@@ -121,12 +121,14 @@ export const Rpc = {
   sendMessage: 'desktop.chat.send',
   /**
    * Hand a message to the conversation's RUNNING turn instead of starting a
-   * new one — the mid-turn send. Params mirror `sendMessage` minus the
-   * creation fields: `{ conversationId, messageId, text, attachments,
-   * voicePrompt?, voiceLang? }`. Answers `{ status: 'pending' }`, or
-   * `{ status: 'no_live_turn' }` when nothing is running and the phone
-   * should send a normal turn (see sync/prompt.ts interject). An older
-   * desktop answers with an unknown-method error, treated the same way.
+   * new one — the phone's mid-turn send. Params mirror `sendMessage` minus
+   * the creation fields: `{ conversationId, messageId, text, attachments,
+   * voicePrompt?, voiceLang? }`. Nothing is saved on the desktop: the message
+   * parks in the turn runner's inbox and the agent reads it at its next stop
+   * point, where it becomes a `user_message` segment on the assistant
+   * message the phone is already mirroring. Answers `{ status: 'pending' }`,
+   * or `{ status: 'no_live_turn' }` when nothing is running and the phone
+   * should send a normal turn. A voice note is transcribed BEFORE it parks.
    */
   interject: 'desktop.chat.interject',
   /** Take an unread mid-turn message back — `{ conversationId, messageId }` → `{ ok }`. */
@@ -170,7 +172,10 @@ export const Rpc = {
   updaterState: 'desktop.updater.state',
   updaterCheck: 'desktop.updater.check',
   updaterInstall: 'desktop.updater.install',
-  /** Abort a pending turn-end countdown (the countdown card's Abort). `{ ok }`. */
+  /**
+   * Abort a pending turn-end countdown (the card's Abort button on the
+   * phone). `{ ok }` — false once it already fired or was aborted.
+   */
   countdownAbort: 'desktop.countdown.abort'
 } as const
 
@@ -192,7 +197,7 @@ export const Event = {
    * A mid-turn user message changed state — `{ conversationId, messageId,
    * channel, text, attachments, state: 'pending' | 'delivered' | 'withdrawn',
    * reason? }`. Its own event, not a turn status: a pending message is not
-   * a turn boundary and must not reset the live overlay.
+   * a turn boundary and must not reset the phone's live overlay.
    */
   interjection: 'interjection.status',
   /**
@@ -219,10 +224,10 @@ export const Event = {
   reindexChanged: 'reindex.status',
   updaterChanged: 'updater.state',
   /**
-   * A turn-end countdown changed state after its turn ended (`{ snapshot }`)
-   * — counting, fired, aborted, failed. Folded into the stored message that
-   * holds the matching `countdown` segment; the desktop also nudges a body
-   * re-read once its own file write has landed.
+   * A turn-end countdown changed state (`{ snapshot }`) — counting, fired,
+   * aborted, failed. Its arming state rides the turn mirror like any other
+   * segment; this push is for the transitions after the turn ended. The
+   * phone folds it into the matching `countdown` segment by countdownId.
    */
   countdownChanged: 'countdown.changed'
 } as const
@@ -252,6 +257,16 @@ export type ConversationMeta = {
 
 export type SyncProjectFile = { path: string; name: string }
 
+/**
+ * The canonical reasoning scale, on the wire.
+ *
+ * Declared here rather than imported because this file has NO imports — it is
+ * vendored byte-identically into the phone, and neither side may reach into
+ * the other's modules. Change both copies together.
+ */
+export type ReasoningMode = 'off' | 'on' | 'high' | 'max'
+export const REASONING_MODES: readonly ReasoningMode[] = ['off', 'on', 'high', 'max']
+
 export type SyncProject = {
   id: string
   title: string
@@ -259,6 +274,8 @@ export type SyncProject = {
   instructions: string
   files: SyncProjectFile[]
   directories: string[]
+  /** The project's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
   createdAt: number
   updatedAt: number
 }
@@ -268,6 +285,8 @@ export type SyncProcedure = {
   title: string
   prompt: string
   mode: 'single' | 'workflow' | null
+  /** The procedure's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
   icon: string
   projectId: string | null
   files: SyncProjectFile[]
@@ -283,6 +302,8 @@ export type AutomationJob = {
   cron: string | null
   nextRunMs: number | null
   mode: 'single' | 'workflow' | null
+  /** The job's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
 }
 
 /**

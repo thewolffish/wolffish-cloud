@@ -83,13 +83,19 @@ export function Toggle({
   )
 }
 
+// `reasoningModes` — the one array-valued config key — is excluded here so
+// these mapped types stay exact: no row renders it (the Library cards read it
+// through useChatReasoning), and leaving an array in the union widens every
+// row's key type to `undefined`.
+type RowKeys = Exclude<keyof DemoConfigValues, 'reasoningModes'>
+
 type BooleanKeys = {
-  [K in keyof DemoConfigValues]: DemoConfigValues[K] extends boolean ? K : never
-}[keyof DemoConfigValues]
+  [K in RowKeys]: DemoConfigValues[K] extends boolean ? K : never
+}[RowKeys]
 
 type StringKeys = {
-  [K in keyof DemoConfigValues]: DemoConfigValues[K] extends string ? K : never
-}[keyof DemoConfigValues]
+  [K in RowKeys]: DemoConfigValues[K] extends string ? K : never
+}[RowKeys]
 
 export type RowChrome = {
   label: string

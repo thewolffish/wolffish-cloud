@@ -1322,6 +1322,7 @@
     "deleteSuccess": "Procedure deleted",
     "saveError": "Something went wrong",
     "modeAria": "Run mode",
+    "thinkingAria": "Thinking level",
     "addPrompt": "Write the prompt",
     "editPrompt": "Edit the prompt"
   },

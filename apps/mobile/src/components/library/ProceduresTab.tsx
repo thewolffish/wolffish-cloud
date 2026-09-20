@@ -9,6 +9,7 @@ import { Delete02Icon, Edit02Icon, PlayIcon, PlusSignIcon } from '@/components/c
 import { DEFAULT_PROJECT_ICON } from '@/components/workspace/ProjectDialog'
 import { DialogError, PromptPreview, PromptSheet } from '@/components/workspace/PromptSheet'
 import { ModePills } from '@/components/workspace/ModePills'
+import { ThinkingPills } from '@/components/workspace/ThinkingPills'
 import { EmojiPicker } from '@/components/workspace/EmojiPicker'
 import { ProjectChipRow } from '@/components/workspace/ProjectChipRow'
 import { pickDocuments, pickMedia, type PickedFile } from '@/lib/files/pickAttachments'
@@ -21,7 +22,8 @@ import {
   useProcedures
 } from '@/lib/sync/procedures'
 import { useProjects, useProjectsWritable } from '@/lib/sync/projects'
-import type { SyncProcedure, SyncProjectFile } from '@/lib/bridge/protocol'
+import { useChatReasoning } from '@/lib/sync/useChatReasoning'
+import type { ReasoningMode, SyncProcedure, SyncProjectFile } from '@/lib/bridge/protocol'
 import { cn } from '@/lib/utils/cn'
 import { formatSignedRelative } from '@/lib/utils/relativeTime'
 import { useToast } from '@/providers/toast/useToast'
@@ -60,6 +62,9 @@ export function ProceduresTab(): React.JSX.Element {
   // Rows without a stamped mode follow the workspace's global mode — the pill
   // shows that effective value, and tapping a segment stamps the row.
   const globalMode = useConfigValue('chatMode')
+  // The chat's reasoning contract: the modes the selected model honours, and
+  // the mode chat is showing right now — what a row without a stamp follows.
+  const reasoning = useChatReasoning()
   const setActiveProject = useChatRuntime((state) => state.setActiveProject)
   const setPendingProject = useChatRuntime((state) => state.setPendingProject)
   const setPendingPrompt = useChatRuntime((state) => state.setPendingPrompt)
@@ -123,6 +128,23 @@ export function ProceduresTab(): React.JSX.Element {
       )
     },
     [globalMode, t, toast]
+  )
+
+  /**
+   * The thinking switch persists on the same terms as the mode toggle — one
+   * per-field merge to the desktop, no optimism, the stored row lands in the
+   * cache. `reasoning.current` is the effective value when the row carries no
+   * stamp, so a press that would change nothing is skipped.
+   */
+  const setThinking = useCallback(
+    (procedure: SyncProcedure, thinking: ReasoningMode): void => {
+      const effective = procedure.thinking ?? reasoning.current
+      if (effective === thinking) return
+      void updateProcedure({ id: procedure.id, thinking }).catch(() =>
+        toast.show({ tone: 'error', message: t('procedures.saveError') })
+      )
+    },
+    [reasoning.current, t, toast]
   )
 
   /**
@@ -261,6 +283,17 @@ export function ProceduresTab(): React.JSX.Element {
                   </View>
                 </View>
                 <PromptPreview value={procedure.prompt} empty={t('procedures.runEmptyHint')} />
+
+                {/* The reasoning switch reads under the row's action cluster —
+                    the phone has no width for a fifth control up there. It
+                    edits the procedure's own stamp, so a run of this procedure
+                    uses it whatever the composer is set to. */}
+                <ThinkingPills
+                  modes={reasoning.modes}
+                  value={procedure.thinking ?? reasoning.current}
+                  disabled={!writable}
+                  onChange={(thinking) => setThinking(procedure, thinking)}
+                />
 
                 {/* What this procedure carries into every run. On the card,
                     not just in the editor: the paths are the part of a

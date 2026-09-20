@@ -6,9 +6,17 @@ import { AttachmentChips } from '@/components/workspace/AttachmentChips'
 import { DEFAULT_PROJECT_ICON, ProjectDialog } from '@/components/workspace/ProjectDialog'
 import { PromptPreview } from '@/components/workspace/PromptSheet'
 import { useConversationList } from '@/lib/conversations/hooks'
-import { createProject, deleteProject, useProjects, useProjectsWritable } from '@/lib/sync/projects'
+import {
+  createProject,
+  deleteProject,
+  updateProject,
+  useProjects,
+  useProjectsWritable
+} from '@/lib/sync/projects'
+import { useChatReasoning } from '@/lib/sync/useChatReasoning'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
-import type { SyncProject } from '@/lib/bridge/protocol'
+import { ThinkingPills } from '@/components/workspace/ThinkingPills'
+import type { ReasoningMode, SyncProject } from '@/lib/bridge/protocol'
 import { formatSignedRelative } from '@/lib/utils/relativeTime'
 import { cn } from '@/lib/utils/cn'
 import { useToast } from '@/providers/toast/useToast'
@@ -38,6 +46,9 @@ export function ProjectsTab(): React.JSX.Element {
   useFreshConfig()
   const { data: projects = [], isLoading, refetch } = useProjects()
   const writable = useProjectsWritable()
+  // The chat's reasoning contract: the modes the selected model honours, and
+  // the mode chat is showing right now — what a project without a stamp runs.
+  const reasoning = useChatReasoning()
   const setActiveProject = useChatRuntime((state) => state.setActiveProject)
 
   const [editing, setEditing] = useState<SyncProject | null>(null)
@@ -101,6 +112,23 @@ export function ProjectsTab(): React.JSX.Element {
       }
     }
   }, [editing, projects])
+
+  /**
+   * The thinking switch writes the project's own reasoning effort — the same
+   * stamp the composer's thinking control reads while the project is active,
+   * so the two can never disagree. One per-field merge to the desktop; the
+   * stored row lands in the cache. A no-op press is skipped.
+   */
+  const setThinking = useCallback(
+    (project: SyncProject, thinking: ReasoningMode): void => {
+      const effective = project.thinking ?? reasoning.current
+      if (effective === thinking) return
+      void updateProject({ id: project.id, thinking }).catch(() =>
+        toast.show({ tone: 'error', message: t('projects.saveError') })
+      )
+    },
+    [reasoning.current, t, toast]
+  )
 
   const handleChanged = useCallback((updated: SyncProject): void => {
     // Only the open dialog's own copy. Project mode needs nothing here — it
@@ -242,6 +270,17 @@ export function ProjectsTab(): React.JSX.Element {
                   </View>
                 </View>
                 <PromptPreview value={project.instructions} empty={t('projects.noInstructions')} />
+                {/* The reasoning switch under the row's action cluster — the
+                    phone's width has no room for a third icon up top. It edits
+                    the project's own stamp, which every turn inside it runs at,
+                    and which the composer's thinking control also reads while
+                    this project is active. */}
+                <ThinkingPills
+                  modes={reasoning.modes}
+                  value={project.thinking ?? reasoning.current}
+                  disabled={!writable}
+                  onChange={(thinking) => setThinking(project, thinking)}
+                />
                 {/* What this project carries into every conversation inside it.
                     On the card, not just in the dialog: the paths are the part
                     of a project you cannot infer from its instructions. */}
