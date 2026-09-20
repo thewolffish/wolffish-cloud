@@ -15,14 +15,14 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
-  lastComputerActionFrom,
+  indicatorNudge,
+  indicatorNoticeText,
+  lastIndicatorActionFrom,
   MAX_SCREEN_INDICATOR_NUDGES,
-  screenIndicatorNotice,
-  screenIndicatorNudge,
   SCREEN_INDICATOR_NOTICE,
   SCREEN_INDICATOR_OFF_TOOL,
   SCREEN_INDICATOR_ON_TOOL,
-  trackScreenIndicator
+  trackIndicators
 } from '../agent/screen-indicator-guard'
 import { formatRuntimeStatus } from '../outbound'
 
@@ -191,36 +191,37 @@ async function run(): Promise<void> {
   // ── 2. the "off" end: tracking what THIS run raised ─────────────────────
 
   await check('a successful glow_on raises the flag and glow_off lowers it', () => {
-    let on = false
-    on = trackScreenIndicator(on, SCREEN_INDICATOR_ON_TOOL, true)
-    assert.equal(on, true)
-    on = trackScreenIndicator(on, 'computer_screenshot', true)
-    assert.equal(on, true, 'unrelated tools must not move the flag')
-    on = trackScreenIndicator(on, SCREEN_INDICATOR_OFF_TOOL, true)
-    assert.equal(on, false)
+    let on = new Set<string>()
+    on = trackIndicators(on, SCREEN_INDICATOR_ON_TOOL, true)
+    assert.ok(on.has('screen'))
+    on = trackIndicators(on, 'computer_screenshot', true)
+    assert.ok(on.has('screen'), 'unrelated tools must not move the flag')
+    on = trackIndicators(on, SCREEN_INDICATOR_OFF_TOOL, true)
+    assert.ok(!on.has('screen'))
   })
 
   await check('failed calls move nothing — a glow that never appeared is not up', () => {
-    assert.equal(trackScreenIndicator(false, SCREEN_INDICATOR_ON_TOOL, false), false)
-    assert.equal(trackScreenIndicator(true, SCREEN_INDICATOR_OFF_TOOL, false), true)
+    assert.equal(trackIndicators(new Set(), SCREEN_INDICATOR_ON_TOOL, false).size, 0)
+    assert.ok(trackIndicators(new Set(['screen']), SCREEN_INDICATOR_OFF_TOOL, false).has('screen'))
   })
 
   // ── 3. the turn-end nudge ───────────────────────────────────────────────
 
   await check('a turn ending with the indicator up is sent back to close it', () => {
-    const nudge = screenIndicatorNudge(true, endTurn('Done — I filed the expense.'), 0)
+    const nudge = indicatorNudge(new Set(['screen']), endTurn('Done — I filed the expense.'), 0)
     assert.ok(nudge, 'must nudge')
-    assert.equal(nudge.length, 2)
-    assert.equal(nudge[0].role, 'assistant')
+    assert.equal(nudge.messages.length, 2)
+    assert.equal(nudge.messages[0].role, 'assistant')
     assert.equal(
-      nudge[0].content,
+      nudge.messages[0].content,
       'Done — I filed the expense.',
       'the real reply is echoed back: it already streamed to the user'
     )
-    assert.equal(nudge[1].role, 'user')
-    assert.ok(String(nudge[1].content).includes(SCREEN_INDICATOR_OFF_TOOL))
+    assert.equal(nudge.messages[1].role, 'user')
+    assert.ok(String(nudge.messages[1].content).includes(SCREEN_INDICATOR_OFF_TOOL))
+    assert.equal(nudge.offTool, SCREEN_INDICATOR_OFF_TOOL)
     assert.equal(
-      nudge[0].role === 'assistant' ? nudge[0].toolUses : null,
+      nudge.messages[0].role === 'assistant' ? nudge.messages[0].toolUses : null,
       undefined,
       'an unmatched tool call would break every adapter'
     )
@@ -231,22 +232,22 @@ async function run(): Promise<void> {
     // stand-in for an empty turn in the model's own voice, and it leaked back
     // out to users as `(no output)` / `(no content)`. Anthropic no longer needs
     // it: toAnthropicMessages merges a user message into the preceding turn.
-    const nudge = screenIndicatorNudge(true, endTurn('   '), 0)
+    const nudge = indicatorNudge(new Set(['screen']), endTurn('   '), 0)
     assert.ok(nudge)
-    assert.equal(nudge.length, 1)
-    assert.equal(nudge[0].role, 'user')
+    assert.equal(nudge.messages.length, 1)
+    assert.equal(nudge.messages[0].role, 'user')
   })
 
   await check('reasoning content is carried through, as the max_tokens continuation does', () => {
-    const nudge = screenIndicatorNudge(true, endTurn('ok', 'thought'), 0)
+    const nudge = indicatorNudge(new Set(['screen']), endTurn('ok', 'thought'), 0)
     assert.ok(nudge)
-    const assistant = nudge[0]
+    const assistant = nudge.messages[0]
     assert.equal(assistant.role, 'assistant')
     assert.equal(assistant.role === 'assistant' ? assistant.reasoningContent : null, 'thought')
   })
 
   await check('no indicator, no nudge — the ordinary turn is untouched', () => {
-    assert.equal(screenIndicatorNudge(false, endTurn('Here you go.'), 0), null)
+    assert.equal(indicatorNudge(new Set(), endTurn('Here you go.'), 0), null)
   })
 
   await check('a model still calling tools is not interrupted', () => {
@@ -256,17 +257,20 @@ async function run(): Promise<void> {
       toolCalls: [{ id: '1', name: 'computer_mouse_click', args: {} }],
       thinking: undefined
     }
-    assert.equal(screenIndicatorNudge(true, parsed, 0), null)
+    assert.equal(indicatorNudge(new Set(['screen']), parsed, 0), null)
   })
 
   await check('a non-end_turn stop is not a finished turn', () => {
     const parsed = { stopReason: 'max_tokens' as const, text: 'cut off', toolCalls: [] as never[] }
-    assert.equal(screenIndicatorNudge(true, parsed, 0), null)
+    assert.equal(indicatorNudge(new Set(['screen']), parsed, 0), null)
   })
 
   await check('the nudge is bounded — it can never spin', () => {
-    assert.ok(screenIndicatorNudge(true, endTurn('x'), MAX_SCREEN_INDICATOR_NUDGES - 1))
-    assert.equal(screenIndicatorNudge(true, endTurn('x'), MAX_SCREEN_INDICATOR_NUDGES), null)
+    assert.ok(indicatorNudge(new Set(['screen']), endTurn('x'), MAX_SCREEN_INDICATOR_NUDGES - 1))
+    assert.equal(
+      indicatorNudge(new Set(['screen']), endTurn('x'), MAX_SCREEN_INDICATOR_NUDGES),
+      null
+    )
   })
 
   // ── 4. the every-iteration notice ───────────────────────────────────────
@@ -280,7 +284,7 @@ async function run(): Promise<void> {
   })
 
   await check('the last screen action rides the notice so the next step verifies it', () => {
-    const la = lastComputerActionFrom({
+    const la = lastIndicatorActionFrom({
       computerUse: {
         lastAction: {
           tool: 'click',
@@ -291,15 +295,20 @@ async function run(): Promise<void> {
       }
     })
     assert.ok(la, 'meta shape must parse')
-    const text = screenIndicatorNotice(la)
+    assert.equal(la.indicator, 'screen', 'the action maps to its indicator')
+    const text = indicatorNoticeText(new Set(['screen']), la) ?? ''
     assert.ok(text.startsWith(SCREEN_INDICATOR_NOTICE), 'the standing notice comes first')
     assert.ok(
       text.includes('no visible change') && text.includes('the dialog closes'),
       'evidence and expectation both ride'
     )
-    assert.equal(screenIndicatorNotice(null), SCREEN_INDICATOR_NOTICE, 'no action, no extra line')
-    assert.equal(lastComputerActionFrom({ diff: 'x' }), null, 'unrelated meta is ignored')
-    assert.equal(lastComputerActionFrom(undefined), null)
+    assert.equal(
+      indicatorNoticeText(new Set(['screen']), null),
+      SCREEN_INDICATOR_NOTICE,
+      'no action, no extra line'
+    )
+    assert.equal(lastIndicatorActionFrom({ diff: 'x' }), null, 'unrelated meta is ignored')
+    assert.equal(lastIndicatorActionFrom(undefined), null)
   })
 
   await check('a turn that never touched the screen pays nothing', () => {

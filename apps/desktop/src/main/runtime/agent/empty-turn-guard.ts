@@ -13,45 +13,43 @@ export const MAX_EMPTY_TURN_NUDGES = 2
 /**
  * The nudge shown to the model when it ends its turn on nothing. Phrased as a
  * system aside so it reads as a runtime correction, not user speech, and gives
- * the model all three exits: wrap up if done, continue if not — or stay silent
- * if silence is genuinely right. The third exit is load-bearing: a turn whose
- * closing message already went out (telemetry acknowledgements, a post-tool
- * continuation with nothing to add) has no honest way to end EXCEPT empty, and
- * a nudge that only offers "summarize or continue" pressures the model into
- * filler — or into faking emptiness by typing its end-of-sequence control
- * token as text (observed: grok-4.6 emitting a literal `<|eos|>` to the user).
- * Naming silence as valid keeps the choice with the model; the nudge budget
- * above still bounds a genuinely glitched dropout.
+ * the model all three exits: wrap up if done, continue if not — or end the turn
+ * properly if there is genuinely nothing left to say.
  *
- * The silent exit must spell out that "empty" means ZERO characters. An
- * earlier wording ("end with no output again") was taken literally: a model
- * closed the turn by typing `(no output)` as its content, which was delivered
- * to the user as a reply (observed live, 2026-08-30). Text that DESCRIBES
- * silence is still output.
+ * That third exit is `close_turn`. It used to be "an entirely empty response —
+ * zero characters", and that instruction was impossible to obey: no
+ * OpenAI-compatible provider carries an empty content channel, which is why the
+ * Agent itself refuses to push an empty assistant message. A model told to say
+ * nothing therefore typed the smallest stand-in it could find and shipped it to
+ * the user — `(no output)`, `(no content)`, `[Empty response]`, `空空如也`,
+ * `[(empty — nothing further)]`. Asking for an unproducible output buys a
+ * placeholder every time; `close_turn` is the producible form of the same
+ * intent, so the ask is now legal and the workaround is unnecessary.
  *
- * Naming that literal in order to forbid it made the leak worse, which is why
- * this text no longer prints a stand-in at all — printing one is how the model
- * learns it. On 2026-09-12 a mobile-channel conversation was nudged twice and
- * closed twice with the same literal appended AFTER real prose, the marker
- * count matching the nudge budget exactly, and the model's reasoning both
- * times was "I need to produce some output structurally in this format". So
- * the wording now describes the class (a typed stand-in for silence) without
- * quoting a member of it, denies the structural-requirement premise outright,
- * and covers the appended shape as well as the reply-for-silence shape.
+ * This guard's job narrowed with that fix, and it is worth being precise about
+ * what it still covers: `close_turn` handles the model that has a legal exit and
+ * uses it. This handles the model that just DROPS OUT — a reasoning-only
+ * response with an empty content channel and no tool call, which is a provider
+ * behaviour rather than a prompt problem, and which no prompt can prevent
+ * because the model never calls anything. It is a recovery path for a glitched
+ * turn, not the sanctioned way to end one.
  *
- * Naming punctuation was needed for the same reason: on 2026-09-06 deepseek-v4
- * reasoned "so I end silently with zero characters" and then sent a lone `.`,
- * which reached the user as its own message bubble. A bare punctuation mark
- * does not read as a "placeholder that describes the silence", so it has to
- * be named outright. The stray character itself is caught after the fact by
- * the content-free half of the control-token guard — a nudge cannot help
- * there, because the text has already streamed to the user by then.
+ * Copy rules it still obeys, each paid for once already: it never PRINTS a
+ * stand-in for silence (printing one is how the model learns it — on 2026-09-12
+ * a conversation nudged twice closed twice with the same literal appended after
+ * real prose, the marker count matching the nudge budget exactly, the model's
+ * reasoning both times being "I need to produce some output structurally in
+ * this format"); it never NAMES punctuation as the forbidden thing without
+ * also naming what to do instead (2026-09-06: deepseek-v4 reasoned "so I end
+ * silently with zero characters" and sent a lone `.`, which reached the user as
+ * its own message bubble); and it describes the class — a typed stand-in for
+ * silence — without quoting a member of it.
  */
 const EMPTY_TURN_NUDGE_TEXT =
   '[System: You ended your turn with an empty response and no tool call. If the task is ' +
   'complete, reply with a brief summary of what was done. If your closing message ' +
   'was already delivered earlier this turn and there is genuinely nothing left to ' +
-  'say, end with an entirely empty response again — zero characters — and the ' +
+  'say, call `close_turn` — that is the complete and correct ending, and the ' +
   'turn will close cleanly. Nothing is ever structurally required in your reply. ' +
   'Do NOT write a stand-in for the silence: no bracketed status note, no written ' +
   'statement that you are staying silent, no lone "." or "…", no control token, ' +

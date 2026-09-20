@@ -121,8 +121,8 @@ export function todoCloseoutNudge(
       'reply has already been delivered to the user; nothing can unsend it or move it. And the card ' +
       'renders BELOW it, so the card is the last thing they see unless you close with a line of your own. ' +
       'How the turn ends from there is yours to decide, as every turn is: say whatever they still need to ' +
-      'hear, or — if they genuinely need nothing further — end with an entirely empty response, zero ' +
-      'characters, which is a complete and valid ending. The one thing that is never an ending is a typed ' +
+      'hear, or — if they genuinely need nothing further — call `close_turn`, which is a complete and valid ' +
+      'ending and the way to say "nothing further" in this runtime. The one thing that is never an ending is ' +
       'stand-in for that silence: a bracketed status note, a lone punctuation mark, a word or set phrase ' +
       'meaning "empty" or "nothing further" in ANY language. Those are not silence, they are a message — ' +
       'everything you write is delivered to the user verbatim, as its own message, in whatever script you ' +

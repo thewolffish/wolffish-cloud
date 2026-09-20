@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { WORKSPACE_ROOT } from './root'
 
 // Wolffish Cloud carries no model-provider configuration on the device.
@@ -914,6 +915,28 @@ export async function setThinkingMode(model: string, mode: string): Promise<Work
       thinkingModes: { ...c.llm.thinkingModes, [model]: mode }
     }
   }))
+}
+
+/**
+ * The chat's currently selected thinking mode — the raw pick the brain button
+ * writes for the user's selected model, canonicalized so a legacy token
+ * (none/basic/extended/fast/budget) reads as the canonical scale. Undefined
+ * when nothing is selected. Two callers: stamping a NEW automation/procedure/
+ * project with the same setting chat is running RIGHT NOW, and resolving the
+ * run-time fallback for items saved before the field existed (they follow
+ * chat live, exactly like `mode`).
+ *
+ * Clamping to the model's own modes is deliberately NOT done here — that
+ * needs the per-model context the display and run sites already hold, and
+ * both re-clamp through normalizeReasoningMode before consuming the value.
+ */
+export async function currentThinkingModeSetting(): Promise<ReasoningMode | undefined> {
+  const cfg = await readConfig().catch(() => null)
+  if (!cfg) return undefined
+  const model = cfg.llm.model
+  const raw = model ? cfg.llm.thinkingModes?.[model] : undefined
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined
+  return normalizeReasoningMode(raw, ['off', 'on', 'high', 'max'])
 }
 
 export async function setLaunchAtStartup(value: boolean): Promise<WorkspaceConfig> {

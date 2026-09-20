@@ -3452,7 +3452,8 @@ app.whenReady().then(async () => {
         lastRunAt: status?.lastRunAt ?? null,
         lastStatus: status?.lastStatus ?? null,
         ...(status?.lastError ? { lastError: status.lastError } : {}),
-        mode: j.mode
+        mode: j.mode,
+        thinking: j.thinking ?? null
       }
     })
   }
@@ -3542,7 +3543,11 @@ app.whenReady().then(async () => {
         // A detached run gets exactly what a Play run gets: the attached files
         // as a model-led list, and a fresh listing of every working folder.
         (proc.files ?? []).map((f) => f.path),
-        proc.directories ?? []
+        proc.directories ?? [],
+        // The procedure's own reasoning stamp; absent ⇒ the brainstem falls
+        // back to the chat's selected thinking mode, the same value Play and
+        // the card's switch show.
+        proc.thinking ?? null
       )
     }
   })
@@ -4145,6 +4150,7 @@ app.whenReady().then(async () => {
         title: string
         prompt: string
         mode?: 'single' | 'workflow'
+        thinking?: 'off' | 'on' | 'high' | 'max'
         icon?: string
         projectId?: string
       }
@@ -4159,6 +4165,7 @@ app.whenReady().then(async () => {
         title?: string
         prompt?: string
         mode?: 'single' | 'workflow'
+        thinking?: 'off' | 'on' | 'high' | 'max'
         icon?: string
         projectId?: string
         files?: ProcedureFileRef[]
@@ -4214,6 +4221,7 @@ app.whenReady().then(async () => {
         title?: string
         icon?: string
         instructions?: string
+        thinking?: 'off' | 'on' | 'high' | 'max'
         files?: ProjectFileRef[]
         directories?: string[]
       }

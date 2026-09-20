@@ -11,7 +11,8 @@ import {
   type CopyFilesResult,
   type OwnedFileRef
 } from '@main/uploads/owned-copies'
-import { readConfig, workspaceRoot } from '@main/workspace/workspace'
+import { currentThinkingModeSetting, readConfig, workspaceRoot } from '@main/workspace/workspace'
+import type { ReasoningMode } from '@main/runtime/reasoning'
 
 /**
  * Procedures — saved prompts the user runs on demand from the Procedures page.
@@ -29,6 +30,13 @@ export type Procedure = {
    * Optional: rows saved before the field shipped follow the global mode.
    */
   mode?: 'single' | 'workflow'
+  /**
+   * The procedure's own reasoning effort — stamped with the chat's selected
+   * thinking mode at creation, user-overridable per procedure. Runs use it
+   * over the chat setting. Optional: rows saved before the field shipped
+   * follow the chat live (exactly the `mode` contract above).
+   */
+  thinking?: ReasoningMode
   /** Emoji shown on the card; absent (legacy rows) ⇒ the page's default. */
   icon?: string
   /** Project binding — runs get the project overlay and register under it. */
@@ -108,6 +116,7 @@ export function createProcedure(payload: {
   title: string
   prompt: string
   mode?: 'single' | 'workflow'
+  thinking?: ReasoningMode
   icon?: string
   projectId?: string
 }): Promise<Procedure> {
@@ -118,11 +127,16 @@ export function createProcedure(payload: {
     // one funnel covers the UI's blank-stub create and the agent's
     // procedure_create alike.
     const globalMode = (await readConfig().catch(() => null))?.llm.mode ?? 'single'
+    // The thinking stamp is the same contract: the chat's selected mode at
+    // creation, absent only when chat itself has nothing selected (the row
+    // then follows chat live, like legacy rows).
+    const thinking = payload.thinking ?? (await currentThinkingModeSetting())
     const procedure: Procedure = {
       id: randomUUID(),
       title: payload.title,
       prompt: payload.prompt,
       mode: payload.mode ?? (globalMode === 'workflow' ? 'workflow' : 'single'),
+      ...(thinking ? { thinking } : {}),
       // Every procedure carries an emoji from birth (cards + the rail badge);
       // the picker can change it but never remove it.
       icon: payload.icon || '📋',
@@ -141,6 +155,7 @@ export function updateProcedure(payload: {
   title?: string
   prompt?: string
   mode?: 'single' | 'workflow'
+  thinking?: ReasoningMode
   icon?: string
   projectId?: string
   /** Whole-list replace — detached copies WE own are deleted from disk. */
@@ -155,6 +170,7 @@ export function updateProcedure(payload: {
     if (payload.title !== undefined) procedure.title = payload.title
     if (payload.prompt !== undefined) procedure.prompt = payload.prompt
     if (payload.mode !== undefined) procedure.mode = payload.mode
+    if (payload.thinking !== undefined) procedure.thinking = payload.thinking
     if (payload.icon !== undefined) procedure.icon = payload.icon
     // '' unbinds — the field disappears from the JSON rather than storing ''.
     if (payload.projectId !== undefined) procedure.projectId = payload.projectId || undefined

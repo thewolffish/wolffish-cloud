@@ -85,7 +85,7 @@ check('ending a turn with open items is sent back once', () => {
   const aside = String(nudge[1].content)
   assert.ok(aside.includes('todo_write'), 'must name the tool')
   assert.ok(aside.includes('2 of 3 items unfinished'), 'must say what is open')
-  assert.ok(aside.includes('zero characters'), 'must permit the silent close')
+  assert.ok(aside.includes('close_turn'), 'must name the producible exit')
   // Permit, never prescribe. Ordering a model to say nothing is what produced
   // the 2026-09-18 leak: deepseek-flash could not emit a zero-token content
   // channel, so it typed the Chinese for "utterly empty" as the run's last

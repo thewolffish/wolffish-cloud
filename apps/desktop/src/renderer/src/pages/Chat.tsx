@@ -260,7 +260,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const toast = useToast()
   const isRtl = RTL_LOCALES.has(locale)
   const { goTo, status, refreshStatus } = useFlow()
-  const { reportSession, markSending, consumeProcedure, activeProject, runStatuses } = useSessions()
+  const {
+    reportSession,
+    markSending,
+    consumeProcedure,
+    activeProject,
+    setActiveProject,
+    runStatuses
+  } = useSessions()
   // Project mode: THIS session runs inside the globally active project. The
   // binding is per-session (descriptor), so a backgrounded plain chat never
   // borrows another session's project chrome. (The project button and manage
@@ -301,19 +308,41 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   }, [selectedModel])
 
   // Active mode, clamped/migrated to a value valid for this model's modes.
+  // Inside a project the PROJECT's thinking mode is the active value — it is
+  // what this conversation's turns actually run at (the agent applies it to
+  // every turn carrying a projectId), so the chip shows and edits the
+  // project's stamp rather than the per-model config it would otherwise own.
   const thinkingMode = useMemo<ReasoningMode>(
     () =>
       normalizeReasoningMode(
-        selectedModel ? persistedThinkingModes?.[selectedModel] : undefined,
+        sessionProject?.thinking ??
+          (selectedModel ? persistedThinkingModes?.[selectedModel] : undefined),
         reasoningModes
       ),
-    [selectedModel, persistedThinkingModes, reasoningModes]
+    [sessionProject, selectedModel, persistedThinkingModes, reasoningModes]
   )
 
   // Persist via API — the source of truth is persistedThinkingModes, which
   // updates reactively through status once the write completes.
   const setThinkingMode = useCallback(
     async (mode: string) => {
+      // Inside a project the chip edits the PROJECT's thinking mode — the
+      // value every turn of its conversations runs at — so the write and the
+      // thing that actually runs can never disagree. Outside one the
+      // per-model config is written exactly as before.
+      if (sessionProject) {
+        if (mode === sessionProject.thinking) return
+        try {
+          const updated = await window.api.projects.update({
+            id: sessionProject.id,
+            thinking: mode as ThinkingMode
+          })
+          setActiveProject(updated)
+        } catch {
+          // The write failed — the chip stays on the project's committed value.
+        }
+        return
+      }
       if (!selectedModel) return
       // Skip redundant writes. The effect below drives this setter
       // autonomously on every status/model transition (including starting a
@@ -326,18 +355,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       await window.api.runtime.setThinkingMode(selectedModel, mode as ThinkingMode)
       await refreshStatus()
     },
-    [selectedModel, persistedThinkingModes, refreshStatus]
+    [sessionProject, setActiveProject, selectedModel, persistedThinkingModes, refreshStatus]
   )
 
   // Migrate/clamp the persisted mode to a value valid for this model. Runs on
   // load and on every model switch so a stale or legacy token (e.g. 'basic')
-  // is rewritten to a canonical one. No write when the model has no modes.
+  // is rewritten to a canonical one. No write when the model has no modes —
+  // and none inside a project, where the chip drives the project's stamp and
+  // the per-model config is not what this conversation runs at.
   useEffect(() => {
-    if (!selectedModel || reasoningModes.length === 0) return
+    if (sessionProject || !selectedModel || reasoningModes.length === 0) return
     const persisted = persistedThinkingModes?.[selectedModel]
     const normalized = normalizeReasoningMode(persisted, reasoningModes)
     if (persisted !== normalized) void setThinkingMode(normalized)
-  }, [reasoningModes, selectedModel, persistedThinkingModes, setThinkingMode])
+  }, [sessionProject, reasoningModes, selectedModel, persistedThinkingModes, setThinkingMode])
 
   useEffect(() => {
     void refreshStatus()
@@ -2137,6 +2168,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       opts?: {
         modeOverride?: 'single' | 'workflow'
         /**
+         * Procedure Play only. The procedure's own reasoning stamp — this
+         * send uses it over the state-based thinkingMode for THIS turn only
+         * (a lingering override would leak into later sends).
+         */
+        thinkingOverride?: 'off' | 'on' | 'high' | 'max'
+        /**
          * An already-transcribed voice note (a voice interjection the turn
          * closed on before reading it, or that found no live turn): the
          * content is its transcript, `attachments` its audio. The feed and
@@ -2266,7 +2303,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           assistantMessageId: assistantPlaceholder.id,
           workingFolders: opts?.workingFolders ?? workingFolders,
           contextFiles: opts?.contextFiles ?? contextFiles,
-          thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+          thinkingMode: (opts?.thinkingOverride ??
+            thinkingMode) as import('@preload/index').ThinkingMode,
           planMode,
           projectId: descriptor.projectId ?? undefined,
           // Per-call only (procedure Play): a lingering state-based override
@@ -2382,7 +2420,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // without nulling it a remounted Chat would re-execute the procedure —
     // duplicate autonomous runs with real side effects.
     consumeProcedure(sessionKey)
-    const { prompt, mode, files = [], directories = [] } = procedure
+    const { prompt, mode, files = [], directories = [], thinking } = procedure
     // The procedure's attachments become THIS conversation's: the folders show
     // up in the composer's picker and the files ride every turn's overlay, so a
     // follow-up question typed here still has both. Written to disk before the
@@ -2401,6 +2439,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       }
       await sendContent(prompt, [], {
         ...(mode ? { modeOverride: mode } : {}),
+        // The procedure's own thinking stamp; absent ⇒ the state-based
+        // thinkingMode (the chat's selection / the project's stamp) carries it.
+        ...(thinking ? { thinkingOverride: thinking } : {}),
         workingFolders: directories,
         contextFiles: files
       })

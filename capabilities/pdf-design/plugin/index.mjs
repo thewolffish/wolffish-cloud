@@ -1,7 +1,7 @@
 // PDF Design — a core capability whose single tool loads the document design
 // manual into context. Model-led: the core contract instructs the agent to
 // call `pdf_design` BEFORE authoring any PDF/report/styled document; this
-// returns it. Mirrors the operating-manual body-load pattern.
+// returns it. Mirrors the body-load pattern used by the other core manuals.
 //
 // The manual text lives in ../manual.md and the tested palettes in
 // ../themes.md (single sources of truth, also readable via

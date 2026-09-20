@@ -464,6 +464,11 @@ export type AutomationJobInfo = {
   lastError?: string
   /** The job's own chat mode (its `mode: …` marker); null ⇒ follows global. */
   mode: 'single' | 'workflow' | null
+  /**
+   * The job's own reasoning effort (its `thinking: …` marker); null ⇒
+   * follows the chat's selected thinking mode.
+   */
+  thinking: 'off' | 'on' | 'high' | 'max' | null
 }
 
 /**
@@ -1092,17 +1097,10 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // tool answers its own refusals (nothing paired, notifications off).
   'phone',
   'electron',
-  // The working-discipline loader: one tool (operating_manual) returning the
-  // full manual. Core so its schema always ships — the agent must be able to
-  // load its discipline as a single first call on any real task, with no
-  // discovery hop (a 2-hop skill_read_source path halved the trigger rate in
-  // testing). The manual BODY loads only when the tool is CALLED, so trivial
-  // turns pay just this ~1 tool schema, never the manual text.
-  'operating-manual',
   // Same body-load pattern for the design manuals. Document/PDF requests,
   // web-page requests, and chart requests are frequent and quality-critical;
-  // a discovery hop before the manual halves the trigger rate (measured for
-  // operating-manual), which is exactly the inconsistent-output failure
+  // a discovery hop before the manual halves the trigger rate, which is
+  // exactly the inconsistent-output failure
   // these exist to fix.
   'pdf-design',
   'web-design',
@@ -1114,9 +1112,9 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  * primary "Core" badge, sorted last, and LOCKED — they can never be toggled
  * off (from the UI, the agent's skill_disable, or a stale config entry). These
  * are the load-bearing built-ins the app assumes are always present:
- * self-management (skills), workflow delegation, introspection, the operating
- * discipline, automations/procedures/projects scheduling, secrets, and the
- * shared utilities. Distinct from CORE_CAPABILITIES above, which governs
+ * self-management (skills), workflow delegation, introspection,
+ * automations/procedures/projects scheduling, secrets, and the shared
+ * utilities. Distinct from CORE_CAPABILITIES above, which governs
  * always-expose-to-the-model (no discovery hop) — a different concern that
  * happens to overlap. setDisabled() filters this set out defensively, so
  * membership here is the single source of truth for "cannot be disabled".
@@ -1133,7 +1131,6 @@ export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   // but never unlearn, and a wrong belief would survive every correction the
   // user makes. Locked for the same reason `skills` is.
   'knowledge',
-  'operating-manual',
   'pdf-design',
   'web-design',
   'dataviz',
@@ -1539,6 +1536,7 @@ export class Cerebellum {
     // every loadAll exit path has it.
     this.registerDiscoveryCapability()
     this.registerTodoCapability()
+    this.registerCloseTurnCapability()
     this.registerChangesCapability()
     const root = this.options.workspaceRoot
     if (!root) {
@@ -1851,6 +1849,32 @@ export class Cerebellum {
    * files back. Model-led — "that made it worse, put it back" — with no
    * git dependency, so it works in any folder.
    */
+  /**
+   * Register the built-in `close_turn` tool: the model's explicit, producible
+   * way to say "everything is delivered and nothing further is needed".
+   *
+   * It exists because the alternative was impossible. The runtime tail used to
+   * ask the model to "end with an entirely empty response — zero characters",
+   * and no OpenAI-compatible provider carries an empty assistant content
+   * channel (the same constraint that makes Agent.ts skip pushing an empty
+   * assistant message). A model that had genuinely finished therefore had no
+   * way to obey: it reached for the smallest stand-in it could type and
+   * shipped it to the user as real text. Documented leaks of exactly that
+   * shape: `(no output)`, `(no content)`, `[Empty response]`, `(empty —
+   * nothing further)`, and the Chinese `空空如也`.
+   *
+   * A tool call is a normal, producible token sequence, so this gives the
+   * model a legal exit that costs nothing and needs no special provider
+   * support. The Agent sees the call and ends the turn; the content channel
+   * ends at the model's last real character, exactly as intended, with no
+   * post-processing anywhere.
+   *
+   * Declared read-only: it changes nothing outside the conversation, so a
+   * plan-mode or explore turn may use it too — refusal to close would be worse
+   * than useless there. The plugin execute() is a no-op returning success; the
+   * Agent intercepts the call before dispatch, so nothing is ever recorded as
+   * a task step.
+   */
   private registerChangesCapability(): void {
     const plugin: WolffishPlugin = {
       name: 'changes',
@@ -2075,6 +2099,78 @@ export class Cerebellum {
                 }
               }
             }
+          }
+        ],
+        body: '',
+        hasPlugin: true,
+        status: 'ok',
+        requires: [],
+        packages: {},
+        npmDependencies: {}
+      },
+      plugin
+    )
+  }
+
+  /**
+   * Register the built-in `close_turn` tool: the model's explicit, producible
+   * way to say "everything is delivered and nothing further is needed".
+   *
+   * It exists because the alternative was impossible. The runtime tail used to
+   * ask the model to "end with an entirely empty response — zero characters",
+   * and no OpenAI-compatible provider carries an empty assistant content
+   * channel (the same constraint that makes Agent.ts skip pushing an empty
+   * assistant message). A model that had genuinely finished therefore had no
+   * way to obey: it reached for the smallest stand-in it could type and
+   * shipped it to the user as real text. Documented leaks of exactly that
+   * shape: `(no output)`, `(no content)`, `[Empty response]`, `(empty —
+   * nothing further)`, and the Chinese `空空如也`.
+   *
+   * A tool call is a normal, producible token sequence, so this gives the
+   * model a legal exit that costs nothing and needs no special provider
+   * support. The Agent sees the call and ends the turn; the content channel
+   * ends at the model's last real character, exactly as intended, with no
+   * post-processing anywhere. It never reaches the API: the call is
+   * intercepted before dispatch, so it produces no upstream request, spends
+   * no ModelGate slot, and is not metered.
+   *
+   * Declared read-only: it changes nothing outside the conversation, so a
+   * plan-mode or explore turn may use it too — refusal to close would be worse
+   * than useless there. The plugin execute() is a no-op returning success; the
+   * Agent intercepts the call before dispatch, so nothing is ever recorded as
+   * a task step.
+   */
+  private registerCloseTurnCapability(): void {
+    const plugin: WolffishPlugin = {
+      name: 'close-turn',
+      tools: [],
+      execute: async (toolName) => {
+        if (toolName !== 'close_turn')
+          return { success: false, error: `close-turn: unknown tool ${toolName}` }
+        return { success: true, output: 'Turn closed.' }
+      }
+    }
+    this.registerInProcessCapability(
+      {
+        name: 'close-turn',
+        dir: '',
+        description:
+          'End the turn when everything the user needs is already said and delivered — the explicit, correct way to say "nothing further".',
+        triggers: { keywords: ['close turn', 'nothing further', 'nothing to add'] },
+        tools: [
+          {
+            name: 'close_turn',
+            readOnly: true,
+            description: [
+              'End the turn with no further message to the user, when everything they need is already said and delivered — your closing reply already went out, a card or file you produced is the answer, or the work is handed back.',
+              '',
+              'This is the correct, explicit way to say "nothing further". Calling it ends the turn immediately and cleanly; your content up to this point is exactly what the user receives.',
+              '',
+              'Use it when: your reply and any files/notifications for this turn are already delivered and a further message would only repeat them or pad. Do NOT call it while the user still needs something you have not said — a wrap-up, an answer, a next step — and never as a shortcut past work that is not finished.',
+              '',
+              'Never write a stand-in for silence instead: no bracketed note, no lone punctuation mark, no word or set phrase meaning "empty" or "nothing further" in any language. Anything you write is delivered to the user verbatim as a message; calling this tool is not.'
+            ].join('\n'),
+            parameters: {}
           }
         ],
         body: '',

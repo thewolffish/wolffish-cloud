@@ -1803,6 +1803,8 @@
     "edit": "Edit automation",
     "active": "Active",
     "inactive": "Inactive",
+    "toggleActive": "Active — click to pause",
+    "toggleInactive": "Inactive — click to enable",
     "run": "Run now",
     "runStarted": "Automation started",
     "runQueued": "Automation queued — the run slots are full ({{count}} in progress). It starts when one frees up",

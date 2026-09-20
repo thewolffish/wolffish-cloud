@@ -1,5 +1,9 @@
+import { CardFact, CardFacts } from '@components/common/card-facts/CardFacts'
 import { ChipRow } from '@components/common/chip-row/ChipRow'
 import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
+import { ModeSwitch } from '@components/common/mode-switch/ModeSwitch'
+import { ThinkingSwitch } from '@components/common/thinking-switch/ThinkingSwitch'
+import { ToggleSwitch } from '@components/common/toggle-switch/ToggleSwitch'
 import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
@@ -8,6 +12,8 @@ import { EditorSheet } from '@components/core/EditorSheet'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
+import { useChatReasoning } from '@hooks/use-chat-reasoning/useChatReasoning'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { escapePromptBody } from '@lib/heartbeat-escape'
 import { cn } from '@lib/utils/cn'
 import type {
@@ -29,6 +35,7 @@ import {
   Delete02Icon,
   Edit02Icon,
   FloppyDiskIcon,
+  Folder01Icon,
   HelpCircleIcon,
   InformationCircleIcon,
   PlayIcon,
@@ -544,6 +551,10 @@ type SidebarJob = {
   mode: 'single' | 'workflow' | null
   /** Absolute file line of the marker, for in-place rewrites; null if absent. */
   modeLineIndex: number | null
+  /** The job's `thinking: …` marker value; null ⇒ follows the chat. */
+  thinking: ReasoningMode | null
+  /** Absolute file line of the thinking marker; null if absent. */
+  thinkingLineIndex: number | null
   /** The job's `project: <id>` marker — its runs bind to that project. */
   project: string | null
   /** The job's `icon: <emoji>` marker; null ⇒ the page default. */
@@ -569,6 +580,10 @@ type SidebarJob = {
  * stripped from the preview so a marker never reads as instruction text.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+// The job's own reasoning effort — canonical tokens only, exactly as the
+// engine's THINKING_MARKER_RE reads them (brainstem.ts); the two must stay in
+// step or the card would show one value and the run would use another.
+const THINKING_MARKER_RE = /^thinking:\s*(off|on|high|max)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 // The display name is free text, so it takes the whole line like the paths.
@@ -593,6 +608,7 @@ function stripLeadingSettings(text: string): string {
     if (
       line === '' ||
       MODE_MARKER_RE.test(line) ||
+      THINKING_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
       ICON_MARKER_RE.test(line) ||
       NAME_MARKER_RE.test(line) ||
@@ -646,6 +662,8 @@ function parseSidebarJobs(
     let endIdx = i
     let mode: 'single' | 'workflow' | null = null
     let modeLineIndex: number | null = null
+    let thinking: ReasoningMode | null = null
+    let thinkingLineIndex: number | null = null
     let project: string | null = null
     let icon: string | null = null
     let name: string | null = null
@@ -680,6 +698,13 @@ function parseSidebarJobs(
         if (m) {
           mode = m[1].toLowerCase() as 'single' | 'workflow'
           modeLineIndex = j
+          if (!isBlock) endIdx = j
+          continue
+        }
+        const th = line.match(THINKING_MARKER_RE)
+        if (th) {
+          thinking = th[1].toLowerCase() as ReasoningMode
+          thinkingLineIndex = j
           if (!isBlock) endIdx = j
           continue
         }
@@ -752,6 +777,8 @@ function parseSidebarJobs(
       endLineIndex: endIdx,
       mode,
       modeLineIndex,
+      thinking,
+      thinkingLineIndex,
       project,
       icon,
       name,
@@ -780,7 +807,17 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
   // Jobs without a marker follow the global mode — show that as the effective
   // selection; clicking a tab stamps an explicit marker.
   const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
+  // The chat's reasoning contract, for the cards' thinking switches: the
+  // modes its selected model honours and the mode chat is showing right now.
+  const reasoning = useChatReasoning()
   const toast = useToast()
+  // persistDraft runs inside the save chain, so it reads the CURRENT chat
+  // reasoning through a ref — the change-subscription mirrors' exact pattern:
+  // fresh without re-creating the chain on every model change.
+  const reasoningRef = useRef(reasoning)
+  useEffect(() => {
+    reasoningRef.current = reasoning
+  }, [reasoning])
 
   const [jobs, setJobs] = useState<HeartbeatJobView[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -1131,6 +1168,40 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
     [applyContent, content, t, toast]
   )
 
+  // Rewrite (or insert) the job's `thinking:` marker line and save — the mode
+  // toggle's exact contract, including the single-line-disabled splice hazard.
+  // The card's switch writes here; the run then uses the stamp, and a job
+  // without one follows the chat's selected mode.
+  const handleSetThinking = useCallback(
+    async (job: SidebarJob, mode: ReasoningMode): Promise<void> => {
+      if (job.thinking === mode) return
+      const lines = content.split('\n')
+      const singleLineDisabled = /^<!--\s*##\s+.+?\s*-->\s*$/.test(lines[job.lineIndex])
+      if (job.thinkingLineIndex !== null) {
+        lines[job.thinkingLineIndex] = `thinking: ${mode}`
+      } else if (singleLineDisabled) {
+        // A body-less disabled job is a one-line comment — splicing the marker
+        // after it would put it OUTSIDE the comment, where the engine's
+        // comment strip folds it into the PREVIOUS job's instruction. Convert
+        // to the block-comment form with the marker inside.
+        const heading = lines[job.lineIndex].replace(/^<!--\s*/, '').replace(/\s*-->\s*$/, '')
+        lines.splice(job.lineIndex, 1, `<!-- ${heading}`, '', `thinking: ${mode}`, '-->')
+      } else {
+        lines.splice(job.lineIndex + 1, 0, '', `thinking: ${mode}`)
+      }
+      const newContent = lines.join('\n')
+      applyContent(newContent)
+      try {
+        await window.api.viewer.writeFile(HEARTBEAT_PATH, newContent)
+        const jobList = await window.api.heartbeat.getJobs()
+        setJobs(jobList)
+      } catch {
+        toast.show({ tone: 'error', message: t('workspace.saveError') })
+      }
+    },
+    [applyContent, content, t, toast]
+  )
+
   const handleDelete = useCallback(
     async (job: SidebarJob): Promise<void> => {
       if (deleting) return
@@ -1420,8 +1491,12 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
         // automation carries an emoji — default ❤️); the project marker only
         // when bound. The mode marker is preserved from the existing block.
         // Files and directories are repeatable, one line each.
-        const settingLines = (mode: 'single' | 'workflow' | null): string[] => [
+        const settingLines = (
+          mode: 'single' | 'workflow' | null,
+          thinking: ReasoningMode | null
+        ): string[] => [
           ...(mode ? [`mode: ${mode}`] : []),
+          ...(thinking ? [`thinking: ${thinking}`] : []),
           ...(projectId ? [`project: ${projectId}`] : []),
           `icon: ${icon || DEFAULT_AUTOMATION_ICON}`,
           // Always written: the editor refuses to save without one, so every
@@ -1450,7 +1525,7 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
         let nextActive = true
         if (target) {
           nextActive = target.active
-          const markers = [...settingLines(target.mode), '']
+          const markers = [...settingLines(target.mode, target.thinking), '']
           const block = target.active
             ? [`## ${schedule}`, '', ...markers, ...promptLines]
             : [`<!-- ## ${schedule}`, '', ...markers, ...promptLines, '-->']
@@ -1459,8 +1534,21 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
           nextContent = lines.join('\n')
         } else {
           // New jobs go before the first HTML comment (the examples block) —
-          // the same shape the automations plugin's insertBlock produces.
-          const block = [`## ${schedule}`, '', ...settingLines(null), '', ...promptLines].join('\n')
+          // the same shape the automations plugin's insertBlock produces. A
+          // new job is stamped with the thinking mode chat is showing RIGHT
+          // NOW (the "the mode the user was in when they created it"
+          // contract the mode marker keeps); a model with no reasoning leaves
+          // the marker off and the job follows chat live.
+          const block = [
+            `## ${schedule}`,
+            '',
+            ...settingLines(
+              null,
+              reasoningRef.current.modes.length > 0 ? reasoningRef.current.current : null
+            ),
+            '',
+            ...promptLines
+          ].join('\n')
           const firstComment = current.search(/<!--/)
           nextContent = (
             firstComment >= 0
@@ -1697,28 +1785,6 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
     [clock, locale, t]
   )
 
-  const jobMetaLine = useCallback(
-    (job: SidebarJob): string => {
-      // The schedule heading left this line for its own chip above — what
-      // stays is the reference detail nobody reads at a glance: the moment,
-      // the project, the edit stamp.
-      const parts: string[] = []
-      // The chip carries the relative countdown; the wall-clock moment it
-      // lands on stays here, where it doesn't have to re-render every second.
-      if (job.active && job.type !== 'startup' && job.nextRunMs != null) {
-        parts.push(formatAbsolute(job.nextRunMs, locale))
-      }
-      const project = job.project ? projectsById.get(job.project) : undefined
-      if (project) parts.push(project.title.trim() || t('projects.untitled'))
-      const edited = editStamps[job.label]
-      if (edited != null) {
-        parts.push(t('heartbeat.editedAt', { time: formatFromNow(edited, now, locale) }))
-      }
-      return parts.join(' · ')
-    },
-    [editStamps, locale, now, projectsById, t]
-  )
-
   return (
     <>
       {view === 'cards' ? (
@@ -1762,10 +1828,16 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                   // is what it does, and the chip below already reads it. A
                   // job written before names existed has only its heading.
                   const title = job.name?.trim() || job.label
-                  // Can come back empty (an unnamed, inactive, unbound job) —
-                  // the chip above already says everything it would have.
-                  const metaLine = jobMetaLine(job)
                   const ScheduleIcon = SCHEDULE_ICONS[job.type] ?? Clock01Icon
+                  // Facts-row material, computed once per card: the
+                  // wall-clock moment behind the countdown chip, the bound
+                  // project and the edit stamp.
+                  const project = job.project ? projectsById.get(job.project) : undefined
+                  const edited = editStamps[job.label]
+                  const nextAbsolute =
+                    job.active && job.type !== 'startup' && job.nextRunMs != null
+                      ? formatAbsolute(job.nextRunMs, locale)
+                      : null
                   return (
                     <li key={job.label} className="min-w-0">
                       <div
@@ -1774,14 +1846,36 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                           !job.active && 'opacity-60'
                         )}
                       >
-                        <div className="flex w-full items-center justify-between gap-2">
+                        <div className="flex w-full min-w-0 items-center gap-2.5">
                           <span
                             aria-hidden
                             className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
                           >
                             {jobCardIcon(job)}
                           </span>
+                          {/* The name leads the card now, with its kind badge
+                              pinned beside it and the actions held to the end
+                              edge — identity first, controls below. */}
+                          <span
+                            title={title}
+                            className="text-fg flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold"
+                          >
+                            <bdi className="min-w-0 truncate">{title}</bdi>
+                            <Badge variant="primary" size="sm" className="shrink-0">
+                              {t(`heartbeat.type.${job.type}`)}
+                            </Badge>
+                          </span>
                           <div className="flex shrink-0 items-center">
+                            {/* The on/off state as one generic switch,
+                                leading the actions: state first, then what
+                                you can do, split by a hairline. */}
+                            <ToggleSwitch
+                              on={job.active}
+                              onToggle={() => void handleToggle(job)}
+                              labelOn={t('heartbeat.toggleActive')}
+                              labelOff={t('heartbeat.toggleInactive')}
+                            />
+                            <span aria-hidden className="bg-border mx-1 h-4 w-px shrink-0" />
                             {job.active && (
                               <button
                                 type="button"
@@ -1828,110 +1922,33 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                         </div>
 
                         <div className="flex w-full min-w-0 flex-1 flex-col gap-2">
-                          {/* On/off and mode are properties of the
-                              automation, not of its prompt. They lead the
-                              stack, pushed to the card's two edges: the switch
-                              under the emoji, the mode under the action
-                              buttons — so the controls frame the same width the
-                              header row above them does. */}
-                          <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
-                            <div
-                              role="tablist"
-                              className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                            >
-                              <button
-                                role="tab"
-                                type="button"
-                                aria-selected={job.active}
-                                onClick={() => {
-                                  if (!job.active) void handleToggle(job)
-                                }}
-                                className={cn(
-                                  'rounded-md px-2 py-1 text-[10px] font-medium',
-                                  job.active
-                                    ? 'bg-primary text-primary-fg shadow-sm'
-                                    : 'text-muted hover:text-fg cursor-pointer'
-                                )}
-                              >
-                                {t('settings.wolffish.toggle.on')}
-                              </button>
-                              <button
-                                role="tab"
-                                type="button"
-                                aria-selected={!job.active}
-                                onClick={() => {
-                                  if (job.active) void handleToggle(job)
-                                }}
-                                className={cn(
-                                  'rounded-md px-2 py-1 text-[10px] font-medium',
-                                  !job.active
-                                    ? 'bg-primary text-primary-fg shadow-sm'
-                                    : 'text-muted hover:text-fg cursor-pointer'
-                                )}
-                              >
-                                {t('settings.wolffish.toggle.off')}
-                              </button>
-                            </div>
-                            <div
-                              role="tablist"
-                              aria-label={t('heartbeat.modeAria')}
-                              className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                            >
-                              {(['single', 'workflow'] as const).map((m) => {
-                                const selected = (job.mode ?? globalMode) === m
-                                return (
-                                  <button
-                                    key={m}
-                                    role="tab"
-                                    type="button"
-                                    aria-selected={selected}
-                                    onClick={() => {
-                                      if (!selected) void handleSetMode(job, m)
-                                    }}
-                                    className={cn(
-                                      'rounded-md px-2 py-1 text-[10px] font-medium',
-                                      selected
-                                        ? 'bg-primary text-primary-fg shadow-sm'
-                                        : 'text-muted hover:text-fg cursor-pointer'
-                                    )}
-                                  >
-                                    {t(
-                                      m === 'workflow'
-                                        ? 'chat.modePicker.workflow'
-                                        : 'chat.modePicker.single'
-                                    )}
-                                  </button>
-                                )
-                              })}
-                            </div>
+                          {/* The run knobs, one cluster under the identity
+                              row: the reasoning ladder, then the run mode —
+                              the same two icon groups every card page
+                              carries. */}
+                          <div className="flex w-full flex-wrap items-center gap-1.5">
+                            <ThinkingSwitch
+                              modes={reasoning.modes}
+                              value={normalizeReasoningMode(
+                                job.thinking ?? reasoning.current,
+                                reasoning.modes
+                              )}
+                              onPick={(m) => void handleSetThinking(job, m)}
+                            />
+                            <ModeSwitch
+                              ariaLabel={t('heartbeat.modeAria')}
+                              value={job.mode ?? globalMode}
+                              onPick={(m) => void handleSetMode(job, m)}
+                            />
                           </div>
-                          <span
-                            title={title}
-                            className="text-fg flex w-full min-w-0 items-center justify-between gap-2 text-sm font-semibold"
-                          >
-                            {/* The name takes the whole row and ellipses on one
-                                line however long it runs; the interval badge
-                                holds the end edge, so every card's badge lands
-                                on the same column. It is the period in the
-                                reader's language — the schedule chip below
-                                spells the same rule in the editor's English
-                                syntax, which is the one thing on the card that
-                                never translates. */}
-                            <bdi className="min-w-0 flex-1 truncate">{title}</bdi>
-                            <Badge variant="primary" size="sm" className="shrink-0">
-                              {t(`heartbeat.type.${job.type}`)}
-                            </Badge>
-                          </span>
-                          {/* When it runs next and the rule it runs by, pushed
-                              to the card's two edges the way the switch and the
-                              mode row above them are — so the four controls
-                              frame one column. Both are worn as the composer's
-                              active-model chip: the countdown in soft primary
-                              because it is the card's headline fact, the rule
-                              outlined and quiet beside it. They wrap to their
-                              own lines rather than squeeze, which is what gives
-                              a long cron the card's full width. */}
-                          <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
+                          {/* When it fires next and the rule it fires by —
+                              one wrapped pair under the knobs, both worn as
+                              the composer's active-model chip: the countdown
+                              in soft primary because it is the card's
+                              headline fact, the rule outlined and quiet
+                              beside it. They wrap rather than squeeze, which
+                              gives a long cron the card's full width. */}
+                          <div className="flex w-full flex-wrap items-center gap-1.5">
                             {/* An automation that is switched off wears the
                                 muted variant instead of promising a run that
                                 isn't coming. */}
@@ -1951,35 +1968,40 @@ export function Heartbeat({ view }: { view: HeartbeatView }): React.JSX.Element 
                               <Clock01Icon size={13} className="shrink-0" />
                               <span className="truncate">{nextRunLabel(job)}</span>
                             </span>
-                            {/* The rule itself, in the syntax the editor takes
-                                — "Weekly (Mon 09:00)" — under its own glyph. It
-                                used to open the mono well below, where a
-                                two-line clamp could swallow it behind the
-                                date. */}
                             <span title={job.label} className={scheduleChipClass}>
                               <ScheduleIcon size={13} className="shrink-0" />
                               <bdi className="truncate">{job.label}</bdi>
                             </span>
                           </div>
-                          {/* The moment the next run lands on, the project and
-                              the edit stamp — reference detail, set in the mono
-                              well the guide and folder rows use. It follows the
-                              chips immediately rather than being pinned to the
-                              card's floor: a neighbour that is mid-run is one
-                              line taller, and a bottom pin would spend that
-                              difference as a gap ABOVE the well, sinking it
-                              away from the card it belongs to. Top-aligned, the
-                              wells line up across the row and the slack falls
-                              underneath, where nothing has to look at it. */}
-                          {metaLine !== '' && (
-                            <code className="border-border bg-bg text-muted line-clamp-2 rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
-                              {metaLine}
-                            </code>
+                          {/* The moment the next run lands on, the bound
+                              project and the edit stamp — reference detail as
+                              icon-led facts, shared with the procedures and
+                              projects cards. Absent pieces drop rather than
+                              print empty; the row itself disappears when
+                              nothing is left. */}
+                          {(nextAbsolute !== null || project || edited != null) && (
+                            <CardFacts>
+                              {nextAbsolute !== null && (
+                                <CardFact icon={<Clock01Icon size={12} />}>{nextAbsolute}</CardFact>
+                              )}
+                              {project && (
+                                <CardFact icon={<Folder01Icon size={12} />}>
+                                  {project.title.trim() || t('projects.untitled')}
+                                </CardFact>
+                              )}
+                              {edited != null && (
+                                <CardFact icon={<Edit02Icon size={12} />}>
+                                  {t('heartbeat.editedAt', {
+                                    time: formatFromNow(edited, now, locale)
+                                  })}
+                                </CardFact>
+                              )}
+                            </CardFacts>
                           )}
                           {/* Running or queued — the last line of the card,
-                              under the well, because it is the only thing here
-                              that is true for the next few minutes rather than
-                              until you edit the automation. */}
+                              under the facts, because it is the only thing
+                              here that is true for the next few minutes
+                              rather than until you edit the automation. */}
                           {busy && (
                             <span
                               className={cn(

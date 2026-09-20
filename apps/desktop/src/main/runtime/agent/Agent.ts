@@ -27,6 +27,11 @@ import {
 } from '@main/runtime/agent/control-token-guard'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
 import {
+  closingNotice,
+  createClosingGuardState,
+  recordClosingTool
+} from '@main/runtime/agent/closing-guard'
+import {
   INTERJECTION_NOTICE,
   interjectionToHistoryMessage,
   type AutonomousInterjectionBridge,
@@ -76,7 +81,7 @@ import {
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
 import type { StepResult } from '@main/runtime/motor'
-import { buildProjectOverlay, projectWorkingFolders } from '@main/projects'
+import { buildProjectOverlay, projectThinking, projectWorkingFolders } from '@main/projects'
 import {
   anyCodeFolder,
   buildInstructionsOverlay,
@@ -413,6 +418,12 @@ export type AutonomousTurnOptions = {
    * modeOverride. Omitted ⇒ the run follows the global mode.
    */
   mode?: 'single' | 'workflow'
+  /**
+   * The job's/procedure's own reasoning effort, threaded through to the turn.
+   * Omitted ⇒ the brainstem already resolved the fallback (the chat's selected
+   * mode) before calling; undefined here means nothing was selectable.
+   */
+  thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
    * Project binding: the turn gets the project overlay and the sealed
    * conversation registers under the project (rail groups/badges it).
@@ -1032,6 +1043,17 @@ export class Agent {
     // prompt cache never churns mid-turn) and appended to the system prompt
     // below. Instructions verbatim; files as a model-led reference list.
     const projectOverlay = await buildProjectOverlay(turn.projectId ?? null).catch(() => '')
+    // The project's own reasoning effort — applied when the caller passed
+    // none (channel turns; runs whose stamp and chat both resolve empty),
+    // the working-folders contract: resolved live per turn, so editing the
+    // project moves the effort for every conversation already inside it. An
+    // explicit per-turn value always wins — the in-app composer (which
+    // already sends the project's mode when one is active) or a procedure's
+    // and automation's own stamp is the more specific instruction.
+    const projectMode =
+      turn.thinkingMode == null
+        ? await projectThinking(turn.projectId ?? null).catch(() => null)
+        : null
     // An automation's or procedure's own attached files, on the same terms and
     // for the same cache reason: one string, computed before the loop,
     // appended to the system prompt beside the project block.
@@ -1047,6 +1069,12 @@ export class Agent {
     // via send_file — turn-scoped and reset per respond() call, and it rides the
     // post-cache-breakpoint tail so it never perturbs the cached history prefix.
     const deliveredThisTurn = new Set<string>()
+    // Closing-message guard (see agent/closing-guard). Turn-scoped: the failure
+    // it covers is intra-turn — two wrap-ups inside ONE turn, either side of a
+    // turn-closing tool call. Advisory only; it tells the model the news is
+    // already out and lets it decide, and it rides the runtime tail into a call
+    // the model was making anyway, so it costs no extra request.
+    const closingGuard = createClosingGuardState()
     // Mid-turn user messages (interjections). Drained at the loop's two stop
     // points only — never inside a tool batch, where an unanswered tool_use
     // would follow. Each delivered message is pushed as a real user entry
@@ -1424,6 +1452,14 @@ export class Agent {
         // task that went well), as the phone and voice notices.
         const screenIndicatorText = indicatorNoticeText(indicatorsOn, lastComputerAction)
 
+        // Closing-message notice: this turn already wrote its wrap-up and closed
+        // it with a turn-closing tool, so the model is told once that the news is
+        // out and a second telling is the same paragraph twice. Master/single
+        // only — an agent turn holds no delivery tools (see AGENT_EXCLUDED_
+        // CAPABILITIES), so it has no closer to double up on. Spent on drain, so
+        // it rides exactly one call. See agent/closing-guard.
+        const closingNoticeText = turn.role === 'agent' ? undefined : closingNotice(closingGuard)
+
         // Phone-notification notice for THIS iteration: the cadence reminder
         // until something goes out, then the don't-repeat guard. Undefined
         // when no phone is reachable — see phoneNotifyAvailable.
@@ -1462,6 +1498,7 @@ export class Agent {
             inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
           taskList: todoItemsThisTurn ? openTaskListNotice(todoItemsThisTurn) : undefined,
           controlToken: controlTokenText,
+          closing: closingNoticeText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText,
           screenIndicator: screenIndicatorText,
@@ -1583,7 +1620,7 @@ export class Agent {
           signal: turn.signal,
           role: turn.role,
           modelOverride: turn.modelOverride,
-          thinkingMode: turn.thinkingMode,
+          thinkingMode: turn.thinkingMode ?? projectMode ?? undefined,
           cacheKey: turn.conversationId ?? turn.turnId,
           // The conversation's own channel IS the surface. 'electron' is
           // the app itself, and a turn with no channel is an in-app turn
@@ -1619,6 +1656,7 @@ export class Agent {
               controlTokenText ||
               phoneNotifyText ||
               screenIndicatorText ||
+              closingNoticeText ||
               interjectionNoticeText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
@@ -1635,6 +1673,7 @@ export class Agent {
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText,
                   screenIndicator: screenIndicatorText,
+                  closing: closingNoticeText,
                   interjection: interjectionNoticeText
                 }) +
                 (workingFoldersBlock ? `\n${workingFoldersBlock}` : '') +
@@ -1932,6 +1971,32 @@ export class Agent {
         if (parsed.thinking) assistantMsg.reasoningContent = parsed.thinking
         messages.push(assistantMsg)
 
+        // close_turn — the model's explicit "everything is delivered and
+        // nothing further is needed". Handled before dispatch so it never
+        // becomes a task step, never reaches the amygdala, and never emits a
+        // tool_result (there is nothing to report back — the loop is over).
+        // This is the producible exit that replaces the old, impossible
+        // "end with an entirely empty response" ask; see cerebellum's
+        // registerCloseTurnCapability for why that ask had to go.
+        //
+        // Every OTHER call in the same batch still runs: a model that closes
+        // the turn alongside real work gets the work done and then stops. Only
+        // when close_turn is the sole call does the turn end here.
+        const closeTurnCall = parsed.toolCalls.find((tc) => tc.name === 'close_turn')
+        if (closeTurnCall) {
+          console.log(
+            `[agent] close_turn${parsed.toolCalls.length > 1 ? ` (with ${parsed.toolCalls.length - 1} other call(s))` : ''} — ending turn (iter ${iterationCount})`
+          )
+          const others = parsed.toolCalls.filter((tc) => tc.name !== 'close_turn')
+          if (others.length === 0) {
+            lastAssistantText = parsed.text
+            stopReason = 'closed'
+            break
+          }
+          parsed.toolCalls = others
+          parsed.stopReason = 'tool_use'
+        }
+
         // Parallel read batches: when one assistant message carries several
         // tool calls, the read-only ones (file_read, file_grep, file_glob,
         // memory_search… — frontmatter `readOnly: true`) START now, bounded,
@@ -2176,6 +2241,9 @@ export class Agent {
             if (reminder) result.output += reminder
           }
           totalToolCalls += 1
+          // A turn-closing tool that actually LANDED — a failed send is not a
+          // close, so this reads result.ok. See agent/closing-guard.
+          if (result.ok) recordClosingTool(closingGuard, call.name)
           if (result.ok && MUTATING_FOLDER_TOOLS.has(call.name)) folderFactsStale = true
           // Follow the computer-use screen indicator this run raised: the tail
           // notice, the turn-end nudge and the terminal failsafe all read this
@@ -2893,6 +2961,7 @@ export class Agent {
           bypassApproval: true,
           publishConversation: false,
           modeOverride: opts.mode,
+          thinkingMode: opts.thinkingMode,
           projectId: opts.projectId ?? null,
           contextFiles: opts.contextFiles ?? null,
           // The same field serves both background sources; the overlay names

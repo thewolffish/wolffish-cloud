@@ -1514,6 +1514,8 @@ export type HeartbeatJobView = {
   body: string
   /** The job's own chat mode (its `mode: …` marker); null ⇒ follows global. */
   mode: 'single' | 'workflow' | null
+  /** The job's own reasoning effort (its `thinking: …` marker); null ⇒ chat. */
+  thinking: 'off' | 'on' | 'high' | 'max' | null
   nextRunMs: number | null
 }
 
@@ -1668,6 +1670,11 @@ export type Procedure = {
   prompt: string
   /** The procedure's own chat mode; absent (legacy rows) ⇒ follows global. */
   mode?: 'single' | 'workflow'
+  /**
+   * The procedure's own reasoning effort; absent (legacy rows) ⇒ follows the
+   * chat's selected thinking mode. Stamped at creation from chat's pick.
+   */
+  thinking?: ThinkingMode
   /** Emoji shown on the card; absent (legacy rows) ⇒ the page's default. */
   icon?: string
   /** Project binding — runs get the project overlay and register under it. */
@@ -1701,6 +1708,7 @@ export type ProceduresApi = {
     title: string
     prompt: string
     mode?: 'single' | 'workflow'
+    thinking?: ThinkingMode
     icon?: string
     projectId?: string
   }) => Promise<Procedure>
@@ -1709,6 +1717,7 @@ export type ProceduresApi = {
     title?: string
     prompt?: string
     mode?: 'single' | 'workflow'
+    thinking?: ThinkingMode
     icon?: string
     projectId?: string
     /** Whole-list replace — detached copies WE own are deleted from disk. */
@@ -1748,6 +1757,11 @@ export type Project = {
   files: ProjectFileRef[]
   /** Working folders every turn in the project gets a fresh listing of. */
   directories?: string[]
+  /**
+   * The project's own reasoning effort; absent (projects saved before the
+   * field shipped) ⇒ follows the chat's selected thinking mode.
+   */
+  thinking?: ThinkingMode
   createdAt: number
   updatedAt: number
 }
@@ -1775,6 +1789,7 @@ export type ProjectsApi = {
     title?: string
     icon?: string
     instructions?: string
+    thinking?: ThinkingMode
     files?: ProjectFileRef[]
     /** Whole-list replace. References only, so nothing is deleted. */
     directories?: string[]

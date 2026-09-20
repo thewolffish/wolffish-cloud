@@ -1,5 +1,8 @@
+import { CardFact, CardFacts } from '@components/common/card-facts/CardFacts'
 import { ChipRow } from '@components/common/chip-row/ChipRow'
 import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
+import { ModeSwitch } from '@components/common/mode-switch/ModeSwitch'
+import { ThinkingSwitch } from '@components/common/thinking-switch/ThinkingSwitch'
 import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
@@ -7,13 +10,15 @@ import { EditorSheet } from '@components/core/EditorSheet'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
+import { useChatReasoning } from '@hooks/use-chat-reasoning/useChatReasoning'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { cn } from '@lib/utils/cn'
 import type { Procedure, ProcedureCopyProgress, ProcedureFileRef, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions } from '@providers/sessions/useSessions'
 import { useTheme } from '@providers/theme/useTheme'
-import { Add01Icon, Delete02Icon, Edit02Icon, PlayIcon } from 'hugeicons-react'
+import { Add01Icon, Delete02Icon, Edit02Icon, Folder01Icon, PlayIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -81,6 +86,9 @@ export function Procedures(): React.JSX.Element {
   // Rows without a stamp follow the global mode — the pill shows that
   // effective value; clicking a tab stamps the row explicitly.
   const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
+  // The chat's reasoning contract, for the card's thinking switch: the modes
+  // its selected model honours, and the mode chat is showing right now.
+  const reasoning = useChatReasoning()
   const toast = useToast()
 
   const [procedures, setProcedures] = useState<Procedure[]>([])
@@ -425,6 +433,26 @@ export function Procedures(): React.JSX.Element {
     }
   }, [])
 
+  const handleSetThinking = useCallback(
+    async (procedure: Procedure, mode: ReasoningMode) => {
+      const effective = normalizeReasoningMode(
+        procedure.thinking ?? reasoning.current,
+        reasoning.modes
+      )
+      if (effective === mode) return
+      setProcedures((prev) =>
+        prev.map((p) => (p.id === procedure.id ? { ...p, thinking: mode } : p))
+      )
+      try {
+        await window.api.procedures.update({ id: procedure.id, thinking: mode })
+      } catch {
+        // Reload the truth if the write failed.
+        void window.api.procedures.list().then(setProcedures)
+      }
+    },
+    [reasoning]
+  )
+
   const handlePlay = useCallback(
     (procedure: Procedure) => {
       // A fresh SESSION per run: the procedure auto-sends into its own new
@@ -436,6 +464,9 @@ export function Procedures(): React.JSX.Element {
         procedure: {
           prompt: procedure.prompt,
           mode: procedure.mode,
+          // The procedure's own reasoning stamp rides the one send; absent ⇒
+          // the chat's selection (or the project's stamp) carries the run.
+          thinking: procedure.thinking,
           icon: procedure.icon || DEFAULT_PROCEDURE_ICON,
           files: (procedure.files ?? []).map((f) => f.path),
           directories: procedure.directories ?? []
@@ -489,26 +520,23 @@ export function Procedures(): React.JSX.Element {
                 const project = procedure.projectId
                   ? projectsById.get(procedure.projectId)
                   : undefined
-                // One mono line, the automations card's exact contract: facts
-                // joined by " · ", with anything that doesn't apply dropped
-                // rather than printed empty.
-                const metaLine = [
-                  t('procedures.editedAt', {
-                    time: formatFromNow(procedure.updatedAt, now, locale)
-                  }),
-                  project ? project.title.trim() || t('projects.untitled') : null
-                ]
-                  .filter(Boolean)
-                  .join(' · ')
                 return (
                   <li key={procedure.id} className="min-w-0">
                     <div className="bg-surface border-border flex h-full w-full flex-col items-start gap-3 rounded-2xl border p-4 text-start">
-                      <div className="flex w-full items-center justify-between gap-2">
+                      <div className="flex w-full min-w-0 items-center gap-2.5">
                         <span
                           aria-hidden
                           className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
                         >
                           {procedureCardIcon(procedure)}
+                        </span>
+                        {/* The name leads the card, actions held to the end
+                            edge — identity first, controls below. */}
+                        <span
+                          title={name}
+                          className="text-fg min-w-0 flex-1 truncate text-sm font-semibold"
+                        >
+                          {name}
                         </span>
                         <div className="flex shrink-0 items-center">
                           <button
@@ -544,55 +572,40 @@ export function Procedures(): React.JSX.Element {
                           </button>
                         </div>
                       </div>
-                      {/* Mode is a property of the procedure, not of its
-                          prompt — so it leads the stack rather than trailing
-                          it, held to the card's end edge (`self-end`, which
-                          follows the locale's direction) so every card's
-                          toggle lands on the same column as the action buttons
-                          above it. */}
-                      <div
-                        role="tablist"
-                        aria-label={t('procedures.modeAria')}
-                        className="border-border bg-bg/40 inline-flex items-center gap-0.5 self-end rounded-lg border p-0.5"
-                      >
-                        {(['single', 'workflow'] as const).map((m) => {
-                          const active = (procedure.mode ?? globalMode) === m
-                          return (
-                            <button
-                              key={m}
-                              role="tab"
-                              type="button"
-                              aria-selected={active}
-                              onClick={() => void handleSetMode(procedure, m)}
-                              className={cn(
-                                'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
-                                'focus-visible:ring-2 focus-visible:ring-accent',
-                                active
-                                  ? 'bg-primary text-primary-fg shadow-sm'
-                                  : 'text-muted hover:text-fg'
-                              )}
-                            >
-                              {t(
-                                m === 'workflow'
-                                  ? 'chat.modePicker.workflow'
-                                  : 'chat.modePicker.single'
-                              )}
-                            </button>
-                          )
-                        })}
+                      {/* The run knobs, one cluster under the identity row:
+                          the reasoning ladder, then the run mode — the same
+                          two icon groups every card page carries. */}
+                      <div className="flex w-full flex-wrap items-center gap-1.5">
+                        <ThinkingSwitch
+                          modes={reasoning.modes}
+                          value={normalizeReasoningMode(
+                            procedure.thinking ?? reasoning.current,
+                            reasoning.modes
+                          )}
+                          onPick={(m) => void handleSetThinking(procedure, m)}
+                        />
+                        <ModeSwitch
+                          ariaLabel={t('procedures.modeAria')}
+                          value={procedure.mode ?? globalMode}
+                          onPick={(m) => void handleSetMode(procedure, m)}
+                        />
                       </div>
-                      <span title={name} className="text-fg w-full truncate text-sm font-semibold">
-                        {name}
-                      </span>
-                      {/* The edit stamp and the bound project — reference
-                          detail, in the mono well the automations cards use. It
-                          follows the content it describes rather than being
-                          pinned to the card's floor: a taller neighbour would
-                          otherwise push it down on its own card, opening a gap
-                          above the well instead of below it. */}
-                      <code className="border-border bg-bg text-muted line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
-                        {metaLine}
-                      </code>
+                      {/* The edit stamp and the bound project as icon-led
+                          facts, shared with the automations and projects
+                          cards; the project fact drops when nothing is
+                          bound. */}
+                      <CardFacts>
+                        <CardFact icon={<Edit02Icon size={12} />}>
+                          {t('procedures.editedAt', {
+                            time: formatFromNow(procedure.updatedAt, now, locale)
+                          })}
+                        </CardFact>
+                        {project && (
+                          <CardFact icon={<Folder01Icon size={12} />}>
+                            {project.title.trim() || t('projects.untitled')}
+                          </CardFact>
+                        )}
+                      </CardFacts>
                     </div>
                   </li>
                 )

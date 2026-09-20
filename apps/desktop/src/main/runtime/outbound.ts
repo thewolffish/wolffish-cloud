@@ -161,6 +161,10 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Mid-turn user-message notice (an interjection was just delivered into
     // this turn's history) — same vehicle; present on exactly one iteration.
     (runtime.interjection ? `${runtime.interjection} ` : '') +
+    // Closing-message notice (this turn already wrote its wrap-up and closed it
+    // with a turn-closing tool) — same vehicle; spent when drained, so it rides
+    // exactly one iteration. See agent/closing-guard.
+    (runtime.closing ? `${runtime.closing} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

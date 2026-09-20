@@ -1,9 +1,13 @@
+import { CardFact, CardFacts } from '@components/common/card-facts/CardFacts'
 import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
 import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
+import { ThinkingSwitch } from '@components/common/thinking-switch/ThinkingSwitch'
 import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
+import { useChatReasoning } from '@hooks/use-chat-reasoning/useChatReasoning'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
 import {
@@ -24,7 +28,8 @@ import {
   Delete02Icon,
   Edit02Icon,
   File01Icon,
-  Folder01Icon
+  Folder01Icon,
+  Timer02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -72,6 +77,9 @@ export function Projects(): React.JSX.Element {
     closeConversation
   } = useSessions()
   const toast = useToast()
+  // The chat's reasoning contract, for the card's thinking switch: the modes
+  // its selected model honours, and the mode chat is showing right now.
+  const reasoning = useChatReasoning()
 
   const [projects, setProjects] = useState<Project[]>([])
   const [metas, setMetas] = useState<ConversationMeta[]>([])
@@ -210,6 +218,32 @@ export function Projects(): React.JSX.Element {
       .catch(() => toast.show({ tone: 'error', message: t('projects.saveError') }))
   }, [deleteTarget, activeProject, setActiveProject, t, toast])
 
+  // The thinking switch: clicking a chip stamps the project's own reasoning
+  // effort — what every turn of its conversations runs at (the composer's
+  // brain chip edits this same stamp while the project is active). Persisted
+  // immediately with optimistic local state, the mode toggle's contract.
+  const handleSetThinking = useCallback(
+    async (project: Project, mode: ReasoningMode) => {
+      const effective = normalizeReasoningMode(
+        project.thinking ?? reasoning.current,
+        reasoning.modes
+      )
+      if (effective === mode) return
+      setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, thinking: mode } : p)))
+      try {
+        const updated = await window.api.projects.update({ id: project.id, thinking: mode })
+        // Keep chat's project mode coherent: the composer reads the ACTIVE
+        // project's thinking while it is on screen, so the same write must
+        // land in the session state — and in an open edit dialog on this row.
+        if (activeProject?.id === updated.id) setActiveProject(updated)
+        setEditing((prev) => (prev && prev.id === updated.id ? updated : prev))
+      } catch {
+        void window.api.projects.list().then(setProjects)
+      }
+    },
+    [activeProject, setActiveProject, reasoning]
+  )
+
   const enterProject = useCallback(
     (project: Project) => {
       setActiveProject(project)
@@ -291,19 +325,6 @@ export function Projects(): React.JSX.Element {
                 const stats = convStats.get(project.id)
                 const fileCount = project.files.length
                 const dirCount = project.directories?.length ?? 0
-                // One mono line, the automations card's exact contract: facts
-                // joined by " · ", with anything that doesn't apply dropped
-                // rather than printed empty (a project nobody has opened yet
-                // has no "used" moment to report).
-                const metaLine = [
-                  t('projects.editedAt', { time: formatFromNow(project.updatedAt, now, locale) }),
-                  stats
-                    ? t('projects.usedAt', { time: formatFromNow(stats.lastUsed, now, locale) })
-                    : null,
-                  t('projects.conversationCount', { count: stats?.count ?? 0 })
-                ]
-                  .filter(Boolean)
-                  .join(' · ')
                 return (
                   <li key={project.id} className="min-w-0">
                     <div
@@ -319,12 +340,20 @@ export function Projects(): React.JSX.Element {
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
                       )}
                     >
-                      <div className="flex w-full items-center justify-between gap-2">
+                      <div className="flex w-full min-w-0 items-center gap-2.5">
                         <span
                           aria-hidden
                           className="border-border bg-bg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg leading-none"
                         >
                           {project.icon || '📁'}
+                        </span>
+                        {/* The name leads the card, actions held to the end
+                            edge — identity first, controls below. */}
+                        <span
+                          title={name}
+                          className="text-fg min-w-0 flex-1 truncate text-sm font-semibold"
+                        >
+                          {name}
                         </span>
                         <div className="flex shrink-0 items-center">
                           <button
@@ -365,7 +394,18 @@ export function Projects(): React.JSX.Element {
                           </button>
                         </div>
                       </div>
-                      <span className="text-fg w-full truncate text-sm font-semibold">{name}</span>
+                      {/* The project's reasoning effort, the same icon group
+                          the automations and procedures cards carry — it
+                          edits the same stamp the chat composer's brain chip
+                          writes while this project is active. */}
+                      <ThinkingSwitch
+                        modes={reasoning.modes}
+                        value={normalizeReasoningMode(
+                          project.thinking ?? reasoning.current,
+                          reasoning.modes
+                        )}
+                        onPick={(m) => void handleSetThinking(project, m)}
+                      />
                       {/* What the project carries into every turn it spawns —
                           its files and its working folders — as the composer's
                           own count chips, so the two facts read off the card
@@ -386,16 +426,28 @@ export function Projects(): React.JSX.Element {
                           />
                         </div>
                       )}
-                      {/* Edit stamp, last use and the conversation count —
-                          reference detail, in the mono well the automations
-                          cards use. It follows the content it describes rather
-                          than being pinned to the card's floor: a taller
-                          neighbour would otherwise push it down on its own
-                          card, opening a gap above the well instead of below
-                          it. */}
-                      <code className="border-border bg-bg text-muted line-clamp-2 w-full rounded-lg border px-2 py-1 font-mono text-[10px] leading-relaxed">
-                        {metaLine}
-                      </code>
+                      {/* Edit stamp, last use and the conversation count as
+                          icon-led facts, shared with the automations and
+                          procedures cards. A project nobody has opened yet
+                          has no "used" moment to report — the piece drops,
+                          the row stays. */}
+                      <CardFacts>
+                        <CardFact icon={<Edit02Icon size={12} />}>
+                          {t('projects.editedAt', {
+                            time: formatFromNow(project.updatedAt, now, locale)
+                          })}
+                        </CardFact>
+                        {stats && (
+                          <CardFact icon={<Timer02Icon size={12} />}>
+                            {t('projects.usedAt', {
+                              time: formatFromNow(stats.lastUsed, now, locale)
+                            })}
+                          </CardFact>
+                        )}
+                        <CardFact icon={<BubbleChatIcon size={12} />}>
+                          {t('projects.conversationCount', { count: stats?.count ?? 0 })}
+                        </CardFact>
+                      </CardFacts>
                     </div>
                   </li>
                 )

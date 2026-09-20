@@ -133,6 +133,11 @@ export type ChatMessage = UserMessage | AssistantMessage
 export type PendingProcedure = {
   prompt: string
   mode?: 'single' | 'workflow'
+  /**
+   * The procedure's own reasoning stamp — the override rides THIS object into
+   * the single send, never renderer state (the mode contract).
+   */
+  thinking?: 'off' | 'on' | 'high' | 'max'
   /** The procedure's emoji — stamped on the run's conversation for the rail badge. */
   icon?: string
   /**

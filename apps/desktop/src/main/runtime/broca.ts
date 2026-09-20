@@ -23,6 +23,7 @@ export type SegmentTurnEndReason =
   | 'max_tokens'
   | 'error'
   | 'no_provider_available'
+  | 'closed'
 
 export type ToolResultStatus = 'success' | 'failed' | 'denied'
 

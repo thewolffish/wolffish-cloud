@@ -120,8 +120,8 @@ export function controlTokenNotice(token: string): string {
     `a tokenizer control token, and it was delivered to the user exactly as written. ` +
     `To the user it is meaningless clutter; they cannot be expected to know what it is. ` +
     `Never write control tokens as visible text. When everything is delivered and there ` +
-    `is nothing left to say, end the turn with an entirely empty reply instead — zero ` +
-    `characters, a complete and valid ending. Write no stand-in for that silence: a ` +
+    `is nothing left to say, call \`close_turn\` instead — it ends the turn cleanly, which is ` +
+    `a complete and valid ending. Write no stand-in for that silence: a ` +
     `bracketed status note, a written statement that you are staying silent, a lone "." ` +
     `and a stray token like this one are all output, and all reach the user as a message. Parentheses are for real ` +
     `asides inside a sentence you are genuinely saying, never a channel for narrating your own output. If the stray token may ` +
@@ -174,8 +174,8 @@ export function contentFreeReplyNotice(reply: string): string {
     `CONTENT-FREE REPLY SIGNAL: your previous reply was \`${reply}\` and nothing else — ` +
     `punctuation with no content, delivered to the user as a message of its own. ` +
     `To them it reads as a stray keystroke, not as silence. ` +
-    `When everything is delivered and there is nothing left to say, end the turn with an ` +
-    `entirely empty reply instead — zero characters, a complete and valid ending — and ` +
+    `When everything is delivered and there is nothing left to say, call \`close_turn\` ` +
+    `instead — it ends the turn cleanly, which is a complete and valid ending — and ` +
     `write no stand-in for the silence. A lone \`.\`, \`…\` or \`-\` is output, and so is any ` +
     `written note that stands in for saying nothing — a parenthesis does not make it out-of-band, ` +
     `and however well-reasoned such a note reads, writing it IS the failure it describes. ` +
@@ -193,25 +193,60 @@ export function contentFreeReplyNotice(reply: string): string {
 const SILENCE_PLACEHOLDER_MAX_CHARS = 40
 
 /**
- * A bracketed group that IS the whole reply, or that sits alone on the reply's
- * last line. Both shapes have shipped to users: the stand-in as the entire
- * message, and the stand-in appended under real prose. A group in the middle
- * of a sentence ("the command printed nothing (no output) and exited 0") is
- * never a match — an ordinary parenthetical is content, and reading it as a
- * leak would spend a tail line telling the model off for writing English.
+ * A bracketed group that IS the whole reply, or that ends the reply as a glued
+ * marker — its own final line, or a bracket stuck directly onto the preceding
+ * character.
+ *
+ * Both shipped shapes must match. `(no output)` arrived as the entire message
+ * (2026-09-12) and `(no content)` likewise (2026-09-14); the 2026-09-19 leak
+ * arrived as `…tightened. 🐟[(empty — nothing further)]` — APPENDED to real
+ * prose on the SAME line, with no newline and no space before the bracket. An
+ * earlier version required a line start (`(?:^|\n)`), so that exact reply
+ * matched nothing and the model was never told.
+ *
+ * The separator is `(?:^|\n|[^\p{L}\p{N}\s])`: a line start, or a single
+ * non-word character (the `🐟` above). Deliberately NOT a plain space — that is
+ * what keeps an ordinary parenthetical ending a sentence, `The build ran clean
+ * (no output)`, out of the match, because there the bracket follows a word and a
+ * space. A marker stapled to prose by the runtime's own leak lands against a
+ * non-word character; a parenthetical that is part of a sentence does not.
+ * Mid-sentence groups (`printed nothing (no output) and exited 0`) still fail on
+ * position alone.
  */
-const BRACKETED_TAIL = /(?:^|\n)[ \t]*([([{<（【][^\n]{1,40}?[)\]}>）】])[ \t]*$/u
+const BRACKETED_TAIL = /(?:^|\n|[^\p{L}\p{N}\s])[ \t]*([([{<（【][^\n]{1,40}?[)\]}>）】])[ \t]*$/u
 
 /**
- * The vocabulary of silence. Deliberately an allowlist of phrases that mean
- * "this message is the absence of a message" and nothing else: `(none)`,
- * `(n/a)` and `(end)` are OFF it, because each has an ordinary use as real
- * content ("Blockers: (none)"). A missed leak costs one stray line the model
- * is told about the next time it does it; a false positive spends a tail line
- * arguing with a model that was writing normally.
+ * A bracketed group that is the ENTIRE reply — the other shipped shape, which
+ * carries no separator at all and so cannot use the pattern above.
  */
-const SILENCE_PHRASE =
-  /^(?:no\s+(?:content|output|reply|response|text|message|further\s+(?:content|output|reply|response|text|message|comment))|nothing(?:\s+(?:to\s+add|to\s+say|further|more|else))?|empty(?:\s+(?:reply|response|message))?|silence|silent|staying\s+silent|end\s+of\s+(?:turn|reply|response|message))[\s.!…]*$/iu
+const BRACKETED_WHOLE = /^[ \t]*([([{<（【][^\n]{1,40}?[)\]}>）】])[ \t]*$/u
+
+/**
+ * The vocabulary of silence, as SUBSTRINGS rather than whole phrases.
+ *
+ * This replaced an exact-match allowlist, and the replacement is the point.
+ * The allowlist approach lost a race it could not win: the model invents a new
+ * member of the class faster than we add one. The shipped members so far are
+ * `(no output)` (2026-09-12, ×2), `(no content)` (2026-09-14),
+ * `[Empty response]` (2026-09-17) and `[(empty — nothing further)]`
+ * (2026-09-19) — and the last one is exactly why exact matching failed:
+ * `empty — nothing further` was rejected by the old pattern because the
+ * `empty` branch was anchored and forbade trailing text, so the guard matched
+ * nothing, armed no notice, and the model was never told.
+ *
+ * A substring test cannot lose that way: any phrase that is *about* the
+ * absence of content trips it, whether or not we have seen it. The shape still
+ * has to be a short bracketed group closing the reply, so this widens only the
+ * vocabulary, never the position — see silencePlaceholder.
+ *
+ * Deliberately still narrow enough to leave real answers alone. `(none)` and
+ * `(n/a)` are NOT here: each carries no silence word and has an ordinary use as
+ * content ("Blockers: (none)"). A missed leak costs one stray line the model is
+ * told about next call; a false positive spends a tail line arguing with a
+ * model that was writing normally.
+ */
+const SILENCE_KEYWORDS =
+  /\b(?:empty|nothing|no\s*(?:content|output|reply|response|text|message|further|more)|silent|silence|end\s+of\s+(?:turn|reply|response|message)|without\s+(?:content|output|text)|awaiting\s+(?:input|instruction|reply))\b/iu
 
 /**
  * The same vocabulary in the script the models actually think in.
@@ -240,7 +275,7 @@ const SILENCE_PHRASE =
  * content, and a false positive spends a tail line arguing with a model that
  * was writing normally.
  */
-const CJK_SILENCE_PHRASES = [
+const CJK_SILENCE_KEYWORDS = [
   '空空如也', // "utterly empty" — the observed leak
   '空无一物',
   '空無一物',
@@ -302,6 +337,12 @@ function unwrapBrackets(text: string): string {
  * both shapes have shipped: the phrase as the entire message, and the phrase
  * stapled under real prose. A phrase inside a sentence is content and never
  * matches.
+ *
+ * The length cap applies to the PHRASE, not the line: a set phrase that merely
+ * appears inside a real Chinese sentence ("我们的数据库空空如也，需要重新导入数据")
+ * is content, and a false positive here would spend a tail line telling the
+ * model off for writing its own language. So the line must reduce to the phrase
+ * itself — same characters, nothing around them.
  */
 function cjkSilencePlaceholder(text: string): SilencePlaceholder | null {
   const trimmed = text.trim()
@@ -309,7 +350,8 @@ function cjkSilencePlaceholder(text: string): SilencePlaceholder | null {
   const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim()
   if (lastLine === '') return null
   const bare = unwrapBrackets(lastLine).replace(TRAILING_PUNCTUATION, '').trim()
-  if (!CJK_SILENCE_PHRASES.includes(bare)) return null
+  if (bare === '') return null
+  if (!CJK_SILENCE_KEYWORDS.includes(bare)) return null
   return { text: lastLine, trailing: lastLine !== trimmed }
 }
 
@@ -339,12 +381,15 @@ export function silencePlaceholder(text: string): SilencePlaceholder | null {
   if (trimmed === '') return null
   const cjk = cjkSilencePlaceholder(trimmed)
   if (cjk) return cjk
-  const match = BRACKETED_TAIL.exec(trimmed)
+  // Two positions, two patterns: the group as the WHOLE reply (`(no output)`),
+  // or as a marker glued to the end of prose (`…🐟[(empty — nothing further)]`).
+  // A bracket that merely ends a normal sentence is neither — see BRACKETED_TAIL.
+  const match = BRACKETED_WHOLE.exec(trimmed) ?? BRACKETED_TAIL.exec(trimmed)
   if (!match) return null
   const group = match[1]
   const inner = group.slice(1, -1).trim()
   if (inner.length === 0 || inner.length > SILENCE_PLACEHOLDER_MAX_CHARS) return null
-  if (!SILENCE_PHRASE.test(inner)) return null
+  if (!SILENCE_KEYWORDS.test(inner)) return null
   return { text: group, trailing: group !== trimmed }
 }
 
@@ -369,7 +414,7 @@ export function silencePlaceholderNotice(placeholder: SilencePlaceholder): strin
   return (
     `SILENCE-PLACEHOLDER SIGNAL: ${where} ` +
     `Nothing is ever structurally required in your reply. When everything is delivered and there is nothing left ` +
-    `to say, end the turn with an entirely empty reply — zero characters, a complete and valid ending — and write ` +
+    `to say, call \`close_turn\` instead — it ends the turn cleanly, which is a complete and valid ending — and write ` +
     `no stand-in for it: a bracketed status note, a written statement that you are staying silent, a lone ` +
     `punctuation mark and a stray control token are all output, and all reach the user. Parentheses do not make ` +
     `a note out-of-band — they are for real asides inside a sentence you are genuinely saying — and however ` +

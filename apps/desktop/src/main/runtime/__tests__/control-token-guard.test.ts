@@ -60,7 +60,7 @@ function testNoticeNamesTokenAndDefers(): void {
   const notice = controlTokenNotice('<|eos|>')
   assert.match(notice, /<\|eos\|>/, 'the notice names the leaked token')
   assert.match(notice, /disregard/, 'the notice defers to deliberate quoting')
-  assert.match(notice, /empty reply/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /close_turn/, 'the notice names the producible exit as the fix')
   assert.match(notice, /Parentheses are for real/, 'and says what brackets are actually for')
   assert.doesNotMatch(
     notice,
@@ -147,7 +147,7 @@ function testContentFreeNeverTripsOnContent(): void {
 function testContentFreeNoticeEchoesAndDefers(): void {
   const notice = contentFreeReplyNotice('.')
   assert.match(notice, /`\.`/, 'the notice echoes the characters the user saw')
-  assert.match(notice, /zero characters/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /close_turn/, 'the notice names the producible exit as the fix')
   assert.doesNotMatch(
     notice,
     /\(no output\)|\(nothing to add\)/i,
@@ -286,7 +286,7 @@ function testSilencePlaceholderNeverTripsOnContent(): void {
 function testSilencePlaceholderNoticeSeparatesTheTwoShapes(): void {
   const alone = silencePlaceholderNotice({ text: '(no content)', trailing: false })
   assert.match(alone, /`\(no content\)`/, 'echoes what the user saw')
-  assert.match(alone, /zero characters/, 'names the silent ending as the fix')
+  assert.match(alone, /close_turn/, 'names the producible exit as the fix')
   assert.match(alone, /entire previous reply/, 'says the whole reply was the stand-in')
   assert.match(alone, /disregard/, 'defers to deliberate content')
 

@@ -175,6 +175,16 @@ export type RuntimeContext = {
    * agent/interjection.ts.
    */
   interjection?: string
+  /**
+   * Closing-message notice — the turn already wrote its wrap-up and closed it
+   * with a turn-closing tool (`notify_phone`, `voice_respond`, `send_file`), so
+   * a reply now would be the same news twice. Present for exactly one call per
+   * turn (the notice is spent when drained), on a call the model was making
+   * anyway — it never buys a model request. Same volatile vehicle and cache
+   * rationale as noProgress. Undefined renders nothing. See
+   * agent/closing-guard.ts.
+   */
+  closing?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [

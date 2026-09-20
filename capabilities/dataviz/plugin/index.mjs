@@ -1,7 +1,7 @@
 // Dataviz — a core capability whose single tool loads the data visualization
 // manual into context. Model-led: the core contract instructs the agent to
 // call `dataviz` BEFORE creating any chart or data display; this returns it.
-// Mirrors the operating-manual body-load pattern.
+// Mirrors the body-load pattern used by the other core manuals.
 //
 // The manual text lives in ../manual.md (single source of truth, also
 // readable via skill_read_source). We read it relative to this module's own

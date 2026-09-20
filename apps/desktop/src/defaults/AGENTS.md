@@ -9,7 +9,7 @@ next to this file — open it and look. When in doubt, **read the markdown**: in
 Wolffish, the markdown files *are* the source of truth.
 
 > This is an orientation guide for a *visiting* assistant (you). It is **not**
-> the Wolffish agent's own operating manual — that lives in
+> the Wolffish agent's own core contract — that lives in
 > `workspace/brain/prefrontal/agents.core.md`. Don't confuse the two.
 
 ---
@@ -174,7 +174,7 @@ brain/
 │   ├── soul.md                the agent's character: tone, humor, hard limits
 │   └── user.md                who you are: name, work, prefs, goals, boundaries
 │
-├── prefrontal/            PLANNING. The operating manual + per-turn prompt dumps.
+├── prefrontal/            PLANNING. The core contract + per-turn prompt dumps.
 │   ├── agents.core.md         shipped core procedures (app-managed, overwritten)
 │   ├── agents.md              YOUR overrides (never overwritten; wins on conflict)
 │   └── .debug/                one timestamped dump per turn of the exact system
@@ -383,7 +383,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (37 capabilities, plus two built into the app)
+### The full catalog (36 capabilities, plus two built into the app)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -425,7 +425,6 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.procedures` | Saved prompts the user runs on demand — `procedure_list`, `procedure_view`, `procedure_create`, `procedure_edit`, `procedure_delete`, `procedure_run` |
 | | `.mcp` | External MCP tool servers, whose tools then become the agent's — `mcp_list`, `mcp_add`, `mcp_test`, `mcp_enable`, `mcp_disable`, `mcp_remove`, `mcp_authorize` |
 | | `.workflow` | Model-led parallel work — `workflow_plan`, `agent_spawn`, `agent_send`, `agents_await`, `agent_cancel`. **Workflow master only**; spawned agents never get these |
-| | `.operating-manual` | The working discipline for anything complex, high-stakes or ambiguous — `operating_manual`, called **first**, before any other tool |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's
 > existing, authenticated browser session (great for sites the user is logged into);

@@ -3,9 +3,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { diskWriter } from '@main/io/diskWriter'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { copyFileWithProgress } from '@main/uploads/copy-progress'
 import { sanitizeFileName } from '@main/uploads/uploads'
 import { workspaceRoot } from '@main/workspace/root'
+import { currentThinkingModeSetting } from '@main/workspace/workspace'
 
 /**
  * Projects — glorified conversations: a maintained set of instructions plus a
@@ -43,6 +45,14 @@ export type Project = {
    * was set up. Absent on rows saved before the field shipped.
    */
   directories?: string[]
+  /**
+   * The project's own reasoning effort — stamped with the chat's selected
+   * thinking mode at creation, user-overridable per project. Conversations
+   * inside the project run their turns at it. Optional: projects saved
+   * before the field shipped follow the chat live (the `mode` contract on
+   * procedures and automations).
+   */
+  thinking?: ReasoningMode
   createdAt: number
   updatedAt: number
 }
@@ -105,16 +115,22 @@ export function createProject(payload: {
   title: string
   icon?: string
   instructions?: string
+  thinking?: ReasoningMode
 }): Promise<Project> {
   return serialize(async () => {
     const projects = await loadProjects()
     const now = Date.now()
+    // The thinking stamp mirrors the procedures store: the chat's selected
+    // mode at creation, absent only when chat itself has nothing selected
+    // (the project then follows chat live, like the mode contract).
+    const thinking = payload.thinking ?? (await currentThinkingModeSetting())
     const project: Project = {
       id: randomUUID(),
       title: payload.title,
       icon: payload.icon ?? '📁',
       instructions: payload.instructions ?? '',
       files: [],
+      ...(thinking ? { thinking } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -129,6 +145,7 @@ export function updateProject(payload: {
   title?: string
   icon?: string
   instructions?: string
+  thinking?: ReasoningMode
   files?: ProjectFileRef[]
   /** Whole-list replace. References only, so nothing is deleted from disk. */
   directories?: string[]
@@ -140,6 +157,7 @@ export function updateProject(payload: {
     if (payload.title !== undefined) project.title = payload.title
     if (payload.icon !== undefined) project.icon = payload.icon
     if (payload.instructions !== undefined) project.instructions = payload.instructions
+    if (payload.thinking !== undefined) project.thinking = payload.thinking
     if (payload.files !== undefined) {
       // Detached files whose copies WE own (inside the project's upload dir)
       // are deleted from disk — detach means gone, nothing orphans. Legacy
@@ -455,4 +473,21 @@ export async function projectWorkingFolders(projectId: string | null): Promise<s
   if (!projectId) return []
   const project = await getProject(projectId).catch(() => null)
   return project?.directories ?? []
+}
+
+/**
+ * A project's own reasoning effort, canonicalized for turn assembly. Null
+ * when unset — the turn then follows the chat's thinking mode, exactly as a
+ * turn outside a project does. Resolved live per turn (never stamped onto
+ * conversations) so editing the project moves the effort for every
+ * conversation already running inside it, the working-folders contract.
+ */
+export async function projectThinking(projectId: string | null): Promise<ReasoningMode | null> {
+  if (!projectId) return null
+  const project = await getProject(projectId).catch(() => null)
+  const raw = project?.thinking
+  if (!raw) return null
+  // Full canonical scale here; the per-model clamp happens at stream assembly
+  // (thalamus) where the model's own modes are known.
+  return normalizeReasoningMode(raw, ['off', 'on', 'high', 'max'])
 }

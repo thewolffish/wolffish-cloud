@@ -2,6 +2,8 @@ import { pruneAutomationUploads } from '@main/automations/files'
 import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
 import { runDetached, type Corpus } from '@main/runtime/corpus'
+import type { ReasoningMode } from '@main/runtime/reasoning'
+import { currentThinkingModeSetting } from '@main/workspace/workspace'
 import type { Cortex } from '@main/runtime/cortex'
 import { isIndexablePath } from '@main/runtime/cortexIngest'
 import type { Hippocampus, KnowledgeFile } from '@main/runtime/hippocampus'
@@ -61,6 +63,11 @@ export type BrainstemJob = {
    * global mode for this job's runs; absent ⇒ follows the global mode.
    */
   mode?: 'single' | 'workflow' | null
+  /**
+   * The job's own reasoning effort (its `thinking: …` marker line). The
+   * runs use it; absent ⇒ follows the chat's selected thinking mode.
+   */
+  thinking?: ReasoningMode | null
   /** Project binding (`project: <id>` marker) — runs get the project overlay. */
   project?: string | null
   /** Emoji (`icon: …` marker) stamped on the run's conversation for the rail badge. */
@@ -332,6 +339,8 @@ export type ParsedSchedule = {
   runAt?: number | null
   /** Per-job chat mode from the `mode: …` marker line; absent ⇒ global. */
   mode?: 'single' | 'workflow' | null
+  /** Per-job reasoning effort from the `thinking: …` marker; absent ⇒ chat. */
+  thinking?: ReasoningMode | null
   /** Project id from the `project: …` marker line; absent ⇒ no binding. */
   project?: string | null
   /** Emoji from the `icon: …` marker line; absent ⇒ none. */
@@ -681,6 +690,7 @@ export class Brainstem {
           body: schedule.body,
           tasks: [],
           mode: schedule.mode ?? null,
+          thinking: schedule.thinking ?? null,
           project: schedule.project ?? null,
           icon: schedule.icon ?? null,
           name: schedule.name ?? null,
@@ -702,6 +712,7 @@ export class Brainstem {
           tasks: [],
           runAt: schedule.runAt ?? null,
           mode: schedule.mode ?? null,
+          thinking: schedule.thinking ?? null,
           project: schedule.project ?? null,
           icon: schedule.icon ?? null,
           name: schedule.name ?? null,
@@ -746,6 +757,7 @@ export class Brainstem {
         body: schedule.body,
         tasks,
         mode: schedule.mode ?? null,
+        thinking: schedule.thinking ?? null,
         project: schedule.project ?? null,
         icon: schedule.icon ?? null,
         name: schedule.name ?? null,
@@ -810,6 +822,8 @@ export class Brainstem {
     label: string
     body: string
     mode: 'single' | 'workflow' | null
+    /** The job's own reasoning effort (`thinking:` marker); null ⇒ chat. */
+    thinking: ReasoningMode | null
     /** Project binding (`project:` marker); null ⇒ unbound. */
     project: string | null
     /** Emoji from the `icon:` marker; null ⇒ none. */
@@ -835,6 +849,7 @@ export class Brainstem {
       label: j.label,
       body: j.body,
       mode: j.mode ?? null,
+      thinking: j.thinking ?? null,
       project: j.project ?? null,
       icon: j.icon ?? null,
       name: j.name ?? null,
@@ -1559,6 +1574,7 @@ export class Brainstem {
       body: job.body,
       runAt: job.runAt ?? null,
       mode: job.mode ?? null,
+      thinking: job.thinking ?? null,
       project: job.project ?? null,
       icon: job.icon ?? null,
       files: job.files ?? [],
@@ -1595,7 +1611,8 @@ export class Brainstem {
     icon?: string | null,
     project?: string | null,
     files?: string[],
-    dirs?: string[]
+    dirs?: string[],
+    thinking?: ReasoningMode | null
   ): { ok: boolean; started: boolean; error?: string } {
     if (!this.agent) return { ok: false, started: false, error: 'The agent is not ready yet.' }
     if (instruction.trim().length === 0) {
@@ -1613,10 +1630,22 @@ export class Brainstem {
       label,
       body: instruction,
       runAt: null,
-      mode: mode ?? null
+      mode: mode ?? null,
+      thinking: thinking ?? null
     }
     const state = this.enqueue(schedule, () =>
-      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon, key, files, dirs)
+      this.runHeartbeatJob(
+        instruction,
+        label,
+        'procedure',
+        mode,
+        thinking,
+        project,
+        icon,
+        key,
+        files,
+        dirs
+      )
     )
     if (state === 'coalesced') {
       return {
@@ -1647,6 +1676,7 @@ export class Brainstem {
       body: string
       label: string
       mode?: 'single' | 'workflow' | null
+      thinking?: ReasoningMode | null
       project?: string | null
       icon?: string | null
       files?: string[]
@@ -1660,6 +1690,7 @@ export class Brainstem {
         source.label,
         'heartbeat',
         source.mode,
+        source.thinking,
         source.project,
         source.icon,
         source.id,
@@ -1673,6 +1704,7 @@ export class Brainstem {
     label: string,
     channel: 'heartbeat' | 'procedure' = 'heartbeat',
     mode?: 'single' | 'workflow' | null,
+    thinking?: ReasoningMode | null,
     project?: string | null,
     icon?: string | null,
     jobId?: string,
@@ -1697,6 +1729,10 @@ export class Brainstem {
         jobId,
         channel,
         mode: mode ?? undefined,
+        // The job's own stamp wins; a job saved before the marker existed
+        // follows the chat's selected mode live — the same contract the card
+        // switch displays (stamp ?? chat).
+        thinkingMode: thinking ?? (await currentThinkingModeSetting()),
         projectId: project ?? undefined,
         icon: icon ?? undefined,
         contextFiles: files && files.length > 0 ? files : undefined,
@@ -2135,7 +2171,9 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
     if (!heading) continue
 
     const headingText = heading[1]
-    const { body, mode, project, icon, name, files, dirs } = splitMarkers(collectBody(lines, i + 1))
+    const { body, mode, thinking, project, icon, name, files, dirs } = splitMarkers(
+      collectBody(lines, i + 1)
+    )
     const parsed = matchSchedule(headingText)
 
     if (!parsed) continue
@@ -2152,6 +2190,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       body,
       runAt: parsed.runAt ?? null,
       mode,
+      thinking,
       project,
       icon,
       name,
@@ -2239,6 +2278,7 @@ export function parseHeartbeatBlocks(raw: string): Array<{ label: string; block:
  * four in sync.
  */
 export const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+export const THINKING_MARKER_RE = /^thinking:\s*(off|on|high|max)\s*$/i
 export const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 export const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 /**
@@ -2260,6 +2300,7 @@ export const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
 export function splitMarkers(body: string): {
   body: string
   mode: 'single' | 'workflow' | null
+  thinking: ReasoningMode | null
   project: string | null
   icon: string | null
   name: string | null
@@ -2268,6 +2309,7 @@ export function splitMarkers(body: string): {
 } {
   const lines = body.split('\n')
   let mode: 'single' | 'workflow' | null = null
+  let thinking: ReasoningMode | null = null
   let project: string | null = null
   let icon: string | null = null
   let name: string | null = null
@@ -2283,6 +2325,12 @@ export function splitMarkers(body: string): {
     const m = line.match(MODE_MARKER_RE)
     if (m) {
       mode = m[1].toLowerCase() as 'single' | 'workflow'
+      i++
+      continue
+    }
+    const t = line.match(THINKING_MARKER_RE)
+    if (t) {
+      thinking = t[1].toLowerCase() as ReasoningMode
       i++
       continue
     }
@@ -2318,7 +2366,16 @@ export function splitMarkers(body: string): {
     }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, name, files, dirs }
+  return {
+    body: lines.slice(i).join('\n').trim(),
+    mode,
+    thinking,
+    project,
+    icon,
+    name,
+    files,
+    dirs
+  }
 }
 
 /**

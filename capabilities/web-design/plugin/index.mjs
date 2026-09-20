@@ -1,8 +1,8 @@
 // Web Design — a core capability whose single tool loads the web design
 // manual into context. Model-led: the core contract instructs the agent to
 // call `web_design` BEFORE authoring any HTML page/site a person will open
-// in a browser; this returns it. Mirrors the operating-manual body-load
-// pattern (and pdf-design, its print sibling).
+// in a browser; this returns it. Mirrors the body-load pattern of the other
+// core manuals (and pdf-design, its print sibling).
 //
 // The manual text lives in ../manual.md (single source of truth, also
 // readable via skill_read_source). We read it relative to this module's own
