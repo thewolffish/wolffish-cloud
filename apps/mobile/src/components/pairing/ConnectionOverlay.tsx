@@ -40,13 +40,22 @@ const APPEAR_RECONNECT_MS = 1_200
 const APPEAR_SYNC_MS = 800
 
 /**
- * How long before each phase's block becomes a choice. Reconnecting earns a
- * way out later — there is genuinely nothing behind the card until the link
- * is back — while a catch-up can be walked away from sooner, because
- * everything already on the phone is readable right now.
+ * How long before each phase's block becomes a choice. Both sit at a full
+ * minute on purpose: the card is only ever up because the app is mid-recovery
+ * with the desktop, and offering a way out at three or five seconds turned a
+ * blip the user would never have noticed into a decision they felt pushed to
+ * make — then the reconnect they skipped finished a beat later anyway. A
+ * minute is the point at which "this is not finishing on its own" becomes
+ * true, so the escape stays a real answer to a real stall instead of an
+ * interruption of one.
+ *
+ * The phases keep their own fuses even though the two now read the same,
+ * because they answer different questions: reconnecting has nothing behind
+ * the card until the link is back, a catch-up has a readable phone behind it
+ * already. They can diverge again without either edit being a re-think.
  */
-const ESCAPE_RECONNECT_MS = 5_000
-const ESCAPE_SYNC_MS = 3_000
+const ESCAPE_RECONNECT_MS = 60_000
+const ESCAPE_SYNC_MS = 60_000
 
 /** Once shown, stay shown this long — the floor that keeps a card that DID
  *  appear legible instead of flickering off a few frames later. */

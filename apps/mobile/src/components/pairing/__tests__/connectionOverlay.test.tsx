@@ -220,7 +220,10 @@ describe('an episode worth showing', () => {
 
     await act(async () => publish({ status: 'reconnecting' }))
     await act(async () => jest.advanceTimersByTime(1_200))
-    await act(async () => jest.advanceTimersByTime(5_000))
+    // The way out is held for a full minute; nothing is offered before it.
+    await act(async () => jest.advanceTimersByTime(59_000))
+    expect(screen.queryByTestId('overlay-escape')).toBeNull()
+    await act(async () => jest.advanceTimersByTime(1_000))
     expect(screen.getByTestId('overlay-escape')).toBeTruthy()
 
     await act(async () => fireEvent.press(screen.getByTestId('overlay-escape')))
