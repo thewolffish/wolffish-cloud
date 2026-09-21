@@ -1,21 +1,16 @@
 ---
 name: computer-use
-description: Desktop automation — see the screen and control mouse/keyboard with a verified-aim loop and pointer-free background input. Screenshots and per-window captures, native-resolution zoom, find controls by name through the accessibility tree, clicks that return evidence (delivery, effect, element under the point, screen change), typing, shortcuts, menus, scrolling, drag-and-drop, waits, clipboard, batches — with a shadow cursor so the user keeps their own mouse.
+description: "Everything that is not a web page — the screen itself: native apps, OS dialogs, browser chrome. Verified-aim clicks that return evidence, accessibility-tree find, native-resolution zoom, typing, menus, scrolling, drag, batches, a shadow cursor so the user keeps their own mouse. An approval per action."
 triggers:
-  - screenshot
-  - click
   - screen
   - desktop
-  - browser
   - open app
-  - navigate
   - scroll
   - type into
   - mouse
   - keyboard
   - what's on my screen
   - computer use
-  - automate
   - UI
   - display
   - monitor
@@ -26,7 +21,6 @@ triggers:
   - pointer
   - drag
   - drop
-  - button
   - menu
   - toolbar
   - icon

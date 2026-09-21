@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils/cn'
 import { Children, forwardRef } from 'react'
 import { Pressable, Text, View, type PressableProps } from 'react-native'
 
-export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'danger'
+export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'danger' | 'soft' | 'dangerSoft'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 export type ButtonProps = PressableProps & {
@@ -21,7 +21,10 @@ const variants: Record<ButtonVariant, string> = {
   primary: 'bg-primary shadow-sm active:opacity-90',
   ghost: 'bg-transparent active:bg-border',
   outline: 'bg-bg border border-border active:bg-border',
-  danger: 'bg-transparent active:bg-rose-500/20'
+  danger: 'bg-transparent active:bg-rose-500/20',
+  // Filled, borderless pair for side-by-side bulk actions (gray + red).
+  soft: 'bg-border active:opacity-80',
+  dangerSoft: 'bg-rose-500/15 active:bg-rose-500/25'
 }
 
 // Text color per variant — React Native does not cascade color to children.
@@ -29,7 +32,9 @@ const textVariants: Record<ButtonVariant, string> = {
   primary: 'text-primary-fg',
   ghost: 'text-fg',
   outline: 'text-fg',
-  danger: 'text-rose-500'
+  danger: 'text-rose-500',
+  soft: 'text-fg',
+  dangerSoft: 'text-rose-500'
 }
 
 const sizes: Record<ButtonSize, string> = {

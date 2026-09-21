@@ -1,73 +1,37 @@
 ---
 name: browser
-description: Automate web browsers — navigate sites, fill forms, click buttons, extract data, take screenshots, and run multi-step web workflows
+description: "Headless Playwright — an invisible throwaway browser nobody watches, for scripted runs. Chromium, Firefox or WebKit; stored credentials, multi-tab crawls, table and link extraction, network logs, page-to-PDF. Not the user's browser and never on screen."
 triggers:
-  - browser
-  - web
-  - website
-  - navigate
-  - login
-  - scrape
-  - screenshot
-  - form
-  - download
-  - cookie
-  - tab
-  - click
-  - url
-  - page
-  - crawl
-  - automate
   - headless
+  - headless browser
+  - throwaway browser
   - chromium
-  - firefox
   - webkit
   - playwright
-  - site
-  - webpage
-  - link
-  - href
-  - submit
-  - button
-  - input
-  - dropdown
-  - select
-  - checkbox
-  - sign in
-  - sign up
-  - register
-  - fill form
+  - scrape
+  - web scraping
+  - crawl
+  - crawler
+  - data extraction
   - extract data
   - extract text
   - table
-  - hover
-  - scroll
-  - keyboard
-  - type
-  - credential
-  - password
-  - open website
-  - go to
-  - visit
-  - browse
-  - surf
-  - html
-  - dom
-  - element
+  - pagination
+  - next page
+  - infinite scroll
   - selector
   - xpath
   - css selector
+  - dom
+  - html
+  - element
   - network
   - request
   - response
-  - pdf
-  - print page
-  - capture
-  - automation
-  - bot
-  - web scraping
-  - data extraction
-  - multi tab
+  - ajax
+  - spa
+  - single page app
+  - iframe
   - incognito
   - private browsing
   - user agent
@@ -75,34 +39,30 @@ triggers:
   - responsive
   - mobile view
   - full page
-  - infinite scroll
-  - pagination
-  - next page
-  - wait for
-  - wait until
-  - load page
-  - page loaded
-  - ajax
-  - spa
-  - single page app
-  - iframe
-  - popup
-  - dialog
-  - alert
-  - confirm dialog
-  - file upload
-  - drag and drop
-  - copy text
-  - read text
-  - get text
+  - automation
+  - bot
+  - credential
+  - password
+  - sign in
+  - sign up
+  - register
+  - pdf
+  - print page
   - price tracker
   - monitor website
   - check availability
   - test website
   - debug website
-  - open browser
+  - wait for
+  - wait until
+  - load page
+  - page loaded
+  - automate
   - launch browser
   - close browser
+  - open browser
+  - unattended
+  - scripted
 tools:
   - name: browser_launch
     description: Launch a browser instance and return a session_id. Defaults to headed Chromium at 1280x720.

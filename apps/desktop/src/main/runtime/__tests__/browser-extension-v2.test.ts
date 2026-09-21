@@ -13,7 +13,7 @@
  * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/browser-extension-v2.test.ts
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -249,11 +249,103 @@ const main = async (): Promise<void> => {
       'the blanket prohibition on desktop capture is gone'
     )
     const core = read('apps/desktop/src/defaults/workspace/brain/prefrontal/agents.core.md')
-    assert.match(core, /four routes/, 'the shared doctrine names four web routes')
+    assert.match(
+      core,
+      /^## Reaching the web — .*you choose$/m,
+      'the shared doctrine still has its web-routes section'
+    )
+    assert.ok(
+      !/\b(two|three|four|five|six|seven)\s+routes\b/i.test(core),
+      'the heading does not hard-code a route count — adding a route must not break a test'
+    )
+    // Every route the doctrine claims to cover is actually named in it.
+    for (const route of [
+      'web_search',
+      'web_fetch',
+      'tool_activate("preview")',
+      'tool_activate("browser-extension")',
+      'tool_activate("browser")',
+      'tool_activate("computer-use")'
+    ]) {
+      assert.ok(core.includes(route), `the shared doctrine names ${route}`)
+    }
     assert.match(core, /Mixed work/, 'the shared doctrine covers crossing the boundary')
     assert.match(core, /ext_doctor/, 'the shared doctrine sends a stuck browser to the doctor')
     const computerUse = read('capabilities/computer-use/SKILL.md')
     assert.match(computerUse, /prefer the ext_\* tools/, 'computer use hands the page back')
+  })
+
+  await check('the in-app browser is shown unprompted for web work, and bounded', () => {
+    // The unprompted-show rule lives in coding.md, on the real trigger (a
+    // change to something with a page, plus a dev server), not on the user
+    // asking — and it says when NOT to fire.
+    const coding = read('apps/desktop/src/defaults/workspace/brain/prefrontal/coding.md')
+    assert.match(coding, /preview_open/, 'coding.md opens the card itself')
+    assert.match(coding, /without asking/, 'coding.md says to show the app unprompted')
+    assert.match(coding, /preview_reload/, 'coding.md re-shows by reloading, not by stacking cards')
+    assert.match(
+      coding,
+      /When not to/,
+      'coding.md bounds the rule so it does not fire on backend-only work'
+    )
+  })
+
+  await check('the four web capabilities stay decidable from their index lines', () => {
+    // The index line is the ONLY prompt surface a capability gets, and it is
+    // cut at 89 characters (cerebellum.ts oneLineDescription). Each one's
+    // first clause must be its discriminator, and no two may share a trigger
+    // keyword — a shared keyword scores +2 for both and hands tool_search's
+    // auto-activation to an arbitrary stable-sort tiebreak.
+    const truncate = (text: string): string => {
+      const flat = text.replace(/\s+/g, ' ').trim()
+      return flat.length > 90 ? flat.slice(0, 89) : flat
+    }
+    const frontmatter = (cap: string): { description: string; triggers: string[] } => {
+      const src = read(`capabilities/${cap}/SKILL.md`)
+      const fm = src.split('\n---\n')[0] ?? ''
+      const parsed = yaml.load(fm.replace(/^---\n/, '')) as {
+        description?: string
+        triggers?: string[]
+      }
+      return {
+        description: parsed.description ?? '',
+        triggers: (parsed.triggers ?? []).map((k) => String(k).toLowerCase())
+      }
+    }
+    const discriminators: Array<[string, RegExp]> = [
+      ['browser', /headless|nobody watches/i],
+      ['browser-extension', /own running browser|their logins/i],
+      ['computer-use', /not a web page/i]
+    ]
+    for (const [cap, pattern] of discriminators) {
+      const head = truncate(frontmatter(cap).description)
+      assert.match(head, pattern, `${cap}'s discriminator survives the 90-char index truncation`)
+    }
+    // `preview` is registered in-process (src/main/browser/tools.ts); its
+    // description is checked there by the same rule. The three on disk must
+    // not share a trigger with each other.
+    const webCaps = ['browser', 'browser-extension', 'computer-use']
+    for (let i = 0; i < webCaps.length; i++) {
+      for (let j = i + 1; j < webCaps.length; j++) {
+        const a = new Set(frontmatter(webCaps[i]).triggers)
+        const shared = frontmatter(webCaps[j]).triggers.filter((k) => a.has(k))
+        assert.deepStrictEqual(
+          shared,
+          [],
+          `${webCaps[i]} and ${webCaps[j]} must not share trigger keywords (shared: ${shared.join(', ')})`
+        )
+      }
+    }
+    // The name-substring rule: +4 for a name match means a capability whose
+    // name contains "browser" makes the existing two undecidable. Guard the
+    // RULE, not the current names.
+    const capDirs = readdirSync(path.join(REPO, 'capabilities'))
+    const browserish = capDirs.filter((d) => d.includes('browser')).sort()
+    assert.deepStrictEqual(
+      browserish,
+      ['browser', 'browser-extension'],
+      'no new capability may take a name containing "browser" — it creates an unbreakable +4 tie'
+    )
   })
 
   await check('the composer turns probe facts into findings the user can act on', async () => {

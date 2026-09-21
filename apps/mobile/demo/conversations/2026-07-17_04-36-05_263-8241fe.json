@@ -74,7 +74,11 @@
           "name": "workflow_plan",
           "args": {
             "note": "Single-author build of the full game, then two parallel adversarial reviewers (API correctness + gameplay logic), then fixes and ship.",
-            "phases": ["build", "adversarial review", "fix & verify"]
+            "phases": [
+              "build",
+              "adversarial review",
+              "fix & verify"
+            ]
           },
           "conversationId": "2026-07-17_04-36-05_263-8241fe"
         },
@@ -1002,6 +1006,41 @@
           "segmentId": "seg_1490",
           "delta": "**ERANGEL-98 is done** — a complete single-file Three.js FPS, verified running in a real browser with zero console errors. 1,286 lines, 52 KB, no build step, no external assets.\n\n**What's in it:**\n- **Controller** — pointer-lock FPS with WASD, shift sprint, space jump, gravity, capsule-vs-AABB collision (with velocity-aware top-snap so you can't tunnel through crates at low FPS)\n- **Map** — 200×200 olive/tan ground, 16 procedural buildings with door gaps, ~40 crates (some stacked), 22 low cover walls, 26 tree stand-ins, dirt patches, fog + hemisphere/directional light with soft shadows\n- **Kar98k** — built from 20+ primitives (stock, receiver, barrel, bolt, scope tube, sights, trigger), single-shot, 5-round mag, 1.2s bolt-cycle lockout with animation, RMB ADS (scope overlay with mil-dots + FOV lerp 75→30 + reduced sway), hipfire spread cone, R reload with dip animation, raycast hitscan with 3× headshot multiplier, tracer + muzzle flash + camera recoil that decays\n- **Enemies** — 9 low-poly humanoid bots that patrol waypoints, aggro on line-of-sight, chase your last-known position (and give up after 3s without LOS — no more omniscient wall-tracking), shoot back with tracers, take damage with hit flash, tip over on death, respawn after 6s\n- **Feedback** — ammo counter, health bar, kill count, crosshair that hides on ADS, hitmarkers (red for headshots), kill feed, damage vignette, full procedural WebAudio (shot crack, bolt clacks, reload foley, hit/kill/hurt sounds, distant enemy reports)\n- **Flow** — \"Click to play\" start screen, ESC pause with pointer-lock-cooldown retry, death screen with redeploy\n\n**Process:** I wrote it, then had two adversarial reviewers (one for Three.js r160 API correctness, one for gameplay logic) try to kill it. They found 1 major bug (permanent omniscient aggro) and 11 minors — all fixed. Then I smoke-tested it in a headless browser: loads clean, WebGL2 active, scene renders, zero errors after sustained frames.\n\nOpen it in any browser and click to play. 🐟",
           "conversationId": "2026-07-17_04-36-05_263-8241fe"
+        },
+        {
+          "kind": "browser",
+          "turnId": "turn_1784252165276_562jlc",
+          "segmentId": "seg_browser_fps_1",
+          "snapshot": {
+            "tabId": "b1c0ffee-fps0-4000-8000-000000000002",
+            "conversationId": "2026-07-17_04-36-05_263-8241fe",
+            "url": "http://localhost:8080/",
+            "title": "Three.js FPS",
+            "loadState": "ready",
+            "canGoBack": false,
+            "canGoForward": false,
+            "mode": "card",
+            "frameSize": {
+              "width": 651,
+              "height": 340
+            },
+            "generation": 1,
+            "error": null,
+            "active": true,
+            "strip": [
+              {
+                "url": "http://localhost:8080/",
+                "title": "Three.js FPS",
+                "active": true
+              },
+              {
+                "url": "https://threejs.org/docs/",
+                "title": "three.js docs",
+                "active": false
+              }
+            ],
+            "still": "https://cdn.wolffi.sh/samples/threejs-fps.jpg"
+          }
         },
         {
           "kind": "turn_end",

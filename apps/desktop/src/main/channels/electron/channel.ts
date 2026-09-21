@@ -19,6 +19,8 @@ import {
   appendTextSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  upsertBrowserSegment,
   upsertTodoSegment,
   upsertWorkflowSegment
 } from '@main/runtime/broca'
@@ -491,6 +493,8 @@ export class ElectronChannel {
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
+        else if (segment.kind === 'process') upsertProcessSegment(acc.segments, segment)
+        else if (segment.kind === 'browser') upsertBrowserSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -499,7 +503,10 @@ export class ElectronChannel {
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         // A countdown card flipping should not wait out the text throttle.
         scheduleMirror(
-          segment.kind === 'countdown' || segment.kind === 'wait' || segment.kind === 'user_message'
+          segment.kind === 'countdown' ||
+            segment.kind === 'wait' ||
+            segment.kind === 'process' ||
+            segment.kind === 'user_message'
         )
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a workflow snapshot, the

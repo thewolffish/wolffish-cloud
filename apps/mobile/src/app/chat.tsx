@@ -8,7 +8,12 @@ import { ConversationsSheet } from '@/components/chat/ConversationsSheet'
 import { FLOATING_AREA, FLOATING_GAP, FloatingChrome } from '@/components/chat/FloatingChrome'
 import { PendingInterjectionBubble } from '@/components/chat/PendingInterjections'
 import { buildFeed, LIVE_KEY } from '@/lib/conversations/feed'
-import { failedTurnEnd, latestTodoLists, todoListId } from '@/lib/conversations/segments'
+import {
+  failedTurnEnd,
+  latestBrowserCards,
+  latestTodoLists,
+  todoListId
+} from '@/lib/conversations/segments'
 import { useConversation } from '@/lib/conversations/hooks'
 import {
   mintMessageId,
@@ -293,6 +298,9 @@ export default function ChatScreen(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [todoSignature]
   )
+  // Where each conversation browser's one card lives (segments.ts
+  // latestBrowserCards) — a cheap walk, so keyed on the feed itself.
+  const browserCards = useMemo(() => latestBrowserCards(feed.map((item) => item.message)), [feed])
 
   /**
    * Is this conversation between turns? Not "is nothing streaming right now" —
@@ -1194,6 +1202,7 @@ export default function ChatScreen(): React.JSX.Element {
                     conversationId={conversationId ?? undefined}
                     verbose={verbose}
                     todoLists={todoLists}
+                    browserCards={browserCards}
                     streaming={item.streaming}
                     // The in-flight turn's row is the one that hosts the
                     // conversation's live ask/approval cards.

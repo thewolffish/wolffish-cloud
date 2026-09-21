@@ -47,6 +47,8 @@ export type Part =
   | { kind: 'task'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'wait'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'countdown'; id: string; snapshot: Record<string, unknown> }
+  | { kind: 'process'; id: string; snapshot: Record<string, unknown> }
+  | { kind: 'browser'; id: string; snapshot: Record<string, unknown> }
   | {
       kind: 'compaction'
       id: string
@@ -622,6 +624,8 @@ export function applySegment(
     case 'workflow':
     case 'task':
     case 'countdown':
+    case 'process':
+    case 'browser':
     case 'wait': {
       const snapshot = (segment.snapshot as Record<string, unknown>) ?? {}
       const keyField =
@@ -631,7 +635,11 @@ export function applySegment(
             ? 'taskId'
             : segment.kind === 'wait'
               ? 'waitId'
-              : 'countdownId'
+              : segment.kind === 'browser'
+                ? 'conversationId'
+                : segment.kind === 'process'
+                  ? 'cardId'
+                  : 'countdownId'
       const key = String(snapshot[keyField] ?? segmentId)
       let replaced = false
       set(
@@ -645,6 +653,8 @@ export function applySegment(
                 (part.kind === 'workflow' ||
                   part.kind === 'task' ||
                   part.kind === 'countdown' ||
+                  part.kind === 'process' ||
+                  part.kind === 'browser' ||
                   part.kind === 'wait') &&
                 String(part.snapshot[keyField] ?? part.id) === key
               ) {
@@ -658,7 +668,13 @@ export function applySegment(
       if (!replaced) {
         editParts((parts) =>
           parts.push({
-            kind: segment.kind as 'workflow' | 'task' | 'countdown' | 'wait',
+            kind: segment.kind as
+              | 'workflow'
+              | 'task'
+              | 'countdown'
+              | 'process'
+              | 'browser'
+              | 'wait',
             id: segmentId,
             snapshot
           })

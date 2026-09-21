@@ -13,6 +13,12 @@ const execFileP = promisify(execFile)
 // lands in the project without the model retyping an absolute path.
 let getWorkingFolders = () => []
 
+// The app's process registry (PluginContext.processes), when the host wired
+// one in. Every background start goes through it so there is ONE list of
+// long-lived processes — persisted, supervised, visible in Library and to
+// `process_*` — instead of this plugin's own map that dies with the app.
+let processesHost = null
+
 function defaultCwd() {
   try {
     const folders = getWorkingFolders()
@@ -638,6 +644,24 @@ async function execShell(args, signal) {
   execCommand = stripRedundantStderrMerge(execCommand, shell)
 
   if (args?.background === true) {
+    if (processesHost) {
+      const started = await processesHost.start({
+        command: execCommand,
+        cwd,
+        env: Object.fromEntries(Object.entries(execEnv).filter(([k]) => !(k in process.env))),
+        wait: false,
+        origin: { conversationId: null, kind: 'shell' }
+      })
+      if (!started.ok) return { success: false, error: started.error ?? 'failed to start background process' }
+      return {
+        success: true,
+        output:
+          `Started in background as managed process "${started.name}" (PID ${started.pid}).` +
+          (started.logPath ? ` Log: ${started.logPath} — read it with process_logs name=${started.name} once it has had a moment to start.` : '') +
+          ` It keeps running after this turn; process_status / process_stop name=${started.name} manage it (process_start is the better tool for servers: it picks a free port and waits for readiness).`,
+        meta: { label: 'Start in background', cwd, outputPath: started.logPath ?? undefined }
+      }
+    }
     return execBackground({ command: execCommand, display: command, cwd, shell, env: execEnv })
   }
 
@@ -927,6 +951,7 @@ const plugin = {
   tools: toolDefinitions,
   async init(context) {
     sudoCtx = context?.sudo ?? null
+    processesHost = context?.processes ?? null
     if (typeof context?.getWorkingFolders === 'function') {
       getWorkingFolders = context.getWorkingFolders
     }
@@ -962,12 +987,41 @@ const plugin = {
   async execute(toolName, args, signal) {
     if (toolName === 'shell_exec') return execShell(args, signal)
     if (toolName === 'shell_jobs') {
+      if (processesHost) {
+        const jobs = processesHost.list()
+        if (jobs.length === 0) return { success: true, output: 'No managed processes. process_start creates one.' }
+        return {
+          success: true,
+          output: jobs
+            .map((j) => `${j.name}: ${j.state}${j.pid ? ` (PID ${j.pid})` : ''} — ${j.command}\n    cwd: ${j.cwd}${j.logPath ? `\n    log: ${j.logPath}` : ''}`)
+            .join('\n')
+        }
+      }
       if (backgroundJobs.size === 0) {
         return { success: true, output: 'No background jobs started this session.' }
       }
       return { success: true, output: [...backgroundJobs.values()].map(describeJob).join('\n') }
     }
     if (toolName === 'shell_stop') {
+      if (processesHost) {
+        if (args?.all === true) {
+          const results = await processesHost.stopAll()
+          if (results.length === 0) return { success: true, output: 'No managed processes to stop.' }
+          return { success: true, output: results.map((r) => `${r.name}: ${r.stopped ? 'stopped' : 'was not running'}`).join('\n') }
+        }
+        const pid = Number(args?.pid)
+        const name = typeof args?.name === 'string' && args.name.trim() ? args.name.trim() : Number.isInteger(pid) && pid > 0 ? processesHost.findByPid(pid) : null
+        if (!name) {
+          if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) {
+            await stopJob({ pid, command: '(not managed)', cwd: '', logPath: '', startedAt: Date.now() })
+            return { success: true, output: `Stopped PID ${pid} (not a managed process).` }
+          }
+          return { success: false, error: 'Pass name (from shell_jobs / process_list), pid, or all=true.' }
+        }
+        const res = await processesHost.stop(name)
+        if (!res.ok) return { success: false, error: res.error ?? 'stop failed' }
+        return { success: true, output: res.stopped ? `Stopped ${name}.` : `${name} was not running.` }
+      }
       if (args?.all === true) {
         const jobs = [...backgroundJobs.values()]
         if (jobs.length === 0) return { success: true, output: 'No background jobs to stop.' }

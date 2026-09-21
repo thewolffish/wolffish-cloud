@@ -1,5 +1,7 @@
 import { countdowns } from '@main/runtime/countdown'
+import { processManager } from '@main/processes/instance'
 import { waits } from '@main/runtime/wait'
+import { browserTabs } from '@main/browser/tab-manager'
 import {
   createConversation,
   loadConversation,
@@ -69,6 +71,8 @@ import {
   upsertWorkflowSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  upsertBrowserSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
   type SegmentSink,
@@ -973,6 +977,17 @@ export class Agent {
     const unregisterWaitEmitter = waits.registerTurnEmitter(turn.turnId, (snapshot) =>
       broca.emitWait(turn.turnId, snapshot)
     )
+    // Same pattern for a page opened in Wolffish's own browser: its live card
+    // rides this turn's broca while the turn runs; after that, every change
+    // reaches the renderer through the browser:changed broadcast.
+    const unregisterBrowserEmitter = browserTabs.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitBrowser(turn.turnId, snapshot)
+    )
+    // Same pattern for a process card opened by process_show in this turn:
+    // live updates ride this broca; after the turn, process:cardChanged.
+    const unregisterProcessEmitter = processManager.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitProcess(turn.turnId, snapshot)
+    )
     try {
       return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
         this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
@@ -980,6 +995,8 @@ export class Agent {
     } finally {
       unregisterCountdownEmitter()
       unregisterWaitEmitter()
+      unregisterBrowserEmitter()
+      unregisterProcessEmitter()
     }
   }
 
@@ -1497,6 +1514,7 @@ export class Agent {
           openTodo:
             inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
           taskList: todoItemsThisTurn ? openTaskListNotice(todoItemsThisTurn) : undefined,
+          processes: processManager.noticeText(turn.conversationId ?? null) || undefined,
           controlToken: controlTokenText,
           closing: closingNoticeText,
           voiceReply: voiceReplyNotice,
@@ -2844,13 +2862,21 @@ export class Agent {
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'countdown') upsertCountdownSegment(segments, seg)
       else if (seg.kind === 'wait') upsertWaitSegment(segments, seg)
+      else if (seg.kind === 'process') upsertProcessSegment(segments, seg)
+      else if (seg.kind === 'browser') upsertBrowserSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
       // Countdown snapshots flush immediately — a card counting down, or
       // flipping to fired/aborted, should not wait out the text throttle.
-      scheduleMirror(seg.kind === 'countdown' || seg.kind === 'wait' || seg.kind === 'user_message')
+      scheduleMirror(
+        seg.kind === 'countdown' ||
+          seg.kind === 'wait' ||
+          seg.kind === 'process' ||
+          seg.kind === 'browser' ||
+          seg.kind === 'user_message'
+      )
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {

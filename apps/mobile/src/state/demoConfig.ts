@@ -1,5 +1,5 @@
 import type { UsageDay } from '@/lib/usage/stats'
-import type { AutomationJob, SyncProcedure } from '@/lib/bridge/protocol'
+import type { AutomationJob, SyncProcedure, SyncProcess } from '@/lib/bridge/protocol'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
@@ -497,6 +497,13 @@ export type ConfigSnapshot = {
    */
   procedures?: SyncProcedure[]
   /**
+   * The managed processes (desktop: `brain/processes.json`) — same contract
+   * as `procedures`: a snapshot copy so the unpaired Processes tab has rows to
+   * show, ignored once a tunnel can answer `Rpc.processesList`. Absent in
+   * bundles published before the process manager shipped.
+   */
+  processes?: SyncProcess[]
+  /**
    * The heartbeat as the Automations screen needs it: the file, the
    * scheduler's live view of the ACTIVE jobs in it, and the per-label edit
    * stamps. Same contract as `procedures` above — snapshot copy for the
@@ -862,6 +869,7 @@ export type DemoConfigState = DemoConfigValues & {
    * two sync modules read them only when there is no tunnel to ask.
    */
   snapshotProcedures: SyncProcedure[]
+  snapshotProcesses: SyncProcess[]
   snapshotAutomations: { markdown: string; jobs: AutomationJob[]; stamps: Record<string, number> }
   /** The one write path — updates a single flat key. */
   setValue: <K extends keyof DemoConfigValues>(key: K, value: DemoConfigValues[K]) => void
@@ -1087,6 +1095,7 @@ const INITIAL_STATE = {
   desktopChangelogMonths: [] as string[],
   customizationOversized: [] as string[],
   snapshotProcedures: [] as SyncProcedure[],
+  snapshotProcesses: [] as SyncProcess[],
   snapshotAutomations: {
     markdown: '',
     jobs: [] as AutomationJob[],
@@ -1167,6 +1176,7 @@ export const useDemoConfig = create<DemoConfigState>()(
             variables: mergeVariablesFromDesktop(snapshot.variables, state.variables),
             projects: snapshot.projects ?? [],
             snapshotProcedures: Array.isArray(snapshot.procedures) ? snapshot.procedures : [],
+            snapshotProcesses: Array.isArray(snapshot.processes) ? snapshot.processes : [],
             snapshotAutomations: {
               markdown:
                 typeof snapshot.automations?.markdown === 'string'
@@ -1342,6 +1352,7 @@ export const useDemoConfig = create<DemoConfigState>()(
           desktopChangelogMonths: state.desktopChangelogMonths,
           customizationOversized: state.customizationOversized,
           snapshotProcedures: state.snapshotProcedures,
+          snapshotProcesses: state.snapshotProcesses,
           snapshotAutomations: state.snapshotAutomations
         }
         for (const key of Object.keys(DEFAULTS) as Array<keyof DemoConfigValues>) {

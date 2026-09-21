@@ -1,7 +1,13 @@
-import { Folder01Icon, HeartCheckIcon, PlayListIcon } from '@/components/core/icons'
+import {
+  ComputerTerminal01Icon,
+  Folder01Icon,
+  HeartCheckIcon,
+  PlayListIcon
+} from '@/components/core/icons'
 import { SegmentedTabs } from '@/components/core/SegmentedTabs'
 import { AutomationsTab } from '@/components/library/AutomationsTab'
 import { ProceduresTab } from '@/components/library/ProceduresTab'
+import { ProcessesTab } from '@/components/library/ProcessesTab'
 import { ProjectsTab } from '@/components/library/ProjectsTab'
 import { PanelScreen } from '@/components/settings/SettingsUI'
 import { useFreshConfig } from '@/lib/sync/useFreshConfig'
@@ -9,7 +15,7 @@ import { useLocalSearchParams } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-type Tab = 'automations' | 'projects' | 'procedures'
+type Tab = 'automations' | 'projects' | 'procedures' | 'processes'
 
 const TABS: readonly {
   key: Tab
@@ -34,6 +40,12 @@ const TABS: readonly {
     icon: (p) => <PlayListIcon {...p} />,
     labelKey: 'settings.tabs.procedures',
     subtitleKey: 'procedures.subtitle'
+  },
+  {
+    key: 'processes',
+    icon: (p) => <ComputerTerminal01Icon {...p} />,
+    labelKey: 'settings.tabs.processes',
+    subtitleKey: 'processes.subtitle'
   }
 ]
 
@@ -105,6 +117,8 @@ export default function LibraryScreen(): React.JSX.Element {
         <AutomationsTab />
       ) : active === 'projects' ? (
         <ProjectsTab />
+      ) : active === 'processes' ? (
+        <ProcessesTab />
       ) : (
         <ProceduresTab />
       )}

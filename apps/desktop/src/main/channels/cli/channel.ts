@@ -49,6 +49,8 @@ import {
   appendTextSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  upsertBrowserSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
@@ -551,6 +553,8 @@ export class CliChannel {
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
+        else if (segment.kind === 'process') upsertProcessSegment(acc.segments, segment)
+        else if (segment.kind === 'browser') upsertBrowserSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -558,7 +562,10 @@ export class CliChannel {
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         scheduleMirror(
-          segment.kind === 'countdown' || segment.kind === 'wait' || segment.kind === 'user_message'
+          segment.kind === 'countdown' ||
+            segment.kind === 'wait' ||
+            segment.kind === 'process' ||
+            segment.kind === 'user_message'
         )
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {

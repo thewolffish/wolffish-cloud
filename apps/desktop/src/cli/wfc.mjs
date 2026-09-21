@@ -73,6 +73,7 @@ import {
   viewFile
 } from './commands/workspace.mjs'
 import { pathCommand, service, status } from './commands/service.mjs'
+import { processCommand } from './commands/process.mjs'
 import { pair } from './commands/pair.mjs'
 
 /**
@@ -138,6 +139,7 @@ ${c.gray('MACHINE')}
   wfc status                   daemon, model, autostart, channels
   wfc cancel [id|--all]        stop a running turn, on any channel
   wfc service <install|status|uninstall|stop|logs>
+  wfc process                  what the agent keeps running ${c.gray('· show · start · stop · restart · logs · autostart · rm · ports')}
   wfc path <status|install>    make "wfc" resolvable
   wfc pair phone [--code]
     ${c.gray('on a box with no screen: pair phone --code')}
@@ -549,6 +551,10 @@ async function dispatch(client, command, args, flags) {
 
     case 'service':
       return service(client, args)
+
+    case 'process':
+    case 'processes':
+      return processCommand(client, args, flags)
 
     case 'path':
       return pathCommand(client, args)

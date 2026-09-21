@@ -112,6 +112,36 @@
           "delta": "Done. Grabbed the full article through your logged-in Medium session, converted it to a clean HTML file with all the tables, code blocks, and references preserved. Should render nicely in any browser.\n\nFair warning: it's 31 KB — Adnan does not mess around. That's a 35-minute read condensed into one clean document. The loop engineering taxonomy and reference implementation at the end are worth the scroll alone 🐟"
         },
         {
+          "kind": "browser",
+          "turnId": "turn_1782404394211_64v5bl",
+          "segmentId": "seg_browser_med_1",
+          "snapshot": {
+            "tabId": "b1c0ffee-med0-4000-8000-000000000003",
+            "conversationId": "2026-06-25_19-19-54",
+            "url": "https://medium.com/@adnanmasood/loop-engineering-a-guide-for-engineers-and-practitioners-893bb65ea943",
+            "title": "Loop Engineering — a guide for engineers and practitioners",
+            "loadState": "ready",
+            "canGoBack": false,
+            "canGoForward": false,
+            "mode": "card",
+            "frameSize": {
+              "width": 651,
+              "height": 340
+            },
+            "generation": 1,
+            "error": null,
+            "active": true,
+            "strip": [
+              {
+                "url": "https://medium.com/@adnanmasood/loop-engineering-a-guide-for-engineers-and-practitioners-893bb65ea943",
+                "title": "Loop Engineering — a guide for engineers and practitioners",
+                "active": true
+              }
+            ],
+            "still": "https://cdn.wolffi.sh/samples/medium-loop-engineering.jpg"
+          }
+        },
+        {
           "kind": "turn_end",
           "turnId": "turn_1782404394211_64v5bl",
           "segmentId": "seg_97",
@@ -464,6 +494,41 @@
           "turnId": "turn_1782414175005_s4ufgd",
           "segmentId": "seg_2",
           "delta": "`~/Desktop/loop-engineering-images/`\n\nAll 11 PNGs are there — you can open the folder directly from your Desktop."
+        },
+        {
+          "kind": "browser",
+          "turnId": "turn_1782414175005_s4ufgd",
+          "segmentId": "seg_browser_med_2",
+          "snapshot": {
+            "tabId": "b1c0ffee-med0-4000-8000-000000000003",
+            "conversationId": "2026-06-25_19-19-54",
+            "url": "https://medium.com/@adnanmasood/loop-engineering-a-guide-for-engineers-and-practitioners-893bb65ea943",
+            "title": "Loop Engineering — a guide for engineers and practitioners",
+            "loadState": "ready",
+            "canGoBack": false,
+            "canGoForward": false,
+            "mode": "card",
+            "frameSize": {
+              "width": 651,
+              "height": 340
+            },
+            "generation": 1,
+            "error": null,
+            "active": true,
+            "strip": [
+              {
+                "url": "https://medium.com/@adnanmasood/loop-engineering-a-guide-for-engineers-and-practitioners-893bb65ea943",
+                "title": "Loop Engineering — a guide for engineers and practitioners",
+                "active": true
+              },
+              {
+                "url": "https://github.com/thewolffish/wolffish-app",
+                "title": "thewolffish/wolffish-app",
+                "active": false
+              }
+            ],
+            "still": "https://cdn.wolffi.sh/samples/medium-loop-engineering.jpg"
+          }
         },
         {
           "kind": "turn_end",

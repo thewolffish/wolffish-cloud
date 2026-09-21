@@ -3,12 +3,14 @@ import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import { Heartbeat, type HeartbeatView } from '@pages/Heartbeat'
 import { Procedures } from '@pages/Procedures'
+import { Processes } from '@pages/Processes'
 import { Projects } from '@pages/Projects'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import {
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  ComputerTerminal01Icon,
   Folder01Icon,
   GridViewIcon,
   HeartCheckIcon,
@@ -18,12 +20,13 @@ import {
 import { useEffect, useState, type ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 
-type Tab = 'automations' | 'projects' | 'procedures'
+type Tab = 'automations' | 'projects' | 'procedures' | 'processes'
 
 const TABS: { key: Tab; icon: ComponentType<{ size?: number }>; labelKey: string }[] = [
   { key: 'automations', icon: HeartCheckIcon, labelKey: 'chat.heartbeat' },
   { key: 'projects', icon: Folder01Icon, labelKey: 'chat.projects' },
-  { key: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' }
+  { key: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' },
+  { key: 'processes', icon: ComputerTerminal01Icon, labelKey: 'chat.processes' }
 ]
 
 /**
@@ -133,6 +136,8 @@ export function Library(): React.JSX.Element {
         <Heartbeat view={view} />
       ) : active === 'projects' ? (
         <Projects />
+      ) : active === 'processes' ? (
+        <Processes />
       ) : (
         <Procedures />
       )}

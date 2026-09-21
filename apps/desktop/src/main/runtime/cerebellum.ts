@@ -841,6 +841,43 @@ export type CountdownHost = {
  * singleton: it renders the waiting card, blocks for as long as the model
  * asked, and resolves early when the user sends a mid-turn message.
  */
+/**
+ * Long-lived process surface (src/main/processes). Present once main calls
+ * setProcessesHost — the shell plugin routes `shell_exec background=true`,
+ * `shell_jobs` and `shell_stop` through it so there is ONE registry of
+ * background processes, persisted and supervised, instead of a per-plugin
+ * in-memory map that dies with the app.
+ */
+export type ProcessesHost = {
+  start: (input: {
+    name?: string
+    command: string
+    cwd?: string
+    env?: Record<string, string>
+    wait?: boolean
+    origin?: { conversationId: string | null; kind: 'started' | 'shell' | 'adopted' }
+  }) => Promise<{
+    ok: boolean
+    error?: string
+    name?: string
+    pid?: number | null
+    logPath?: string | null
+    url?: string | null
+  }>
+  list: () => Array<{
+    name: string
+    pid: number | null
+    state: string
+    command: string
+    cwd: string
+    logPath: string | null
+    startedAt: number | null
+  }>
+  stop: (name: string) => Promise<{ ok: boolean; stopped: boolean; error?: string }>
+  stopAll: () => Promise<Array<{ name: string; stopped: boolean }>>
+  findByPid: (pid: number) => string | null
+}
+
 export type WaitHost = {
   /**
    * Block for `input.seconds`, showing a card that says why. Resolves with
@@ -987,6 +1024,11 @@ export type PluginContext = {
    */
   wait?: WaitHost
   /**
+   * Long-lived process registry — see ProcessesHost. Present once main
+   * calls setProcessesHost.
+   */
+  processes?: ProcessesHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -1104,7 +1146,12 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // these exist to fix.
   'pdf-design',
   'web-design',
-  'dataviz'
+  'dataviz',
+  // Long-lived processes (dev servers, tunnels, watchers). Core so a "start
+  // the dev server" turn never spends a discovery hop and the port rule in
+  // process_start's description is always in front of the model; the shell
+  // plugin's background path depends on the registry being present.
+  'processes'
 ])
 
 /**
@@ -1120,6 +1167,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  * membership here is the single source of truth for "cannot be disabled".
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
+  'processes',
   'workflow',
   'countdown',
   'todo',
@@ -1197,6 +1245,7 @@ export class Cerebellum {
   private voiceHost?: VoiceHost
   private countdownHost?: CountdownHost
   private waitHost?: WaitHost
+  private processesHost?: ProcessesHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1426,6 +1475,11 @@ export class Cerebellum {
 
   setVoiceHost(host: VoiceHost): void {
     this.voiceHost = host
+  }
+
+  /** Wire the process registry the shell plugin's background path delegates to. */
+  setProcessesHost(host: ProcessesHost): void {
+    this.processesHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -2826,6 +2880,7 @@ export class Cerebellum {
         voice: this.voiceHost,
         countdown: this.countdownHost,
         wait: this.waitHost,
+        processes: this.processesHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

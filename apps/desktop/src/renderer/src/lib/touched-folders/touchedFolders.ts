@@ -2,32 +2,33 @@ import type { Segment } from '@preload/index'
 
 /**
  * The folders a conversation has changed files in — derived from the
- * persisted segment stream, never from live state, so the chips over the
+ * persisted segment stream, never from live turn state, so the chips over the
  * transcript are the same while a turn streams, after it ends, and when the
  * conversation is reopened from history.
  *
- * A folder counts as touched when a file-changing tool call (file_edit,
- * file_write, file_patch) completed successfully inside it. Every touched
- * folder collapses to the one folder the chips name — the first path segment
- * under its working folder, or, with no working folder to read the path
- * against, the project folder its first source root or dot-directory opens
- * (projectRootCut) — so a run never costs the strip a chain of nested
- * directories, and two projects whose trees share a shape never leave two
- * chips that read the same. The path comes from the result's diff when the
- * tool recorded one (already absolute — the plugin resolved it against the
- * working folder), and from the call's own `path` argument otherwise,
- * resolved against the first working folder when relative. Failed and denied
- * calls changed nothing and are skipped.
+ * A file counts as changed when a file-changing tool call (file_edit,
+ * file_write, file_patch) completed successfully on it. The path comes from
+ * the result's diff when the tool recorded one (already absolute — the plugin
+ * resolved it against the working folder), and from the call's own `path`
+ * argument otherwise, resolved against the first working folder when relative.
+ * Failed and denied calls changed nothing and are skipped.
+ *
+ * Every changed file is then charged to ONE project folder — the repository
+ * root above it, else its manifest's folder, else the working folder or
+ * workspace/home container it sits in — so the strip never carries a chain of
+ * nested directories and two projects whose trees share a shape never leave
+ * two chips that read the same. That resolution needs the filesystem, so main
+ * owns it (upload.projectFolders, src/main/uploads/project-folders.ts); this
+ * module scans the segments and groups the files by what main answered.
  */
 
 export type TouchedFolder = {
-  /** Absolute directory path — what opens when the chip is clicked. */
+  /** Absolute directory path of the project — what opens when the chip is clicked. */
   path: string
-  /** Short display name: the top-level directory under its working folder,
-   *  the working folder's own name for its root, and the project folder for
-   *  paths outside every working folder. */
+  /** Short display name: the project folder's own name. */
   label: string
-  /** Distinct files changed anywhere under this folder. */
+  /** Distinct files changed anywhere under this folder; 0 for a folder that is
+   *  attached to the conversation but has no changes yet. */
   files: number
 }
 
@@ -71,83 +72,6 @@ function joinPath(base: string, rel: string): string {
   return out.join('/') || '/'
 }
 
-/** The working folder that contains `dir`, longest match first. */
-function containingFolder(dir: string, folders: string[]): string | null {
-  let best: string | null = null
-  for (const raw of folders) {
-    const folder = normalize(raw)
-    if (dir === folder || dir.startsWith(`${folder}/`)) {
-      if (!best || folder.length > best.length) best = folder
-    }
-  }
-  return best
-}
-
-function labelFor(dir: string, folders: string[]): string {
-  const root = containingFolder(dir, folders)
-  if (root) {
-    const rel = dir.slice(root.length).replace(/^\//, '')
-    return rel || basename(root)
-  }
-  // Outside every working folder the chip is the project folder itself, so its
-  // own name is the label.
-  return basename(dir)
-}
-
-/**
- * Where the project folder ends for a path with no working folder to read it
- * against: the index of the first segment that opens a project's tree — a
- * source root (`src`, `lib`, `test`, …) or a repo-admin dot-directory
- * (`.github`, `.githooks`, …). Scanning left to right takes the OUTERMOST
- * boundary, which is what keeps the collapse at the project level: scanning
- * inward finds the second `src` of `…/src/renderer/src/pages` first and
- * leaves a chip named `src` for every project shaped that way. Containers
- * (`apps`, `pages`, `packages`) are not boundaries — they carry named things
- * — so `…/wolffish-cloud/apps/desktop/src/main/…` reads as `desktop`, the app
- * the path belongs to. Returns -1 when the path carries no boundary.
- */
-const BOUNDARY_RE = /^(src|lib|test|tests|docs|doc|scripts)$/
-const PROJECT_MARKER_RE = /^(\.github|\.githooks|\.gitlab|\.circleci|\.vscode|\.idea|\.husky)$/
-
-function projectRootCut(parts: string[]): number {
-  for (let i = 1; i < parts.length; i++) {
-    if (BOUNDARY_RE.test(parts[i]) || PROJECT_MARKER_RE.test(parts[i])) return i
-  }
-  return -1
-}
-
-/**
- * The folder a changed file is charged to. Every touched directory collapses
- * to the project folder that opens its tree, so nested directories never earn
- * chips of their own — the strip names where the work happened, not the leaf
- * of every path it touched.
- *
- * Inside a working folder that folder is its first path segment. With none to
- * collapse against — a chat whose folders were never set, or whose folder was
- * since removed — the first boundary from the left settles it (projectRootCut);
- * a path with no boundary anywhere falls back to its own directory's parent,
- * keeping the directory itself when only two segments remain.
- */
-function touchedDir(file: string, folders: string[]): string {
-  const dir = dirname(file)
-  if (!dir) return ''
-  const root = containingFolder(dir, folders)
-  if (root) {
-    if (dir === root) return root
-    const segment = dir.slice(root.length + 1).split('/')[0]
-    return segment ? `${root}/${segment}` : root
-  }
-  const parts = dir.split('/').filter(Boolean)
-  const cut = projectRootCut(parts)
-  if (cut < 0) {
-    if (parts.length <= 2) return dir
-    const up = parts.slice(0, -1).join('/')
-    return dir.startsWith('/') ? `/${up}` : up
-  }
-  const at = parts.slice(0, cut).join('/')
-  return dir.startsWith('/') ? `/${at}` : at
-}
-
 /** The file each successful file-changing call touched, in stream order. */
 export function collectChangedFiles(
   messages: SegmentMessage[],
@@ -183,21 +107,85 @@ export function collectChangedFiles(
   return files
 }
 
-export function collectTouchedFolders(
-  messages: SegmentMessage[],
-  workingFolders: string[]
+/** The distinct directories the changed files live in, first-seen order — what
+ *  main is asked to resolve to projects. */
+export function changedDirectories(files: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const file of files) {
+    const dir = dirname(file)
+    if (!dir || seen.has(dir)) continue
+    seen.add(dir)
+    out.push(dir)
+  }
+  return out
+}
+
+/**
+ * One chip per project: the changed files grouped by the project folder
+ * `projectFor` resolves their directory to, in first-seen order, each counting
+ * its distinct files. A directory `projectFor` has no answer for yet (main has
+ * not replied) contributes nothing rather than a chip that would re-label
+ * itself a moment later.
+ */
+export function groupTouchedFolders(
+  files: readonly string[],
+  projectFor: (dir: string) => string | undefined
 ): TouchedFolder[] {
-  const byDir = new Map<string, Set<string>>()
-  for (const file of collectChangedFiles(messages, workingFolders)) {
-    const dir = touchedDir(file, workingFolders)
+  const byProject = new Map<string, Set<string>>()
+  for (const file of files) {
+    const dir = dirname(file)
     if (!dir) continue
-    const set = byDir.get(dir) ?? new Set<string>()
+    const project = projectFor(dir)
+    if (!project) continue
+    const set = byProject.get(project) ?? new Set<string>()
     set.add(file)
-    byDir.set(dir, set)
+    byProject.set(project, set)
   }
   const out: TouchedFolder[] = []
-  for (const [dir, set] of byDir) {
-    out.push({ path: dir, label: labelFor(dir, workingFolders), files: set.size })
+  for (const [project, set] of byProject) {
+    out.push({ path: project, label: basename(project), files: set.size })
+  }
+  return out
+}
+
+/**
+ * The strip itself: every attached working folder, in the order it was
+ * attached, followed by every project the conversation changed files in that
+ * is not already on the strip. One chip per path — an attached repo that was
+ * then edited is ONE chip, in its attached position, carrying the count.
+ *
+ * Each working folder appears as the project it opens (`projectFor` — the
+ * repository it sits in, or itself), which is what makes the two halves meet
+ * on the same path: attach `wolffish-app/src/renderer`, edit a page under it,
+ * and the strip shows `wolffish-app` once. Two spellings of one folder — a
+ * trailing slash, a `~` — resolve to the same path and collapse the same way.
+ *
+ * Attached-and-unchanged chips live only as long as the folder stays attached
+ * (they are recomputed from the current list); a changed folder's chip comes
+ * from the segments and so outlives its removal.
+ */
+export function folderChips(
+  workingFolders: readonly string[],
+  touched: readonly TouchedFolder[],
+  projectFor: (dir: string) => string | undefined
+): TouchedFolder[] {
+  const out: TouchedFolder[] = []
+  const at = new Map<string, number>()
+  for (const folder of workingFolders) {
+    const project = folder ? projectFor(folder) : undefined
+    if (!project || at.has(project)) continue
+    at.set(project, out.length)
+    out.push({ path: project, label: basename(project), files: 0 })
+  }
+  for (const chip of touched) {
+    const index = at.get(chip.path)
+    if (index !== undefined) {
+      out[index] = { ...out[index], files: chip.files }
+      continue
+    }
+    at.set(chip.path, out.length)
+    out.push(chip)
   }
   return out
 }

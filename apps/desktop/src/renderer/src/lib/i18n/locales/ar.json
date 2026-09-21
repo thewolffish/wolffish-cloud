@@ -4,6 +4,7 @@
     "tagline": "مساحة هادئة لعملك"
   },
   "common": {
+    "save": "حفظ",
     "back": "رجوع",
     "cancel": "إلغاء",
     "loading": "جارٍ التحميل…",
@@ -1790,6 +1791,33 @@
         "relaunch": "أُسقط لأن Wolffish أُعيد تشغيله قبل أن يُنفَّذ."
       }
     },
+    "browser": {
+      "untitled": "صفحة بلا عنوان",
+      "back": "رجوع",
+      "forward": "تقدّم",
+      "reload": "إعادة تحميل",
+      "expand": "توسيع — تولَّ الصفحة بنفسك",
+      "close": "إغلاق هذه الصفحة",
+      "closed": "مغلقة",
+      "loading": "جارٍ تحميل الصفحة",
+      "waiting": "لا شيء لعرضه بعد",
+      "openInSheet": "مفتوحة في العرض الموسّع",
+      "livePage": "الصفحة الحيّة",
+      "open": "متصفح ولفيش",
+      "newTab": "صفحة جديدة",
+      "address": "أدخل عنوانًا",
+      "pages": "الصفحات المفتوحة",
+      "closeTab": "إغلاق الصفحة",
+      "blank": "صفحة فارغة",
+      "startTitle": "متصفح ولفيش",
+      "startTagline": "سجّل دخولك مرة واحدة ودع ولفيش يتولّى الباقي",
+      "startChip": "المتصفح",
+      "closeAll": "إغلاق المتصفح",
+      "openInBrowser": "فتح في المتصفح",
+      "closedNote": "المتصفح مغلق",
+      "relaunch": "إعادة تشغيل المتصفح",
+      "opening": "جارٍ فتح {{host}}"
+    },
     "wait": {
       "status": {
         "waiting": "بالانتظار",
@@ -1816,13 +1844,50 @@
       "high": "عاجل"
     },
     "touchedFolders": {
-      "label": "المجلدات التي تغيّرت في هذه المحادثة",
+      "label": "المجلدات التي تعمل فيها هذه المحادثة",
+      "attached": "مجلد عمل لهذه المحادثة، لم يتغيّر فيه أي ملف بعد. اضغط لفتحه",
       "chip_zero": "لا ملفات تغيّرت هنا. اضغط لفتح المجلد",
       "chip_one": "تغيّر ملف واحد هنا. اضغط لفتح المجلد",
       "chip_two": "تغيّر ملفان هنا. اضغط لفتح المجلد",
       "chip_few": "تغيّرت {{count}} ملفات هنا. اضغط لفتح المجلد",
       "chip_many": "تغيّر {{count}} ملفًا هنا. اضغط لفتح المجلد",
       "chip_other": "تغيّر {{count}} ملف هنا. اضغط لفتح المجلد"
+    },
+    "processes": "العمليات",
+    "process": {
+      "title": "العمليات",
+      "titleOne": "عملية",
+      "empty": "لا شيء لعرضه.",
+      "runningCount": "{{count}} من {{total}} قيد التشغيل",
+      "state": {
+        "starting": "يبدأ",
+        "running": "قيد التشغيل",
+        "stopping": "يتوقف",
+        "stopped": "متوقف",
+        "exited": "انتهى",
+        "crashed": "تعطّل"
+      },
+      "exitCode": "رمز الخروج {{code}}",
+      "adopted": "مُتبنّى",
+      "stop": "إيقاف",
+      "stopping": "جارٍ الإيقاف…",
+      "restart": "إعادة تشغيل",
+      "restarting": "جارٍ إعادة التشغيل…",
+      "start": "تشغيل",
+      "since": "يعمل منذ {{time}}",
+      "endedAt": "انتهى {{time}}",
+      "port": "المنفذ {{port}}",
+      "restarts_zero": "لا إعادات تشغيل",
+      "restarts_one": "إعادة تشغيل واحدة",
+      "restarts_two": "إعادتا تشغيل",
+      "restarts_few": "{{count}} إعادات تشغيل",
+      "restarts_many": "{{count}} إعادة تشغيل",
+      "restarts_other": "{{count}} إعادة تشغيل",
+      "autostart": {
+        "off": "",
+        "wolffish": "يبدأ مع Wolffish",
+        "system": "يبدأ عند تسجيل الدخول"
+      }
     }
   },
   "library": {
@@ -2292,6 +2357,75 @@
       "resent": "رمز جديد في طريقه إليك.",
       "done": "تم تفعيل الحساب — سجّل الدخول بكلمة المرور الجديدة"
     }
+  },
+  "processes": {
+    "title": "العمليات",
+    "subtitle": "خوادم وأنفاق ونصوص يُبقيها Wolffish قيد التشغيل.",
+    "runningBadge": "{{running}} من {{total}} قيد التشغيل",
+    "stopAll": "إيقاف الكل",
+    "stoppedCount": "تم إيقاف {{count}}",
+    "empty": "لا توجد عمليات مُدارة بعد. اطلب تشغيل خادم تطوير، أو دع Wolffish يتبنّى عملية تعمل بالفعل.",
+    "autostartLabel": "التشغيل التلقائي",
+    "autostart": {
+      "off": "إيقاف",
+      "wolffish": "مع Wolffish",
+      "system": "عند تسجيل الدخول"
+    },
+    "restartLabel": "إعادة التشغيل",
+    "restart": {
+      "never": "أبدًا",
+      "on-failure": "عند الفشل",
+      "always": "دائمًا"
+    },
+    "onQuitLabel": "عند إغلاق Wolffish",
+    "onQuit": {
+      "keep": "يبقى قيد التشغيل",
+      "stop": "يتوقف"
+    },
+    "createdAt": "أُضيف {{time}}",
+    "logs": "السجلات",
+    "logsTitle": "السجل · {{name}}",
+    "logsEmpty": "السجل فارغ.",
+    "edit": "تعديل",
+    "editTitle": "تعديل {{name}}",
+    "command": "الأمر",
+    "cwd": "مجلد العمل",
+    "portHint": "اكتب {port} في الأمر مكان المنفذ؛ يملؤه Wolffish بمنفذ حر من نطاقه الخاص ويضبط PORT.",
+    "saved": "تم الحفظ",
+    "savedRestartHint": "تم الحفظ. تحتفظ النسخة العاملة بتعريفها القديم حتى تعيد تشغيلها.",
+    "remove": "إزالة",
+    "removeTitle": "إزالة العملية",
+    "removeConfirm": "إيقاف \"{{name}}\" إن كانت تعمل، وإزالة إدخال تسجيل الدخول إن وُجد، ونسيانها مع سجلاتها؟",
+    "removed": "تمت إزالة {{name}}",
+    "error": "حدث خطأ ما",
+    "searchPlaceholder": "ابحث بالاسم أو الأمر أو المجلد أو الرابط",
+    "filterStatus": "الحالة",
+    "status": {
+      "all": "الكل",
+      "running": "قيد التشغيل",
+      "stopped": "متوقف",
+      "crashed": "متعطّل"
+    },
+    "groupCount": "{{running}} من {{total}} قيد التشغيل",
+    "noMatches": "لا توجد عمليات تطابق هذه المرشحات.",
+    "showingCount": "عرض {{shown}} من {{total}}",
+    "pid": "المعرّف {{pid}}",
+    "deleteAll": "حذف الكل",
+    "stopAllTitle": "إيقاف جميع العمليات",
+    "stopAllConfirm_zero": "لا عمليات قيد التشغيل.",
+    "stopAllConfirm_one": "إيقاف العملية الوحيدة قيد التشغيل؟",
+    "stopAllConfirm_two": "إيقاف العمليتين قيد التشغيل؟",
+    "stopAllConfirm_few": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "stopAllConfirm_many": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "stopAllConfirm_other": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "deleteAllTitle": "حذف جميع العمليات",
+    "deleteAllConfirm": "إيقاف كل ما لا يزال يعمل ({{running}})، وإزالة أي إدخالات تسجيل دخول، ونسيان جميع العمليات الـ{{count}} مع سجلاتها؟",
+    "removedCount_zero": "لم تُزَل أي عملية",
+    "removedCount_one": "تمت إزالة عملية واحدة",
+    "removedCount_two": "تمت إزالة عمليتين",
+    "removedCount_few": "تمت إزالة {{count}} عمليات",
+    "removedCount_many": "تمت إزالة {{count}} عملية",
+    "removedCount_other": "تمت إزالة {{count}} عملية"
   },
   "profile": {
     "title": "الملف الشخصي",

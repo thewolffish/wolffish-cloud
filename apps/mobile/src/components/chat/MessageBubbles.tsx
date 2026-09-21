@@ -1,5 +1,6 @@
 import { Copy01Icon, Tick02Icon } from '@/components/core/icons'
 import {
+  type RenderOptions,
   CODE_ACTIVITY_TOOLS,
   buildRenderBlocks,
   failedTurnEnd,
@@ -30,6 +31,8 @@ import { Pressable, Text, View } from 'react-native'
 import { ApprovalCard } from '@/components/chat/ApprovalCard'
 import { CountdownCard } from '@/components/chat/CountdownCard'
 import { WaitCard } from '@/components/chat/WaitCard'
+import { ProcessCard } from '@/components/chat/ProcessCard'
+import { BrowserCard } from '@/components/chat/BrowserCard'
 import {
   CompactionCard,
   ModelChip,
@@ -166,7 +169,8 @@ export const AssistantMessageView = memo(function AssistantMessageView({
   liveTurn,
   liveError,
   onTryAgain,
-  todoLists
+  todoLists,
+  browserCards
 }: {
   message: ConversationMessage
   conversationId?: string
@@ -174,6 +178,8 @@ export const AssistantMessageView = memo(function AssistantMessageView({
   /** Every task list in its latest state (segments.ts latestTodoLists) — a
    *  later turn's todo_write resolves an earlier card in place. */
   todoLists?: Map<string, TodoItem[]>
+  /** Where each conversation browser's one card lives (segments.ts latestBrowserCards). */
+  browserCards?: RenderOptions['browserCards']
   streaming?: boolean
   /** True for the in-flight turn's own row (feed.ts LIVE_KEY) — the only row
    *  that may host the conversation's live cards. */
@@ -186,7 +192,10 @@ export const AssistantMessageView = memo(function AssistantMessageView({
    *  running — the desktop's own rule for the retry button. */
   onTryAgain?: (reason: string) => void
 }): React.JSX.Element {
-  const blocks = useMemo(() => buildRenderBlocks(message, { todoLists }), [message, todoLists])
+  const blocks = useMemo(
+    () => buildRenderBlocks(message, { todoLists, browserCards }),
+    [message, todoLists, browserCards]
+  )
   const fullText = useMemo(() => messageText(message), [message])
   // Cards the desktop is holding this turn open for. Live state wins over the
   // persisted record for the same tool call: the two describe one approval,
@@ -480,6 +489,14 @@ function renderBlock(
       // Why the agent went quiet — output FOR the user, never verbose-gated:
       // a silent turn with no card is indistinguishable from a hang.
       return <WaitCard snapshot={block.snapshot} conversationId={conversationId} />
+    case 'process':
+      // The live process card the model chose to show — output FOR the user,
+      // never verbose-gated; its buttons drive the desktop's registry.
+      return <ProcessCard snapshot={block.snapshot} />
+    case 'browser':
+      // The conversation's in-app browser, read-only: a still of what the
+      // desktop shows. Output FOR the user, never verbose-gated.
+      return <BrowserCard snapshot={block.snapshot} conversationId={conversationId} />
     case 'todo':
       // The model's task list — output FOR the user, so never verbose-gated.
       return <TodoCard items={block.items} />

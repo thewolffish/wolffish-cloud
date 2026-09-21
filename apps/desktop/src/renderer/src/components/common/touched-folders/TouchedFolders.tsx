@@ -5,18 +5,22 @@ import { Folder01Icon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * The folders this conversation has changed files in, as a strip of chips
- * laid over the transcript's top edge — starting after the leading glass
- * disc, on the row the FloatingChrome owns, ending before the trailing disc.
- * One chip per parent folder — each touched directory collapses to the top
- * level of the project it belongs to, so nested folders never each get one —
- * carrying the number of files changed anywhere under it; click opens the
- * folder in the system file manager. The strip never wraps: it scrolls on x,
- * scrollbar hidden, so a run that touches twenty folders costs the transcript
- * no height.
+ * The folders this conversation works in, as a strip of chips laid over the
+ * transcript's top edge — starting after the leading glass disc, on the row
+ * the FloatingChrome owns, ending before the trailing disc. Every attached
+ * working folder, then every project files were changed in; one chip per
+ * project — each touched directory collapses to the repository (or project)
+ * folder it belongs to, so nested folders never each get one. A chip carries
+ * the number of files changed anywhere under it, and no number at all while
+ * that is zero (an attached folder nothing has happened in yet); click opens
+ * the folder in the system file manager. The strip never wraps: it scrolls
+ * on x, scrollbar hidden, so a run that touches twenty folders costs the
+ * transcript no height.
  *
- * Fed by collectTouchedFolders over the persisted segments, so the chips
- * are identical live, after the turn and on a reopened conversation.
+ * Fed by folderChips over the persisted segments and the attached folders,
+ * with each directory's project resolved once by main (upload.projectFolders),
+ * so the chips are identical live, after the turn and on a reopened
+ * conversation.
  */
 export function TouchedFolders({
   folders
@@ -49,7 +53,11 @@ export function TouchedFolders({
             type="button"
             role="listitem"
             onClick={() => void window.api.upload.revealPath(folder.path)}
-            title={`${folder.path}\n${t('chat.touchedFolders.chip', { count: folder.files })}`}
+            title={`${folder.path}\n${
+              folder.files > 0
+                ? t('chat.touchedFolders.chip', { count: folder.files })
+                : t('chat.touchedFolders.attached')
+            }`}
             className={cn(
               'flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium',
               // The card ground, not the chrome's glass: these chips lie over
@@ -65,7 +73,7 @@ export function TouchedFolders({
             <span dir="ltr" className="max-w-[16rem] truncate">
               {folder.label}
             </span>
-            <span className="text-muted tabular-nums">{folder.files}</span>
+            {folder.files > 0 && <span className="text-muted tabular-nums">{folder.files}</span>}
           </button>
         ))}
       </div>

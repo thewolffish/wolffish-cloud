@@ -1,15 +1,28 @@
 /**
  * The folder chips over the transcript: which folders a conversation changed
- * files in, derived from the persisted segments alone. Pins the rules the
- * strip relies on — only successful file-changing calls count, the diff's
- * absolute path wins over the call's argument, a relative argument resolves
- * against the first working folder, and each touched folder collapses to the
- * project folder whose tree its path opens.
+ * files in. Two halves, each pinned on its own:
+ *
+ *  - the segment scan (renderer): only successful file-changing calls count,
+ *    the diff's absolute path wins over the call's argument, a relative
+ *    argument resolves against the first working folder, files group by the
+ *    project their directory resolves to, labels are the project's own name;
+ *  - the project resolution (main, src/main/uploads/project-folders.ts) over
+ *    a fake filesystem: the repository root wins, then a manifest, then the
+ *    working folder / workspace / home container, then the old shape
+ *    heuristic — so a run editing `wolffish-landing/content/blog/en` bills
+ *    `wolffish-landing`, never `blog` (the chip a user caught), and nothing
+ *    ever collapses into the home directory.
+ *
+ * Run:
+ *   TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/touched-folders.test.ts
  */
 import type { Segment } from '@preload/index'
+import { projectFolderFor, projectFoldersFor } from '../../uploads/project-folders'
 import {
+  changedDirectories,
   collectChangedFiles,
-  collectTouchedFolders
+  folderChips,
+  groupTouchedFolders
 } from '../../../renderer/src/lib/touched-folders/touchedFolders'
 
 let passed = 0
@@ -20,6 +33,9 @@ function ok(label: string, cond: boolean, detail?: unknown): void {
     failed++
     console.error(`FAIL ${label}${detail !== undefined ? `\n     ${JSON.stringify(detail)}` : ''}`)
   }
+}
+function eq(label: string, actual: unknown, expected: unknown): void {
+  ok(label, JSON.stringify(actual) === JSON.stringify(expected), { actual, expected })
 }
 
 function call(id: string, name: string, args: Record<string, unknown>): Segment {
@@ -42,9 +58,24 @@ const msg = (segments: Segment[]): { role: string; segments: Segment[] } => ({
   role: 'assistant',
   segments
 })
-const W = '/repo/app'
 
-function main(): void {
+const HOME = '/Users/y'
+const WS_FILES = `${HOME}/.wfc/workspace/files`
+const LANDING = `${HOME}/Documents/wolffish/wolffish-landing`
+const APP = `${HOME}/Documents/wolffish/wolffish-app`
+const CLOUD = `${HOME}/Documents/wolffish/wolffish-cloud`
+
+/** A fake tree: the set of paths that exist. */
+function fakeFs(paths: string[]): (p: string) => boolean {
+  const set = new Set(paths)
+  return (p) => set.has(p)
+}
+function deps(paths: string[]): Parameters<typeof projectFolderFor>[2] {
+  return { exists: fakeFs(paths), home: HOME, workspaceFiles: WS_FILES }
+}
+
+function segmentScan(): void {
+  const W = '/repo/app'
   const messages = [
     { role: 'user', segments: undefined },
     msg([
@@ -70,109 +101,276 @@ function main(): void {
     ])
   ]
   const files = collectChangedFiles(messages, [W])
-  ok(
-    'only successful file-changing calls count, in stream order',
-    JSON.stringify(files) ===
-      JSON.stringify([
-        `${W}/src/a.ts`,
-        `${W}/src/lib/b.ts`,
-        `${W}/src/a.ts`,
-        `${W}/test/x.test.ts`,
-        `${W}/README.md`,
-        '/tmp/scratch/notes.md'
-      ]),
-    files
-  )
-  const folders = collectTouchedFolders(messages, [W])
-  ok(
-    'one chip per parent folder, nested folders collapsed, files deduplicated',
-    JSON.stringify(folders) ===
-      JSON.stringify([
-        { path: `${W}/src`, label: 'src', files: 2 },
-        { path: `${W}/test`, label: 'test', files: 1 },
-        { path: W, label: 'app', files: 1 },
-        { path: '/tmp/scratch', label: 'scratch', files: 1 }
-      ]),
-    folders
-  )
-  ok(
-    'no chip label reads as a nested path',
-    folders.every((f) => !f.label.includes('/')),
-    folders
-  )
+  eq('only successful file-changing calls count, in stream order', files, [
+    `${W}/src/a.ts`,
+    `${W}/src/lib/b.ts`,
+    `${W}/src/a.ts`,
+    `${W}/test/x.test.ts`,
+    `${W}/README.md`,
+    '/tmp/scratch/notes.md'
+  ])
+  eq('distinct directories, first-seen order', changedDirectories(files), [
+    `${W}/src`,
+    `${W}/src/lib`,
+    `${W}/test`,
+    W,
+    '/tmp/scratch'
+  ])
   ok(
     'no working folder: a relative path cannot resolve and is skipped',
-    collectTouchedFolders(messages, []).every((f) => f.path.startsWith('/'))
-  )
-  // The case that reached a user: no working folder, absolute paths (every
-  // tool result carries one, so a relative argument resolves by the diff).
-  // Nothing to collapse against must still collapse, or the strip shows the
-  // leaf of every nested path — the chip that read `workflows` for
-  // `wolffish-app/.github/workflows/commit-trailers.yml`.
-  const absolute = [
-    msg([
-      call('a', 'file_write', { path: '/repo/app/.github/workflows/ci.yml' }),
-      result('a', 'success', '/repo/app/.github/workflows/ci.yml'),
-      call('b', 'file_write', { path: '/repo/app/src/lib/deep/nested/x.ts' }),
-      result('b', 'success', '/repo/app/src/lib/deep/nested/x.ts'),
-      call('c', 'file_write', { path: '/repo/app/src/lib/other/y.ts' }),
-      result('c', 'success', '/repo/app/src/lib/other/y.ts')
-    ])
-  ]
-  ok(
-    'no working folder: every path in one project collapses to that project',
-    JSON.stringify(collectTouchedFolders(absolute, [])) ===
-      JSON.stringify([{ path: '/repo/app', label: 'app', files: 3 }]),
-    collectTouchedFolders(absolute, [])
-  )
-  // Two projects whose trees share the same shape — the case a user caught,
-  // where `…/wolffish-app/src/renderer/src/…` and `…/wolffish-cloud/apps/
-  // desktop/src/renderer/src/…` each collapsed to their second `src` and put
-  // two chips both named `src` on the strip. The leftmost boundary keeps each
-  // project whole: `wolffish-app` and `desktop` (`apps` is a container, not a
-  // boundary).
-  const twins = [
-    msg([
-      call('p', 'file_write', { path: '/repo/wolffish-app/src/renderer/src/pages/Chat.tsx' }),
-      result('p', 'success', '/repo/wolffish-app/src/renderer/src/pages/Chat.tsx'),
-      call('q', 'file_write', {
-        path: '/repo/wolffish-cloud/apps/desktop/src/renderer/src/pages/Chat.tsx'
-      }),
-      result('q', 'success', '/repo/wolffish-cloud/apps/desktop/src/renderer/src/pages/Chat.tsx'),
-      call('r', 'file_write', {
-        path: '/repo/wolffish-cloud/apps/desktop/src/main/runtime/__tests__/x.test.ts'
-      }),
-      result(
-        'r',
-        'success',
-        '/repo/wolffish-cloud/apps/desktop/src/main/runtime/__tests__/x.test.ts'
-      )
-    ])
-  ]
-  ok(
-    'no working folder: one chip per project, never two chips named `src`',
-    JSON.stringify(collectTouchedFolders(twins, [])) ===
-      JSON.stringify([
-        { path: '/repo/wolffish-app', label: 'wolffish-app', files: 1 },
-        { path: '/repo/wolffish-cloud/apps/desktop', label: 'desktop', files: 2 }
-      ]),
-    collectTouchedFolders(twins, [])
-  )
-  ok(
-    'the longest containing working folder labels a nested folder',
-    collectTouchedFolders(messages, ['/repo', W])[0]?.label === 'src'
+    collectChangedFiles(messages, []).every((f) => f.startsWith('/'))
   )
   ok(
     'a message without segments contributes nothing',
-    collectTouchedFolders([{ role: 'assistant' }], [W]).length === 0
+    collectChangedFiles([{ role: 'assistant' }], [W]).length === 0
   )
-  ok(
+  eq(
     'windows separators are normalized',
-    collectTouchedFolders(
+    collectChangedFiles(
       [msg([call('w', 'file_edit', { path: 'src\\win.ts' }), result('w', 'success')])],
       ['C:\\proj']
-    )[0]?.path === 'C:/proj/src'
+    ),
+    ['C:/proj/src/win.ts']
   )
+
+  // Grouping: every directory of one project lands on one chip, files are
+  // deduplicated, the label is the project's own name, and a directory main
+  // has not answered for yet earns no chip at all.
+  const project = (dir: string): string | undefined =>
+    dir.startsWith(W) ? W : dir === '/tmp/scratch' ? undefined : dir
+  eq(
+    'one chip per project, files deduplicated, label = project name',
+    groupTouchedFolders(files, project),
+    [{ path: W, label: 'app', files: 4 }]
+  )
+  eq(
+    'an unresolved directory contributes nothing',
+    groupTouchedFolders(['/tmp/scratch/notes.md'], () => undefined),
+    []
+  )
+  ok(
+    'no chip label reads as a nested path',
+    groupTouchedFolders(files, (d) => d).every((f) => !f.label.includes('/'))
+  )
+}
+
+function projectResolution(): void {
+  // The run that reached a user: a heartbeat with no working folder on the
+  // conversation wrote ten posts under wolffish-landing/content/blog/{en,ar}
+  // and the strip read `blog`. The repository root is the answer, whatever
+  // the working folder is set to — none, the repo, or the parent of ten repos.
+  const tree = deps([`${LANDING}/.git`, `${APP}/.git`, `${CLOUD}/.git`])
+  const blogEn = `${LANDING}/content/blog/en`
+  const blogAr = `${LANDING}/content/blog/ar`
+  eq('repo root, no working folder', projectFolderFor(blogEn, [], tree), LANDING)
+  eq('repo root, working folder = the repo', projectFolderFor(blogEn, [LANDING], tree), LANDING)
+  eq(
+    'repo root, working folder = the parent of many repos',
+    projectFolderFor(blogEn, [`${HOME}/Documents/wolffish`], tree),
+    LANDING
+  )
+  eq(
+    'repo root, working folder inside the repo',
+    projectFolderFor(`${APP}/src/renderer/src/pages`, [`${APP}/src/renderer`], tree),
+    APP
+  )
+  eq(
+    'two directories of one repo resolve to the same project',
+    projectFoldersFor([blogEn, blogAr, LANDING], [], tree),
+    { [blogEn]: LANDING, [blogAr]: LANDING, [LANDING]: LANDING }
+  )
+  // Two repos whose trees share a shape never read the same: each is its own
+  // repo, and the monorepo's app is billed to the monorepo (the repository
+  // beats the sub-package's manifest).
+  const twins = deps([
+    `${APP}/.git`,
+    `${CLOUD}/.git`,
+    `${CLOUD}/package.json`,
+    `${CLOUD}/apps/desktop/package.json`
+  ])
+  eq(
+    'one project per repository, never two chips named src',
+    projectFoldersFor(
+      [`${APP}/src/renderer/src/pages`, `${CLOUD}/apps/desktop/src/renderer/src/pages`],
+      [],
+      twins
+    ),
+    {
+      [`${APP}/src/renderer/src/pages`]: APP,
+      [`${CLOUD}/apps/desktop/src/renderer/src/pages`]: CLOUD
+    }
+  )
+  // A worktree or submodule keeps `.git` as a FILE; existence is what counts.
+  eq(
+    'a .git file (worktree) marks a repo too',
+    projectFolderFor('/srv/wt/src/x', [], deps(['/srv/wt/.git'])),
+    '/srv/wt'
+  )
+  // No repo: the nearest manifest is the project.
+  eq(
+    'manifest folder when there is no repo',
+    projectFolderFor('/srv/site/src/pages', [], deps(['/srv/site/package.json'])),
+    '/srv/site'
+  )
+  // Working folder with no repo or manifest: the folder the user named IS the
+  // project, however deep the edit — never the first folder under it.
+  const notes = `${HOME}/Desktop/notes`
+  eq('working folder is the project', projectFolderFor(`${notes}/a/b`, [notes], deps([])), notes)
+  eq(
+    'the longest containing working folder wins',
+    projectFolderFor(`${notes}/a/b`, [`${HOME}/Desktop`, notes], deps([])),
+    notes
+  )
+  // Nothing ever collapses into the home directory: a dotfiles repo at ~/.git
+  // or a .git on the runtime folder is ignored, and the home containers hand
+  // out their first folder instead.
+  const dotfiles = deps([`${HOME}/.git`, `${HOME}/.wolffish/.git`])
+  eq('~/.git never swallows Desktop work', projectFolderFor(`${notes}/a`, [], dotfiles), notes)
+  eq(
+    'a file straight on the Desktop bills Desktop',
+    projectFolderFor(`${HOME}/Desktop`, [], dotfiles),
+    `${HOME}/Desktop`
+  )
+  eq(
+    'Documents hands out its first folder',
+    projectFolderFor(`${HOME}/Documents/wolffish`, [], dotfiles),
+    `${HOME}/Documents/wolffish`
+  )
+  eq(
+    'a home folder outside the named ones bills itself',
+    projectFolderFor(`${HOME}/Pictures/2026/09`, [], dotfiles),
+    `${HOME}/Pictures`
+  )
+  eq(
+    'Documents set as the working folder is still a container',
+    projectFolderFor(`${HOME}/Documents/wolffish/x`, [`${HOME}/Documents`], dotfiles),
+    `${HOME}/Documents/wolffish`
+  )
+  // The workspace's files tree: one folder per automation, whatever a run
+  // nests beneath it, even with a .git on the runtime folder above.
+  const run = `${WS_FILES}/wolffish-signal/2026-09-21-0630`
+  eq(
+    'workspace files bill the automation folder',
+    projectFoldersFor([run, `${run}/fonts`, `${run}/shots`], [LANDING], dotfiles),
+    {
+      [run]: `${WS_FILES}/wolffish-signal`,
+      [`${run}/fonts`]: `${WS_FILES}/wolffish-signal`,
+      [`${run}/shots`]: `${WS_FILES}/wolffish-signal`
+    }
+  )
+  eq(
+    'a repo cloned inside a run folder is its own project',
+    projectFolderFor(`${run}/site/src`, [], deps([`${run}/site/.git`])),
+    `${run}/site`
+  )
+  // Outside every container with no marker: the old shape heuristic, then
+  // the directory itself.
+  eq(
+    'bare tree: the outermost src boundary',
+    projectFolderFor('/repo/app/src/lib/deep/nested', [], deps([])),
+    '/repo/app'
+  )
+  eq(
+    'bare tree: a repo-admin dot-directory folds into its project',
+    projectFolderFor('/repo/app/.github/workflows', [], deps([])),
+    '/repo/app'
+  )
+  eq(
+    'bare tree, no boundary: the directory itself',
+    projectFolderFor('/tmp/scratch', [], deps([])),
+    '/tmp/scratch'
+  )
+  eq(
+    'windows separators are normalized',
+    projectFolderFor('C:\\proj\\src', ['C:\\proj'], deps([])),
+    'C:/proj'
+  )
+  eq(
+    'windows repo root',
+    projectFolderFor('C:/proj/src/deep', [], {
+      exists: fakeFs(['C:/proj/.git']),
+      home: 'C:\\Users\\y',
+      workspaceFiles: null
+    }),
+    'C:/proj'
+  )
+}
+
+function homeExpansion(): void {
+  const tree = deps([`${LANDING}/.git`])
+  eq(
+    '~ in a directory expands to home before the walk',
+    projectFolderFor('~/Documents/wolffish/wolffish-landing/content/blog/en', [], tree),
+    LANDING
+  )
+  eq(
+    '~ in a working folder expands to home',
+    projectFolderFor(`${HOME}/Desktop/notes/a`, ['~/Desktop/notes'], deps([])),
+    `${HOME}/Desktop/notes`
+  )
+  eq('~ alone is home', projectFolderFor('~', [], deps([])), HOME)
+}
+
+/**
+ * The strip: attached folders show as chips from the first message on, an
+ * attached repo that was edited is one chip with the count, an untouched
+ * folder's chip goes when the folder is removed, a touched one's stays, and
+ * two spellings of one folder never make two chips.
+ */
+function strip(): void {
+  const project = (dir: string): string | undefined => {
+    if (dir === '/pending') return undefined
+    for (const root of [LANDING, APP]) {
+      if (dir === root || dir === `${root}/` || dir.startsWith(`${root}/`)) return root
+    }
+    if (dir === '~/Documents/wolffish/wolffish-landing') return LANDING
+    return dir
+  }
+  const landing = { path: LANDING, label: 'wolffish-landing', files: 10 }
+  const touched = [landing]
+  eq(
+    'attached folders first; an attached repo that was edited is ONE chip carrying the count',
+    folderChips([APP, LANDING], touched, project),
+    [{ path: APP, label: 'wolffish-app', files: 0 }, landing]
+  )
+  eq(
+    'a project edited outside every attached folder follows the attached ones',
+    folderChips([APP], touched, project),
+    [{ path: APP, label: 'wolffish-app', files: 0 }, landing]
+  )
+  eq(
+    'an untouched folder removed is gone; a touched one stays',
+    folderChips([], touched, project),
+    [landing]
+  )
+  eq(
+    'one folder attached three ways — as is, trailing slash, ~ — is one chip',
+    folderChips([LANDING, `${LANDING}/`, '~/Documents/wolffish/wolffish-landing'], [], project),
+    [{ path: LANDING, label: 'wolffish-landing', files: 0 }]
+  )
+  eq(
+    'an attached subfolder of a repo shows as the repo, and meets its edits there',
+    folderChips([`${APP}/src/renderer`], [{ path: APP, label: 'wolffish-app', files: 3 }], project),
+    [{ path: APP, label: 'wolffish-app', files: 3 }]
+  )
+  eq(
+    'an attached folder main has not resolved yet earns no chip',
+    folderChips(['/pending', ''], [], project),
+    []
+  )
+  const many = folderChips(
+    [APP, LANDING, `${APP}/`],
+    [landing, { path: '/tmp/x', label: 'x', files: 1 }],
+    project
+  )
+  ok('chips are unique by path', new Set(many.map((c) => c.path)).size === many.length, many)
+}
+
+function main(): void {
+  segmentScan()
+  projectResolution()
+  homeExpansion()
+  strip()
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process.exit(1)
 }

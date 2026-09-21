@@ -1,4 +1,5 @@
 import type {
+  BrowserTabSnapshot,
   ConversationMessage,
   CountdownSnapshot,
   NoProviderAvailableInfo,
@@ -8,6 +9,7 @@ import type {
   ToolResultMeta,
   ToolResultStatus,
   ToolTiming,
+  ProcessCardSnapshot,
   WaitSnapshot,
   WorkflowSnapshot
 } from '@/lib/conversations/types'
@@ -103,6 +105,9 @@ export type RenderBlock =
   | { type: 'workflow'; key: string; snapshot: WorkflowSnapshot }
   | { type: 'countdown'; key: string; snapshot: CountdownSnapshot }
   | { type: 'wait'; key: string; snapshot: WaitSnapshot }
+  | { type: 'process'; key: string; snapshot: ProcessCardSnapshot }
+  /** The conversation's in-app browser — read-only on the phone. */
+  | { type: 'browser'; key: string; snapshot: BrowserTabSnapshot }
   /** The model's task list for one turn, in its latest state. */
   | { type: 'todo'; key: string; items: TodoItem[] }
   | {
@@ -301,6 +306,39 @@ export type RenderOptions = {
   /** Every task list in its latest state — see latestTodoLists. Without it,
    *  each card shows the items of its own write. */
   todoLists?: Map<string, TodoItem[]>
+  /**
+   * Where each conversation browser's ONE card lives — see latestBrowserCards.
+   * A message that is not that holder draws no browser card. Without it,
+   * every message that carries a browser segment draws one.
+   */
+  browserCards?: Map<string, { messageId: string; snapshot: BrowserTabSnapshot }>
+}
+
+/** What a browser card stands for: the conversation, else the tab (desktop's browserKey). */
+export function browserKey(snapshot: Pick<BrowserTabSnapshot, 'conversationId' | 'tabId'>): string {
+  return snapshot.conversationId ?? snapshot.tabId
+}
+
+/**
+ * One browser card per conversation, in the LATEST message that carries it —
+ * the desktop's keepLatestBrowserCard, mirrored: the card follows the last
+ * turn that used the browser, so nobody scrolls up to find it. Later
+ * messages win; within one message the last segment wins.
+ */
+export function latestBrowserCards(
+  messages: ConversationMessage[]
+): Map<string, { messageId: string; snapshot: BrowserTabSnapshot }> {
+  const out = new Map<string, { messageId: string; snapshot: BrowserTabSnapshot }>()
+  for (const message of messages) {
+    for (const segment of message.segments ?? []) {
+      if (segment.kind !== 'browser' || !segment.snapshot) continue
+      out.set(browserKey(segment.snapshot), {
+        messageId: message.id ?? '',
+        snapshot: segment.snapshot
+      })
+    }
+  }
+  return out
 }
 
 export function buildRenderBlocks(
@@ -318,6 +356,8 @@ export function buildRenderBlocks(
   const workflowIndexById = new Map<string, number>()
   const countdownIndexById = new Map<string, number>()
   const waitIndexById = new Map<string, number>()
+  const processIndexById = new Map<string, number>()
+  const browserIndexByKey = new Map<string, number>()
   const todoIndexByTurn = new Map<string, number>()
   let textBuffer = ''
   let textKey = ''
@@ -507,6 +547,40 @@ export function buildRenderBlocks(
         } else {
           waitIndexById.set(id, blocks.length)
           blocks.push({ type: 'wait', key: `wt:${id}`, snapshot: segment.snapshot })
+        }
+        break
+      }
+      case 'process': {
+        // Process card — replace-by-cardId, the task fold. Never
+        // verbose-gated: it is output FOR the user, with buttons.
+        flushText()
+        const id = segment.snapshot?.cardId
+        if (!id) break
+        const existing = processIndexById.get(id)
+        if (existing !== undefined) {
+          blocks[existing] = { type: 'process', key: `pc:${id}`, snapshot: segment.snapshot }
+        } else {
+          processIndexById.set(id, blocks.length)
+          blocks.push({ type: 'process', key: `pc:${id}`, snapshot: segment.snapshot })
+        }
+        break
+      }
+      case 'browser': {
+        // The conversation's browser: one card, at the latest message that
+        // used it, in its latest state. Never verbose-gated — the user
+        // watches what the model is looking at.
+        if (!segment.snapshot) break
+        const key = browserKey(segment.snapshot)
+        const holder = options.browserCards?.get(key)
+        if (holder && holder.messageId !== (message.id ?? '')) break
+        const snapshot = holder?.snapshot ?? segment.snapshot
+        flushText()
+        const existing = browserIndexByKey.get(key)
+        if (existing !== undefined) {
+          blocks[existing] = { type: 'browser', key: `br:${key}`, snapshot }
+        } else {
+          browserIndexByKey.set(key, blocks.length)
+          blocks.push({ type: 'browser', key: `br:${key}`, snapshot })
         }
         break
       }

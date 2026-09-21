@@ -12,6 +12,8 @@ export type ExpandedSheetProps = {
   title?: string
   /** Action controls rendered in the header before the close button. */
   actions?: ReactNode
+  /** Rendered just before the title (an icon or logo). */
+  leading?: ReactNode
   children: ReactNode
 }
 
@@ -33,6 +35,7 @@ export function ExpandedSheet({
   onClose,
   title,
   actions,
+  leading,
   children
 }: ExpandedSheetProps): React.JSX.Element | null {
   const { t } = useTranslation()
@@ -80,6 +83,7 @@ export function ExpandedSheet({
             underTrafficLights && 'pt-12'
           )}
         >
+          {leading}
           <span
             id={titleId}
             className="text-fg min-w-0 flex-1 truncate text-sm font-semibold"

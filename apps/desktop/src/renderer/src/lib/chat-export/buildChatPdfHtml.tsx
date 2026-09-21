@@ -1,4 +1,4 @@
-import type { Segment } from '@preload/index'
+import type { ProcessCardSnapshot, Segment } from '@preload/index'
 import {
   CODE_ACTIVITY_TOOLS,
   WORKFLOW_TOOL_NAMES,
@@ -288,6 +288,17 @@ function workflowBlock(snapshot: WorkflowSnapshot): string {
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">workflow · ${escapeHtml(snapshot.status)}</span></div>${snapshot.note ? `<div class="wf-note" dir="auto">${escapeHtml(snapshot.note)}</div>` : ''}${phases}${table}</div>`
 }
 
+/** The process card as a static block — one line per process in its last state. */
+function processBlock(snapshot: ProcessCardSnapshot): string {
+  const rows = snapshot.processes
+    .map((r) => {
+      const where = r.run.url ?? (r.run.port ? `:${r.run.port}` : '')
+      return `<div class="wf-note" dir="ltr">${escapeHtml(r.name)} — ${escapeHtml(r.run.state)}${where ? ` · ${escapeHtml(where)}` : ''}</div>`
+    })
+    .join('')
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">processes · ${escapeHtml(snapshot.title ?? String(snapshot.processes.length))}</span></div>${rows}</div>`
+}
+
 /** The countdown card as a static block — label, state, what it ran. */
 /**
  * A blocking wait as a static block — mirrors WaitCard's terminal line (the
@@ -317,6 +328,21 @@ function countdownBlock(snapshot: CountdownSnapshot): string {
         ? snapshot.error
         : (snapshot.result ?? '')
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">countdown · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.label)} — ${escapeHtml(snapshot.target.tool)} after ${snapshot.seconds}s${detail ? ` — ${escapeHtml(detail)}` : ''}</div></div>`
+}
+
+/**
+ * An in-app browser page as a static block: the live card has nothing to
+ * say on paper beyond where it was and what it showed. Typed structurally so
+ * this file stays free of the browser module.
+ */
+function browserBlock(snapshot: {
+  url: string
+  title: string
+  loadState: string
+  error: { message: string } | null
+}): string {
+  const detail = snapshot.error ? snapshot.error.message : snapshot.loadState
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">browser · ${escapeHtml(detail)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.title || snapshot.url)}${snapshot.title ? ` — ${escapeHtml(snapshot.url)}` : ''}</div></div>`
 }
 
 /** The todo checklist as a static block — mirrors TodoCard, always printed. */
@@ -417,6 +443,12 @@ function assistantParts(
     } else if (seg.kind === 'wait') {
       flushText()
       parts.push(waitBlock(seg.snapshot))
+    } else if (seg.kind === 'process') {
+      flushText()
+      parts.push(processBlock(seg.snapshot))
+    } else if (seg.kind === 'browser') {
+      flushText()
+      parts.push(browserBlock(seg.snapshot))
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
       flushText()

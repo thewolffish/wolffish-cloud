@@ -241,11 +241,17 @@ function AssistantRow(props: {
             <Match when={part.kind === 'task'}>
               <TaskPart snapshot={(part as Extract<Part, { kind: 'task' }>).snapshot} />
             </Match>
+            <Match when={part.kind === 'process'}>
+              <ProcessPart snapshot={(part as Extract<Part, { kind: 'process' }>).snapshot} />
+            </Match>
             <Match when={part.kind === 'countdown'}>
               <CountdownPart snapshot={(part as Extract<Part, { kind: 'countdown' }>).snapshot} />
             </Match>
             <Match when={part.kind === 'wait'}>
               <WaitPart snapshot={(part as Extract<Part, { kind: 'wait' }>).snapshot} />
+            </Match>
+            <Match when={part.kind === 'browser'}>
+              <BrowserPart snapshot={(part as Extract<Part, { kind: 'browser' }>).snapshot} />
             </Match>
             <Match when={part.kind === 'compaction'}>
               <CompactionPart part={part as Extract<Part, { kind: 'compaction' }>} />
@@ -842,6 +848,75 @@ function CountdownPart(props: { snapshot: Record<string, unknown> }): JSX.Elemen
 }
 
 /**
+ * The live process card in the terminal: one line per process with its
+ * state, port or URL and uptime. The buttons the desktop card has are the
+ * `wfc process stop|restart <name>` verbs here, so the hint names them.
+ */
+function ProcessPart(props: { snapshot: Record<string, unknown> }): JSX.Element {
+  const p = theme
+  const [now, setNow] = createSignal(Date.now())
+  const timer = setInterval(() => setNow(Date.now()), 30_000)
+  onCleanup(() => clearInterval(timer))
+  const list = () =>
+    Array.isArray(props.snapshot.processes)
+      ? (props.snapshot.processes as Array<Record<string, unknown>>)
+      : []
+  const title = () =>
+    String(props.snapshot.title ?? (list().length === 1 ? 'Process' : 'Processes'))
+  const live = (state: string) =>
+    state === 'starting' || state === 'running' || state === 'stopping'
+  const running = () =>
+    list().filter((r) => live(String((r.run as Record<string, unknown>)?.state ?? ''))).length
+  const age = (ms: number) => {
+    const s = Math.max(0, Math.round(ms / 1000))
+    if (s < 60) return `${s}s`
+    const m = Math.round(s / 60)
+    if (m < 60) return `${m}m`
+    const h = Math.round(m / 60)
+    return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
+  }
+  const color = () =>
+    running() > 0
+      ? p().good
+      : list().some((r) => (r.run as Record<string, unknown>)?.state === 'crashed')
+        ? p().bad
+        : p().muted
+  return (
+    <Card title={`${title()} · ${running()}/${list().length} running`} color={color()}>
+      <For each={list()}>
+        {(r) => {
+          const run = (r.run ?? {}) as Record<string, unknown>
+          const state = String(run.state ?? '')
+          const where = run.url ? String(run.url) : run.port ? `:${run.port}` : ''
+          const stamp =
+            live(state) && typeof run.startedAt === 'number'
+              ? `up ${age(now() - (run.startedAt as number))}`
+              : typeof run.endedAt === 'number'
+                ? `${age(now() - (run.endedAt as number))} ago`
+                : ''
+          return (
+            <text>
+              <span
+                style={{ fg: live(state) ? p().good : state === 'crashed' ? p().bad : p().muted }}
+              >
+                {'● '}
+              </span>
+              <span style={{ fg: p().text, bold: true }}>{String(r.name)}</span>
+              <span
+                style={{ fg: p().muted }}
+              >{` ${state}${run.exitCode !== null && run.exitCode !== undefined && !live(state) ? ` (exit ${run.exitCode})` : ''}`}</span>
+              <span style={{ fg: p().accent }}>{where ? ` ${where}` : ''}</span>
+              <span style={{ fg: p().dim }}>{stamp ? ` · ${stamp}` : ''}</span>
+            </text>
+          )
+        }}
+      </For>
+      <text fg={p().dim}>{'wfc process stop|restart|logs <name>'}</text>
+    </Card>
+  )
+}
+
+/**
  * The blocking-wait card in the terminal. No input of its own — typing in
  * the CLI composer is already a mid-turn message, which is exactly what ends
  * a wait, so the hint points there instead of inventing a second control.
@@ -890,6 +965,36 @@ function formatWaitRemaining(ms: number): string {
   const h = Math.floor(s / 3600)
   const m = Math.round((s % 3600) / 60)
   return m ? `${h}h ${m}m` : `${h}h`
+}
+
+/**
+ * A page open in Wolffish's own browser. The desktop draws the live page;
+ * a terminal can only say where it is and whether it loaded — the card's
+ * one-line record, matching what the PDF export prints.
+ */
+function BrowserPart(props: { snapshot: Record<string, unknown> }): JSX.Element {
+  const p = theme
+  const url = () => String(props.snapshot.url ?? '')
+  const title = () => String(props.snapshot.title || url() || 'page')
+  const state = () => String(props.snapshot.loadState ?? '')
+  const error = () => {
+    const e = props.snapshot.error as { message?: string } | null | undefined
+    return e?.message ? String(e.message) : ''
+  }
+  const color = () => (error() ? p().warn : state() === 'loading' ? p().dim : p().good)
+  return (
+    <Card title={`Browser · ${title()}`} color={color()}>
+      <text fg={p().muted}>
+        {url()}
+        <Show when={error()}>
+          <span style={{ fg: p().warn }}>{`   ${error()}`}</span>
+        </Show>
+        <Show when={!error() && state() === 'loading'}>
+          <span style={{ fg: p().dim }}>{'   loading…'}</span>
+        </Show>
+      </text>
+    </Card>
+  )
 }
 
 function CompactionPart(props: { part: Extract<Part, { kind: 'compaction' }> }): JSX.Element {

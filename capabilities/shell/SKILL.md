@@ -105,7 +105,8 @@ triggers:
   - open terminal
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output (stdout+stderr in order, ANSI stripped). Default cwd is the first working folder when the conversation has one (the runtime tail names it), else the user home directory — so `npm test` or `git status` land in the project without a cwd argument. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Long output keeps the LAST 2000 lines / 50 KB (where a failing run reports its failure) and the full text is saved to a log file the result names. A command shaped like a server or watcher (dev servers, `--watch`, `vitest` without `run`) is refused in the foreground — run it with background=true, which captures its output to a log file you can read and lets you stop it with shell_stop; pass force=true only if it really exits. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session — no TTY needed. This tool is for terminal work (git, package managers, builds, tests, scripts); use file_read / file_edit / file_grep / file_glob for reading, editing and searching files.
+    description: >-
+      Run a shell command and return its output (stdout+stderr in order, ANSI stripped). Default cwd is the first working folder when the conversation has one (the runtime tail names it), else the user home directory — so `npm test` or `git status` land in the project without a cwd argument. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Long output keeps the LAST 2000 lines / 50 KB (where a failing run reports its failure) and the full text is saved to a log file the result names. A command shaped like a server or watcher (dev servers, `--watch`, `vitest` without `run`) is refused in the foreground — anything that must keep running is a managed process: use process_start (it picks a free port, waits for readiness and returns the URL); background=true is the plain fallback and registers the same way; pass force=true only if it really exits. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session — no TTY needed. This tool is for terminal work (git, package managers, builds, tests, scripts); use file_read / file_edit / file_grep / file_glob for reading, editing and searching files.
     parameters:
       command:
         type: string
@@ -121,18 +122,22 @@ tools:
       background:
         type: boolean
         required: false
-        description: Start the command detached and return immediately with its PID and a log file path. Use for any process that does not exit on its own (npm run dev, vite, nodemon, http servers, watchers). Read the log with file_read (or tail -n 50 <log>) to check it started; stop it with shell_stop.
+        description: Start the command detached as a managed process and return immediately with its name, PID and log path. Prefer process_start for servers and watchers (port allocation, readiness wait, URL); use this only for a plain background command with no port. process_logs / process_status / process_stop manage it afterwards.
       force:
         type: boolean
         required: false
         description: Run a command in the foreground even though it looks like a server or watcher. Only when you are sure it exits on its own.
   - name: shell_jobs
     readOnly: true
-    description: List the background processes started with shell_exec background=true in this app session — PID, command, cwd, log path, running or exited.
+    description: List the managed processes (everything started with process_start or shell_exec background=true, in any conversation) — name, state, PID, command, cwd, log path. process_list is the same list with more detail.
     parameters: {}
   - name: shell_stop
-    description: Stop a background process started with shell_exec background=true — the whole process tree, SIGTERM then SIGKILL. Pass pid, or all=true to stop every job started this session (do this before finishing a task that started a dev server to verify a change).
+    description: Stop a managed process by name or pid — the whole process tree, graceful then hard — or all=true for every one. Same as process_stop. Stop what you started only to check something; leave a dev server the user is working with running.
     parameters:
+      name:
+        type: string
+        required: false
+        description: The managed process name (from shell_jobs / process_list)
       pid:
         type: number
         required: false

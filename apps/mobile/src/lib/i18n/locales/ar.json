@@ -57,6 +57,7 @@
       "procedures": "الإجراءات",
       "automations": "الأتمتة",
       "conversations": "المحادثات",
+      "processes": "العمليات",
       "admin": "الإدارة"
     },
     "summary": {
@@ -987,6 +988,16 @@
       "cachedShare": "{{percent}}٪ من السياق المُستوعَب جاء من الكاش"
     },
     "offlineReply": "لا أستطيع الإجابة وسطح المكتب بعيد عن المتناول — فهو يشغّل النموذج ويحتفظ بمساحة عملك. رسالتك محفوظة هنا؛ أرسلها مجدداً عند عودة الاتصال.",
+    "browser": {
+      "desktopOnly": "متاحة مباشرةً على سطح المكتب فقط",
+      "openLive": "فتح الصفحة الحيّة",
+      "openExternal": "فتح في المتصفح",
+      "copyUrl": "نسخ الرابط",
+      "copied": "تم النسخ",
+      "noStill": "لا معاينة بعد",
+      "pages": "الصفحات المفتوحة",
+      "title": "متصفح ولفيش"
+    },
     "countdown": {
       "status": {
         "armed": "جاهز",
@@ -1324,6 +1335,39 @@
       "title": "المهام",
       "progress": "{{done}}/{{total}} مكتملة",
       "high": "عاجل"
+    },
+    "process": {
+      "title": "العمليات",
+      "titleOne": "عملية",
+      "empty": "لا شيء لعرضه.",
+      "runningCount": "{{count}} من {{total}} قيد التشغيل",
+      "state": {
+        "starting": "يبدأ",
+        "running": "قيد التشغيل",
+        "stopping": "يتوقف",
+        "stopped": "متوقف",
+        "exited": "انتهى",
+        "crashed": "تعطّل"
+      },
+      "exitCode": "رمز الخروج {{code}}",
+      "adopted": "مُتبنّى",
+      "stop": "إيقاف",
+      "restart": "إعادة تشغيل",
+      "start": "تشغيل",
+      "since": "يعمل منذ {{time}}",
+      "endedAt": "انتهى {{time}}",
+      "port": "المنفذ {{port}}",
+      "restarts_zero": "لا إعادات تشغيل",
+      "restarts_one": "إعادة تشغيل واحدة",
+      "restarts_two": "إعادتا تشغيل",
+      "restarts_few": "{{count}} إعادات تشغيل",
+      "restarts_many": "{{count}} إعادة تشغيل",
+      "restarts_other": "{{count}} إعادة تشغيل",
+      "autostart": {
+        "off": "",
+        "wolffish": "يبدأ مع Wolffish",
+        "system": "يبدأ عند تسجيل الدخول"
+      }
     }
   },
   "history": {
@@ -1764,6 +1808,78 @@
       "tryAgain": "أعد المحاولة",
       "tryAgainMessage": "انقطع الردّ السابق بسبب خللٍ لدى مزوّد النموذج ({{reason}}). تابع من حيث توقفت — تحقّق ممّا اكتمل فعلاً (ملفات كُتبت، نتائج أدوات، خطط وُضعت) وأكمل دون إعادة ما أُنجز."
     }
+  },
+  "processes": {
+    "title": "العمليات",
+    "subtitle": "خوادم وأنفاق ونصوص يُبقيها Wolffish قيد التشغيل.",
+    "runningBadge": "{{running}} من {{total}} قيد التشغيل",
+    "stopAll": "إيقاف الكل",
+    "deleteAll": "حذف الكل",
+    "stopAllTitle": "إيقاف جميع العمليات؟",
+    "stopAllConfirm_zero": "لا عمليات قيد التشغيل.",
+    "stopAllConfirm_one": "إيقاف العملية الوحيدة قيد التشغيل.",
+    "stopAllConfirm_two": "إيقاف العمليتين قيد التشغيل.",
+    "stopAllConfirm_few": "إيقاف العمليات الـ{{count}} قيد التشغيل.",
+    "stopAllConfirm_many": "إيقاف العمليات الـ{{count}} قيد التشغيل.",
+    "stopAllConfirm_other": "إيقاف العمليات الـ{{count}} قيد التشغيل.",
+    "deleteAllTitle": "حذف جميع العمليات؟",
+    "deleteAllConfirm": "إيقاف كل ما لا يزال يعمل ({{running}})، وإزالة أي إدخالات تسجيل دخول، ونسيان جميع العمليات الـ{{count}} مع سجلاتها.",
+    "stoppedCount": "تم إيقاف {{count}}",
+    "removedCount_zero": "لم تُزَل أي عملية",
+    "removedCount_one": "تمت إزالة عملية واحدة",
+    "removedCount_two": "تمت إزالة عمليتين",
+    "removedCount_few": "تمت إزالة {{count}} عمليات",
+    "removedCount_many": "تمت إزالة {{count}} عملية",
+    "removedCount_other": "تمت إزالة {{count}} عملية",
+    "empty": "لا توجد عمليات مُدارة. اطلب من Wolffish تشغيل خادم تطوير، أو تبنّي عملية تعمل بالفعل.",
+    "offline": "اتصل بجهازك المكتبي لرؤية عملياته والتحكم فيها.",
+    "searchPlaceholder": "ابحث بالاسم أو الأمر أو المجلد أو الرابط",
+    "status": {
+      "all": "الكل",
+      "running": "قيد التشغيل",
+      "stopped": "متوقف",
+      "crashed": "متعطّل"
+    },
+    "autostartLabel": "التشغيل التلقائي",
+    "autostart": {
+      "off": "إيقاف",
+      "wolffish": "مع Wolffish",
+      "system": "عند تسجيل الدخول"
+    },
+    "restartLabel": "إعادة التشغيل",
+    "restart": {
+      "never": "أبدًا",
+      "on-failure": "عند الفشل",
+      "always": "دائمًا"
+    },
+    "onQuitLabel": "عند إغلاق Wolffish",
+    "onQuit": {
+      "keep": "يبقى قيد التشغيل",
+      "stop": "يتوقف"
+    },
+    "groupCount": "{{running}} من {{total}} قيد التشغيل",
+    "noMatches": "لا توجد عمليات تطابق هذه المرشحات.",
+    "showingCount": "عرض {{shown}} من {{total}}",
+    "createdAt": "أُضيف {{time}}",
+    "pid": "المعرّف {{pid}}",
+    "logs": "السجلات",
+    "logsTitle": "السجل · {{name}}",
+    "logsEmpty": "السجل فارغ.",
+    "edit": "تعديل",
+    "editTitle": "تعديل {{name}}",
+    "command": "الأمر",
+    "cwd": "مجلد العمل",
+    "portHint": "اكتب {port} في الأمر مكان المنفذ؛ يملؤه Wolffish بمنفذ حر من نطاقه الخاص ويضبط PORT.",
+    "saved": "تم الحفظ",
+    "savedRestartHint": "تم الحفظ. تحتفظ النسخة العاملة بتعريفها القديم حتى تعيد تشغيلها.",
+    "remove": "إزالة",
+    "removeTitle": "إزالة العملية؟",
+    "removeConfirm": "إيقاف \"{{name}}\" إن كانت تعمل، وإزالة إدخال تسجيل الدخول إن وُجد، ونسيانها مع سجلاتها.",
+    "removed": "تمت إزالة {{name}}",
+    "error": "حدث خطأ ما",
+    "cancel": "إلغاء",
+    "done": "تم",
+    "save": "حفظ"
   },
   "connection": {
     "subtitle": "مؤسستك، وجهازك المكتبي من خلالها",

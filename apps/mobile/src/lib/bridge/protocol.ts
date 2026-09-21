@@ -176,7 +176,15 @@ export const Rpc = {
    * Abort a pending turn-end countdown (the card's Abort button on the
    * phone). `{ ok }` — false once it already fired or was aborted.
    */
-  countdownAbort: 'desktop.countdown.abort'
+  countdownAbort: 'desktop.countdown.abort',
+  processesList: 'desktop.processes.list',
+  processStart: 'desktop.processes.start',
+  processStop: 'desktop.processes.stop',
+  processStopAll: 'desktop.processes.stopAll',
+  processRestart: 'desktop.processes.restart',
+  processUpdate: 'desktop.processes.update',
+  processRemove: 'desktop.processes.remove',
+  processLogs: 'desktop.processes.logs'
 } as const
 
 /** Event topics pushed without a request. */
@@ -229,7 +237,15 @@ export const Event = {
    * segment; this push is for the transitions after the turn ended. The
    * phone folds it into the matching `countdown` segment by countdownId.
    */
-  countdownChanged: 'countdown.changed'
+  countdownChanged: 'countdown.changed',
+  processesChanged: 'processes.changed',
+  processCardChanged: 'process.card',
+  /**
+   * The conversation's in-app browser changed (`{ snapshot }`) — a page
+   * loaded, the active tab switched, a still frame landed. The phone folds
+   * it into the conversation's `browser` segment (one per conversation).
+   */
+  browserChanged: 'browser.changed'
 } as const
 
 export type RpcMethod = (typeof Rpc)[keyof typeof Rpc]
@@ -266,6 +282,54 @@ export type SyncProjectFile = { path: string; name: string }
  */
 export type ReasoningMode = 'off' | 'on' | 'high' | 'max'
 export const REASONING_MODES: readonly ReasoningMode[] = ['off', 'on', 'high', 'max']
+
+export type SyncProcessPort =
+  { mode: 'wolffish' } | { mode: 'fixed'; port: number; takeover?: boolean } | { mode: 'none' }
+
+export type SyncProcess = {
+  id: string
+  name: string
+  command: string
+  cwd: string
+  env: Record<string, string>
+  port: SyncProcessPort
+  ready: { port?: boolean; logMatch?: string; timeoutMs?: number }
+  restart: 'never' | 'on-failure' | 'always'
+  onQuit: 'keep' | 'stop'
+  autostart: 'off' | 'wolffish' | 'system'
+  origin: { conversationId: string | null; kind: 'started' | 'shell' | 'adopted' }
+  createdAt: number
+  updatedAt: number
+  run: {
+    pid: number | null
+    signature: string
+    osStart: string | null
+    port: number | null
+    url: string | null
+    state: 'stopped' | 'starting' | 'running' | 'stopping' | 'exited' | 'crashed'
+    exitCode: number | null
+    exitSignal: string | null
+    startedAt: number | null
+    readyAt: number | null
+    endedAt: number | null
+    restarts: number
+    logPath: string | null
+    unit: string | null
+    adoptedAt: number | null
+    lastError: string | null
+  }
+}
+
+export type SyncProcessCard = {
+  cardId: string
+  conversationId: string | null
+  turnId: string | null
+  title: string | null
+  names: string[] | null
+  processes: SyncProcess[]
+  createdAt: number
+  updatedAt: number
+}
 
 export type SyncProject = {
   id: string
@@ -552,6 +616,7 @@ export const DEEPLINK_ROUTES = [
   'settings/projects',
   'settings/automations',
   'settings/procedures',
+  'settings/processes',
   'settings/customization',
   'settings/channels',
   'settings/capabilities',

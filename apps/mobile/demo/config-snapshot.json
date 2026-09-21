@@ -17829,5 +17829,198 @@
     "soul": "# Soul\n\nYou are Wolffish — Younes's own agent, not a product demo of one. You run on his\nmachine, you hold his files, and you are the only one here who can actually do\nanything about them.\n\n## Voice\n- Answer first, then the reasoning. Never open with a restatement of the question.\n- Short sentences. No filler, no \"great question\", no apologising for limits.\n- Arabic in, Arabic out — match the language of the message, not of this file.\n- One emoji at most, and only when it carries information a word would not.\n\n## Rules\n- Say \"I don't know\" rather than producing a plausible-looking guess.\n- Never invent a number, a date, or a file path. Look it up, or say it is unchecked.\n- Money, calendar invites, and messages to other people: confirm before acting.\n- Anything destructive — deleting, overwriting, force-pushing — is a question, not a step.\n- When a task turns out to be bigger than asked, do it and say what changed.\n- Cite the command that produced a figure, so it can be re-run.\n\n## Humor\nDry, occasional, never at the user's expense. Skip it entirely when something is\nactually broken.\n\n## What I do without being asked\n- Notice when a report contradicts last week's and say so.\n- Keep the daily brief under two minutes of reading.\n- Stop and ask when two instructions in this file disagree.\n",
     "user": "# User\n\n- Name: Younes Alharbi\n- Location: Riyadh (Asia/Riyadh)\n- Works at: Sadeem — builds and ships mobile + desktop apps\n- Languages: Arabic (native), English (fluent) — code, commits and PRs in English\n\n## Preferences\n- Work hours 9:00–18:00; do not schedule anything before 09:00.\n- Prefers being shown the diff over being told about the diff.\n- Hates half-answers: finish the whole task, then name what was left out.\n- Weekly review lands Sunday morning, not Thursday night.\n- Coffee order worth remembering: flat white, no sugar.\n\n## Standing facts\n- Mom: Reem — SMS forwarder set up on her phone (reem2047@icloud.com), checks in\n  most evenings. Her doctor is Dr. Sami Halawani.\n- Brother handles the family car paperwork; do not duplicate those reminders.\n- Nawaf is the collaborator on the growth experiments — loop him in on anything\n  that changes the posting schedule.\n- Sohel comes to clean on Tuesdays; do not book anything at the flat that morning.\n\n## Channels\n- The app is the fast lane: automations report there, and the phone only for something that needs a decision.\n- A phone notification is for people, not for reports.\n- The phone is a real surface, not a mirror — a notification that fires there\n  should be worth unlocking for.\n",
     "agents": "# Agents\n\nOverrides for this workspace. These win over the built-in procedures.\n\n## Shipping\n- Before any release: run the full test suite, then the simulator smoke pass.\n- Never push straight to `main` — branch, then open a PR.\n- A release note is part of the release, not a follow-up.\n\n## Files\n- Screenshots for issues go in `~/Desktop/wolffish-issues/`, dated folders.\n- Anything downloaded for a one-off task is deleted when the task closes.\n- Never write into `brain/` from a normal turn; that is the compaction pass's.\n\n## Reporting\n- When summarising a long thread, lead with what changed since the last summary.\n- A workflow run reports the agents it spawned and what each one cost.\n- If a scheduled job produced nothing worth sending, send nothing — silence is\n  a valid result and beats a daily \"no news\" ping.\n\n## Research\n- Two independent sources before a claim goes in a brief, and name both.\n- A press release is not a source; the filing behind it is.\n"
-  }
+  },
+  "processes": [
+    {
+      "id": "a3f1c2d4-1b0e-4c7a-9e3b-6d2f8a1c5e70",
+      "name": "cms-dev",
+      "command": "npm run dev -- -p {port}",
+      "cwd": "/Users/younes/Desktop/minimal-cms",
+      "env": {},
+      "port": {
+        "mode": "wolffish"
+      },
+      "ready": {},
+      "restart": "on-failure",
+      "onQuit": "keep",
+      "autostart": "wolffish",
+      "origin": {
+        "conversationId": "2026-08-03_09-12-44",
+        "kind": "started"
+      },
+      "createdAt": 1789950000000,
+      "updatedAt": 1789950120000,
+      "run": {
+        "pid": 48211,
+        "signature": "npm",
+        "osStart": "Mon Sep 21 06:28:11 2026",
+        "port": 20984,
+        "url": "http://localhost:20984",
+        "state": "running",
+        "exitCode": null,
+        "exitSignal": null,
+        "startedAt": 1789950120000,
+        "readyAt": 1789950122100,
+        "endedAt": null,
+        "restarts": 0,
+        "logPath": "/Users/younes/.wolffish/workspace/files/processes/cms-dev/current.log",
+        "unit": null,
+        "adoptedAt": null,
+        "lastError": null
+      }
+    },
+    {
+      "id": "b7e2d9f0-4a3c-4d1e-8f6b-2c9a7d5e3b11",
+      "name": "tunnel",
+      "command": "cloudflared tunnel --url http://localhost:20984",
+      "cwd": "/Users/younes/Desktop/minimal-cms",
+      "env": {},
+      "port": {
+        "mode": "none"
+      },
+      "ready": {},
+      "restart": "always",
+      "onQuit": "keep",
+      "autostart": "off",
+      "origin": {
+        "conversationId": "2026-08-03_09-12-44",
+        "kind": "started"
+      },
+      "createdAt": 1789950420000,
+      "updatedAt": 1789950540000,
+      "run": {
+        "pid": 48211,
+        "signature": "cloudflared",
+        "osStart": "Mon Sep 21 06:28:11 2026",
+        "port": null,
+        "url": null,
+        "state": "running",
+        "exitCode": null,
+        "exitSignal": null,
+        "startedAt": 1789950540000,
+        "readyAt": 1789950542100,
+        "endedAt": null,
+        "restarts": 0,
+        "logPath": "/Users/younes/.wolffish/workspace/files/processes/tunnel/current.log",
+        "unit": null,
+        "adoptedAt": null,
+        "lastError": null
+      }
+    },
+    {
+      "id": "c1d8e4a2-7f5b-4e9c-a3d6-8b0f2c4e6a92",
+      "name": "api",
+      "command": "uvicorn app:app --port {port} --reload",
+      "cwd": "/Users/younes/Documents/northwind/api",
+      "env": {},
+      "port": {
+        "mode": "wolffish"
+      },
+      "ready": {},
+      "restart": "on-failure",
+      "onQuit": "keep",
+      "autostart": "off",
+      "origin": {
+        "conversationId": "2026-09-19_21-14-02",
+        "kind": "started"
+      },
+      "createdAt": 1789930680000,
+      "updatedAt": 1789951560000,
+      "run": {
+        "pid": null,
+        "signature": "uvicorn",
+        "osStart": null,
+        "port": 20233,
+        "url": "http://localhost:20233",
+        "state": "crashed",
+        "exitCode": 1,
+        "exitSignal": null,
+        "startedAt": 1789930800000,
+        "readyAt": null,
+        "endedAt": 1789951560000,
+        "restarts": 5,
+        "logPath": "/Users/younes/.wolffish/workspace/files/processes/api/current.log",
+        "unit": null,
+        "adoptedAt": null,
+        "lastError": "restarts stopped after 5 exits in 2 minutes"
+      }
+    },
+    {
+      "id": "d9a4b6c8-2e1f-4b3d-9c7a-5f8e0d2b4c63",
+      "name": "docs-site",
+      "command": "npm run dev -- --port {port} --strictPort",
+      "cwd": "/Users/younes/Documents/northwind/docs",
+      "env": {},
+      "port": {
+        "mode": "wolffish"
+      },
+      "ready": {},
+      "restart": "never",
+      "onQuit": "keep",
+      "autostart": "off",
+      "origin": {
+        "conversationId": "2026-09-19_10-02-45",
+        "kind": "started"
+      },
+      "createdAt": 1789779480000,
+      "updatedAt": 1789858800000,
+      "run": {
+        "pid": null,
+        "signature": "npm",
+        "osStart": null,
+        "port": 20510,
+        "url": "http://localhost:20510",
+        "state": "stopped",
+        "exitCode": 0,
+        "exitSignal": null,
+        "startedAt": 1789779600000,
+        "readyAt": null,
+        "endedAt": 1789858800000,
+        "restarts": 0,
+        "logPath": "/Users/younes/.wolffish/workspace/files/processes/docs-site/current.log",
+        "unit": null,
+        "adoptedAt": null,
+        "lastError": null
+      }
+    },
+    {
+      "id": "e5c7d1f3-8a2b-4c6e-b1d9-3e7f9a0c2d84",
+      "name": "ollama",
+      "command": "ollama serve",
+      "cwd": "/Users/younes",
+      "env": {},
+      "port": {
+        "mode": "fixed",
+        "port": 11434
+      },
+      "ready": {},
+      "restart": "never",
+      "onQuit": "keep",
+      "autostart": "off",
+      "origin": {
+        "conversationId": "2026-09-20_14-33-18",
+        "kind": "adopted"
+      },
+      "createdAt": 1789919880000,
+      "updatedAt": 1789920000000,
+      "run": {
+        "pid": 48211,
+        "signature": "ollama",
+        "osStart": "Mon Sep 21 06:28:11 2026",
+        "port": 11434,
+        "url": "http://localhost:11434",
+        "state": "running",
+        "exitCode": null,
+        "exitSignal": null,
+        "startedAt": 1789920000000,
+        "readyAt": 1789920000000,
+        "endedAt": null,
+        "restarts": 0,
+        "logPath": "/Users/younes/.wolffish/workspace/files/processes/ollama/current.log",
+        "unit": null,
+        "adoptedAt": 1789920000000,
+        "lastError": null
+      }
+    }
+  ]
 }

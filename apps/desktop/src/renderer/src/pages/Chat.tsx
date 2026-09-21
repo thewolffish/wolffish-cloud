@@ -28,6 +28,7 @@ import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
+import { ProcessCard } from '@components/common/process-card/ProcessCard'
 import { WaitCard } from '@components/common/wait-card/WaitCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
@@ -45,19 +46,29 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
-import { collectTouchedFolders } from '@lib/touched-folders/touchedFolders'
+import {
+  changedDirectories,
+  collectChangedFiles,
+  folderChips,
+  groupTouchedFolders
+} from '@lib/touched-folders/touchedFolders'
 import {
   CODE_ACTIVITY_TOOLS,
   todoListId,
   latestTodoLists,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  browserKey,
+  upsertBrowserSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type CountdownSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
+import { BrowserCard } from '@components/common/browser-card/BrowserCard'
+import { keepLatestBrowserCard } from '@main/runtime/browser-card'
 import {
   normalizeReasoningMode,
   reasoningModesFor,
@@ -67,6 +78,7 @@ import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   ApprovalDecision,
   AskUserResponse,
+  BrowserTabSnapshot,
   ChatHistoryMessage,
   ConversationFile,
   ConversationStats,
@@ -76,6 +88,7 @@ import type {
   Segment,
   ThinkingMode,
   TimelineEntry,
+  ProcessCardSnapshot,
   TodoItem
 } from '@preload/index'
 import {
@@ -595,11 +608,52 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
   // The folders this conversation changed files in — chips over the
   // transcript's top edge. Derived from the persisted segments so the strip
-  // is the same live, after the turn and on a reopened conversation.
-  const touchedFolders = useMemo(
-    () => collectTouchedFolders(messages, workingFolders),
+  // is the same live, after the turn and on a reopened conversation. Each
+  // changed directory is charged to ONE project folder (the repository root
+  // above it, else the container it sits in), resolved by main because that
+  // needs the filesystem — asked once per distinct set of directories, not per
+  // streamed token, and a reply for a set that has since changed is dropped.
+  const changedFiles = useMemo(
+    () => collectChangedFiles(messages, workingFolders),
     [messages, workingFolders]
   )
+  // Main is asked about every changed file's directory AND every attached
+  // working folder — an attached folder's chip names the project it opens
+  // (the repo it sits in, or itself), which is how an attached repo and the
+  // edits made inside it land on one chip. Distinct, so the key moves only
+  // when the set does.
+  const folderDirsKey = useMemo(
+    () =>
+      Array.from(
+        new Set([...changedDirectories(changedFiles), ...workingFolders.filter(Boolean)])
+      ).join('\n'),
+    [changedFiles, workingFolders]
+  )
+  const [projectByDir, setProjectByDir] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!folderDirsKey) return
+    let alive = true
+    void window.api.upload
+      .projectFolders(folderDirsKey.split('\n'), workingFolders)
+      .then((map) => {
+        if (alive) setProjectByDir((prev) => ({ ...prev, ...map }))
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [folderDirsKey, workingFolders])
+  // The strip: attached folders first, then the projects with changes, one
+  // chip per path (folderChips). An attached folder that saw no changes is a
+  // chip only while it stays attached; one that did keeps its chip from the
+  // segments after removal. Nothing before the first message — until then the
+  // composer's own folder row is the only place the folders show.
+  const firstMessageSent = messages.length > 0
+  const folderStrip = useMemo(() => {
+    if (!firstMessageSent) return []
+    const projectFor = (dir: string): string | undefined => projectByDir[dir]
+    return folderChips(workingFolders, groupTouchedFolders(changedFiles, projectFor), projectFor)
+  }, [firstMessageSent, workingFolders, changedFiles, projectByDir])
   /**
    * Reference files this conversation's turns are told about — seeded by a
    * procedure's Play from that procedure's attachments and persisted on the
@@ -1621,6 +1675,49 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         for (const message of conv.messages) {
           for (const seg of message.segments ?? []) {
             if (seg.kind === 'countdown' && seg.snapshot.countdownId === snapshot.countdownId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
+
+  // Process-card changes after the opening turn ended (a stop from Library,
+  // a crash, a restart) arrive as pushes — the countdown fold, keyed by cardId.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.processes.onCardChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldProcessSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'process' && seg.snapshot.cardId === snapshot.cardId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
+
+  // In-app browser page changes after the opening turn ended (a navigation,
+  // a title, a load state) arrive as pushes — the countdown fold, keyed by
+  // tabId, so a reopened conversation shows the card's last state.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.browser.onChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldBrowserSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'browser' && browserKey(seg.snapshot) === browserKey(snapshot)) {
               seg.snapshot = snapshot
             }
           }
@@ -3285,7 +3382,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           conversations sheet) laid over this transcript — no rails, no
           header. It stays live while turns stream; only the composer of a
           PROCESSING conversation is gated (below). */}
-      <TouchedFolders folders={touchedFolders} />
+      <TouchedFolders folders={folderStrip} />
       <div
         ref={scrollerRef}
         className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"
@@ -5324,6 +5421,12 @@ function renderSegments(
       blocks.push(
         <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
       )
+    } else if (seg.kind === 'process') {
+      // The live process card the model chose to show: one per cardId,
+      // upserted on append and folded from process:cardChanged pushes after
+      // the turn ends. Output FOR the user — renders regardless of verbose.
+      flushText()
+      blocks.push(<ProcessCard key={`process-${seg.snapshot.cardId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'wait') {
       // The blocking-wait card: one per wait, upserted by waitId, carrying
       // its own input while it runs. Output FOR the user — it renders
@@ -5331,6 +5434,15 @@ function renderSegments(
       // quiet with no explanation reads as a hang.
       flushText()
       blocks.push(<WaitCard key={`wait-${seg.snapshot.waitId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'browser') {
+      // The conversation's browser: one live card per conversation, upserted
+      // on append and folded from browser:changed pushes after the turn ends.
+      // Output FOR the user — renders regardless of verbose; the whole point
+      // is that they can see it.
+      flushText()
+      blocks.push(
+        <BrowserCard key={`browser-${browserKey(seg.snapshot)}`} snapshot={seg.snapshot} />
+      )
     } else if (seg.kind === 'user_message') {
       // A message the user sent mid-turn, at the exact point the agent read
       // it. Output FROM the user — always visible, clean feed included, and
@@ -6666,6 +6778,52 @@ function foldCountdownSnapshot(
   })
 }
 
+/**
+ * Fold a post-turn process-card push into whichever message holds the
+ * matching `process` segment — the countdown fold, keyed by cardId.
+ */
+function foldProcessSnapshot(
+  messages: ChatMessage[],
+  snapshot: ProcessCardSnapshot
+): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (!m.segments.some((s) => s.kind === 'process' && s.snapshot.cardId === snapshot.cardId))
+      return m
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'process' && s.snapshot.cardId === snapshot.cardId ? { ...s, snapshot } : s
+      )
+    }
+  })
+}
+
+/**
+ * Fold a post-turn browser-page push into whichever message holds the
+ * matching `browser` segment — the countdown fold, keyed by tabId.
+ */
+function foldBrowserSnapshot(messages: ChatMessage[], snapshot: BrowserTabSnapshot): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (
+      !m.segments.some(
+        (s) => s.kind === 'browser' && browserKey(s.snapshot) === browserKey(snapshot)
+      )
+    ) {
+      return m
+    }
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'browser' && browserKey(s.snapshot) === browserKey(snapshot)
+          ? { ...s, snapshot }
+          : s
+      )
+    }
+  })
+}
+
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
@@ -6678,6 +6836,8 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
       else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
       else if (segment.kind === 'wait') upsertWaitSegment(nextSegments, segment)
+      else if (segment.kind === 'process') upsertProcessSegment(nextSegments, segment)
+      else if (segment.kind === 'browser') upsertBrowserSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
@@ -6697,7 +6857,9 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
         }
       }
       out[i] = next
-      return out
+      // The browser card lives in the latest turn that used the browser;
+      // an earlier turn's copy of it goes.
+      return segment.kind === 'browser' ? keepLatestBrowserCard(out) : out
     }
   }
   return out

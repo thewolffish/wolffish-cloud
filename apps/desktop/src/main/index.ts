@@ -2,6 +2,7 @@ process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { attachFilesToAutomation, removeAutomationFile } from '@main/automations/files'
+import { projectFoldersFor } from '@main/uploads/project-folders'
 import { installAttention } from '@main/attention'
 import { braveService, type BraveStatus } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
@@ -157,6 +158,19 @@ import { turnScope } from '@main/runtime/corpus'
 import { countdowns } from '@main/runtime/countdown'
 import { waits } from '@main/runtime/wait'
 import { registerCountdownCapability } from '@main/runtime/countdown-capability'
+import { processManager } from '@main/processes/instance'
+import { registerProcessesCapability } from '@main/processes/tools'
+import { isLive as isProcessLive } from '@main/processes/types'
+import { browserTabs } from '@main/browser/tab-manager'
+import { registerPreviewCapability } from '@main/browser/tools'
+import { flushBrowserCookies } from '@main/browser/session'
+import type {
+  BrowserFps,
+  BrowserInputEvent,
+  BrowserPartition,
+  BrowserRect,
+  BrowserTabMode
+} from '@main/browser/types'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { detectSystem, type SystemInfo } from '@main/system'
@@ -256,6 +270,7 @@ import {
   Tray
 } from 'electron'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import os from 'node:os'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
@@ -1673,7 +1688,13 @@ const MOBILE_CONFIG_SILENT = new Set([
   'model:pullProgress',
   'projects:copyProgress',
   'reindex:progress',
-  'countdown:changed'
+  'countdown:changed',
+  'processes:changed',
+  'process:cardChanged',
+  // In-app browser: tab state and close events are per-card pushes, not
+  // config. (Frames never go through broadcast at all.)
+  'browser:changed',
+  'browser:closed'
 ])
 
 /**
@@ -1963,6 +1984,14 @@ async function shutdownGracefully(): Promise<void> {
   await extensionServer.stop().catch(() => undefined)
   await mcpManager.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
+  // The in-app browser: close every tab (each is a renderer process), then
+  // flush the cookie store — Chromium commits cookies every 30s/512 ops, and
+  // this one await is what makes a login completed seconds before Cmd+Q
+  // survive the relaunch.
+  browserTabs.destroyAll('shutdown')
+  await flushBrowserCookies().catch(() => undefined)
+  // Managed processes marked `stop on quit` get their signal; nothing waits.
+  processManager.shutdown()
 }
 
 // Counts async work (title generation, save) that fired after a turn
@@ -2391,6 +2420,10 @@ app.whenReady().then(async () => {
   // another app. Pointed at the main window only: the tray popup is not a
   // window anyone is waiting at.
   installAttention(mainBrowserWindow)
+  // The in-app browser hosts its tabs inside the main window's contentView.
+  // Same resolver, same reason: headless boot has no window, and the tab
+  // manager must read that as "nowhere to show a page", not crash.
+  browserTabs.install(mainBrowserWindow)
 
   // <webview> guests. Two browser-tab behaviors the bare tag lacks: a popup
   // (window.open, target=_blank) never becomes a naked BrowserWindow — an
@@ -2921,6 +2954,25 @@ app.whenReady().then(async () => {
     pending: () => countdowns.pending()
   })
   registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
+  // ── Wolffish's own browser ───────────────────────────────────────────────
+  // Tabs live in main (WebContentsView, parked in the window's corner); the
+  // `preview` capability is the model's handle on them. State changes reach
+  // every surface through broadcast; frames go straight to the renderer —
+  // never through broadcast, whose CLI/mobile fan-out would serialise 30 JPEG
+  // buffers a second onto a terminal socket.
+  registerPreviewCapability(agent.cerebellum, browserTabs)
+  browserTabs.setStillGate(() => mobileChannel.hasPeer)
+  browserTabs.setHandlers({
+    onChanged: (snapshot) => {
+      broadcast('browser:changed', snapshot)
+      if (mobileChannel.hasPeer) mobileChannel.pushBrowserChanged(snapshot)
+    },
+    onClosed: (tabId, reason) => broadcast('browser:closed', { tabId, reason }),
+    onFrame: (frame) => {
+      const win = mainBrowserWindow()
+      if (win && !win.isDestroyed()) win.webContents.send('browser:frame', frame)
+    }
+  })
   // Blocking waits (`wait`, utilities). No cross-turn plumbing: a wait lives
   // and dies inside the tool call that is holding its turn open, so its cards
   // ride that turn's broca and its only outside input is a mid-turn message —
@@ -2944,10 +2996,200 @@ app.whenReady().then(async () => {
     }
   })
   void countdowns.init()
+  // ── Managed processes ──────────────────────────────────────────────────
+  // One registry of long-lived processes (dev servers, tunnels, watchers…)
+  // that outlive the tool call, the turn and the app — see src/main/processes.
+  // The model drives it through the `processes` capability; the shell plugin's
+  // background path delegates into it through the seam below; Library and the
+  // chat card act through the IPC handlers further down. Card updates after
+  // the opening turn ended ride process:cardChanged plus a conversation-file
+  // write-through, the countdown pattern.
+  registerProcessesCapability(agent.cerebellum, agent.amygdala, processManager)
+  agent.cerebellum.setProcessesHost({
+    start: async (input) => {
+      const name = input.name ?? `bg-${Date.now().toString(36).slice(-4)}`
+      const result = await processManager.start({
+        name,
+        command: input.command,
+        cwd: input.cwd,
+        env: input.env,
+        port: { mode: 'none' },
+        restart: 'never',
+        onQuit: 'keep',
+        origin: input.origin ?? {
+          conversationId: agent.cerebellum.getCurrentConversationId(),
+          kind: 'shell'
+        },
+        wait: input.wait ?? false
+      })
+      if (!result.ok) return { ok: false, error: result.error }
+      return {
+        ok: true,
+        name: result.record.name,
+        pid: result.record.run.pid,
+        logPath: result.record.run.logPath,
+        url: result.record.run.url
+      }
+    },
+    list: () =>
+      processManager.list().map((r) => ({
+        name: r.name,
+        pid: r.run.pid,
+        state: r.run.state,
+        command: r.command,
+        cwd: r.cwd,
+        logPath: r.run.logPath,
+        startedAt: r.run.startedAt
+      })),
+    stop: (name) => processManager.stop(name),
+    stopAll: () => processManager.stopAll(),
+    findByPid: (pid) =>
+      processManager.list().find((r) => r.run.pid === pid && isProcessLive(r))?.name ?? null
+  })
+  processManager.onChanged(() => {
+    broadcast('processes:changed', {})
+    if (mobileChannel.hasPeer) mobileChannel.pushProcessesChanged()
+  })
+  processManager.onCard((snapshot) => {
+    broadcast('process:cardChanged', snapshot)
+    if (mobileChannel.hasPeer) mobileChannel.pushProcessCardChanged(snapshot)
+    if (processManager.isOwningTurnLive(snapshot.cardId) || !snapshot.conversationId) return
+    // The opening turn is over: rewrite the card in the conversation file in
+    // place so a reopened conversation shows its last state.
+    void updateConversation(snapshot.conversationId, (current) => {
+      if (!current) return null
+      let found = false
+      for (const message of current.messages) {
+        for (const seg of message.segments ?? []) {
+          if (seg.kind === 'process' && seg.snapshot.cardId === snapshot.cardId) {
+            seg.snapshot = snapshot
+            found = true
+          }
+        }
+      }
+      return found ? current : null
+    }).catch(() => undefined)
+  })
+  processManager.onCrash((record) => {
+    wlog.warn(
+      '[processes]',
+      `${record.name} crashed (exit ${record.run.exitCode ?? '?'})${record.run.lastError ? `: ${record.run.lastError}` : ''}`
+    )
+  })
+  void processManager
+    .init()
+    .catch((err) =>
+      wlog.warn('[processes]', `init failed: ${err instanceof Error ? err.message : String(err)}`)
+    )
   // Countdown-card Abort button: stops a pending turn-end countdown for good.
   handle('countdown:abort', async (_e, payload: { countdownId: string }) => {
     return countdowns.abort(payload.countdownId, 'user')
   })
+
+  // ── Managed processes (Library tab, chat card buttons, `wfc process`) ──
+  // The same main-process functions the model's process_* tools call; no
+  // surface holds its own list.
+  handle('processes:list', async () => processManager.list())
+  handle('processes:start', async (_e, payload: Parameters<typeof processManager.start>[0]) => {
+    const result = await processManager.start({
+      ...payload,
+      origin: payload.origin ?? { conversationId: null, kind: 'started' }
+    })
+    return result.ok
+      ? { ok: true, record: result.record }
+      : { ok: false, error: result.error, record: result.record }
+  })
+  handle('processes:stop', async (_e, payload: { name: string }) =>
+    processManager.stop(payload.name)
+  )
+  handle('processes:stopAll', async () => processManager.stopAll())
+  handle('processes:restart', async (_e, payload: { name: string }) => {
+    const result = await processManager.restart(payload.name)
+    return result.ok
+      ? { ok: true, record: result.record }
+      : { ok: false, error: result.error, record: result.record }
+  })
+  handle(
+    'processes:update',
+    async (_e, payload: { name: string } & Parameters<typeof processManager.update>[1]) => {
+      const { name, ...patch } = payload
+      return processManager.update(name, patch)
+    }
+  )
+  handle('processes:remove', async (_e, payload: { name: string }) =>
+    processManager.remove(payload.name)
+  )
+  handle('processes:logs', async (_e, payload: { name: string; lines?: number }) =>
+    processManager.logs(payload.name, { lines: payload.lines ?? 200 })
+  )
+  handle('processes:ports', async () => processManager.ports())
+
+  // ── In-app browser (the card's own controls) ─────────────────────────
+  // Everything a card can do to its page. The model's route is the `preview`
+  // tools; this is the user's, and both land on the same tab in main.
+  handle(
+    'browser:createTab',
+    (_e, input: { url: string; conversationId: string | null; partition?: BrowserPartition }) =>
+      browserTabs.createTab(input)
+  )
+  handle('browser:closeTab', (_e, p: { tabId: string }) => {
+    browserTabs.closeTab(p.tabId, 'user')
+  })
+  handle('browser:listTabs', () => browserTabs.list())
+  handle('browser:navigate', async (_e, p: { tabId: string; url: string }) => {
+    const tab = browserTabs.require(p.tabId)
+    await tab.webContents.loadURL(p.url).catch(() => undefined)
+    return tab.snapshot()
+  })
+  handle('browser:goBack', (_e, p: { tabId: string }) => {
+    const tab = browserTabs.require(p.tabId)
+    if (tab.webContents.navigationHistory.canGoBack()) tab.webContents.navigationHistory.goBack()
+    return tab.snapshot()
+  })
+  handle('browser:goForward', (_e, p: { tabId: string }) => {
+    const tab = browserTabs.require(p.tabId)
+    if (tab.webContents.navigationHistory.canGoForward())
+      tab.webContents.navigationHistory.goForward()
+    return tab.snapshot()
+  })
+  handle('browser:reload', (_e, p: { tabId: string }) => {
+    const tab = browserTabs.require(p.tabId)
+    tab.webContents.reload()
+    return tab.snapshot()
+  })
+  handle(
+    'browser:attachViewer',
+    (_e, p: { tabId: string; size: { width: number; height: number }; fps: BrowserFps }) =>
+      browserTabs.attachViewer(p.tabId, p.size, p.fps)
+  )
+  handle('browser:detachViewer', (_e, p: { tabId: string }) => browserTabs.detachViewer(p.tabId))
+  handle('browser:setViewerFps', (_e, p: { tabId: string; fps: BrowserFps }) =>
+    browserTabs.setViewerFps(p.tabId, p.fps)
+  )
+  handle(
+    'browser:setViewerSize',
+    (_e, p: { tabId: string; size: { width: number; height: number } }) =>
+      browserTabs.setViewerSize(p.tabId, p.size)
+  )
+  handle('browser:activate', (_e, p: { tabId: string }) => {
+    browserTabs.activate(p.tabId)
+  })
+  handle('browser:sendInput', (_e, p: { tabId: string; event: BrowserInputEvent }) => {
+    browserTabs.sendInput(p.tabId, p.event)
+  })
+  // The card's "open in browser": web URLs only — never file:, data: or a
+  // custom scheme that would hand the OS something to execute.
+  handle('browser:openExternal', async (_e, p: { url: string }) => {
+    if (!/^https?:\/\//i.test(p.url)) return { ok: false, error: 'Only http(s) URLs open outside.' }
+    await shell.openExternal(p.url)
+    return { ok: true }
+  })
+  handle('browser:setStageRect', (_e, p: { tabId: string; rect: BrowserRect | null }) => {
+    browserTabs.setStage(p.tabId, p.rect)
+  })
+  handle('browser:setMode', (_e, p: { tabId: string; mode: BrowserTabMode }) =>
+    browserTabs.setMode(p.tabId, p.mode)
+  )
 
   agent.cerebellum.setVoiceHost({
     getTts: () => getTtsConfig(),
@@ -3870,6 +4112,26 @@ app.whenReady().then(async () => {
         }
       }
     }
+  )
+
+  // The project each touched directory belongs to, for the folder chips over a
+  // transcript: the repository root above it when there is one, so a run that
+  // edits `wolffish-landing/content/blog/en` bills a chip reading
+  // `wolffish-landing`, never `blog`. The rules and their order live in
+  // src/main/uploads/project-folders.ts; only the filesystem is supplied here.
+  // Keyed by the directory as the renderer sent it.
+  handle(
+    'upload:projectFolders',
+    async (_e, dirs: string[], workingFolders: string[]): Promise<Record<string, string>> =>
+      projectFoldersFor(
+        Array.isArray(dirs) ? dirs : [],
+        Array.isArray(workingFolders) ? workingFolders : [],
+        {
+          exists: existsSync,
+          home: os.homedir(),
+          workspaceFiles: join(workspaceRoot(), 'files')
+        }
+      )
   )
 
   // Reveal a path in the OS file manager: a directory opens directly, a file is
@@ -4874,6 +5136,9 @@ app.on('will-quit', () => {
   // path never runs the async drain, and Node does not kill children on
   // parent exit — a server that ignores stdin EOF would orphan.
   mcpManager.killAllSync()
+  // Browser tabs are renderer processes owned by this window; the idle-quit
+  // path never ran the async drain, so close them here, synchronously.
+  browserTabs.destroyAll('shutdown')
   if (lockAcquired) {
     releaseLockSync(lockfilePath())
     lockAcquired = false

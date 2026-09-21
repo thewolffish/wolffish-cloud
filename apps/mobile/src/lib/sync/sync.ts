@@ -1,6 +1,12 @@
 import { hydrateOverflow, rebuildConversation, type RebuiltConversation } from '@/lib/sync/rebuild'
 import { coalesceTextSegments, messageFilePaths } from '@/lib/conversations/segments'
-import type { ConversationMessage, CountdownSnapshot, Segment } from '@/lib/conversations/types'
+import type {
+  BrowserTabSnapshot,
+  ConversationMessage,
+  CountdownSnapshot,
+  ProcessCardSnapshot,
+  Segment
+} from '@/lib/conversations/types'
 import { getDb, withExclusiveTransaction } from '@/lib/db/database'
 import { resolveWorkspaceFile } from '@/lib/files/fileCache'
 import { bridgeClient } from '@/lib/cloud/bridge'
@@ -27,6 +33,7 @@ import { applyRunsPush, invalidateAutomations, readRuns } from '@/lib/sync/autom
 import { applyOverlayReindex, readReindex } from '@/lib/sync/overlays'
 import { applyUpdaterPush, readUpdaterState } from '@/lib/sync/updater'
 import { invalidateProcedures } from '@/lib/sync/procedures'
+import { invalidateProcesses } from '@/lib/sync/processes'
 import { invalidateProjects } from '@/lib/sync/projects'
 import { usageDaysFromWire } from '@/lib/usage/ledger'
 import { useAppStore } from '@/state/appStore'
@@ -474,6 +481,20 @@ export function attachLiveUpdates(): () => void {
     invalidateProcedures()
   })
 
+  // The process registry — every start, transition, stop and edit, whoever
+  // caused it. Same invalidation contract as the three stores above.
+  bridge.onEvent(Event.processesChanged, () => {
+    invalidateProcesses()
+  })
+
+  // A process card re-rendered after its turn ended (a stop from the desktop's
+  // page, a crash, a restart). Same fold as the countdown, keyed by cardId.
+  bridge.onEvent(Event.processCardChanged, (payload) => {
+    const snapshot = (payload as { snapshot?: ProcessCardSnapshot } | null)?.snapshot
+    if (!snapshot?.cardId || !snapshot.conversationId) return
+    void foldProcessSnapshot(snapshot.conversationId, snapshot)
+  })
+
   bridge.onEvent(Event.automationsChanged, () => {
     invalidateAutomations()
   })
@@ -499,6 +520,15 @@ export function attachLiveUpdates(): () => void {
     const snapshot = (payload as { snapshot?: CountdownSnapshot } | null)?.snapshot
     if (!snapshot?.countdownId || !snapshot.conversationId) return
     void foldCountdownSnapshot(snapshot.conversationId, snapshot)
+  })
+
+  // The conversation's in-app browser moved (a load, a tab switch, a fresh
+  // still) — fold into the one `browser` segment the conversation carries,
+  // keyed by conversation, the countdown contract.
+  bridge.onEvent(Event.browserChanged, (payload) => {
+    const snapshot = (payload as { snapshot?: BrowserTabSnapshot } | null)?.snapshot
+    if (!snapshot?.tabId || !snapshot.conversationId) return
+    void foldBrowserSnapshot(snapshot.conversationId, snapshot)
   })
 
   return () => undefined
@@ -845,6 +875,61 @@ export async function getSyncCursor(): Promise<string> {
 
 async function setSyncCursor(cursor: string): Promise<void> {
   await setMeta('cursor', cursor)
+}
+
+/** Replace the matching `process` segment's snapshot in the stored body. */
+async function foldProcessSnapshot(
+  conversationId: string,
+  snapshot: ProcessCardSnapshot
+): Promise<void> {
+  const conversation = await getConversation(conversationId).catch(() => null)
+  if (!conversation) return
+  let changed = false
+  for (const message of conversation.messages) {
+    const segments = message.segments ?? []
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      if (seg.kind === 'process' && seg.snapshot.cardId === snapshot.cardId) {
+        segments[i] = { ...seg, snapshot }
+        changed = true
+      }
+    }
+    if (changed) {
+      await replaceMessage(conversationId, message).catch(() => undefined)
+      break
+    }
+  }
+  if (changed) invalidateConversation(conversationId)
+}
+
+/** Replace the conversation's `browser` segment snapshot in the stored body. */
+async function foldBrowserSnapshot(
+  conversationId: string,
+  snapshot: BrowserTabSnapshot
+): Promise<void> {
+  const conversation = await getConversation(conversationId).catch(() => null)
+  if (!conversation) return
+  let changed = false
+  for (const message of conversation.messages) {
+    const segments = message.segments ?? []
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      if (
+        seg.kind === 'browser' &&
+        (seg.snapshot.conversationId ?? seg.snapshot.tabId) ===
+          (snapshot.conversationId ?? snapshot.tabId)
+      ) {
+        segments[i] = { ...seg, snapshot }
+        changed = true
+      }
+    }
+    if (changed) {
+      await replaceMessage(conversationId, message).catch(() => undefined)
+      changed = false
+      // keep going: the latest holder wins on render, but every copy stays current
+    }
+  }
+  invalidateConversation(conversationId)
 }
 
 /** Replace the matching `countdown` segment's snapshot in the stored body. */

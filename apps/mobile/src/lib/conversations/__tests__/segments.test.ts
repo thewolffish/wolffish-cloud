@@ -924,3 +924,66 @@ describe('a task list continued by a later turn', () => {
     expect(buildRenderBlocks(first)[1]).toEqual({ type: 'todo', key: 'td:t1', items: open.items })
   })
 })
+
+describe('process card segments', () => {
+  const snap = (state: 'running' | 'stopped') => ({
+    cardId: 'card-1',
+    conversationId: 'c1',
+    turnId: 't1',
+    title: null,
+    names: ['web-dev'],
+    processes: [
+      {
+        id: 'p1',
+        name: 'web-dev',
+        command: 'npm run dev -- -p {port}',
+        cwd: '/proj',
+        env: {},
+        port: { mode: 'wolffish' as const },
+        ready: {},
+        restart: 'on-failure' as const,
+        onQuit: 'keep' as const,
+        autostart: 'off' as const,
+        origin: { conversationId: 'c1', kind: 'started' as const },
+        createdAt: 1,
+        updatedAt: 1,
+        run: {
+          pid: 1,
+          signature: 'npm',
+          osStart: null,
+          port: 20001,
+          url: 'http://localhost:20001',
+          state,
+          exitCode: null,
+          exitSignal: null,
+          startedAt: 1,
+          readyAt: 1,
+          endedAt: null,
+          restarts: 0,
+          logPath: null,
+          unit: null,
+          adoptedAt: null,
+          lastError: null
+        }
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 1
+  })
+
+  it('folds by cardId so two snapshots of one card render once, in the latest state', () => {
+    const blocks = buildRenderBlocks(
+      message([
+        textSeg('before', 's1'),
+        { kind: 'process', turnId: 't1', segmentId: 's2', snapshot: snap('running') },
+        { kind: 'process', turnId: 't1', segmentId: 's3', snapshot: snap('stopped') },
+        textSeg('after', 's4')
+      ])
+    )
+    const cards = blocks.filter((b) => b.type === 'process')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].type === 'process' && cards[0].snapshot.processes[0].run.state).toBe('stopped')
+    // It sits where the card was first shown, between the two text bubbles.
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'process', 'text'])
+  })
+})

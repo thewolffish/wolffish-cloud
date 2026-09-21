@@ -1,3 +1,4 @@
+import { keepLatestBrowserCard } from '@main/runtime/browser-card'
 import type { ConversationFile, ConversationMessage, PersistedApproval } from '@preload/index'
 import type { ApprovalCardState, AssistantStatus, ChatMessage } from '@providers/flow/useFlow'
 
@@ -69,7 +70,7 @@ export function mapConversationMessage(m: ConversationMessage): ChatMessage {
  * (History rows, the sidebar's Conversations list) so they can't drift.
  */
 export function mapConversationMessages(conv: ConversationFile): ChatMessage[] {
-  return conv.messages.map(mapConversationMessage)
+  return keepLatestBrowserCard(conv.messages.map(mapConversationMessage))
 }
 
 /**
@@ -199,7 +200,7 @@ export function reconcileFeedWithDisk(
             return next && held.get(m.id) === m ? next : m
           })
     if (tail.length === 0) return base
-    return [...base, ...mapConversationMessages({ ...conv, messages: tail })]
+    return keepLatestBrowserCard([...base, ...mapConversationMessages({ ...conv, messages: tail })])
   }
   // Transition fallback (an id-less message on either side): count what the
   // feed holds the way the WRITER counts it, or the slice below takes the

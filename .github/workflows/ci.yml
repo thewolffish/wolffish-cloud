@@ -63,6 +63,9 @@ jobs:
       - run: npm run lint
       - run: npm run cli:test
       - name: seam tests
+        env:
+          # process-units.test.ts refuses to run without it (it would otherwise touch the live service manager).
+          WOLFFISH_AUTOSTART_DRY_RUN: "1"
         run: |
           set -e
           for t in \
@@ -76,6 +79,11 @@ jobs:
             src/main/runtime/__tests__/wait.test.ts \
             src/main/runtime/__tests__/screen-indicator.test.ts \
             src/main/runtime/__tests__/todo-guard.test.ts \
+            src/main/runtime/__tests__/touched-folders.test.ts \
+            src/main/runtime/__tests__/processes-engine.test.ts \
+            src/main/runtime/__tests__/process-units.test.ts \
+            src/main/runtime/__tests__/bundled-skills.test.ts \
+            src/main/runtime/__tests__/browser-extension-v2.test.ts \
             src/main/channels/__tests__/mobile-channel-settings.test.ts \
             src/main/channels/__tests__/mobile-model-catalog.test.ts \
             src/main/channels/__tests__/mobile-snapshot-resilience.test.ts \

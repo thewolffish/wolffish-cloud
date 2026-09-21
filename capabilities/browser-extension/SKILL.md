@@ -1,8 +1,7 @@
 ---
 name: browser-extension
-description: Open, read and drive any web page in the user's real browser — logins, paywalls and JS-heavy sites included. Reaches what web_fetch cannot, and acts as well as reads — read the page as an accessibility tree and click, fill and type by element reference, take full-page or element screenshots, watch network and console, handle dialogs, emulate devices, and check what is missing when the browser will not cooperate. Chrome, Edge, Brave, Firefox, several at once.
+description: "The user's own running browser and their logins — paywalls, private dashboards, bot-checked sites, and every site they are already signed into. Reads any page as an accessibility tree and clicks, fills and types by element reference; screenshots, network, console, dialogs, device emulation. Chrome, Edge, Brave, Firefox, several at once."
 triggers:
-  - browser
   - extension
   - chrome
   - brave
@@ -10,73 +9,40 @@ triggers:
   - firefox
   - opera
   - which browser
-  - web
-  - navigate
-  - click
-  - tab
-  - screenshot
-  - cookie
-  - page
-  - url
-  - form
-  - download
-  - scrape
-  - open page
-  - go to
-  - visit
-  - site
-  - website
-  - webpage
-  - link
-  - browse
-  - surf
-  - search
-  - fill
-  - submit
-  - button
-  - input
-  - type
-  - scroll
-  - reload
-  - refresh
+  - my browser
+  - real browser
+  - actual browser
+  - connected browser
+  - in my browser
+  - active tab
+  - current tab
+  - current page
+  - open tabs
+  - my tabs
+  - new tab
+  - close tab
+  - switch tab
+  - browser window
+  - window management
+  - full screen
   - bookmark
   - history
   - javascript
   - console
   - inspect
-  - element
-  - selector
-  - dom
-  - html
-  - content
-  - extract
-  - read page
-  - capture
-  - new tab
-  - close tab
-  - switch tab
-  - my browser
-  - real browser
-  - actual browser
-  - connected browser
-  - active tab
-  - current tab
-  - current page
-  - open tabs
-  - window management
-  - browser window
-  - resize window
-  - full screen
-  - developer tools
   - devtools
+  - developer tools
   - network tab
   - local storage
   - session storage
   - clear cache
   - clear cookies
   - notification
-  - popup
-  - in my browser
+  - reload
+  - refresh
+  - read page
+  - open page
+  - fill
   - on this page
   - what's on the page
   - copy from page
@@ -84,6 +50,11 @@ triggers:
   - grab from page
   - save this page
   - print this page
+  - search
+  - logged in
+  - my account
+  - my session
+  - paywall
 requires:
   - node
 tools:

@@ -246,6 +246,39 @@ textarea,
   animation-name: wf-sheet-in-rtl;
 }
 
+/* The browser card's "opening a page" bar: transform-only, eases out toward
+   the end and holds there until the first frame lands, then the card swaps. */
+@keyframes wf-progress-fake {
+  0% {
+    transform: scaleX(0);
+  }
+  60% {
+    transform: scaleX(0.7);
+  }
+  100% {
+    transform: scaleX(0.92);
+  }
+}
+.wf-progress-fake {
+  transform-origin: 0 50%;
+  animation: wf-progress-fake 6s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+[dir='rtl'] .wf-progress-fake {
+  transform-origin: 100% 50%;
+}
+
+/* A sideways strip that scrolls without end and without a bar (the browser
+   card's tab strip): the global 8px gutter above is reserved for every
+   scroller, and a strip of chips has no room for it. */
+.wf-scroll-x-bare {
+  scrollbar-width: none;
+}
+.wf-scroll-x-bare::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Trailing-edge variant: same motion mirrored, for sheets that open opposite
    the profile/conversations pair (the chat's logs and files sheets). */
 .wf-sheet-panel-end {

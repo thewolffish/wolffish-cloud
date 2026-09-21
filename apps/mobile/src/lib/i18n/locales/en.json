@@ -57,6 +57,7 @@
       "procedures": "Procedures",
       "automations": "Automations",
       "conversations": "Conversations",
+      "processes": "Processes",
       "admin": "Admin"
     },
     "summary": {
@@ -985,6 +986,16 @@
       "cachedShare": "{{percent}}% of ingested context came from cache"
     },
     "offlineReply": "I can't answer while your desktop is out of reach — it runs the model and holds your workspace. Your message is saved here; send it again once the link is back.",
+    "browser": {
+      "desktopOnly": "Only live on your desktop",
+      "openLive": "Open the live page",
+      "openExternal": "Open in browser",
+      "copyUrl": "Copy link",
+      "copied": "Copied",
+      "noStill": "No preview yet",
+      "pages": "Open pages",
+      "title": "Wolffish Browser"
+    },
     "countdown": {
       "status": {
         "armed": "Armed",
@@ -1062,6 +1073,35 @@
       "title": "Tasks",
       "progress": "{{done}}/{{total}} done",
       "high": "high"
+    },
+    "process": {
+      "title": "Processes",
+      "titleOne": "Process",
+      "empty": "Nothing to show.",
+      "runningCount": "{{count}} of {{total}} running",
+      "state": {
+        "starting": "Starting",
+        "running": "Running",
+        "stopping": "Stopping",
+        "stopped": "Stopped",
+        "exited": "Exited",
+        "crashed": "Crashed"
+      },
+      "exitCode": "exit {{code}}",
+      "adopted": "Adopted",
+      "stop": "Stop",
+      "restart": "Restart",
+      "start": "Start",
+      "since": "Up for {{time}}",
+      "endedAt": "Ended {{time}}",
+      "port": "Port {{port}}",
+      "restarts_one": "{{count}} restart",
+      "restarts_other": "{{count}} restarts",
+      "autostart": {
+        "off": "",
+        "wolffish": "Starts with Wolffish",
+        "system": "Starts at login"
+      }
     }
   },
   "history": {
@@ -1483,6 +1523,70 @@
       "attachments": "Attachments",
       "opinion": "Model opinion"
     }
+  },
+  "processes": {
+    "title": "Processes",
+    "subtitle": "Servers, tunnels and scripts Wolffish keeps running.",
+    "runningBadge": "{{running}} of {{total}} running",
+    "stopAll": "Stop all",
+    "deleteAll": "Delete all",
+    "stopAllTitle": "Stop all processes?",
+    "stopAllConfirm_one": "Stop the {{count}} running process.",
+    "stopAllConfirm_other": "Stop all {{count}} running processes.",
+    "deleteAllTitle": "Delete all processes?",
+    "deleteAllConfirm": "Stop everything still running ({{running}}), remove any login entries, and forget all {{count}} processes with their logs.",
+    "stoppedCount": "Stopped {{count}}",
+    "removedCount_one": "Removed {{count}} process",
+    "removedCount_other": "Removed {{count}} processes",
+    "empty": "No managed processes. Ask Wolffish to start a dev server, or to adopt one that is already running.",
+    "offline": "Connect to your desktop to see and control its processes.",
+    "searchPlaceholder": "Search by name, command, folder or URL",
+    "status": {
+      "all": "All",
+      "running": "Running",
+      "stopped": "Stopped",
+      "crashed": "Crashed"
+    },
+    "autostartLabel": "Autostart",
+    "autostart": {
+      "off": "Off",
+      "wolffish": "With Wolffish",
+      "system": "At login"
+    },
+    "restartLabel": "Restart",
+    "restart": {
+      "never": "never",
+      "on-failure": "on failure",
+      "always": "always"
+    },
+    "onQuitLabel": "When Wolffish quits",
+    "onQuit": {
+      "keep": "Keep running",
+      "stop": "Stop"
+    },
+    "groupCount": "{{running}} of {{total}} running",
+    "noMatches": "No processes match these filters.",
+    "showingCount": "Showing {{shown}} of {{total}}",
+    "createdAt": "Added {{time}}",
+    "pid": "pid {{pid}}",
+    "logs": "Logs",
+    "logsTitle": "Log · {{name}}",
+    "logsEmpty": "The log is empty.",
+    "edit": "Edit",
+    "editTitle": "Edit {{name}}",
+    "command": "Command",
+    "cwd": "Working directory",
+    "portHint": "Write {port} in the command where the port goes; Wolffish fills it with a free port from its own band and sets PORT.",
+    "saved": "Saved",
+    "savedRestartHint": "Saved. The running copy keeps its old definition until you restart it.",
+    "remove": "Remove",
+    "removeTitle": "Remove process?",
+    "removeConfirm": "Stop \"{{name}}\" if it is running, remove its login entry if any, and forget it along with its logs.",
+    "removed": "Removed {{name}}",
+    "error": "Something went wrong",
+    "cancel": "Cancel",
+    "done": "Done",
+    "save": "Save"
   },
   "errors": {
     "provider": {

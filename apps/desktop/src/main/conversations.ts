@@ -1,5 +1,6 @@
 import { diskWriter } from '@main/io/diskWriter'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import { keepLatestBrowserCard } from './runtime/browser-card'
 import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/root'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
@@ -700,7 +701,7 @@ export function mergeConversationOnto(
 ): ConversationFile {
   if (!disk) return incoming
   const merged: ConversationFile = { ...incoming }
-  merged.messages = mergeMessages(disk.messages, incoming.messages)
+  merged.messages = keepLatestBrowserCard(mergeMessages(disk.messages, incoming.messages))
   // `channel` belongs to whichever writer created the conversation; a caller
   // that simply doesn't carry it must not erase it. The renderer's load-failure
   // fallback (ensureConversationId) builds a copy with no channel at all, and

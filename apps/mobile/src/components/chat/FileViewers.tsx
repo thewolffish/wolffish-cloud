@@ -53,12 +53,13 @@ import { MarkdownView } from '@/components/chat/MarkdownView'
  * card→expand pair.
  *
  * Two mobile-specific rules, both about living inside a scrolling feed:
- *  - inline previews are NON-INTERACTIVE (a WebView that scrolls inside the
- *    chat list steals the list's pan gesture) — tapping a preview expands it,
- *    and the expanded sheet is where scrolling, zooming and links live. HTML
- *    is the one exception: a delivered page is meant to be READ, so its card
- *    is a live viewer (see HtmlFileCard) that takes the page's own height and
- *    only takes the gesture once the page is too tall to show whole;
+ *  - WebView previews (PDF, slides) are NON-INTERACTIVE (a WebView that
+ *    scrolls inside the chat list steals the list's pan gesture) — tapping one
+ *    expands it, and the expanded sheet is where scrolling, zooming and links
+ *    live. Native bodies (markdown, source, CSV) scroll in place inside their
+ *    clamp, and HTML is a live viewer (see HtmlFileCard) that takes the page's
+ *    own height and only takes the gesture once the page is too tall to show
+ *    whole. Every card keeps the footer's expand button either way;
  *  - the desktop's open/reveal/download trio collapses into the system share
  *    sheet, which is where "open in…", "save to Files" and "print" live.
  */
@@ -440,9 +441,10 @@ export function TextFileCard({
   return (
     <CardShell align={align}>
       <CardHeader icon={icon} name={name} meta={t('chat.fileViewer.lines', { count: lineCount })} />
-      <PreviewTap onPress={() => setOpen(true)} label={name} maxHeight={INLINE_BODY_HEIGHT}>
-        {body}
-      </PreviewTap>
+      {/* Scrolls in place (the body is a clamped ScrollView; nestedScrollEnabled
+          hands the gesture back to the feed at its ends) — the footer's expand
+          button is what opens the sheet, so no PreviewTap here. */}
+      <View className="overflow-hidden">{body}</View>
       <CardFooter label={footerLabel}>
         <ShareAction uri={uri} />
         <CopyAction text={text} />
@@ -762,9 +764,10 @@ export function SheetFileCard({
   return (
     <CardShell align={align}>
       <CardHeader icon={<Table01Icon size={14} className="text-muted" />} name={name} />
-      <PreviewTap onPress={() => setOpen(true)} label={name} maxHeight={INLINE_BODY_HEIGHT}>
+      {/* Scrolls in place, same as TextFileCard; expand lives in the footer. */}
+      <View className="overflow-hidden">
         <SheetGrid table={table} />
-      </PreviewTap>
+      </View>
       <CardFooter label={footerLabel}>
         <ShareAction uri={uri} />
         <CopyAction text={text} />
