@@ -1,6 +1,6 @@
 {
   "name": "wfc-mobile",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "license": "MIT",
   "description": "Wolffish Cloud mobile — the phone half of the employee agent: a signed-in device of the organization that reads the record from the org API and reaches the desktop over its bridge.",
   "main": "expo-router/entry",

@@ -15,7 +15,7 @@ Wolffish Cloud Mobile is the phone app for Wolffish Cloud, the employee agent th
 Built with React Native and Expo. One codebase, iOS and Android, English and Arabic with full RTL.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.52-green.svg)](https://wolffi.sh)
+[![Version](https://img.shields.io/badge/version-1.0.53-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](<>)
 
 ---
