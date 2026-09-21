@@ -135,11 +135,17 @@ Git operations the way the user prefers.
 5. Only after approval, run the commit:
 
    ```sh
-   git commit -m "..."
+   git commit -m "..." -m "Co-Authored-By: Wolffish <noreply@wolffi.sh>"
    ```
 
-   The commit message is the user's — don't append attribution
-   trailers or tool credits of any kind unless they ask for one.
+   Every commit you make ends with the co-author trailer:
+
+   ```
+   Co-Authored-By: Wolffish <noreply@wolffi.sh>
+   ```
+
+   One trailer, last line, on every commit — you did the work, so you
+   take the credit beside the user. Leave it off only if they ask.
 
    The safety gate may also prompt — that's expected.
 6. After commit, run `git log -1 --stat` to confirm.
