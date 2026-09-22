@@ -38,11 +38,26 @@ import { copyToClipboard } from '../lib/clipboard.mjs'
 import { basename, renderStoredMessage } from '../lib/render.mjs'
 import { renderMarkdown } from '../lib/markdown.mjs'
 import { runTurn } from '../lib/turn.mjs'
+import { filterConversationsByTitle, matchesKeywords } from '../lib/search.mjs'
 
 // ─── Conversations ──────────────────────────────────────────────────────────
 
 /** Same page size as the REPL's /list, so the two never disagree. */
 const PAGE_SIZE = 25
+
+/** Every `conversations` verb that acts on ONE conversation rather than listing. */
+const CONVERSATION_SUBCOMMANDS = new Set([
+  'show',
+  'print',
+  'read',
+  'rm',
+  'delete',
+  'diagnose',
+  'diagnostics',
+  'resume',
+  'open',
+  'continue'
+])
 
 /**
  * `wfc conversations` — the app's History screen.
@@ -54,11 +69,27 @@ const PAGE_SIZE = 25
 export async function conversations(client, args, flags = {}, resume = null) {
   const [sub, ...rest] = args
 
+  // `--search` takes ONE argv word, so an unquoted `-s release notes` leaves
+  // "notes" behind as a positional — which then reads as a conversation id,
+  // matches a title, and opens a transcript nobody asked for. With a search in
+  // hand, loose words are more of the search; only a real subcommand is not.
+  if (flags.search != null && !CONVERSATION_SUBCOMMANDS.has(sub)) {
+    const loose = !sub ? [] : sub === 'list' || sub === 'ls' ? rest : [sub, ...rest]
+    return listConversations(client, {
+      json: flags.json,
+      limit: flags.limit,
+      all: flags.all,
+      search: [flags.search, ...loose].join(' '),
+      resume
+    })
+  }
+
   if (!sub || sub === 'list' || sub === 'ls') {
     return listConversations(client, {
       json: flags.json,
       limit: flags.limit,
       all: flags.all,
+      search: flags.search,
       resume
     })
   }
@@ -130,8 +161,16 @@ export function shortConversationId(id) {
  * Piped or scripted it prints the table and returns, exactly as before, so
  * `wfc conversations --json` and `| grep` are untouched.
  */
-export async function listConversations(client, { json, limit, all = false, resume = null } = {}) {
-  const conversations = await client.invoke('conversation:list')
+export async function listConversations(
+  client,
+  { json, limit, all = false, search = '', resume = null } = {}
+) {
+  // `--search` narrows by TITLE, on the same keywords the app's conversations
+  // search takes, and applies to all three shapes this command has: the JSON,
+  // the piped table, and the menu — where it arrives as the filter already
+  // typed, so `wfc conversations --search invoice` opens on the answer.
+  const query = String(search ?? '').trim()
+  const conversations = filterConversationsByTitle(await client.invoke('conversation:list'), query)
   const size = Number.isFinite(limit) && limit > 0 ? limit : PAGE_SIZE
 
   if (json) {
@@ -141,9 +180,11 @@ export async function listConversations(client, { json, limit, all = false, resu
 
   if (!interactive()) {
     const rows = all ? conversations : conversations.slice(0, size)
-    heading(`Conversations ${c.gray(`(${conversations.length})`)}`)
+    heading(
+      `Conversations ${c.gray(query ? `"${query}" (${conversations.length})` : `(${conversations.length})`)}`
+    )
     if (rows.length === 0) {
-      out(c.gray('  none yet'))
+      out(c.gray(query ? '  nothing matches' : '  none yet'))
       return 0
     }
     table(
@@ -174,12 +215,16 @@ export async function listConversations(client, { json, limit, all = false, resu
   }
 
   let shown = all ? conversations.length : size
-  let filter = ''
+  let filter = query
   for (;;) {
     const list = await client.invoke('conversation:list')
+    // Keywords in any order, so `telegram invoice` finds the one conversation
+    // that is both. The haystack keeps the channel and the id this prompt has
+    // always reached as well as the title — the app searches titles alone, but
+    // narrowing a menu that already finds more would take something away.
     const matched = filter
       ? list.filter((conv) =>
-          `${conv.title ?? ''} ${conv.channel ?? ''} ${conv.id}`.toLowerCase().includes(filter)
+          matchesKeywords(`${conv.title ?? ''} ${conv.channel ?? ''} ${conv.id}`, filter)
         )
       : list
     const rows = matched.slice(0, shown)
@@ -232,7 +277,7 @@ export async function listConversations(client, { json, limit, all = false, resu
       out()
       continue
     }
-    filter = answer.toLowerCase()
+    filter = answer
     shown = size
   }
 }

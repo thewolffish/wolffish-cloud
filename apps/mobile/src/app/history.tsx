@@ -1,4 +1,11 @@
-import { ArrowLeft01Icon, ArrowRight01Icon, Bug01Icon, Delete01Icon } from '@/components/core/icons'
+import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  Bug01Icon,
+  Delete01Icon,
+  Search01Icon
+} from '@/components/core/icons'
+import { INPUT_TEXT_ALIGN, WRITING_DIRECTION, rtlPlaceholder } from '@/components/core/Input'
 import { ChannelBadge } from '@/components/conversations/ChannelBadge'
 import { chipText, chipTone, Pulse } from '@/components/conversations/ConversationChip'
 import { UnreadBadge } from '@/components/core/UnreadBadge'
@@ -8,7 +15,11 @@ import { ConfirmDialog } from '@/components/core/ConfirmDialog'
 import { HistorySkeleton } from '@/components/history/HistorySkeleton'
 import { groupByRecency } from '@/lib/conversations/grouping'
 import { removeConversation, useConversationList } from '@/lib/conversations/hooks'
-import { buildConversationRows, type ConversationRow } from '@/lib/conversations/rows'
+import {
+  buildConversationRows,
+  filterConversationRows,
+  type ConversationRow
+} from '@/lib/conversations/rows'
 import { useProjects } from '@/lib/sync/projects'
 import { goBack } from '@/lib/utils/back'
 import { cn } from '@/lib/utils/cn'
@@ -16,10 +27,11 @@ import { useChatRuntime } from '@/state/chatRuntime'
 import { useRunStatus } from '@/state/runStatus'
 import { useDesktopReachable } from '@/lib/cloud/useBridgeStatus'
 import { formatRelativeTime } from '@/lib/utils/relativeTime'
+import { useTokens } from '@/providers/theme/useTheme'
 import { router } from 'expo-router'
 import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { I18nManager, Pressable, SectionList, Text, View } from 'react-native'
+import { I18nManager, Keyboard, Pressable, SectionList, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 /**
@@ -71,7 +83,12 @@ const Row = memo(function Row({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={row.title}
-      onPress={() => router.push({ pathname: '/chat', params: { id: row.id } })}
+      onPress={() => {
+        // A row tapped mid-search would otherwise carry the keyboard onto the
+        // chat screen — the search field stays mounted (and focused) under it.
+        Keyboard.dismiss()
+        router.push({ pathname: '/chat', params: { id: row.id } })
+      }}
       className="bg-surface border-border flex-row items-center gap-3 rounded-xl border px-4 py-3 active:bg-border-soft"
     >
       <Pulse active={processing}>
@@ -144,10 +161,14 @@ const Row = memo(function Row({
 export default function HistoryScreen(): React.JSX.Element {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const tokens = useTokens()
   const { data: metas, isLoading } = useConversationList()
   const { data: projects } = useProjects()
   const live = useChatRuntime((state) => state.streams)
   const runs = useRunStatus((state) => state.runs)
+  // Title search. Screen-local: coming back to History is coming back to the
+  // whole list, not to whatever it was narrowed to last time.
+  const [query, setQuery] = useState('')
   const [doomed, setDoomed] = useState<ConversationRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   // The conversation whose bundle is being collected, if any.
@@ -162,10 +183,17 @@ export default function HistoryScreen(): React.JSX.Element {
     () => buildConversationRows({ metas: metas ?? [], live, runs, projects, untitled }),
     [metas, live, runs, projects, untitled]
   )
+  // What the screen actually lists: the rows the typed keywords match, all of
+  // them when nothing is typed.
+  const visible = useMemo(() => filterConversationRows(rows, query), [rows, query])
   // Sliced into the same recency buckets the desktop's History page and the
   // conversations sheet use, keyed on `at` — a running turn lifts its row into
   // "Today" exactly as it lifts it to the top.
-  const groups = useMemo(() => groupByRecency(rows, (row) => row.at), [rows])
+  //
+  // Grouped over the MATCHES, so the chips count 1..n down what is on screen,
+  // as the desktop's do. Keeping each row's rank in the unfiltered list would
+  // print 3, 17, 42 under a search.
+  const groups = useMemo(() => groupByRecency(visible, (row) => row.at), [visible])
   const BackIcon = I18nManager.isRTL ? ArrowRight01Icon : ArrowLeft01Icon
 
   return (
@@ -185,16 +213,52 @@ export default function HistoryScreen(): React.JSX.Element {
         </Text>
       </View>
 
+      {/* Fixed under the header rather than scrolled with the list: it is what
+          the list is being steered WITH, so it stays put while the results
+          move. Only there once there is something to search — a field over an
+          empty screen is a control that cannot act.
+
+          Not autofocused, unlike the desktop page's: on a phone that raises a
+          keyboard over half the list you came here to look at. */}
+      {!isLoading && rows.length > 0 && (
+        <View className="px-4 pt-4">
+          <View className="border-border bg-surface h-10 flex-row items-center gap-2 rounded-lg border px-3">
+            <Search01Icon size={15} className="text-muted" />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder={rtlPlaceholder(t('history.searchPlaceholder'))}
+              accessibilityLabel={t('history.searchPlaceholder')}
+              placeholderTextColor={tokens.muted}
+              selectionColor={tokens.accent}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              style={WRITING_DIRECTION}
+              className={cn('text-fg h-10 flex-1 font-sans text-sm', INPUT_TEXT_ALIGN)}
+            />
+          </View>
+        </View>
+      )}
+
       {isLoading ? (
         <HistorySkeleton />
-      ) : rows.length === 0 ? (
+      ) : visible.length === 0 ? (
         <View className="flex-1 items-center justify-center px-8">
-          <Text className="text-muted text-center font-sans text-sm">{t('history.empty')}</Text>
+          <Text className="text-muted text-center font-sans text-sm">
+            {rows.length === 0 ? t('history.empty') : t('history.searchEmpty')}
+          </Text>
         </View>
       ) : (
         <SectionList
           sections={groups}
           keyExtractor={(item) => item.id}
+          // A row tapped while the keyboard is up opens on that FIRST tap —
+          // the default spends it dismissing the keyboard. And scrolling puts
+          // the keyboard away, so a long result list is reachable to its end.
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           // Desktop's headers scroll away with their group rather than pinning;
           // RN sticks them on iOS by default, so turn that off to match.
           stickySectionHeadersEnabled={false}

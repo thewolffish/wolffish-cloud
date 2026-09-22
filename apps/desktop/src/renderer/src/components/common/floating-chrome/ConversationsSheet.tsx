@@ -6,6 +6,7 @@ import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversati
 import { mapConversationMessages } from '@lib/conversation-open'
 import {
   buildConversationRows,
+  filterConversationRows,
   groupConversationRows,
   runPhaseKey,
   type ConversationRow
@@ -22,6 +23,7 @@ import {
   Clock01Icon,
   FileEditIcon,
   LibraryIcon,
+  Search01Icon,
   Settings02Icon,
   SquareLock01Icon,
   UserGroupIcon
@@ -122,6 +124,9 @@ export function ConversationsSheet({
   // change on the Projects page propagates; a stamp would go stale).
   const [projects, setProjects] = useState<Project[]>([])
   const [limit, setLimit] = useState(PAGE)
+  // Title search over the conversations below — never over the page rows
+  // above, which are the way OUT of chat and must stay where they are.
+  const [query, setQuery] = useState('')
   const scrollerRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -189,11 +194,19 @@ export function ConversationsSheet({
     )
   }, [metas, projects, runStatuses, t, activeProject, activeConversationId])
 
+  // What the sheet lists: the rows the typed keywords match, all of them when
+  // nothing is typed. Filtering happens BEFORE the window, so a match buried
+  // at row 500 is on screen immediately instead of after twelve scrolls.
+  const visible = useMemo(() => filterConversationRows(rows, query), [rows, query])
+
   // Windowing: slicing a prefix keeps groupConversationRows' rank numbers
-  // identical to the full list's — the chips count across group headers.
-  const windowed = useMemo(() => (rows.length > limit ? rows.slice(0, limit) : rows), [rows, limit])
+  // identical to the listed rows' — the chips count across group headers.
+  const windowed = useMemo(
+    () => (visible.length > limit ? visible.slice(0, limit) : visible),
+    [visible, limit]
+  )
   const groups = useMemo(() => groupConversationRows(windowed), [windowed])
-  const hasMore = rows.length > windowed.length
+  const hasMore = visible.length > windowed.length
 
   // Grow the window as the sentinel nears the viewport. The observer re-fires
   // after each growth relayouts the sentinel, so a tall screen keeps growing
@@ -292,9 +305,46 @@ export function ConversationsSheet({
             </span>
           </div>
         )}
+        {/* Search is fixed with the nav rather than scrolling with the list:
+            the query is what you are steering the list WITH, so it has to stay
+            on screen while the results move. Only rendered once there is
+            something to search. */}
+        {rows.length > 0 && (
+          // The padding lives on the wrapper, not the label, so the icon and
+          // the input's own inset are the SAME pair every other search field
+          // in the app uses (start-3 / ps-9) rather than a second set of
+          // numbers that has to be kept in step with this row's padding.
+          <div className="shrink-0 px-2.5 pt-3">
+            <label className="relative block">
+              <Search01Icon
+                size={14}
+                aria-hidden
+                className="text-muted pointer-events-none absolute start-3 top-1/2 -translate-y-1/2"
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  // A new query is a new list — start it at one window again,
+                  // or a wide search inherits the 400 rows the last scroll grew.
+                  setLimit(PAGE)
+                }}
+                placeholder={t('history.searchPlaceholder')}
+                aria-label={t('history.searchPlaceholder')}
+                className={cn(
+                  'border-border bg-bg text-fg placeholder:text-muted w-full rounded-lg border py-1.5 pe-3 ps-9 text-xs',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
+                )}
+              />
+            </label>
+          </div>
+        )}
         <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
-          {rows.length === 0 ? (
-            <p className="text-muted px-1.5 pt-3 text-xs">{t('history.empty')}</p>
+          {visible.length === 0 ? (
+            <p className="text-muted px-1.5 pt-3 text-xs">
+              {rows.length === 0 ? t('history.empty') : t('history.searchEmpty')}
+            </p>
           ) : (
             <nav className="flex w-full flex-col gap-0.5">
               {groups.map((group) => (

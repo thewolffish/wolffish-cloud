@@ -47,6 +47,7 @@ import {
 import { pair } from './pair.mjs'
 import { service } from './service.mjs'
 import { basename } from '../lib/render.mjs'
+import { filterConversationsByTitle } from '../lib/search.mjs'
 import { stdinIsRawCapable, stdinIsTty, stdoutIsTty } from '../lib/tty.mjs'
 import { setConsoleEcho } from '../lib/console-ctl.mjs'
 import { attachComposer } from '../lib/composer.mjs'
@@ -73,7 +74,7 @@ const SLASH_HELP = [
   ['/pending', 'answer approvals parked by an earlier session'],
 
   ['CONVERSATIONS', null],
-  ['/conversations', 'list them, newest first'],
+  ['/conversations [words]', 'list them, newest first — words narrow by title'],
   ['/read <n|id>', 'read one without leaving this conversation'],
   ['/switch <n|id>', 'talk to one, by its number or id'],
 
@@ -131,7 +132,11 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     // cumulative on purpose: after `/more`, `/switch 3` must still mean the
     // third row the user read, not the third row of the newest page.
     listing: [],
-    pageSize: PAGE_SIZE
+    pageSize: PAGE_SIZE,
+    // The words `/conversations` was last narrowed by, '' for the whole list.
+    // Held on the state rather than passed down, so `/more` pages through the
+    // SAME search instead of silently widening back out at the page boundary.
+    filter: ''
   }
 
   const [snapshot, cliConfig, status] = await Promise.all([
@@ -893,13 +898,20 @@ async function handleSlash(client, state, input) {
      * List conversations, newest first, numbered. The numbers are what
      * `/switch` takes — a full id is 20-odd characters nobody wants to retype,
      * and an 8-char prefix still has to be read off the screen correctly.
+     *
+     * A bare number is still the page size, because `/conversations 50` has
+     * always meant "show me fifty". Anything else is a title search: the words
+     * you remember, in any order. `/conversations` with nothing clears it, so
+     * the way back to the whole list is the command you already know.
      */
     case 'conversations':
     case 'conversation':
     case 'list':
     case 'ls': {
-      const size = Number.parseInt(args[0] ?? '', 10)
+      const onlyNumber = args.length === 1 && /^\d+$/.test(args[0])
+      const size = onlyNumber ? Number.parseInt(args[0], 10) : NaN
       state.pageSize = Number.isFinite(size) && size > 0 ? size : PAGE_SIZE
+      state.filter = onlyNumber ? '' : args.join(' ').trim()
       state.listing = []
       return printPage(client, state, 0)
     }
@@ -1389,9 +1401,14 @@ async function handleSlash(client, state, input) {
  * offset.
  */
 async function printPage(client, state, offset) {
-  const all = await client.invoke('conversation:list')
-  if (all.length === 0) {
+  const everything = await client.invoke('conversation:list')
+  if (everything.length === 0) {
     out(c.gray('  no conversations yet'))
+    return null
+  }
+  const all = filterConversationsByTitle(everything, state.filter)
+  if (all.length === 0) {
+    out(c.gray(`  nothing matches "${state.filter}" · /conversations for all ${everything.length}`))
     return null
   }
   const rows = all.slice(offset, offset + state.pageSize)
@@ -1419,6 +1436,9 @@ async function printPage(client, state, offset) {
   const more = all.length - shown
   out(
     c.gray(`  ${offset + 1}-${shown} of ${all.length}`) +
+      // Say WHICH list the count is of — an unannounced 4-of-4 after a search
+      // reads as "you only have four conversations".
+      (state.filter ? c.gray(` matching "${state.filter}"`) : '') +
       (more > 0 ? c.gray(` · /more for ${Math.min(more, state.pageSize)} more`) : '') +
       // Both verbs, because the numbers are the affordance and a bare number
       // typed here is a MESSAGE — the list has to say what to prefix it with,

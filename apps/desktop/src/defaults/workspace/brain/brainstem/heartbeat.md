@@ -25,10 +25,18 @@ Behavior worth knowing:
   follows whatever chat mode is active when it fires. The Heartbeat page has
   a per-job toggle for this.
 
-You don't have to hand-edit this file: just ask Wolffish ("every morning…", "in
-2 days remind me…") and it manages these jobs for you with its `automation_*`
-tools (list / create / edit / delete / check / run). Hand-editing still works —
-the schedule forms are below.
+**Wolffish: manage these jobs with the `automation_*` tools, always.** Add,
+reschedule, reword, pause or resume, delete, run one now, or work out why it
+missed — that is list / create / edit (pausing and resuming are edit with
+`enabled`) / delete / check / run, every time, no exceptions. The
+tools validate the schedule, reload the scheduler live and keep the Automations
+page in step; a change written straight into this file skips all of that, and the
+next writer overwrites it. That's about the operation, not the file — reading this
+file is encouraged, and editing it by hand is fine when the file itself is what
+you're working on.
+
+(From chat, this is also how you ask for it: "every morning at 8", "in 2 days
+remind me", "turn that job off". The schedule forms are below.)
 
 Memory compaction (daily and weekly) is configured separately in
 Settings > Hippocampus > Compaction and is not part of this file.

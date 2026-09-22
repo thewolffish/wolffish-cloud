@@ -5,6 +5,7 @@ import { Modal } from '@components/core/Modal'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import {
   buildConversationRows,
+  filterConversationRows,
   groupConversationRows,
   runPhaseKey,
   type ConversationRow
@@ -22,7 +23,8 @@ import {
   ArrowRight02Icon,
   BubbleChatIcon,
   Bug01Icon,
-  Delete01Icon
+  Delete01Icon,
+  Search01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -62,6 +64,9 @@ export function History(): React.JSX.Element {
   // Skeleton ONLY on the first-ever load (cold cache). Return visits seed from
   // the cache above and refresh silently — no skeleton flash.
   const [loading, setLoading] = useState(() => cachedConversations === null)
+  // Title search. Page-local and uncached on purpose: the list you return to
+  // is the whole list, not whatever you were narrowing to last visit.
+  const [query, setQuery] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ConversationRow | null>(null)
   // Diagnostic export target — the same per-conversation bundle the chat
   // composer's bug button produces, reachable for a conversation you are not
@@ -126,11 +131,20 @@ export function History(): React.JSX.Element {
     [conversations, runStatuses, projects, t]
   )
 
+  // What the page actually lists: the rows the typed keywords match, all of
+  // them when nothing is typed.
+  const visible = useMemo(() => filterConversationRows(rows, query), [rows, query])
+
   // Sliced into the recency buckets the page renders headers over. Recomputed
   // with the rows (which refresh on every turn start/end and every
   // conversation:changed push), so the day boundary is never more stale than
   // the list itself.
-  const groups = useMemo(() => groupConversationRows(rows), [rows])
+  //
+  // Grouped over the MATCHES, so the number chips count 1..n down whatever is
+  // on screen. Keeping each row's rank in the unfiltered list would print
+  // 3, 17, 42 under a search — the chip answers "which row am I looking at",
+  // which is a question about the visible list.
+  const groups = useMemo(() => groupConversationRows(visible), [visible])
 
   const handleResume = useCallback(
     async (id: string) => {
@@ -194,6 +208,34 @@ export function History(): React.JSX.Element {
         </Button>
       </div>
 
+      {/* Search sits OUTSIDE the scroller, at the grid's own max width, so it
+          stays reachable however far down a long history you have scrolled.
+          It renders only once there is something to search: an input over an
+          empty page is a control that cannot act. */}
+      {!loading && rows.length > 0 && (
+        <div className="px-6 pb-4">
+          <label className="relative mx-auto block w-full max-w-5xl">
+            <Search01Icon
+              size={15}
+              aria-hidden
+              className="text-muted pointer-events-none absolute start-3 top-1/2 -translate-y-1/2"
+            />
+            <input
+              type="search"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('history.searchPlaceholder')}
+              aria-label={t('history.searchPlaceholder')}
+              className={cn(
+                'border-border bg-bg text-fg placeholder:text-muted w-full rounded-lg border py-2 pe-3 ps-9 text-sm',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
+              )}
+            />
+          </label>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         <div className="mx-auto flex h-full max-w-5xl flex-col">
           {loading && (
@@ -219,13 +261,15 @@ export function History(): React.JSX.Element {
               ))}
             </div>
           )}
-          {!loading && rows.length === 0 && (
+          {!loading && visible.length === 0 && (
             <div className="text-muted flex flex-1 flex-col items-center justify-center gap-3 text-center">
               <BubbleChatIcon size={40} className="opacity-40" />
-              <p className="text-sm">{t('history.empty')}</p>
+              <p className="text-sm">
+                {rows.length === 0 ? t('history.empty') : t('history.searchEmpty')}
+              </p>
             </div>
           )}
-          {!loading && rows.length > 0 && (
+          {!loading && visible.length > 0 && (
             /* The bottom breathing room lives HERE, on the content, not on the
                scroll container's pb-6: the wrapper above is h-full, so the
                groups overflow OUT of its box and Chromium drops the scroller's

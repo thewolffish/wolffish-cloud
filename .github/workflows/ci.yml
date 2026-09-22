@@ -84,6 +84,8 @@ jobs:
             src/main/runtime/__tests__/process-units.test.ts \
             src/main/runtime/__tests__/bundled-skills.test.ts \
             src/main/runtime/__tests__/browser-extension-v2.test.ts \
+            src/main/runtime/__tests__/automation-routing.test.ts \
+            src/main/runtime/__tests__/automation-pause.test.ts \
             src/main/channels/__tests__/mobile-channel-settings.test.ts \
             src/main/channels/__tests__/mobile-model-catalog.test.ts \
             src/main/channels/__tests__/mobile-snapshot-resilience.test.ts \

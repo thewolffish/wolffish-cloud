@@ -22,7 +22,7 @@ const toolDefinitions = [
   {
     name: 'automation_list',
     description:
-      "List every configured automation (heartbeat job): its schedule heading, the plain-English timing, the instruction it runs, whether the schedule is valid, and whether it's running right now. Use this before editing, deleting, or running one so you reference it by the correct number or label.",
+      "List every configured automation (heartbeat job) — active AND paused, numbered in the order they appear in heartbeat.md (the Automations page shows the same jobs but sorts them by next run): its schedule heading, the plain-English timing, the instruction it runs, whether the schedule is valid, whether it's paused, and whether it's running right now. Use this before editing, pausing, resuming, deleting, or running one so you reference it by the correct number or label.",
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -60,7 +60,7 @@ const toolDefinitions = [
   {
     name: 'automation_edit',
     description:
-      "Change an existing automation's schedule and/or its instruction. Identify it by the 1-based number from automation_list or its exact schedule label. Provide schedule, instruction, or both — whatever you omit is kept.",
+      "Change an existing automation — its name, schedule, instruction or mode — or PAUSE / RESUME it with `enabled`. Identify it by the 1-based number from automation_list or its exact schedule label. Whatever you omit is kept.",
     parameters: {
       type: 'object',
       properties: {
@@ -85,6 +85,11 @@ const toolDefinitions = [
         instruction: {
           type: 'string',
           description: 'New instruction body. Omit to keep the current instruction.'
+        },
+        enabled: {
+          type: 'boolean',
+          description:
+            "false PAUSES the automation — it stays listed (here and on the Automations page) but stops firing, exactly like the page's off switch; true RESUMES a paused one. Omit to leave it as it is. Combines with the other changes."
         }
       },
       required: ['identifier']
@@ -114,7 +119,7 @@ const toolDefinitions = [
   {
     name: 'automation_run',
     description:
-      'Run an automation immediately instead of waiting for its schedule — the way to test one. It runs in the background as a sealed conversation; read the outcome with automation_check. Identify it by number or schedule label.',
+      "Run an automation immediately instead of waiting for its schedule — the way to test one. It runs in the background as a sealed conversation; read the outcome with automation_check. Identify it by number or schedule label. A paused automation can't run — resume it first (automation_edit with enabled true).",
     parameters: {
       type: 'object',
       properties: {
@@ -135,7 +140,7 @@ const toolDefinitions = [
 async function listAutomations() {
   if (!automations) return missingBridge()
   const raw = await loadHeartbeat()
-  const blocks = parseActiveBlocks(raw)
+  const blocks = parseBlocks(raw)
   const live = automations.listJobs()
 
   if (blocks.length === 0) {
@@ -146,9 +151,25 @@ async function listAutomations() {
     }
   }
 
-  const lines = [`## Automations (${blocks.length})`, '']
+  const paused = blocks.filter((b) => b.paused).length
+  const lines = [`## Automations (${blocks.length}${paused ? `, ${paused} paused` : ''})`, '']
   for (const b of blocks) {
     const preview = automations.previewSchedule(b.label)
+    if (b.paused) {
+      // Listed, numbered and addressable like any other row — a paused job is
+      // still the user's automation, just switched off. Never looked up among
+      // the live jobs: the scheduler has none for it, and a same-label active
+      // job must not lend it a run status.
+      const title = b.name ? `**${b.name}** (${b.label})` : `**${b.label}**`
+      const would = preview.ok ? ` (would run ${preview.human})` : ''
+      const modeTag = b.mode ? ` · mode: ${b.mode}` : ''
+      lines.push(`${b.index}. ${title} — ⏸ **paused**, not scheduled${would}${modeTag}`)
+      lines.push(`   ${oneLine(b.body) || '(no instruction)'}`)
+      for (const file of b.files ?? []) lines.push(`   file: \`${file}\``)
+      for (const dir of b.dirs ?? []) lines.push(`   working folder: \`${dir}\``)
+      lines.push('')
+      continue
+    }
     const job = matchLiveJob(live, b)
     const valid = preview.ok
     const timing = valid ? preview.human : '⚠ invalid schedule — will NOT run'
@@ -168,7 +189,7 @@ async function listAutomations() {
     lines.push('')
   }
   lines.push(
-    'Edit or delete by the number above (or the exact label). Memory compaction jobs are configured in Settings → Hippocampus and are not listed here.'
+    'Edit, pause, resume or delete by the number above (or the exact label) — pausing and resuming are automation_edit with `enabled`. Memory compaction jobs are configured in Settings → Hippocampus and are not listed here.'
   )
   return { success: true, output: lines.join('\n').trim() }
 }
@@ -252,17 +273,23 @@ async function editAutomation(args) {
   const newInstruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
   const newMode = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
   const newName = typeof args?.name === 'string' ? args.name.trim() : ''
+  const enabled = parseEnabled(args?.enabled)
+  if (enabled.error) return { success: false, error: enabled.error }
 
   if (!identifier) return { success: false, error: 'automation_edit: provide an `identifier` (number or label).' }
-  if (!newSchedule && !newInstruction && !newMode && !newName) {
-    return { success: false, error: 'automation_edit: provide a new `name`, `schedule`, `instruction`, or `mode`.' }
+  const contentChange = Boolean(newSchedule || newInstruction || newMode || newName)
+  if (!contentChange && enabled.value === null) {
+    return {
+      success: false,
+      error: 'automation_edit: provide a new `name`, `schedule`, `instruction`, or `mode` — or `enabled` to pause (false) or resume (true) it.'
+    }
   }
   if (newMode && newMode !== 'single' && newMode !== 'workflow') {
     return { success: false, error: "automation_edit: `mode` must be 'single' or 'workflow'." }
   }
 
   const raw = await loadHeartbeat()
-  const blocks = parseActiveBlocks(raw)
+  const blocks = parseBlocks(raw)
   const target = findTarget(blocks, identifier)
   if (target.error) return { success: false, error: target.error }
 
@@ -283,16 +310,30 @@ async function editAutomation(args) {
   }
 
   const heading = normalizeHeading(resolvedHeading)
-  const body = newInstruction || target.block.body
-  // Preserve the block's mode stamp across edits unless explicitly changed;
-  // the project binding and icon always survive a plugin rewrite.
-  const mode = newMode || target.block.mode
+  const wasPaused = target.block.paused
+  const willPause = enabled.value === null ? wasPaused : !enabled.value
 
-  const next = applyEdit(
-    raw,
-    target.block,
-    heading,
-    composeBody(
+  // Resuming a one-time job whose moment has already passed would not run it:
+  // the write reloads the scheduler, and a reload RETIRES a past one-shot from
+  // the file unrun (brainstem scheduleOnce). The job would simply vanish. A new
+  // schedule in this same call was already checked to be in the future above.
+  if (wasPaused && !willPause && !newSchedule) {
+    const when = automations.previewSchedule(heading)
+    if (when.ok && when.kind === 'once' && typeof when.runAt === 'number' && when.runAt <= Date.now()) {
+      return {
+        success: false,
+        error: `automation_edit: "${heading}" is a one-time automation whose moment has already passed — resuming it as it is would make the scheduler retire it without running. Nothing was saved. Resume it with a new \`schedule\` in the same call (e.g. "In (15m)" or a later "Once (...)").`
+      }
+    }
+  }
+
+  let next = raw
+  if (contentChange) {
+    const body = newInstruction || target.block.body
+    // Preserve the block's mode stamp across edits unless explicitly changed;
+    // the project binding and icon always survive a plugin rewrite.
+    const mode = newMode || target.block.mode
+    const composed = composeBody(
       {
         mode,
         project: target.block.project,
@@ -303,16 +344,49 @@ async function editAutomation(args) {
       },
       body
     )
-  )
+    // A paused job is edited IN its comment, so changing its time or its
+    // words never switches it back on as a side effect.
+    next = wasPaused
+      ? applyPausedEdit(raw, target.block, heading, composed)
+      : applyEdit(raw, target.block, heading, composed)
+  }
+
+  if (willPause !== wasPaused) {
+    // An edit rewrites a job in place — it never moves — so the job keeps its
+    // number, and the re-parse finds it at the same position.
+    const current = parseBlocks(next)[target.block.index - 1]
+    if (!current || current.label !== heading || current.paused !== wasPaused) {
+      return {
+        success: false,
+        error: `automation_edit: lost track of "${heading}" while ${willPause ? 'pausing' : 'resuming'} it — nothing was saved. Run automation_list and try again.`
+      }
+    }
+    next = willPause ? pauseBlock(next, current) : resumeBlock(next, current)
+  }
+
+  if (next === raw) {
+    return {
+      success: true,
+      output: `"${heading}" is already ${wasPaused ? 'paused' : 'running on its schedule'} — nothing to change.`
+    }
+  }
+
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_edit: couldn't save — ${result.error ?? 'unknown error'}` }
   }
 
   const preview = automations.previewSchedule(heading)
+  const edited = contentChange ? 'Updated' : willPause ? 'Paused' : 'Resumed'
+  if (willPause) {
+    return {
+      success: true,
+      output: `${edited} automation "${heading}" — it is paused: still listed here and on the Automations page, switched off, and it will NOT fire until it is resumed with automation_edit (enabled: true).`
+    }
+  }
   return {
     success: true,
-    output: `Updated automation "${heading}"${preview.ok ? ` — now runs ${preview.human}` : ''}. It runs unattended with tool calls auto-approved; up to three automations run at once, and extra fires queue. Verify with \`automation_check\` (or \`automation_run\` to test).`
+    output: `${edited} automation "${heading}"${preview.ok ? ` — runs ${preview.human}` : ''}. It runs unattended with tool calls auto-approved; up to three automations run at once, and extra fires queue. Verify with \`automation_check\` (or \`automation_run\` to test).`
   }
 }
 
@@ -326,12 +400,12 @@ async function deleteAutomation(args) {
   if (!identifier) return { success: false, error: 'automation_delete: provide an `identifier` (number or label).' }
 
   const raw = await loadHeartbeat()
-  const blocks = parseActiveBlocks(raw)
+  const blocks = parseBlocks(raw)
   const target = findTarget(blocks, identifier)
   if (target.error) return { success: false, error: target.error }
 
   const label = target.block.label
-  const next = applyDelete(raw, target.block)
+  const next = target.block.paused ? applyPausedDelete(raw, target.block) : applyDelete(raw, target.block)
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_delete: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -370,7 +444,13 @@ async function checkAutomations() {
   lines.push('')
 
   if (live.length === 0) {
-    lines.push('No automations are configured.')
+    // "Nothing configured" would be false when every job is merely paused.
+    const paused = parseBlocks(await loadHeartbeat()).filter((b) => b.paused).length
+    lines.push(
+      paused > 0
+        ? `No automations are scheduled — ${paused} ${paused === 1 ? 'is' : 'are'} paused (see automation_list; resume with automation_edit, enabled: true).`
+        : 'No automations are configured.'
+    )
     return { success: true, output: lines.join('\n') }
   }
 
@@ -395,9 +475,15 @@ async function runAutomation(args) {
   // (Resolving against the live job list instead would skew the numbering
   // whenever an invalid-schedule heading exists, and run the wrong automation.)
   const raw = await loadHeartbeat()
-  const blocks = parseActiveBlocks(raw)
+  const blocks = parseBlocks(raw)
   const target = findTarget(blocks, identifier)
   if (target.error) return { success: false, error: target.error }
+  if (target.block.paused) {
+    return {
+      success: false,
+      error: `Can't run "${target.block.label}" — it is paused, so the scheduler has no job for it. Resume it with automation_edit (enabled: true) first, then run it.`
+    }
+  }
 
   // Translate the chosen block to the live registered job (by id) so we run
   // exactly that one. A block with no live job is an unregistered/ghost entry.
@@ -457,8 +543,7 @@ function inComment(pos, ranges) {
  * detects headings (comment-stripped, `## ` prefix), but keeps offsets so edits
  * never disturb the surrounding prose or the commented example block.
  */
-function parseActiveBlocks(raw) {
-  const ranges = commentRanges(raw)
+function parseActiveBlocks(raw, ranges = commentRanges(raw)) {
   const headings = []
   let offset = 0
   for (const line of raw.split('\n')) {
@@ -484,7 +569,7 @@ function parseActiveBlocks(raw) {
       .trim()
     const { body, mode, project, icon, name, files, dirs } = splitMarkers(rawBody)
     blocks.push({
-      index: i + 1,
+      paused: false,
       label: h.label,
       body,
       mode,
@@ -493,11 +578,83 @@ function parseActiveBlocks(raw) {
       name,
       files,
       dirs,
+      start: h.headingStart,
       headingStart: h.headingStart,
       end
     })
   }
   return blocks
+}
+
+/**
+ * The PAUSED automations. The Automations page's off switch comments a job
+ * out in place — `<!-- ## <schedule> -->` for one with no body, and
+ * `<!-- ## <schedule>` … a closing `-->` line around one that has a body
+ * (Heartbeat.tsx handleToggle; brainstem parseHeartbeatBlocks reads the same
+ * three forms). So a comment that OPENS a line with `<!-- ## ` and whose label
+ * is a real schedule is a paused job. Every other comment — the commented
+ * examples, a user's own note — stays opaque, exactly as the page and the
+ * engine treat it.
+ */
+function parsePausedBlocks(raw, ranges, isSchedule) {
+  const blocks = []
+  for (const [start, commentEnd] of ranges) {
+    if (start > 0 && raw[start - 1] !== '\n') continue
+    const text = raw.slice(start, commentEnd)
+    const nl = text.indexOf('\n')
+    const firstLine = nl === -1 ? text : text.slice(0, nl)
+    const single = /^<!--\s*##\s+(.+?)\s*-->$/.exec(firstLine)
+    const opener = !single && nl !== -1 ? /^<!--\s*##\s+(.+?)\s*$/.exec(firstLine) : null
+    const label = (single ?? opener)?.[1]
+    if (!label || !isSchedule(label)) continue
+    // Inside the comment: the opener line off the top, the `-->` off the end.
+    const inner = single ? '' : text.slice(nl + 1, text.length - '-->'.length)
+    // One comment, one job. A hand-paused job that lost its closing `-->` runs
+    // on to the NEXT comment's `-->` — typically the end of the examples — and
+    // resuming that "job" would switch every example on, unattended and
+    // auto-approved. A second opener or a second heading inside means the
+    // comment spans more than one thing (a job body can never hold a `## `
+    // line), so it is not a paused job — leave it exactly as it is.
+    if (inner.includes('<!--') || /^##\s/m.test(inner)) continue
+    const rawBody = inner
+      .replace(/^---+\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    const { body, mode, thinking, project, icon, name, files, dirs } = splitMarkers(rawBody)
+    blocks.push({
+      paused: true,
+      single: Boolean(single),
+      label,
+      body,
+      mode,
+      thinking,
+      project,
+      icon,
+      name,
+      files,
+      dirs,
+      start,
+      commentEnd
+    })
+  }
+  return blocks
+}
+
+/**
+ * Every automation in the file — active AND paused — in file order, numbered
+ * 1..n. The Automations page shows the same set (sorted by next run, so its
+ * order can differ); the number is this list's, and every tool resolves it the
+ * same way. Paused jobs were
+ * once invisible here (they live inside comments, which the active parse skips
+ * wholesale), which left "turn that job back on" with no tool that could even
+ * find it — and pausing with no tool that could do it.
+ */
+function parseBlocks(raw) {
+  const ranges = commentRanges(raw)
+  const isSchedule = (label) => Boolean(automations?.previewSchedule(label)?.ok)
+  return [...parseActiveBlocks(raw, ranges), ...parsePausedBlocks(raw, ranges, isSchedule)]
+    .sort((a, b) => a.start - b.start)
+    .map((block, i) => ({ ...block, index: i + 1 }))
 }
 
 /**
@@ -634,9 +791,70 @@ function applyDelete(raw, block) {
   return tidyOutsideComments(raw.slice(0, block.headingStart) + raw.slice(block.end))
 }
 
+/** Rewrite a paused job in place, still commented out — an edit is not a resume. */
+function applyPausedEdit(raw, block, heading, body) {
+  const text = body.trim() ? `<!-- ## ${heading}\n\n${body.trim()}\n-->` : `<!-- ## ${heading} -->`
+  return tidyOutsideComments(raw.slice(0, block.start) + text + raw.slice(block.commentEnd))
+}
+
+/** Remove a paused job — its whole comment, and the line it stood on. */
+function applyPausedDelete(raw, block) {
+  const end = raw[block.commentEnd] === '\n' ? block.commentEnd + 1 : block.commentEnd
+  return tidyOutsideComments(raw.slice(0, block.start) + raw.slice(end))
+}
+
+/**
+ * Pause an active job the way the Automations page's off switch does, byte for
+ * byte (Heartbeat.tsx handleToggle): the heading line gains `<!-- `, and a
+ * `-->` line goes in after the job's LAST non-blank line — or, for a job with
+ * no body, the heading closes on its own line. It only wraps, never rewrites:
+ * the engine's edit-stamp hash (parseHeartbeatBlocks) drops the wrappers, so a
+ * pause is not mistaken for an edit — which is also why nothing here is tidied.
+ */
+function pauseBlock(raw, block) {
+  const lines = raw.slice(block.headingStart, block.end).split('\n')
+  let last = 0
+  for (let i = 1; i < lines.length; i++) if (lines[i].trim() !== '') last = i
+  if (last === 0) {
+    lines[0] = `<!-- ${lines[0]} -->`
+  } else {
+    lines[0] = `<!-- ${lines[0]}`
+    lines.splice(last + 1, 0, '-->')
+  }
+  return raw.slice(0, block.headingStart) + lines.join('\n') + raw.slice(block.end)
+}
+
+/** Resume a paused job — the exact inverse of pauseBlock, as the page's switch does it. */
+function resumeBlock(raw, block) {
+  const lines = raw.slice(block.start, block.commentEnd).split('\n')
+  lines[0] = lines[0].replace(/^<!--\s*/, '')
+  if (block.single) {
+    lines[0] = lines[0].replace(/\s*-->$/, '')
+  } else {
+    const last = lines.length - 1
+    if (/^\s*-->$/.test(lines[last])) lines.splice(last, 1)
+    else lines[last] = lines[last].replace(/\s*-->$/, '')
+  }
+  return raw.slice(0, block.start) + lines.join('\n') + raw.slice(block.commentEnd)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * `enabled` → true (resume), false (pause) or null (leave as is). Models send
+ * booleans as strings often enough that "false" must pause rather than be read
+ * as a truthy string and RESUME the job.
+ */
+function parseEnabled(value) {
+  if (value === undefined || value === null || value === '') return { value: null }
+  if (value === true || value === false) return { value }
+  const text = String(value).trim().toLowerCase()
+  if (text === 'true') return { value: true }
+  if (text === 'false') return { value: false }
+  return { error: 'automation_edit: `enabled` must be true (resume) or false (pause).' }
+}
 
 function missingBridge() {
   return {

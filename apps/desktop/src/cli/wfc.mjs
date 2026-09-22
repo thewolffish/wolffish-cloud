@@ -101,6 +101,7 @@ ${c.gray('CHAT')}
 
 ${c.gray('THE APP, IN THE TERMINAL')}
   wfc conversations            list · show · resume · diagnose · rm
+  wfc conversations -s <words> only the titles carrying every word
   wfc conversations show <id>  read it back ${c.gray('· --tools · --clean · --last <n>')}
   wfc projects                 browse ${c.gray('·')} new ${c.gray('·')} show ${c.gray('·')} edit ${c.gray('·')} copy ${c.gray('·')} paste ${c.gray('·')} rename ${c.gray('·')} rm
   wfc procedures               browse ${c.gray('·')} new ${c.gray('·')} run ${c.gray('·')} edit ${c.gray('·')} copy ${c.gray('·')} paste ${c.gray('·')} mode ${c.gray('·')} rm
@@ -147,6 +148,7 @@ ${c.gray('MACHINE')}
 ${c.gray('FLAGS')}
   --tools / --clean  show or hide tool calls, overriding the saved setting
   --last <n>         with show: only the most recent n turns
+  --search / -s <words>  with conversations: narrow to the titles matching
   --json           machine-readable output where it applies
   --yes            auto-approve tool approvals for this run
   --raw            with view: print credentials instead of masking them
@@ -169,6 +171,8 @@ function parseArgs(argv) {
     project: null,
     /** Plan mode: a read-only turn that only writes the conversation's plan file. */
     plan: false,
+    /** `conversations --search <words>`: narrow the listing by title. */
+    search: null,
     /**
      * Null means "whatever `channels.cli.verbose` says". `--tools` and
      * `--clean` are a per-COMMAND override, which is the thing the stored
@@ -196,6 +200,7 @@ function parseArgs(argv) {
     else if (arg === '-f' || arg === '--file') flags.files.push(argv[++i])
     else if (arg === '-c' || arg === '--conversation') flags.conversation = argv[++i] ?? null
     else if (arg === '--project') flags.project = argv[++i] ?? null
+    else if (arg === '--search' || arg === '-s') flags.search = argv[++i] ?? null
     else if (arg === '--plan') flags.plan = true
     else rest.push(arg)
   }

@@ -322,7 +322,7 @@ When the user asks "where is …", this is your lookup table.
 | Trace **exactly what a tool did** (args + output) | `workspace/brain/corpus/YYYY-MM-DD.log.md` |
 | Inspect a **multi-step task run** | `workspace/brain/motor/tasks/TASK-*.md` |
 | Understand **why the agent decided X** | `workspace/brain/prefrontal/.debug/*.md` (the assembled prompt) |
-| Schedule a **recurring background job** | `workspace/brain/brainstem/heartbeat.md` |
+| Schedule a **recurring background job** | ask the agent — automation operations go through the `automation_*` tools (see §6), which manage `workspace/brain/brainstem/heartbeat.md` |
 | Check **token spend / costs** | `workspace/usage/providers/cloud.md` (every device's calls) and `usage/daily/*.md` |
 | Change **model, theme, locale, safety, integrations, secrets** | `workspace/config.json` (models are whatever the org allows — `/v1/models`) |
 | Debug **app crashes / sync / extension** | `workspace/logs/*.log` and `workspace/logs/extension/*.jsonl` |
@@ -509,6 +509,11 @@ pipeline as if the user typed it. Schedule kinds: `Startup`, `Every (Nm)`,
 `Every (Nh)`, `Hourly (mm)`, `Daily`/`Nightly (HH:MM)`, `Weekday (HH:MM)`,
 `Weekly (Day HH:MM)`, `Monthly (DD HH:MM)`, and raw `Cron (expr)`. In a fresh
 install every example is commented out — uncomment a block to activate it.
+**Managing a job always goes through the `.automations` tools.** The
+`automation_*` tools validate the schedule and reload the scheduler live; a job
+written into the file by hand skips both and is overwritten by the next writer.
+The file itself stays an ordinary file — fine to read, and fine to edit when the
+file is what you're working on — but it is not how an automation gets managed.
 
 **Channels.** The desktop app, the terminal, and the phone all share one brain. A
 `TurnRunner` serializes turns (FIFO) so the channels don't collide; a `TurnRouter`
@@ -656,8 +661,16 @@ Create `brain/cerebellum/.<name>/SKILL.md` (+ `plugin/index.mjs` for code). Give
 Reloads on next launch.
 
 **"Run something on a schedule."**
-Add a `##` job to `brain/brainstem/heartbeat.md` using one of the schedule kinds in
-§7. Keep the instruction in the body, plain prose.
+Have the agent do it with the `.automations` capability's `automation_*` tools —
+`automation_create` / `automation_edit` / `automation_delete` / `automation_run`,
+with pausing and resuming a job being `automation_edit` with `enabled` — which
+validate the schedule, reload the scheduler live and keep the Automations page in
+step. Every operation on a job goes through them; that is the rule, not
+the shortcut. The file they manage is `brain/brainstem/heartbeat.md` (schedule
+kinds in §7): read it to see what is scheduled, and edit it directly when the file
+itself is what you are working on — just not as a way to change a job, since a
+hand-written change skips validation, the live reload and the page's bookkeeping
+and gets silently overwritten.
 
 **"What am I spending?"**
 Read `usage/providers/cloud.md` (every device's calls, rebuilt from the org's
@@ -741,7 +754,8 @@ run from spinning.
   calls (convenience vs. caution — know which the user wants). `blockCredentials`
   toggles credential-pattern protection.
 - **Scheduled jobs auto-approve.** Heartbeat tasks run unattended, so they don't
-  pause for confirmation — be deliberate about what you put in `heartbeat.md`.
+  pause for confirmation — be deliberate about the instruction you give an
+  automation, and set it up with the `automation_*` tools as always.
 - **No artificial timeouts.** Tools run until they finish (except OOM protection);
   long-running commands are normal. Use `background:true` for servers/watchers.
 - **Secrets live in `config.json`** (the user's own variables, MCP

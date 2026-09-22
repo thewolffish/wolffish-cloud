@@ -2210,6 +2210,8 @@
     "newChat": "محادثة جديدة",
     "processing": "قيد المعالجة…",
     "diagnosticsPending": "لم تُفهرَس بعد — أعد المحاولة بعد لحظات",
+    "searchPlaceholder": "ابحث في المحادثات بالعنوان",
+    "searchEmpty": "لا توجد محادثات تطابق هذا البحث.",
     "groups": {
       "today": "اليوم",
       "yesterday": "أمس",

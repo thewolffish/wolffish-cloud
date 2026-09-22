@@ -1,6 +1,6 @@
 ---
 name: automations
-description: YOU OWN THIS. Wolffish's scheduled automations (the heartbeat) — list, create, edit, delete, check status, and run jobs that fire on a schedule and run autonomously. Reach for it by INTENT whenever a need or issue touches a schedule, a recurring job, or the heartbeat — even when the user never says "automation".
+description: YOU OWN THIS. Wolffish's scheduled automations (the heartbeat) — list, create, edit, pause, resume, delete, check status, and run jobs that fire on a schedule and run autonomously. These tools are the ONLY supported way to change an automation; heartbeat.md is the file they manage, so read it freely but never change a job by editing it. Reach for them by INTENT whenever a need or issue touches a schedule, a recurring job, or the heartbeat — even when the user never says "automation".
 triggers:
   - automation
   - automations
@@ -39,13 +39,26 @@ triggers:
   - test the job
   - not firing
   - run automatically
+  - heartbeat.md
+  - the heartbeat file
+  - brainstem
+  - my automations
+  - scheduled job
+  - scheduled jobs
+  - disable that job
+  - turn off that job
+  - pause that job
+  - remove that job
+  - change the time
+  - what automations
+  - edit the heartbeat
 tools:
   - name: automation_list
     readOnly: true
-    description: List every configured automation — its name, its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
+    description: List every configured automation — active AND paused, numbered in the order they appear in heartbeat.md — with its name, its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid, paused, or currently running.
     parameters: {}
   - name: automation_create
-    description: Create a new automation that runs on a schedule. Provide a short name, the schedule and the instruction to run.
+    description: Create a new automation that runs on a schedule — the ONLY supported way to add one (never add one by writing its heading into heartbeat.md). Provide a short name, the schedule and the instruction to run.
     parameters:
       name:
         type: string
@@ -66,7 +79,7 @@ tools:
         required: false
         description: 'A single emoji for this automation — YOU pick one that fits what it does (📧 for an inbox sweep, 📰 for a news digest, 💌 for a message sender). Shown on its card and stamped on its run conversations. One emoji, no spaces. Omitted or invalid ⇒ the default 🫀.'
   - name: automation_edit
-    description: Change an existing automation's name, schedule and/or instruction. Identify it by the number from automation_list or its exact schedule label.
+    description: Change an existing automation's name, schedule, instruction or mode, or PAUSE and RESUME it with `enabled` — the ONLY supported way to change one (never change a job by rewriting heartbeat.md). Identify it by the number from automation_list or its exact schedule label.
     parameters:
       identifier:
         type: string
@@ -88,6 +101,10 @@ tools:
         required: false
         enum: ['single', 'workflow']
         description: Change which chat mode the automation runs in ('single' or 'workflow'). Omit to keep its current mode.
+      enabled:
+        type: boolean
+        required: false
+        description: false PAUSES the automation — it stays listed (here and on the Automations page) but stops firing, exactly like the page's off switch; true RESUMES a paused one. Omit to leave it as it is. Combines with the other changes, so a paused one-time job whose moment has passed resumes with a new schedule in the same call.
 
   - name: automation_delete
     description: Permanently remove an automation so it stops firing. Identify it by its number from automation_list or its exact schedule label.
@@ -100,7 +117,7 @@ tools:
     description: Check runtime status — which automation (if any) is running right now, and how each one's last run went (completed, failed, or skipped). Use this to verify an automation works or to see recent activity.
     parameters: {}
   - name: automation_run
-    description: Run an automation immediately, right now, instead of waiting for its schedule — the way to test one. Runs in the background as a sealed conversation. Identify it by number or schedule label.
+    description: Run an automation immediately, right now, instead of waiting for its schedule — the way to test one. Runs in the background as a sealed conversation. Identify it by number or schedule label. A paused automation can't run until it is resumed.
     parameters:
       identifier:
         type: string
@@ -114,8 +131,31 @@ confirm_patterns:
 
 **You own this.** Reach for it by intent whenever a need or issue touches a
 schedule, a recurring job, or the heartbeat — even if the user never names it.
-The `automation_*` tools are the supported way to change anything here; the
-`heartbeat.md` file is for reading, not editing.
+
+**Managing an automation is always a tool call.** `automation_create`,
+`automation_edit`, `automation_delete`, `automation_run`, `automation_list`,
+`automation_check` — every OPERATION on a job goes through them, every time, no
+exceptions and no "quick edit". They own the parts that are easy to miss by hand:
+schedule validation, the live scheduler reload, the per-job settings markers and
+the app's edit stamps. Skip them and the Automations page and the running
+scheduler quietly disagree with the file — until the next writer (the page, a
+toggle, a sync) overwrites your change without a word.
+
+That governs the operation, not the file. `brain/brainstem/heartbeat.md` stays
+readable and is often the clearest answer to "what's scheduled?" — and when the
+task really is the file rather than the setting (the user wants to see or
+hand-edit the raw markdown, or a bulk restructure the tools don't cover), open it
+as the file it is. What you don't do is reach for it to do a job the tools do.
+
+**Pausing and resuming are tool calls too.** "Turn that job off", "pause the
+digest", "stop it for now" is `automation_edit` with `enabled: false` — the job
+stays in the file and on the Automations page, switched off (the same `<!-- -->`
+the page's own switch writes), and stops firing; `enabled: true` turns it back
+on. `automation_list` shows paused jobs in their place, numbered like the rest,
+so you can always find one to resume. Pause rather than delete whenever the user
+might want the job back — `automation_delete` is permanent. A paused one-time
+job whose moment has passed can't simply resume (the scheduler would retire it
+unrun); resume it with a new `schedule` in the same `automation_edit` call.
 
 An **automation** is a scheduled job that runs **by itself**, with no one in the
 chat. Together they are Wolffish's *heartbeat*: the background work that keeps
@@ -124,16 +164,15 @@ Friday retrospective. Each automation is one entry in
 `brain/brainstem/heartbeat.md`: a `## <schedule>` heading and, below it, a plain
 instruction. The brainstem parses that file, registers a cron job for each
 entry, and when a job fires it runs the instruction as a full autonomous agent
-turn. You manage all of this with the `automation_*` tools — you never have to
-hand-edit the file (though it's there if you want to read it).
+turn. You manage all of this with the `automation_*` tools.
 
 An entry's body may START with setting-marker lines the user configured from
 the Automations page — `mode: single|workflow`, `project: <id>` (the run gets
 that project's context and its conversation registers under the project),
 `icon: <emoji>` (the card/badge emoji), and the repeatable `file: <path>` /
 `dir: <path>`. They are settings, not instruction text. The `automation_*`
-tools preserve them automatically; if you ever edit the file directly, keep
-them in place.
+tools preserve them automatically — one more reason management belongs to the
+tools.
 
 **Files and working folders (`file:` / `dir:`).** These are what the user
 attached to an automation from the Automations page — the automation's own

@@ -6,15 +6,21 @@ import {
   Clock01Icon,
   LibraryIcon,
   Notification03Icon,
+  Search01Icon,
   Settings02Icon,
   UserGroupIcon,
   type IconProps
 } from '@/components/core/icons'
+import { INPUT_TEXT_ALIGN, WRITING_DIRECTION, rtlPlaceholder } from '@/components/core/Input'
 import { UnreadBadge } from '@/components/core/UnreadBadge'
 import { groupByRecency } from '@/lib/conversations/grouping'
 import { useAdminAccess } from '@/lib/cloud/useAdminAccess'
 import { useConversationList } from '@/lib/conversations/hooks'
-import { buildConversationRows, type ConversationRow } from '@/lib/conversations/rows'
+import {
+  buildConversationRows,
+  filterConversationRows,
+  type ConversationRow
+} from '@/lib/conversations/rows'
 import { unreadFor, unreadNotifications, useNotifications } from '@/state/notifications'
 import { useActiveProject, useProjects } from '@/lib/sync/projects'
 import { DEFAULT_PROJECT_ICON } from '@/components/workspace/ProjectDialog'
@@ -30,11 +36,13 @@ import {
   Animated,
   Easing,
   I18nManager,
+  Keyboard,
   Modal,
   Pressable,
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View
 } from 'react-native'
@@ -60,8 +68,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
  * is left and scrolls inside it.
  *
  * The chip is the whole state readout, exactly as on the desktop: it counts the
- * conversation's rank in the WHOLE list (continuing across the date headers
- * rather than restarting under each), and it is tinted by what the last turn in
+ * conversation's rank in the WHOLE list — among the matches, while a search is
+ * typed — continuing across the date headers rather than restarting under
+ * each, and it is tinted by what the last turn in
  * that conversation did — pale primary while one is running (pulsing) or while
  * the row is the open one, then success / error / stopped for as long as that
  * is fresh. See lib/conversations/rows.ts for where those phases come from.
@@ -138,9 +147,9 @@ const NAV: NavRowSpec[] = [
     Icon: AiBrain01Icon,
     labelKey: 'settings.tabs.customization'
   },
-  // The full Conversations page — search and delete, which the list below
-  // cannot do — last, where the desktop's sheet keeps it. It used to live in
-  // Settings, but it is a place you go, not a knob you turn.
+  // The full Conversations page — delete and the diagnostic export, which the
+  // list below cannot do — last, where the desktop's sheet keeps it. It used to
+  // live in Settings, but it is a place you go, not a knob you turn.
   {
     key: 'conversations',
     href: '/history',
@@ -379,6 +388,7 @@ function SheetBody({
 }: Omit<ConversationsSheetProps, 'open'>): React.JSX.Element {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const tokens = useTokens()
   const { data: metas } = useConversationList()
   const { data: projects } = useProjects()
   const live = useChatRuntime((state) => state.streams)
@@ -400,13 +410,21 @@ function SheetBody({
     return all.filter((row) => row.projectId === activeProject.id || row.id === activeId)
   }, [metas, live, runs, projects, untitled, activeProject, activeId])
 
+  // Title search over the conversations — never over the pages above them,
+  // which are the way OUT of chat and must stay where they are. Cleared on
+  // every open for free, like the window: this component mounts with the sheet.
+  const [query, setQuery] = useState('')
+  // Filtered BEFORE the window, so a match that sits at row 500 is on screen
+  // at once rather than after a dozen reach-the-ends.
+  const visible = useMemo(() => filterConversationRows(rows, query), [rows, query])
+
   // The window, grown as the user reaches the end rather than fetched by page —
   // there is only one list and it is already in memory. It starts small on
   // every open for free: this component is mounted with the sheet.
   const [limit, setLimit] = useState(PAGE)
-  const windowed = useMemo(() => rows.slice(0, limit), [rows, limit])
+  const windowed = useMemo(() => visible.slice(0, limit), [visible, limit])
   const groups = useMemo(() => groupByRecency(windowed, (row) => row.at), [windowed])
-  const more = rows.length > windowed.length
+  const more = visible.length > windowed.length
   const loadMore = useCallback(() => {
     if (more) setLimit((current) => current + PAGE)
   }, [more])
@@ -422,8 +440,12 @@ function SheetBody({
     [admin.canRead]
   )
 
+  // Both ways out put the keyboard away first. The Modal fades rather than
+  // vanishing, and a keyboard raised by the search field would otherwise ride
+  // that fade over the conversation (or page) the user just picked.
   const select = useCallback(
     (id: string) => {
+      Keyboard.dismiss()
       onClose()
       onSelect(id)
     },
@@ -435,6 +457,7 @@ function SheetBody({
   // until something else dismissed it.
   const go = useCallback(
     (href: string) => {
+      Keyboard.dismiss()
       onClose()
       router.push(href as never)
     },
@@ -493,6 +516,35 @@ function SheetBody({
             </Text>
           </View>
         )}
+        {/* Fixed with the pages rather than scrolled with the list: it is what
+            the list is being steered WITH, so it stays on screen while the
+            results move. Only there once there is something to search, and
+            never autofocused — opening the sheet to go somewhere must not
+            raise a keyboard over the way there. */}
+        {rows.length > 0 && (
+          <View className="border-border bg-surface mx-1.5 mt-3 h-9 flex-row items-center gap-2 rounded-lg border px-2.5">
+            <Search01Icon size={14} className="text-muted" />
+            <TextInput
+              value={query}
+              onChangeText={(text) => {
+                setQuery(text)
+                // A new query is a new list — start it at one window again,
+                // or a wide search inherits every row the last scroll grew.
+                setLimit(PAGE)
+              }}
+              placeholder={rtlPlaceholder(t('history.searchPlaceholder'))}
+              accessibilityLabel={t('history.searchPlaceholder')}
+              placeholderTextColor={tokens.muted}
+              selectionColor={tokens.accent}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              style={WRITING_DIRECTION}
+              className={cn('text-fg h-9 flex-1 font-sans text-xs', INPUT_TEXT_ALIGN)}
+            />
+          </View>
+        )}
       </View>
       {/* The one scroller. `flex: 1` rather than nothing: a virtualized list in
           a column with a sibling above it sizes to its CONTENT unless it is told
@@ -509,6 +561,9 @@ function SheetBody({
         onEndReachedThreshold={0.6}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        // Scrolling puts the search keyboard away, so a long result list is
+        // reachable to its end instead of ending behind the keys.
+        keyboardDismissMode="on-drag"
         contentContainerStyle={{ paddingBottom: insets.bottom + 16, paddingHorizontal: 10 }}
         renderSectionHeader={({ section }) => (
           <Text
@@ -534,7 +589,7 @@ function SheetBody({
         )}
         ListEmptyComponent={
           <Text className="text-muted px-1.5 pt-3 text-left font-sans text-xs">
-            {t('history.empty')}
+            {rows.length === 0 ? t('history.empty') : t('history.searchEmpty')}
           </Text>
         }
       />

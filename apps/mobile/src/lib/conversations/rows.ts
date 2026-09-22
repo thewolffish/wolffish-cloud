@@ -166,3 +166,48 @@ export function buildConversationRows({
 
   return rows.sort((a, b) => b.at - a.at)
 }
+
+/**
+ * Fold a string down to what a title search should compare: case-insensitive,
+ * and blind to the marks a keyboard may or may not have put there. NFD splits
+ * a composed letter into base + combining mark, and dropping the marks makes
+ * "cafe" find "Café" and a bare Arabic word find its vowelled spelling — which
+ * matters because a title is written BY the model, not by the person searching
+ * for it, so the two spellings are routinely not the same one.
+ */
+function foldForSearch(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+}
+
+/** The typed query as the keywords it contains — split, folded, empties dropped. */
+export function conversationSearchKeywords(query: string): string[] {
+  return query.split(/\s+/).map(foldForSearch).filter(Boolean)
+}
+
+/**
+ * Title search — the desktop's filterConversationRows
+ * (src/renderer/src/lib/conversation-rows.ts), ported so the same query
+ * narrows the History screen and the conversations sheet here exactly as it
+ * narrows them there. The terminal holds a third copy (src/cli/lib/search.mjs);
+ * all three are pinned to one table of cases.
+ *
+ * Every keyword must appear SOMEWHERE in the title, in any order — typing
+ * "release notes" finds "Notes for the 1.0.311 release" — because recalling a
+ * conversation is recalling two or three words from it, rarely the phrase it
+ * was titled with. An empty query hands back the rows untouched (the same
+ * array), so a list that is not being searched pays nothing for the call.
+ */
+export function filterConversationRows(
+  rows: readonly ConversationRow[],
+  query: string
+): readonly ConversationRow[] {
+  const keywords = conversationSearchKeywords(query)
+  if (keywords.length === 0) return rows
+  return rows.filter((row) => {
+    const title = foldForSearch(row.title)
+    return keywords.every((word) => title.includes(word))
+  })
+}
