@@ -1980,15 +1980,6 @@ export class Agent {
           task = await this.motor.createTask(userContent || 'Tool execution')
         }
 
-        const toolUses: ToolUse[] = parsed.toolCalls.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          args: tc.args
-        }))
-        const assistantMsg: ChatMessage = { role: 'assistant', content: parsed.text, toolUses }
-        if (parsed.thinking) assistantMsg.reasoningContent = parsed.thinking
-        messages.push(assistantMsg)
-
         // close_turn — the model's explicit "everything is delivered and
         // nothing further is needed". Handled before dispatch so it never
         // becomes a task step, never reaches the amygdala, and never emits a
@@ -2000,6 +1991,14 @@ export class Agent {
         // Every OTHER call in the same batch still runs: a model that closes
         // the turn alongside real work gets the work done and then stops. Only
         // when close_turn is the sole call does the turn end here.
+        //
+        // This runs BEFORE the assistant message below is built, and that
+        // ordering is the whole point: close_turn is intercepted here and never
+        // dispatched, so no tool message will ever answer it. A message that
+        // declares it next to calls that ARE dispatched is a request no provider
+        // accepts — "An assistant message with 'tool_calls' must be followed by
+        // tool messages responding to each 'tool_call_id'" — and that rejection
+        // failed a turn whose work had already finished and shipped.
         const closeTurnCall = parsed.toolCalls.find((tc) => tc.name === 'close_turn')
         if (closeTurnCall) {
           console.log(
@@ -2014,6 +2013,15 @@ export class Agent {
           parsed.toolCalls = others
           parsed.stopReason = 'tool_use'
         }
+
+        const toolUses: ToolUse[] = parsed.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          args: tc.args
+        }))
+        const assistantMsg: ChatMessage = { role: 'assistant', content: parsed.text, toolUses }
+        if (parsed.thinking) assistantMsg.reasoningContent = parsed.thinking
+        messages.push(assistantMsg)
 
         // Parallel read batches: when one assistant message carries several
         // tool calls, the read-only ones (file_read, file_grep, file_glob,
